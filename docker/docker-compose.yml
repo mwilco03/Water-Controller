@@ -1,0 +1,115 @@
+# Water Treatment Controller - Docker Compose
+# Copyright (C) 2024
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+version: "3.9"
+
+services:
+  # PostgreSQL with TimescaleDB
+  database:
+    image: timescale/timescaledb:latest-pg15
+    container_name: wtc-database
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: wtc
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-wtc_password}
+      POSTGRES_DB: water_treatment
+    volumes:
+      - db_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wtc -d water_treatment"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis for caching and pub/sub
+  redis:
+    image: redis:7-alpine
+    container_name: wtc-redis
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Web API
+  api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.web
+    container_name: wtc-api
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://wtc:${DB_PASSWORD:-wtc_password}@database:5432/water_treatment
+      REDIS_URL: redis://redis:6379
+      API_HOST: 0.0.0.0
+      API_PORT: 8080
+    ports:
+      - "8080:8080"
+    depends_on:
+      database:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/api/v1/system/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # PROFINET Controller (optional - requires host network mode)
+  controller:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.controller
+    container_name: wtc-controller
+    restart: unless-stopped
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    environment:
+      WT_INTERFACE: ${PROFINET_INTERFACE:-eth0}
+      WT_CYCLE_TIME: 1000
+      WT_LOG_LEVEL: INFO
+    volumes:
+      - ./config:/etc/water-controller:ro
+      - controller_logs:/var/log/water-controller
+    # Only start if PROFINET interface is configured
+    profiles:
+      - profinet
+
+  # Grafana for visualization
+  grafana:
+    image: grafana/grafana:latest
+    container_name: wtc-grafana
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_INSTALL_PLUGINS: grafana-clock-panel,grafana-simple-json-datasource
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    ports:
+      - "3000:3000"
+    depends_on:
+      - database
+
+volumes:
+  db_data:
+  redis_data:
+  controller_logs:
+  grafana_data:
+
+networks:
+  default:
+    name: wtc-network

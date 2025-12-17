@@ -1,0 +1,31 @@
+# Water Treatment Controller - Web API Dockerfile
+# Copyright (C) 2024
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install dependencies
+COPY web/api/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy application
+COPY web/api/ .
+
+# Create non-root user
+RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
+USER appuser
+
+# Environment
+ENV PYTHONUNBUFFERED=1
+ENV API_HOST=0.0.0.0
+ENV API_PORT=8080
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD python -c "import httpx; httpx.get('http://localhost:8080/api/v1/system/health')" || exit 1
+
+EXPOSE 8080
+
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"]

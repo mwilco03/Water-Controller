@@ -1,0 +1,30 @@
+# Water Treatment Controller - Grafana Datasources
+# Copyright (C) 2024
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+apiVersion: 1
+
+datasources:
+  - name: TimescaleDB
+    type: postgres
+    access: proxy
+    url: database:5432
+    database: water_treatment
+    user: wtc
+    secureJsonData:
+      password: ${DB_PASSWORD:-wtc_password}
+    jsonData:
+      sslmode: disable
+      maxOpenConns: 10
+      maxIdleConns: 5
+      connMaxLifetime: 14400
+      postgresVersion: 1500
+      timescaledb: true
+    isDefault: true
+
+  - name: Redis
+    type: redis-datasource
+    access: proxy
+    url: redis:6379
+    jsonData:
+      client: standalone
