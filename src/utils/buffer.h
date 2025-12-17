@@ -8,6 +8,7 @@
 #define WTC_BUFFER_H
 
 #include "types.h"
+#include <pthread.h>
 
 #ifdef __cplusplus
 extern "C" {

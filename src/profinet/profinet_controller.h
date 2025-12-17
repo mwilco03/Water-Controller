@@ -13,14 +13,16 @@
 extern "C" {
 #endif
 
-/* PROFINET constants */
-#define PROFINET_ETHERTYPE              0x8892
-#define PROFINET_FRAME_ID_RTC1_MIN      0x8000
-#define PROFINET_FRAME_ID_RTC1_MAX      0xBFFF
-#define PROFINET_FRAME_ID_DCP           0xFEFC
-#define PROFINET_FRAME_ID_DCP_HELLO     0xFEFD
-#define PROFINET_FRAME_ID_DCP_GETSET    0xFEFE
-#define PROFINET_FRAME_ID_DCP_IDENT     0xFEFF
+/* Include frame definitions (constants are defined in profinet_frame.h) */
+#include "profinet_frame.h"
+
+/* PROFINET timing constants */
+#ifndef PROFINET_FRAME_ID_RTC1_MIN
+#define PROFINET_FRAME_ID_RTC1_MIN      PROFINET_FRAME_ID_RT_CLASS1
+#endif
+#ifndef PROFINET_FRAME_ID_RTC1_MAX
+#define PROFINET_FRAME_ID_RTC1_MAX      PROFINET_FRAME_ID_RT_CLASS1_END
+#endif
 
 #define PROFINET_MIN_CYCLE_TIME_US      31250   /* 31.25 µs (32 * 31.25 = 1ms) */
 #define PROFINET_MAX_AR                 256

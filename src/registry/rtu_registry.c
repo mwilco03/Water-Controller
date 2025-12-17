@@ -264,8 +264,23 @@ wtc_result_t rtu_registry_list_devices(rtu_registry_t *registry,
         copy_count = max_count;
     }
 
+    if (copy_count == 0) {
+        *devices = NULL;
+        *count = 0;
+        pthread_mutex_unlock(&registry->lock);
+        return WTC_OK;
+    }
+
+    /* Allocate array of device structs (caller must free) */
+    *devices = calloc(copy_count, sizeof(rtu_device_t));
+    if (!*devices) {
+        pthread_mutex_unlock(&registry->lock);
+        return WTC_ERROR_NO_MEMORY;
+    }
+
+    /* Copy device data (shallow copy - pointers inside are shared) */
     for (int i = 0; i < copy_count; i++) {
-        devices[i] = registry->devices[i];
+        memcpy(&(*devices)[i], registry->devices[i], sizeof(rtu_device_t));
     }
     *count = copy_count;
 

@@ -47,6 +47,7 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/src/coordination
     ${CMAKE_SOURCE_DIR}/src/config
     ${CMAKE_SOURCE_DIR}/src/db
+    ${CMAKE_SOURCE_DIR}/src/ipc
     ${CMAKE_SOURCE_DIR}/src/utils
 )
 
@@ -104,6 +105,11 @@ set(COORDINATION_SOURCES
     src/coordination/coordination.c
 )
 
+# IPC module sources
+set(IPC_SOURCES
+    src/ipc/ipc_server.c
+)
+
 # Create core library
 add_library(wtc_core ${CORE_SOURCES})
 target_link_libraries(wtc_core Threads::Threads)
@@ -140,6 +146,10 @@ target_link_libraries(wtc_historian wtc_core wtc_registry)
 add_library(wtc_coordination ${COORDINATION_SOURCES})
 target_link_libraries(wtc_coordination wtc_core wtc_registry wtc_control)
 
+# Create IPC library
+add_library(wtc_ipc ${IPC_SOURCES})
+target_link_libraries(wtc_ipc wtc_core wtc_registry wtc_alarms wtc_control rt)
+
 # Main executable
 add_executable(water_treat_controller src/main.c)
 target_link_libraries(water_treat_controller
@@ -150,6 +160,8 @@ target_link_libraries(water_treat_controller
     wtc_alarms
     wtc_historian
     wtc_coordination
+    wtc_ipc
+    rt
     m
 )
 

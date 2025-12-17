@@ -40,6 +40,9 @@ extern "C" {
 #define WTC_DEFAULT_SENSORS     32
 #define WTC_DEFAULT_ACTUATORS   32
 
+/* Max slots for fixed-size arrays in configuration structs */
+#define WTC_MAX_SLOTS           256
+
 /* Return codes */
 typedef enum {
     WTC_OK = 0,

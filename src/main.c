@@ -12,6 +12,7 @@
 #include "control/control_engine.h"
 #include "alarms/alarm_manager.h"
 #include "historian/historian.h"
+#include "ipc/ipc_server.h"
 #include "utils/logger.h"
 #include "utils/time_utils.h"
 
@@ -31,6 +32,7 @@ static rtu_registry_t *g_registry = NULL;
 static control_engine_t *g_control = NULL;
 static alarm_manager_t *g_alarms = NULL;
 static historian_t *g_historian = NULL;
+static ipc_server_t *g_ipc = NULL;
 
 /* Configuration */
 typedef struct {
@@ -232,6 +234,16 @@ static wtc_result_t initialize_components(void) {
     }
     historian_set_registry(g_historian, g_registry);
 
+    /* Initialize IPC server for API communication */
+    res = ipc_server_init(&g_ipc);
+    if (res != WTC_OK) {
+        LOG_ERROR("Failed to initialize IPC server");
+        return res;
+    }
+    ipc_server_set_registry(g_ipc, g_registry);
+    ipc_server_set_alarm_manager(g_ipc, g_alarms);
+    ipc_server_set_control_engine(g_ipc, g_control);
+
     LOG_INFO("All components initialized successfully");
     return WTC_OK;
 }
@@ -264,6 +276,12 @@ static wtc_result_t start_components(void) {
         return res;
     }
 
+    res = ipc_server_start(g_ipc);
+    if (res != WTC_OK) {
+        LOG_ERROR("Failed to start IPC server");
+        return res;
+    }
+
     LOG_INFO("All components started successfully");
     return WTC_OK;
 }
@@ -272,6 +290,7 @@ static wtc_result_t start_components(void) {
 static void stop_components(void) {
     LOG_INFO("Stopping components...");
 
+    if (g_ipc) ipc_server_stop(g_ipc);
     if (g_historian) historian_stop(g_historian);
     if (g_alarms) alarm_manager_stop(g_alarms);
     if (g_control) control_engine_stop(g_control);
@@ -282,6 +301,7 @@ static void stop_components(void) {
 static void cleanup_components(void) {
     LOG_INFO("Cleaning up components...");
 
+    ipc_server_cleanup(g_ipc);
     historian_cleanup(g_historian);
     alarm_manager_cleanup(g_alarms);
     control_engine_cleanup(g_control);
@@ -333,6 +353,10 @@ int main(int argc, char *argv[]) {
     while (g_running) {
         /* Main loop processing */
         time_sleep_ms(100);
+
+        /* Update IPC shared memory and process commands */
+        ipc_server_update(g_ipc);
+        ipc_server_process_commands(g_ipc);
 
         /* Periodic status (every 10 seconds) */
         static uint64_t last_status_ms = 0;

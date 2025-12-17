@@ -20,6 +20,24 @@ extern "C" {
 #define ETH_MAX_FRAME_LEN   1518
 #define ETH_FCS_LEN         4
 
+/* PROFINET Ethernet types */
+#define PROFINET_ETHERTYPE          0x8892
+#define PROFINET_ETHERTYPE_VLAN     0x8100
+
+/* PROFINET Frame IDs */
+#define PROFINET_FRAME_ID_DCP           0xFEFC
+#define PROFINET_FRAME_ID_DCP_HELLO     0xFEFC
+#define PROFINET_FRAME_ID_DCP_GETSET    0xFEFD
+#define PROFINET_FRAME_ID_DCP_IDENT     0xFEFE
+#define PROFINET_FRAME_ID_RT_CLASS1     0x8000  /* Start of RT Class 1 */
+#define PROFINET_FRAME_ID_RT_CLASS1_END 0xBFFF  /* End of RT Class 1 */
+#define PROFINET_FRAME_ID_RT_CLASS3     0x0100  /* RT Class 3 (IRT) */
+#define PROFINET_FRAME_ID_RTC3_END      0x7FFF
+#define PROFINET_FRAME_ID_ALARM_HIGH    0xFC01
+#define PROFINET_FRAME_ID_ALARM_LOW     0xFE01
+#define PROFINET_FRAME_ID_PTCP_SYNC     0xFF00
+#define PROFINET_FRAME_ID_PTCP_DELAY    0xFF40
+
 /* PROFINET frame header */
 typedef struct __attribute__((packed)) {
     uint8_t dst_mac[ETH_ADDR_LEN];
