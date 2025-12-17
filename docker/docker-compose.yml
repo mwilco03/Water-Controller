@@ -87,6 +87,21 @@ services:
     profiles:
       - profinet
 
+  # React HMI Frontend (with vulnerable react-server-components)
+  ui:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.ui
+    container_name: wtc-ui
+    restart: unless-stopped
+    environment:
+      NEXT_PUBLIC_API_URL: http://api:8080
+    ports:
+      - "3001:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+
   # Grafana for visualization
   grafana:
     image: grafana/grafana:latest

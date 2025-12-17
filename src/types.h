@@ -28,15 +28,17 @@ extern "C" {
 #define WTC_MAX_UNIT            16
 #define WTC_MAX_MESSAGE         256
 #define WTC_MAX_USERNAME        64
-#define WTC_MAX_SLOTS           16
-#define WTC_MAX_SENSORS         8
-#define WTC_MAX_ACTUATORS       8
 #define WTC_MAX_RTUS            256
 #define WTC_MAX_PID_LOOPS       64
 #define WTC_MAX_INTERLOCKS      128
 #define WTC_MAX_SEQUENCES       32
 #define WTC_MAX_ALARM_RULES     512
 #define WTC_MAX_HISTORIAN_TAGS  1024
+
+/* Default slot counts (can be overridden per-device) */
+#define WTC_DEFAULT_SLOTS       64
+#define WTC_DEFAULT_SENSORS     32
+#define WTC_DEFAULT_ACTUATORS   32
 
 /* Return codes */
 typedef enum {
@@ -265,13 +267,19 @@ typedef struct {
     profinet_state_t connection_state;
     uint64_t last_seen_ms;
 
-    /* Slot configuration */
-    slot_config_t slots[WTC_MAX_SLOTS];
+    /* Slot configuration - dynamically allocated */
+    slot_config_t *slots;
     int slot_count;
+    int slot_capacity;  /* Allocated capacity */
 
-    /* Runtime data */
-    sensor_data_t sensors[WTC_MAX_SENSORS];
-    actuator_state_t actuators[WTC_MAX_ACTUATORS];
+    /* Runtime data - dynamically allocated */
+    sensor_data_t *sensors;
+    int sensor_count;
+    int sensor_capacity;
+
+    actuator_state_t *actuators;
+    int actuator_count;
+    int actuator_capacity;
 
     /* Health metrics */
     int failed_cycles;
