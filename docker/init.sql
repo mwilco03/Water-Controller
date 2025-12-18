@@ -1,0 +1,234 @@
+-- Water Treatment Controller - Database Initialization
+-- Copyright (C) 2024
+-- SPDX-License-Identifier: GPL-3.0-or-later
+
+-- Enable TimescaleDB extension
+CREATE EXTENSION IF NOT EXISTS timescaledb CASCADE;
+
+-- RTU Devices table
+CREATE TABLE IF NOT EXISTS rtu_devices (
+    id SERIAL PRIMARY KEY,
+    station_name VARCHAR(64) UNIQUE NOT NULL,
+    ip_address INET NOT NULL,
+    vendor_id INTEGER NOT NULL,
+    device_id INTEGER NOT NULL,
+    slot_count INTEGER NOT NULL DEFAULT 16,
+    connection_state VARCHAR(32) NOT NULL DEFAULT 'OFFLINE',
+    last_seen TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Slot Configuration table
+CREATE TABLE IF NOT EXISTS slot_configs (
+    id SERIAL PRIMARY KEY,
+    rtu_id INTEGER REFERENCES rtu_devices(id) ON DELETE CASCADE,
+    slot_number INTEGER NOT NULL,
+    slot_type VARCHAR(16) NOT NULL CHECK (slot_type IN ('sensor', 'actuator')),
+    name VARCHAR(64),
+    unit VARCHAR(16),
+    scale_min REAL,
+    scale_max REAL,
+    deadband REAL DEFAULT 0.0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(rtu_id, slot_number)
+);
+
+-- Historian Tags table
+CREATE TABLE IF NOT EXISTS historian_tags (
+    id SERIAL PRIMARY KEY,
+    rtu_station VARCHAR(64) NOT NULL,
+    slot INTEGER NOT NULL,
+    tag_name VARCHAR(128) UNIQUE NOT NULL,
+    sample_rate_ms INTEGER NOT NULL DEFAULT 1000,
+    deadband REAL NOT NULL DEFAULT 0.0,
+    compression VARCHAR(32) NOT NULL DEFAULT 'DEADBAND',
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Time-series data table (hypertable)
+CREATE TABLE IF NOT EXISTS historian_data (
+    time TIMESTAMPTZ NOT NULL,
+    tag_id INTEGER NOT NULL REFERENCES historian_tags(id),
+    value REAL NOT NULL,
+    quality INTEGER NOT NULL DEFAULT 192
+);
+
+-- Convert to hypertable
+SELECT create_hypertable('historian_data', 'time', if_not_exists => TRUE);
+
+-- Create index for efficient queries
+CREATE INDEX IF NOT EXISTS idx_historian_data_tag_time ON historian_data (tag_id, time DESC);
+
+-- Alarm Rules table
+CREATE TABLE IF NOT EXISTS alarm_rules (
+    id SERIAL PRIMARY KEY,
+    rtu_station VARCHAR(64) NOT NULL,
+    slot INTEGER NOT NULL,
+    condition VARCHAR(16) NOT NULL CHECK (condition IN ('HIGH_HIGH', 'HIGH', 'LOW', 'LOW_LOW', 'RATE_OF_CHANGE', 'DEVIATION')),
+    threshold REAL NOT NULL,
+    severity VARCHAR(16) NOT NULL CHECK (severity IN ('INFO', 'WARNING', 'CRITICAL', 'EMERGENCY')),
+    delay_ms INTEGER NOT NULL DEFAULT 0,
+    message VARCHAR(256) NOT NULL,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Alarm History table (hypertable)
+CREATE TABLE IF NOT EXISTS alarm_history (
+    time TIMESTAMPTZ NOT NULL,
+    alarm_id SERIAL,
+    rule_id INTEGER REFERENCES alarm_rules(id),
+    rtu_station VARCHAR(64) NOT NULL,
+    slot INTEGER NOT NULL,
+    severity VARCHAR(16) NOT NULL,
+    state VARCHAR(16) NOT NULL CHECK (state IN ('ACTIVE_UNACK', 'ACTIVE_ACK', 'CLEARED_UNACK', 'CLEARED')),
+    message VARCHAR(256) NOT NULL,
+    value REAL NOT NULL,
+    threshold REAL NOT NULL,
+    ack_time TIMESTAMPTZ,
+    ack_user VARCHAR(64),
+    clear_time TIMESTAMPTZ
+);
+
+-- Convert to hypertable
+SELECT create_hypertable('alarm_history', 'time', if_not_exists => TRUE);
+
+-- PID Loops table
+CREATE TABLE IF NOT EXISTS pid_loops (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(64) UNIQUE NOT NULL,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    input_rtu VARCHAR(64) NOT NULL,
+    input_slot INTEGER NOT NULL,
+    output_rtu VARCHAR(64) NOT NULL,
+    output_slot INTEGER NOT NULL,
+    kp REAL NOT NULL DEFAULT 1.0,
+    ki REAL NOT NULL DEFAULT 0.0,
+    kd REAL NOT NULL DEFAULT 0.0,
+    setpoint REAL NOT NULL DEFAULT 0.0,
+    output_min REAL NOT NULL DEFAULT 0.0,
+    output_max REAL NOT NULL DEFAULT 100.0,
+    mode VARCHAR(16) NOT NULL DEFAULT 'AUTO' CHECK (mode IN ('AUTO', 'MANUAL', 'CASCADE')),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Interlocks table
+CREATE TABLE IF NOT EXISTS interlocks (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(64) UNIQUE NOT NULL,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    input_rtu VARCHAR(64) NOT NULL,
+    input_slot INTEGER NOT NULL,
+    output_rtu VARCHAR(64) NOT NULL,
+    output_slot INTEGER NOT NULL,
+    condition VARCHAR(16) NOT NULL CHECK (condition IN ('ABOVE', 'BELOW', 'EQUAL', 'NOT_EQUAL')),
+    threshold REAL NOT NULL,
+    action VARCHAR(16) NOT NULL DEFAULT 'OFF' CHECK (action IN ('OFF', 'ON')),
+    delay_ms INTEGER NOT NULL DEFAULT 0,
+    latching BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Users table (for authentication)
+CREATE TABLE IF NOT EXISTS users (
+    id SERIAL PRIMARY KEY,
+    username VARCHAR(64) UNIQUE NOT NULL,
+    password_hash VARCHAR(256) NOT NULL,
+    role VARCHAR(32) NOT NULL DEFAULT 'operator' CHECK (role IN ('viewer', 'operator', 'engineer', 'admin')),
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_login TIMESTAMPTZ
+);
+
+-- Audit Log table (hypertable)
+CREATE TABLE IF NOT EXISTS audit_log (
+    time TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    user_id INTEGER REFERENCES users(id),
+    action VARCHAR(64) NOT NULL,
+    resource VARCHAR(128) NOT NULL,
+    details JSONB,
+    ip_address INET
+);
+
+-- Convert to hypertable
+SELECT create_hypertable('audit_log', 'time', if_not_exists => TRUE);
+
+-- Insert default admin user (password: admin - should be changed!)
+INSERT INTO users (username, password_hash, role)
+VALUES ('admin', '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/X4.G5y5GJzfHJgP7.', 'admin')
+ON CONFLICT (username) DO NOTHING;
+
+-- Insert sample RTU devices
+INSERT INTO rtu_devices (station_name, ip_address, vendor_id, device_id, slot_count, connection_state)
+VALUES
+    ('rtu-tank-1', '192.168.1.100', 1, 1, 16, 'OFFLINE'),
+    ('rtu-pump-station', '192.168.1.101', 1, 1, 16, 'OFFLINE'),
+    ('rtu-filter-1', '192.168.1.102', 1, 1, 16, 'OFFLINE')
+ON CONFLICT (station_name) DO NOTHING;
+
+-- Insert sample historian tags
+INSERT INTO historian_tags (rtu_station, slot, tag_name, sample_rate_ms, deadband, compression)
+VALUES
+    ('rtu-tank-1', 1, 'rtu-tank-1.pH', 1000, 0.05, 'SWINGING_DOOR'),
+    ('rtu-tank-1', 2, 'rtu-tank-1.Temperature', 1000, 0.5, 'DEADBAND'),
+    ('rtu-tank-1', 3, 'rtu-tank-1.Turbidity', 1000, 0.1, 'DEADBAND'),
+    ('rtu-tank-1', 7, 'rtu-tank-1.Level', 1000, 0.5, 'SWINGING_DOOR'),
+    ('rtu-tank-1', 8, 'rtu-tank-1.Pressure', 1000, 0.1, 'DEADBAND')
+ON CONFLICT (tag_name) DO NOTHING;
+
+-- Insert sample alarm rules
+INSERT INTO alarm_rules (rtu_station, slot, condition, threshold, severity, delay_ms, message)
+VALUES
+    ('rtu-tank-1', 1, 'HIGH', 8.5, 'WARNING', 5000, 'pH High'),
+    ('rtu-tank-1', 1, 'HIGH_HIGH', 9.0, 'CRITICAL', 0, 'pH Very High'),
+    ('rtu-tank-1', 1, 'LOW', 6.5, 'WARNING', 5000, 'pH Low'),
+    ('rtu-tank-1', 1, 'LOW_LOW', 6.0, 'CRITICAL', 0, 'pH Very Low'),
+    ('rtu-tank-1', 7, 'LOW', 10.0, 'WARNING', 3000, 'Tank Level Low'),
+    ('rtu-tank-1', 7, 'LOW_LOW', 5.0, 'CRITICAL', 0, 'Tank Level Critical'),
+    ('rtu-tank-1', 8, 'HIGH', 8.0, 'WARNING', 2000, 'Pressure High'),
+    ('rtu-tank-1', 8, 'HIGH_HIGH', 10.0, 'EMERGENCY', 0, 'Pressure Very High - Emergency');
+
+-- Insert sample PID loop
+INSERT INTO pid_loops (name, input_rtu, input_slot, output_rtu, output_slot, kp, ki, kd, setpoint, output_min, output_max, mode)
+VALUES
+    ('pH Control', 'rtu-tank-1', 1, 'rtu-tank-1', 12, 2.0, 0.1, 0.5, 7.0, 0.0, 100.0, 'AUTO'),
+    ('Level Control', 'rtu-tank-1', 7, 'rtu-tank-1', 10, 1.5, 0.05, 0.2, 75.0, 0.0, 100.0, 'AUTO')
+ON CONFLICT (name) DO NOTHING;
+
+-- Insert sample interlocks
+INSERT INTO interlocks (name, input_rtu, input_slot, output_rtu, output_slot, condition, threshold, action, delay_ms, latching)
+VALUES
+    ('Low Level Pump Protect', 'rtu-tank-1', 7, 'rtu-pump-station', 9, 'BELOW', 10.0, 'OFF', 0, TRUE),
+    ('High Pressure Relief', 'rtu-tank-1', 8, 'rtu-tank-1', 11, 'ABOVE', 9.0, 'ON', 0, FALSE)
+ON CONFLICT (name) DO NOTHING;
+
+-- Create continuous aggregate for hourly averages
+CREATE MATERIALIZED VIEW IF NOT EXISTS historian_hourly
+WITH (timescaledb.continuous) AS
+SELECT
+    time_bucket('1 hour', time) AS bucket,
+    tag_id,
+    AVG(value) AS avg_value,
+    MIN(value) AS min_value,
+    MAX(value) AS max_value,
+    COUNT(*) AS sample_count
+FROM historian_data
+GROUP BY bucket, tag_id;
+
+-- Add refresh policy
+SELECT add_continuous_aggregate_policy('historian_hourly',
+    start_offset => INTERVAL '3 hours',
+    end_offset => INTERVAL '1 hour',
+    schedule_interval => INTERVAL '1 hour',
+    if_not_exists => TRUE);
+
+-- Add data retention policy (keep raw data for 30 days)
+SELECT add_retention_policy('historian_data', INTERVAL '30 days', if_not_exists => TRUE);
+SELECT add_retention_policy('alarm_history', INTERVAL '365 days', if_not_exists => TRUE);
+SELECT add_retention_policy('audit_log', INTERVAL '365 days', if_not_exists => TRUE);
+
+-- Grant permissions
+GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO wtc;
+GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO wtc;

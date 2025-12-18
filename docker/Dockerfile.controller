@@ -1,0 +1,52 @@
+# Water Treatment Controller - C Controller Dockerfile
+# Copyright (C) 2024
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+FROM debian:bookworm-slim AS builder
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    cmake \
+    pkg-config \
+    libpq-dev \
+    libjson-c-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy source
+WORKDIR /app
+COPY CMakeLists.txt .
+COPY src/ src/
+
+# Build
+RUN mkdir build && cd build && \
+    cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=OFF .. && \
+    make -j$(nproc)
+
+# Runtime image
+FROM debian:bookworm-slim
+
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y \
+    libpq5 \
+    libjson-c5 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy binary
+COPY --from=builder /app/build/water_treat_controller /usr/local/bin/
+
+# Create config directory
+RUN mkdir -p /etc/water-controller /var/log/water-controller
+
+# Set default environment
+ENV WT_INTERFACE=eth0
+ENV WT_CYCLE_TIME=1000
+ENV WT_LOG_LEVEL=INFO
+
+# Expose for debugging
+EXPOSE 4840/tcp
+
+# Run with capabilities for raw sockets
+# docker run --cap-add=NET_ADMIN --cap-add=NET_RAW
+ENTRYPOINT ["water_treat_controller"]
+CMD ["-i", "eth0", "-t", "1000"]

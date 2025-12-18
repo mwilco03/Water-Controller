@@ -1,0 +1,32 @@
+[Unit]
+Description=Water Treatment Controller Web UI
+Documentation=https://github.com/mwilco03/Water-Controller
+After=network.target water-controller-api.service
+
+[Service]
+Type=simple
+User=wtc
+Group=wtc
+WorkingDirectory=/opt/water-controller/web/ui
+ExecStart=/usr/bin/node server.js
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=water-controller-ui
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/water-controller
+
+# Environment
+Environment=NODE_ENV=production
+Environment=PORT=3000
+EnvironmentFile=-/etc/water-controller/environment
+
+[Install]
+WantedBy=multi-user.target
