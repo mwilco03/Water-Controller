@@ -87,6 +87,28 @@ typedef struct {
     int mode;
 } shm_pid_loop_t;
 
+/* Discovery result structures */
+typedef struct {
+    char station_name[64];
+    char ip_address[16];
+    char mac_address[18];
+    uint16_t vendor_id;
+    uint16_t device_id;
+    bool reachable;
+} shm_discovered_device_t;
+
+typedef struct {
+    uint8_t address;
+    uint16_t device_type;
+    char description[64];
+} shm_i2c_device_t;
+
+typedef struct {
+    uint8_t rom_code[8];
+    uint8_t family_code;
+    char description[64];
+} shm_onewire_device_t;
+
 /* Command structure for write operations */
 typedef struct {
     uint32_t sequence;
@@ -113,6 +135,42 @@ typedef struct {
         struct {
             int interlock_id;
         } reset_cmd;
+        struct {
+            char station_name[64];
+            char ip_address[16];
+            uint16_t vendor_id;
+            uint16_t device_id;
+        } add_rtu_cmd;
+        struct {
+            char station_name[64];
+        } remove_rtu_cmd;
+        struct {
+            char station_name[64];
+        } connect_rtu_cmd;
+        struct {
+            char station_name[64];
+        } disconnect_rtu_cmd;
+        struct {
+            char network_interface[32];
+            uint32_t timeout_ms;
+        } dcp_discover_cmd;
+        struct {
+            char rtu_station[64];
+            int bus_number;
+        } i2c_discover_cmd;
+        struct {
+            char rtu_station[64];
+            int bus_number;
+        } onewire_discover_cmd;
+        struct {
+            char rtu_station[64];
+            int slot;
+            int slot_type;
+            char name[64];
+            char unit[16];
+            int measurement_type;
+            int actuator_type;
+        } configure_slot_cmd;
     };
 } shm_command_t;
 
@@ -123,6 +181,19 @@ typedef struct {
 #define SHM_CMD_PID_MODE        3
 #define SHM_CMD_ACK_ALARM       4
 #define SHM_CMD_RESET_INTERLOCK 5
+#define SHM_CMD_ADD_RTU         6
+#define SHM_CMD_REMOVE_RTU      7
+#define SHM_CMD_CONNECT_RTU     8
+#define SHM_CMD_DISCONNECT_RTU  9
+#define SHM_CMD_DCP_DISCOVER    10
+#define SHM_CMD_I2C_DISCOVER    11
+#define SHM_CMD_ONEWIRE_DISCOVER 12
+#define SHM_CMD_CONFIGURE_SLOT  13
+
+/* Discovery result limits */
+#define WTC_MAX_DISCOVERY_DEVICES 32
+#define WTC_MAX_I2C_DEVICES       16
+#define WTC_MAX_ONEWIRE_DEVICES   16
 
 /* Main shared memory structure */
 typedef struct {
@@ -154,6 +225,26 @@ typedef struct {
     shm_command_t command;
     uint32_t command_sequence;
     uint32_t command_ack;
+
+    /* Command result (Controller -> API) */
+    int command_result;          /* 0 = success, negative = error */
+    char command_error_msg[256]; /* Error message if any */
+
+    /* Discovery results (populated by controller after discovery commands) */
+    shm_discovered_device_t discovered_devices[WTC_MAX_DISCOVERY_DEVICES];
+    int discovered_device_count;
+    bool discovery_in_progress;
+    bool discovery_complete;
+
+    /* I2C discovery results */
+    shm_i2c_device_t i2c_devices[WTC_MAX_I2C_DEVICES];
+    int i2c_device_count;
+    bool i2c_discovery_complete;
+
+    /* 1-Wire discovery results */
+    shm_onewire_device_t onewire_devices[WTC_MAX_ONEWIRE_DEVICES];
+    int onewire_device_count;
+    bool onewire_discovery_complete;
 
     /* Mutex for synchronization */
     pthread_mutex_t lock;
@@ -188,6 +279,16 @@ wtc_result_t ipc_server_set_alarm_manager(ipc_server_t *server,
 struct control_engine;
 wtc_result_t ipc_server_set_control_engine(ipc_server_t *server,
                                             struct control_engine *control);
+
+/* Set PROFINET controller */
+struct profinet_controller;
+wtc_result_t ipc_server_set_profinet(ipc_server_t *server,
+                                      struct profinet_controller *profinet);
+
+/* Set DCP discovery */
+struct dcp_discovery;
+wtc_result_t ipc_server_set_dcp(ipc_server_t *server,
+                                 struct dcp_discovery *dcp);
 
 /* Update shared memory (call periodically) */
 wtc_result_t ipc_server_update(ipc_server_t *server);

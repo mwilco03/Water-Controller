@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
-from datetime import datetime
+from datetime import datetime, timedelta
 import asyncio
 import json
 import logging
@@ -30,6 +30,9 @@ except ImportError:
 # Import database persistence layer
 import db_persistence as db
 
+# Import historian module for time-series data
+import historian as hist
+
 # Configure logging with structured format
 logging.basicConfig(
     level=logging.INFO,
@@ -41,6 +44,124 @@ logger = logging.getLogger(__name__)
 from contextvars import ContextVar
 request_user: ContextVar[str] = ContextVar('request_user', default='system')
 request_ip: ContextVar[str] = ContextVar('request_ip', default='unknown')
+
+# Authentication configuration
+import os
+AUTH_ENABLED = os.environ.get('WTC_AUTH_ENABLED', 'true').lower() in ('true', '1', 'yes')
+AUTH_BYPASS_HEADER = os.environ.get('WTC_AUTH_BYPASS_HEADER', None)  # For testing
+
+# In-memory session store (populated on login, moved here for dependency access)
+active_sessions: Dict[str, Dict[str, Any]] = {}
+
+# User roles for authorization
+class UserRole:
+    VIEWER = "viewer"
+    OPERATOR = "operator"
+    ENGINEER = "engineer"
+    ADMIN = "admin"
+
+# Role hierarchy for permission checks
+ROLE_HIERARCHY = {
+    UserRole.VIEWER: 0,
+    UserRole.OPERATOR: 1,
+    UserRole.ENGINEER: 2,
+    UserRole.ADMIN: 3
+}
+
+
+from fastapi import Header, Request
+
+
+async def get_current_user(
+    request: Request,
+    authorization: Optional[str] = Header(None)
+) -> Optional[Dict[str, Any]]:
+    """
+    Dependency to get the current authenticated user.
+    Returns None if authentication is disabled or bypassed.
+    Raises HTTPException if auth is required but invalid.
+    """
+    # Check if auth is disabled
+    if not AUTH_ENABLED:
+        return {"username": "anonymous", "role": UserRole.ADMIN, "groups": []}
+
+    # Check for bypass header (testing only)
+    if AUTH_BYPASS_HEADER and request.headers.get(AUTH_BYPASS_HEADER):
+        return {"username": "test_user", "role": UserRole.ADMIN, "groups": []}
+
+    # Extract token from Authorization header
+    if not authorization:
+        raise HTTPException(
+            status_code=401,
+            detail="Authentication required",
+            headers={"WWW-Authenticate": "Bearer"}
+        )
+
+    # Support both "Bearer <token>" and raw token
+    token = authorization
+    if authorization.startswith("Bearer "):
+        token = authorization[7:]
+
+    # Try in-memory cache first, then database
+    session = active_sessions.get(token)
+    if not session:
+        # Try database
+        db_session = db.get_session(token)
+        if db_session:
+            session = {
+                "username": db_session["username"],
+                "role": db_session["role"],
+                "groups": db_session.get("groups", [])
+            }
+            # Cache in memory
+            active_sessions[token] = session
+            # Update activity in database
+            db.update_session_activity(token)
+
+    if not session:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid or expired session",
+            headers={"WWW-Authenticate": "Bearer"}
+        )
+
+    # Update request context for audit logging
+    request_user.set(session["username"])
+    if request.client:
+        request_ip.set(request.client.host)
+
+    return session
+
+
+async def require_role(required_role: str):
+    """Factory for role-based authorization dependency"""
+    async def role_checker(user: Dict[str, Any] = Depends(get_current_user)):
+        user_role = user.get("role", UserRole.VIEWER)
+        if ROLE_HIERARCHY.get(user_role, 0) < ROLE_HIERARCHY.get(required_role, 0):
+            raise HTTPException(
+                status_code=403,
+                detail=f"Insufficient permissions. Required role: {required_role}"
+            )
+        return user
+    return role_checker
+
+
+# Create role-specific dependencies
+require_viewer = Depends(get_current_user)
+require_operator = Depends(get_current_user)  # Will add role check in handler
+require_engineer = Depends(get_current_user)
+require_admin = Depends(get_current_user)
+
+
+def check_role(user: Dict[str, Any], required_role: str):
+    """Helper to check user role in handlers"""
+    user_role = user.get("role", UserRole.VIEWER)
+    if ROLE_HIERARCHY.get(user_role, 0) < ROLE_HIERARCHY.get(required_role, 0):
+        raise HTTPException(
+            status_code=403,
+            detail=f"Insufficient permissions. Required role: {required_role}"
+        )
+
 
 # Create FastAPI app
 app = FastAPI(
@@ -566,13 +687,17 @@ class RTUCreateRequest(BaseModel):
     slots: Optional[List[Dict[str, Any]]] = None  # Slot configuration
 
 @app.post("/api/v1/rtus", response_model=RTUDevice)
-async def create_rtu(request: RTUCreateRequest):
+async def create_rtu(request: RTUCreateRequest, user: Dict = Depends(get_current_user)):
     """
     Add a new RTU to the system.
 
     This creates the RTU configuration in the database and sends
     an IPC command to the PROFINET controller to initiate connection.
+
+    Requires: Engineer or Admin role
     """
+    check_role(user, UserRole.ENGINEER)
+
     # Check if RTU already exists in database
     existing = _get_rtu_from_db(request.station_name)
     if existing:
@@ -633,9 +758,11 @@ async def create_rtu(request: RTUCreateRequest):
     return rtu
 
 @app.delete("/api/v1/rtus/{station_name}")
-async def delete_rtu(station_name: str, cascade: bool = True):
+async def delete_rtu(station_name: str, cascade: bool = True, user: Dict = Depends(get_current_user)):
     """
     Remove an RTU from the system.
+
+    Requires: Admin role
 
     If cascade=True (default), the database layer automatically deletes:
     - All alarm rules referencing this RTU
@@ -646,6 +773,8 @@ async def delete_rtu(station_name: str, cascade: bool = True):
 
     Also sends IPC command to disconnect from PROFINET controller.
     """
+    check_role(user, UserRole.ADMIN)
+
     # Check RTU exists in database
     existing = _get_rtu_from_db(station_name)
     if not existing:
@@ -927,8 +1056,15 @@ async def get_rtu_actuators(station_name: str):
     return actuators
 
 @app.post("/api/v1/rtus/{station_name}/actuators/{slot}")
-async def command_actuator(station_name: str, slot: int, command: ActuatorCommand):
-    """Send command to actuator via shared memory IPC"""
+async def command_actuator(station_name: str, slot: int, command: ActuatorCommand,
+                           user: Dict = Depends(get_current_user)):
+    """
+    Send command to actuator via shared memory IPC.
+
+    Requires: Operator role or higher
+    """
+    check_role(user, UserRole.OPERATOR)
+
     # Verify RTU exists in database
     db_rtu = _get_rtu_from_db(station_name)
     if not db_rtu:
@@ -1430,8 +1566,14 @@ async def list_alarm_rules():
     return list(alarm_rules.values())
 
 @app.post("/api/v1/alarms/rules", response_model=AlarmRule)
-async def create_alarm_rule(rule: AlarmRule):
-    """Create a new alarm rule"""
+async def create_alarm_rule(rule: AlarmRule, user: Dict = Depends(get_current_user)):
+    """
+    Create a new alarm rule.
+
+    Requires: Engineer role or higher
+    """
+    check_role(user, UserRole.ENGINEER)
+
     rule_id = len(alarm_rules) + 1
     rule.rule_id = rule_id
     alarm_rules[rule_id] = rule
@@ -1495,8 +1637,14 @@ async def get_pid_loop(loop_id: int):
     return fallback_pid_loops[loop_id]
 
 @app.put("/api/v1/control/pid/{loop_id}/setpoint")
-async def update_pid_setpoint(loop_id: int, update: SetpointUpdate):
-    """Update PID loop setpoint"""
+async def update_pid_setpoint(loop_id: int, update: SetpointUpdate,
+                               user: Dict = Depends(get_current_user)):
+    """
+    Update PID loop setpoint.
+
+    Requires: Operator role or higher
+    """
+    check_role(user, UserRole.OPERATOR)
     client = get_shm_client()
     if client:
         success = client.set_setpoint(loop_id, update.setpoint)
@@ -1588,29 +1736,91 @@ async def list_historian_tags():
     return list(_historian_tags_cache.values())
 
 @app.get("/api/v1/trends/{tag_id}")
-async def get_trend_data(tag_id: int, start_time: datetime, end_time: datetime):
+async def get_trend_data(
+    tag_id: int,
+    start_time: datetime,
+    end_time: datetime,
+    aggregate: bool = False,
+    interval_seconds: int = 60
+):
     """
     Get trend data for a tag.
 
     Returns historical samples from the data historian.
     If historian is not populated, returns empty sample list.
 
-    Note: The historian collects data from shared memory automatically.
-    This endpoint queries the historical data store, not live data.
+    Args:
+        tag_id: Historian tag ID
+        start_time: Query start time
+        end_time: Query end time
+        aggregate: If true, return aggregated data (min/max/avg)
+        interval_seconds: Aggregation interval in seconds (default 60)
     """
     _refresh_historian_tags()
     if tag_id not in _historian_tags_cache:
         raise HTTPException(status_code=404, detail="Tag not found")
 
-    # In production, query the historian database for actual recorded values
-    # The historian service writes samples to a time-series database
-    # For now, return empty samples - no simulated data
     logger.debug(f"Trend query for tag {tag_id}: {start_time} to {end_time}")
 
-    # Placeholder: historian integration would query time-series DB here
-    samples = []
+    try:
+        if aggregate:
+            samples = hist.query_aggregate(tag_id, start_time, end_time, interval_seconds)
+        else:
+            samples = hist.query_raw(tag_id, start_time, end_time)
+    except Exception as e:
+        logger.error(f"Historian query failed: {e}")
+        samples = []
 
     return {"tag_id": tag_id, "samples": samples}
+
+
+@app.get("/api/v1/trends/{tag_id}/latest")
+async def get_trend_latest(tag_id: int):
+    """Get the latest value for a historian tag."""
+    _refresh_historian_tags()
+    if tag_id not in _historian_tags_cache:
+        raise HTTPException(status_code=404, detail="Tag not found")
+
+    try:
+        latest = hist.get_latest(tag_id)
+        if latest:
+            return {"tag_id": tag_id, **latest}
+        return {"tag_id": tag_id, "value": None, "time": None, "quality": None}
+    except Exception as e:
+        logger.error(f"Historian query failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/v1/trends/{tag_id}/record")
+async def record_trend_sample(tag_id: int, value: float, quality: int = 192):
+    """
+    Record a sample to the historian (for testing/manual entry).
+
+    In production, samples are recorded automatically by the historian service.
+    """
+    _refresh_historian_tags()
+    if tag_id not in _historian_tags_cache:
+        raise HTTPException(status_code=404, detail="Tag not found")
+
+    try:
+        hist.record_sample(tag_id, datetime.utcnow(), value, quality)
+        db.log_audit(request_user.get(), 'record', 'historian', str(tag_id),
+                     f"Manual sample recorded: {value}")
+        return {"status": "ok", "tag_id": tag_id}
+    except Exception as e:
+        logger.error(f"Failed to record sample: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/v1/trends/stats")
+async def get_historian_stats():
+    """Get historian storage statistics."""
+    try:
+        stats = hist.get_statistics()
+        return stats
+    except Exception as e:
+        logger.error(f"Failed to get historian stats: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 # ============== System Endpoints ==============
 
@@ -1792,8 +2002,14 @@ async def list_backups():
     return sorted(backups, key=lambda x: x.created_at, reverse=True)
 
 @app.post("/api/v1/backups", response_model=BackupMetadata)
-async def create_backup(request: BackupRequest):
-    """Create a new configuration backup"""
+async def create_backup(request: BackupRequest, user: Dict = Depends(get_current_user)):
+    """
+    Create a new configuration backup.
+
+    Requires: Admin role
+    """
+    check_role(user, UserRole.ADMIN)
+
     os.makedirs(BACKUP_DIR, exist_ok=True)
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -1862,8 +2078,14 @@ async def download_backup(backup_id: str):
     )
 
 @app.post("/api/v1/backups/{backup_id}/restore")
-async def restore_backup(backup_id: str):
-    """Restore configuration from a backup"""
+async def restore_backup(backup_id: str, user: Dict = Depends(get_current_user)):
+    """
+    Restore configuration from a backup.
+
+    Requires: Admin role
+    """
+    check_role(user, UserRole.ADMIN)
+
     global fallback_rtus, alarm_rules, fallback_pid_loops, historian_tags, modbus_config
 
     filename = f"{backup_id}.tar.gz"
@@ -2191,8 +2413,7 @@ async def control_service(service_name: str, action: str):
 
 # ============== Authentication Endpoints ==============
 
-# In-memory session store (would use Redis/DB in production)
-active_sessions: Dict[str, Dict[str, Any]] = {}
+# Note: active_sessions is defined at module level (line ~54) for dependency access
 
 # Active Directory configuration store
 ad_config_store: ADConfig = ADConfig()
@@ -2287,15 +2508,37 @@ async def login(request: LoginRequest):
     # Generate session token
     token = secrets.token_hex(32)
 
-    # Store session
+    # Determine role from groups
+    role = UserRole.VIEWER
+    if "WTC-Admins" in groups:
+        role = UserRole.ADMIN
+    elif "WTC-Engineers" in groups:
+        role = UserRole.ENGINEER
+    elif "WTC-Operators" in groups:
+        role = UserRole.OPERATOR
+
+    # Session expiry (24 hours)
+    expires_at = datetime.now() + timedelta(hours=24)
+
+    # Store session in memory
     active_sessions[token] = {
         "username": username,
+        "role": role,
         "groups": groups,
         "created": datetime.now().isoformat(),
         "last_activity": datetime.now().isoformat()
     }
 
-    logger.info(f"User {username} logged in successfully")
+    # Persist session to database
+    db.create_session(
+        token=token,
+        username=username,
+        role=role,
+        groups=groups,
+        expires_at=expires_at
+    )
+
+    logger.info(f"User {username} logged in successfully with role {role}")
 
     return LoginResponse(
         success=True,
@@ -2307,8 +2550,12 @@ async def login(request: LoginRequest):
 @app.post("/api/v1/auth/logout")
 async def logout(token: str = None):
     """Logout and invalidate session token"""
-    if token and token in active_sessions:
-        del active_sessions[token]
+    if token:
+        # Remove from memory
+        if token in active_sessions:
+            del active_sessions[token]
+        # Remove from database
+        db.delete_session(token)
         return {"status": "ok", "message": "Logged out"}
     return {"status": "ok", "message": "Session not found"}
 

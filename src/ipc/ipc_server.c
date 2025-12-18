@@ -8,6 +8,8 @@
 #include "rtu_registry.h"
 #include "alarm_manager.h"
 #include "control_engine.h"
+#include "dcp_discovery.h"
+#include "profinet_controller.h"
 #include "logger.h"
 #include "time_utils.h"
 
@@ -18,6 +20,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <pthread.h>
+#include <arpa/inet.h>
 
 #define LOG_TAG "IPC"
 #define SHM_NAME "/wtc_shared_memory"
@@ -31,6 +34,8 @@ struct ipc_server {
     struct rtu_registry *registry;
     struct alarm_manager *alarms;
     struct control_engine *control;
+    struct profinet_controller *profinet;
+    struct dcp_discovery *dcp;
 
     uint32_t last_command_seq;
 };
@@ -148,6 +153,22 @@ wtc_result_t ipc_server_set_control_engine(ipc_server_t *server,
                                             struct control_engine *control) {
     if (!server) return WTC_ERROR_INVALID_PARAM;
     server->control = control;
+    return WTC_OK;
+}
+
+/* Set PROFINET controller */
+wtc_result_t ipc_server_set_profinet(ipc_server_t *server,
+                                      struct profinet_controller *profinet) {
+    if (!server) return WTC_ERROR_INVALID_PARAM;
+    server->profinet = profinet;
+    return WTC_OK;
+}
+
+/* Set DCP discovery */
+wtc_result_t ipc_server_set_dcp(ipc_server_t *server,
+                                 struct dcp_discovery *dcp) {
+    if (!server) return WTC_ERROR_INVALID_PARAM;
+    server->dcp = dcp;
     return WTC_OK;
 }
 
@@ -301,6 +322,269 @@ wtc_result_t ipc_server_update(ipc_server_t *server) {
     return WTC_OK;
 }
 
+/* Helper: Format MAC address to string */
+static void format_mac_address(const uint8_t *mac, char *str, size_t str_size) {
+    snprintf(str, str_size, "%02X:%02X:%02X:%02X:%02X:%02X",
+             mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+}
+
+/* Helper: Format IP address to string */
+static void format_ip_address(uint32_t ip, char *str, size_t str_size) {
+    struct in_addr addr = { .s_addr = htonl(ip) };
+    inet_ntop(AF_INET, &addr, str, str_size);
+}
+
+/* DCP discovery callback - populates shared memory discovery results */
+static void dcp_discovery_callback(const dcp_device_info_t *device, void *ctx) {
+    ipc_server_t *server = (ipc_server_t *)ctx;
+    if (!server || !server->shm) return;
+
+    pthread_mutex_lock(&server->shm->lock);
+
+    int idx = server->shm->discovered_device_count;
+    if (idx < WTC_MAX_DISCOVERY_DEVICES) {
+        shm_discovered_device_t *shm_dev = &server->shm->discovered_devices[idx];
+
+        strncpy(shm_dev->station_name, device->station_name, 63);
+        shm_dev->station_name[63] = '\0';
+
+        format_ip_address(device->ip_address, shm_dev->ip_address,
+                          sizeof(shm_dev->ip_address));
+        format_mac_address(device->mac_address, shm_dev->mac_address,
+                           sizeof(shm_dev->mac_address));
+
+        shm_dev->vendor_id = device->vendor_id;
+        shm_dev->device_id = device->device_id;
+        shm_dev->reachable = true;
+
+        server->shm->discovered_device_count++;
+        LOG_DEBUG(LOG_TAG, "DCP discovered: %s at %s",
+                  device->station_name, shm_dev->ip_address);
+    }
+
+    pthread_mutex_unlock(&server->shm->lock);
+}
+
+/* Handle RTU management commands */
+static wtc_result_t handle_rtu_command(ipc_server_t *server, shm_command_t *cmd) {
+    wtc_result_t result = WTC_OK;
+    const char *cmd_name = NULL;
+
+    switch (cmd->command_type) {
+        case SHM_CMD_ADD_RTU:
+            cmd_name = "add_rtu";
+            if (server->registry) {
+                result = rtu_registry_add_device(server->registry,
+                                                  cmd->add_rtu_cmd.station_name,
+                                                  cmd->add_rtu_cmd.ip_address,
+                                                  NULL, 0);
+                LOG_INFO(LOG_TAG, "Add RTU command: %s at %s (result=%d)",
+                         cmd->add_rtu_cmd.station_name,
+                         cmd->add_rtu_cmd.ip_address,
+                         result);
+            }
+            break;
+
+        case SHM_CMD_REMOVE_RTU:
+            cmd_name = "remove_rtu";
+            if (server->registry) {
+                /* Disconnect first if connected */
+                if (server->profinet) {
+                    profinet_controller_disconnect(server->profinet,
+                                                    cmd->remove_rtu_cmd.station_name);
+                }
+                result = rtu_registry_remove_device(server->registry,
+                                                     cmd->remove_rtu_cmd.station_name);
+                LOG_INFO(LOG_TAG, "Remove RTU command: %s (result=%d)",
+                         cmd->remove_rtu_cmd.station_name, result);
+            }
+            break;
+
+        case SHM_CMD_CONNECT_RTU:
+            cmd_name = "connect_rtu";
+            if (server->profinet) {
+                rtu_device_t *device = rtu_registry_get_device(server->registry,
+                                                                cmd->connect_rtu_cmd.station_name);
+                if (device) {
+                    result = profinet_controller_connect(server->profinet,
+                                                          cmd->connect_rtu_cmd.station_name,
+                                                          device->slots,
+                                                          device->slot_count);
+                    LOG_INFO(LOG_TAG, "Connect RTU command: %s (result=%d)",
+                             cmd->connect_rtu_cmd.station_name, result);
+                } else {
+                    result = WTC_ERROR_NOT_FOUND;
+                    LOG_WARN(LOG_TAG, "Connect RTU failed: %s not found in registry",
+                             cmd->connect_rtu_cmd.station_name);
+                }
+            }
+            break;
+
+        case SHM_CMD_DISCONNECT_RTU:
+            cmd_name = "disconnect_rtu";
+            if (server->profinet) {
+                result = profinet_controller_disconnect(server->profinet,
+                                                         cmd->disconnect_rtu_cmd.station_name);
+                LOG_INFO(LOG_TAG, "Disconnect RTU command: %s (result=%d)",
+                         cmd->disconnect_rtu_cmd.station_name, result);
+            }
+            break;
+    }
+
+    /* Store result in shared memory */
+    server->shm->command_result = result;
+    if (result != WTC_OK && cmd_name) {
+        snprintf(server->shm->command_error_msg, sizeof(server->shm->command_error_msg),
+                 "%s failed with error %d", cmd_name, result);
+    } else {
+        server->shm->command_error_msg[0] = '\0';
+    }
+
+    return result;
+}
+
+/* Handle discovery commands */
+static wtc_result_t handle_discovery_command(ipc_server_t *server, shm_command_t *cmd) {
+    wtc_result_t result = WTC_OK;
+
+    switch (cmd->command_type) {
+        case SHM_CMD_DCP_DISCOVER:
+            if (server->dcp) {
+                /* Clear previous results */
+                server->shm->discovered_device_count = 0;
+                server->shm->discovery_in_progress = true;
+                server->shm->discovery_complete = false;
+
+                /* Start discovery with callback */
+                result = dcp_discovery_start(server->dcp, dcp_discovery_callback, server);
+                if (result == WTC_OK) {
+                    result = dcp_discovery_identify_all(server->dcp);
+                }
+
+                LOG_INFO(LOG_TAG, "DCP discover command on %s (timeout=%ums, result=%d)",
+                         cmd->dcp_discover_cmd.network_interface,
+                         cmd->dcp_discover_cmd.timeout_ms,
+                         result);
+            } else {
+                result = WTC_ERROR_NOT_INITIALIZED;
+                LOG_WARN(LOG_TAG, "DCP discovery not initialized");
+            }
+            break;
+
+        case SHM_CMD_I2C_DISCOVER:
+            /* I2C discovery - requires RTU to perform the scan */
+            if (server->profinet) {
+                server->shm->i2c_device_count = 0;
+                server->shm->i2c_discovery_complete = false;
+
+                /* Send I2C scan request to RTU via acyclic read */
+                LOG_INFO(LOG_TAG, "I2C discover command: %s bus %d",
+                         cmd->i2c_discover_cmd.rtu_station,
+                         cmd->i2c_discover_cmd.bus_number);
+
+                /* Read I2C scan record from RTU (0x8020 = vendor-specific I2C scan) */
+                uint8_t scan_buffer[256];
+                size_t scan_len = sizeof(scan_buffer);
+                result = profinet_controller_read_record(server->profinet,
+                                                          cmd->i2c_discover_cmd.rtu_station,
+                                                          0, /* API */
+                                                          0, /* Slot */
+                                                          1, /* Subslot */
+                                                          0x8020, /* I2C scan index */
+                                                          scan_buffer,
+                                                          &scan_len);
+
+                if (result == WTC_OK && scan_len > 0) {
+                    /* Parse I2C scan results */
+                    int device_count = scan_buffer[0];
+                    for (int i = 0; i < device_count && i < WTC_MAX_I2C_DEVICES; i++) {
+                        int offset = 1 + i * 3;
+                        if (offset + 2 < (int)scan_len) {
+                            server->shm->i2c_devices[i].address = scan_buffer[offset];
+                            server->shm->i2c_devices[i].device_type =
+                                (scan_buffer[offset + 1] << 8) | scan_buffer[offset + 2];
+                            server->shm->i2c_device_count++;
+                        }
+                    }
+                }
+                server->shm->i2c_discovery_complete = true;
+            }
+            break;
+
+        case SHM_CMD_ONEWIRE_DISCOVER:
+            /* 1-Wire discovery - requires RTU to perform the scan */
+            if (server->profinet) {
+                server->shm->onewire_device_count = 0;
+                server->shm->onewire_discovery_complete = false;
+
+                LOG_INFO(LOG_TAG, "1-Wire discover command: %s bus %d",
+                         cmd->onewire_discover_cmd.rtu_station,
+                         cmd->onewire_discover_cmd.bus_number);
+
+                /* Read 1-Wire scan record from RTU (0x8021 = vendor-specific 1-Wire scan) */
+                uint8_t scan_buffer[256];
+                size_t scan_len = sizeof(scan_buffer);
+                result = profinet_controller_read_record(server->profinet,
+                                                          cmd->onewire_discover_cmd.rtu_station,
+                                                          0, /* API */
+                                                          0, /* Slot */
+                                                          1, /* Subslot */
+                                                          0x8021, /* 1-Wire scan index */
+                                                          scan_buffer,
+                                                          &scan_len);
+
+                if (result == WTC_OK && scan_len > 0) {
+                    /* Parse 1-Wire scan results (each device has 8-byte ROM code) */
+                    int device_count = scan_buffer[0];
+                    for (int i = 0; i < device_count && i < WTC_MAX_ONEWIRE_DEVICES; i++) {
+                        int offset = 1 + i * 8;
+                        if (offset + 7 < (int)scan_len) {
+                            memcpy(server->shm->onewire_devices[i].rom_code,
+                                   &scan_buffer[offset], 8);
+                            server->shm->onewire_devices[i].family_code = scan_buffer[offset];
+                            server->shm->onewire_device_count++;
+                        }
+                    }
+                }
+                server->shm->onewire_discovery_complete = true;
+            }
+            break;
+    }
+
+    server->shm->command_result = result;
+    return result;
+}
+
+/* Handle slot configuration command */
+static wtc_result_t handle_configure_slot(ipc_server_t *server, shm_command_t *cmd) {
+    if (!server->registry) return WTC_ERROR_NOT_INITIALIZED;
+
+    slot_config_t slot = {
+        .slot = cmd->configure_slot_cmd.slot,
+        .subslot = 1,
+        .type = cmd->configure_slot_cmd.slot_type,
+        .enabled = true,
+        .measurement_type = cmd->configure_slot_cmd.measurement_type,
+        .actuator_type = cmd->configure_slot_cmd.actuator_type,
+    };
+
+    strncpy(slot.name, cmd->configure_slot_cmd.name, WTC_MAX_NAME - 1);
+    strncpy(slot.unit, cmd->configure_slot_cmd.unit, WTC_MAX_UNIT - 1);
+
+    wtc_result_t result = rtu_registry_set_device_config(server->registry,
+                                                          cmd->configure_slot_cmd.rtu_station,
+                                                          &slot, 1);
+
+    LOG_INFO(LOG_TAG, "Configure slot command: %s slot %d as %s (result=%d)",
+             cmd->configure_slot_cmd.rtu_station,
+             cmd->configure_slot_cmd.slot,
+             cmd->configure_slot_cmd.name,
+             result);
+
+    server->shm->command_result = result;
+    return result;
+}
+
 /* Process incoming commands */
 wtc_result_t ipc_server_process_commands(ipc_server_t *server) {
     if (!server || !server->running) return WTC_ERROR_NOT_INITIALIZED;
@@ -329,6 +613,7 @@ wtc_result_t ipc_server_process_commands(ipc_server_t *server) {
                               cmd->actuator_cmd.rtu_station,
                               cmd->actuator_cmd.slot,
                               cmd->actuator_cmd.command);
+                    server->shm->command_result = WTC_OK;
                 }
                 break;
 
@@ -340,6 +625,7 @@ wtc_result_t ipc_server_process_commands(ipc_server_t *server) {
                     LOG_DEBUG(LOG_TAG, "Setpoint command: loop %d = %.2f",
                               cmd->setpoint_cmd.loop_id,
                               cmd->setpoint_cmd.setpoint);
+                    server->shm->command_result = WTC_OK;
                 }
                 break;
 
@@ -351,6 +637,7 @@ wtc_result_t ipc_server_process_commands(ipc_server_t *server) {
                     LOG_DEBUG(LOG_TAG, "PID mode command: loop %d = %d",
                               cmd->mode_cmd.loop_id,
                               cmd->mode_cmd.mode);
+                    server->shm->command_result = WTC_OK;
                 }
                 break;
 
@@ -362,6 +649,7 @@ wtc_result_t ipc_server_process_commands(ipc_server_t *server) {
                     LOG_DEBUG(LOG_TAG, "Alarm ack command: alarm %d by %s",
                               cmd->ack_cmd.alarm_id,
                               cmd->ack_cmd.user);
+                    server->shm->command_result = WTC_OK;
                 }
                 break;
 
@@ -371,7 +659,33 @@ wtc_result_t ipc_server_process_commands(ipc_server_t *server) {
                                                     cmd->reset_cmd.interlock_id);
                     LOG_DEBUG(LOG_TAG, "Interlock reset: %d",
                               cmd->reset_cmd.interlock_id);
+                    server->shm->command_result = WTC_OK;
                 }
+                break;
+
+            /* RTU management commands */
+            case SHM_CMD_ADD_RTU:
+            case SHM_CMD_REMOVE_RTU:
+            case SHM_CMD_CONNECT_RTU:
+            case SHM_CMD_DISCONNECT_RTU:
+                handle_rtu_command(server, cmd);
+                break;
+
+            /* Discovery commands */
+            case SHM_CMD_DCP_DISCOVER:
+            case SHM_CMD_I2C_DISCOVER:
+            case SHM_CMD_ONEWIRE_DISCOVER:
+                handle_discovery_command(server, cmd);
+                break;
+
+            /* Slot configuration */
+            case SHM_CMD_CONFIGURE_SLOT:
+                handle_configure_slot(server, cmd);
+                break;
+
+            default:
+                LOG_WARN(LOG_TAG, "Unknown command type: %d", cmd->command_type);
+                server->shm->command_result = WTC_ERROR_INVALID_PARAM;
                 break;
         }
 

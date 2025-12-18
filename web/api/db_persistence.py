@@ -252,6 +252,21 @@ def init_database():
             )
         ''')
 
+        # User Sessions table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS user_sessions (
+                token TEXT PRIMARY KEY,
+                username TEXT NOT NULL,
+                role TEXT NOT NULL DEFAULT 'viewer',
+                groups TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                last_activity TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                expires_at TIMESTAMP NOT NULL,
+                ip_address TEXT,
+                user_agent TEXT
+            )
+        ''')
+
         # Audit Log table
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS audit_log (
@@ -416,6 +431,95 @@ def delete_alarm_rule(rule_id: int) -> bool:
         return cursor.rowcount > 0
 
 
+# ============== PID Loop Operations ==============
+
+def get_pid_loops() -> List[Dict[str, Any]]:
+    """Get all PID control loops"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM pid_loops ORDER BY id')
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def get_pid_loop(loop_id: int) -> Optional[Dict[str, Any]]:
+    """Get a single PID loop by ID"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM pid_loops WHERE id = ?', (loop_id,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+
+def create_pid_loop(loop: Dict[str, Any]) -> int:
+    """Create a new PID control loop"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO pid_loops (name, enabled, input_rtu, input_slot, output_rtu, output_slot,
+                                   kp, ki, kd, setpoint, output_min, output_max, deadband,
+                                   integral_limit, derivative_filter, mode)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (loop['name'], loop.get('enabled', True), loop['input_rtu'], loop['input_slot'],
+              loop['output_rtu'], loop['output_slot'], loop.get('kp', 1.0), loop.get('ki', 0.0),
+              loop.get('kd', 0.0), loop.get('setpoint', 0), loop.get('output_min', 0),
+              loop.get('output_max', 100), loop.get('deadband', 0), loop.get('integral_limit', 100),
+              loop.get('derivative_filter', 0.1), loop.get('mode', 'AUTO')))
+        conn.commit()
+        log_audit('system', 'create', 'pid_loop', str(cursor.lastrowid), f"Created PID loop {loop['name']}")
+        return cursor.lastrowid
+
+
+def update_pid_loop(loop_id: int, loop: Dict[str, Any]) -> bool:
+    """Update a PID control loop"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            UPDATE pid_loops
+            SET name = ?, enabled = ?, input_rtu = ?, input_slot = ?, output_rtu = ?, output_slot = ?,
+                kp = ?, ki = ?, kd = ?, setpoint = ?, output_min = ?, output_max = ?, deadband = ?,
+                integral_limit = ?, derivative_filter = ?, mode = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+        ''', (loop['name'], loop.get('enabled', True), loop['input_rtu'], loop['input_slot'],
+              loop['output_rtu'], loop['output_slot'], loop.get('kp', 1.0), loop.get('ki', 0.0),
+              loop.get('kd', 0.0), loop.get('setpoint', 0), loop.get('output_min', 0),
+              loop.get('output_max', 100), loop.get('deadband', 0), loop.get('integral_limit', 100),
+              loop.get('derivative_filter', 0.1), loop.get('mode', 'AUTO'), loop_id))
+        conn.commit()
+        return cursor.rowcount > 0
+
+
+def update_pid_setpoint(loop_id: int, setpoint: float) -> bool:
+    """Update only the setpoint for a PID loop"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            UPDATE pid_loops SET setpoint = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+        ''', (setpoint, loop_id))
+        conn.commit()
+        return cursor.rowcount > 0
+
+
+def update_pid_mode(loop_id: int, mode: str) -> bool:
+    """Update only the mode for a PID loop"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            UPDATE pid_loops SET mode = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+        ''', (mode, loop_id))
+        conn.commit()
+        return cursor.rowcount > 0
+
+
+def delete_pid_loop(loop_id: int) -> bool:
+    """Delete a PID control loop"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute('DELETE FROM pid_loops WHERE id = ?', (loop_id,))
+        conn.commit()
+        log_audit('system', 'delete', 'pid_loop', str(loop_id), f"Deleted PID loop {loop_id}")
+        return cursor.rowcount > 0
+
+
 # ============== Modbus Operations ==============
 
 def get_modbus_server_config() -> Dict[str, Any]:
@@ -575,6 +679,119 @@ def get_audit_log(limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
             SELECT * FROM audit_log ORDER BY timestamp DESC LIMIT ? OFFSET ?
         ''', (limit, offset))
         return [dict(row) for row in cursor.fetchall()]
+
+
+# ============== Session Management ==============
+
+def create_session(token: str, username: str, role: str, groups: List[str],
+                   expires_at: datetime, ip_address: str = None, user_agent: str = None) -> bool:
+    """Create a new user session"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        try:
+            cursor.execute('''
+                INSERT INTO user_sessions (token, username, role, groups, expires_at, ip_address, user_agent)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (token, username, role, json.dumps(groups), expires_at.isoformat(),
+                  ip_address, user_agent))
+            conn.commit()
+            log_audit(username, 'login', 'session', token[:8], f"User {username} logged in", ip_address)
+            return True
+        except Exception as e:
+            logger.error(f"Failed to create session: {e}")
+            return False
+
+
+def get_session(token: str) -> Optional[Dict[str, Any]]:
+    """Get session by token"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT * FROM user_sessions
+            WHERE token = ? AND expires_at > datetime('now')
+        ''', (token,))
+        row = cursor.fetchone()
+        if row:
+            session = dict(row)
+            # Parse groups from JSON
+            if session.get('groups'):
+                try:
+                    session['groups'] = json.loads(session['groups'])
+                except:
+                    session['groups'] = []
+            return session
+        return None
+
+
+def update_session_activity(token: str) -> bool:
+    """Update session last activity time"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            UPDATE user_sessions SET last_activity = CURRENT_TIMESTAMP
+            WHERE token = ?
+        ''', (token,))
+        conn.commit()
+        return cursor.rowcount > 0
+
+
+def delete_session(token: str) -> bool:
+    """Delete a session (logout)"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        # Get username for audit log
+        cursor.execute('SELECT username FROM user_sessions WHERE token = ?', (token,))
+        row = cursor.fetchone()
+        username = row['username'] if row else 'unknown'
+
+        cursor.execute('DELETE FROM user_sessions WHERE token = ?', (token,))
+        conn.commit()
+
+        if cursor.rowcount > 0:
+            log_audit(username, 'logout', 'session', token[:8], f"User {username} logged out")
+            return True
+        return False
+
+
+def cleanup_expired_sessions() -> int:
+    """Remove expired sessions"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            DELETE FROM user_sessions WHERE expires_at < datetime('now')
+        ''')
+        conn.commit()
+        deleted = cursor.rowcount
+        if deleted > 0:
+            logger.info(f"Cleaned up {deleted} expired sessions")
+        return deleted
+
+
+def get_active_sessions(username: str = None) -> List[Dict[str, Any]]:
+    """Get all active sessions, optionally filtered by username"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        if username:
+            cursor.execute('''
+                SELECT token, username, role, created_at, last_activity, ip_address
+                FROM user_sessions
+                WHERE username = ? AND expires_at > datetime('now')
+                ORDER BY last_activity DESC
+            ''', (username,))
+        else:
+            cursor.execute('''
+                SELECT token, username, role, created_at, last_activity, ip_address
+                FROM user_sessions
+                WHERE expires_at > datetime('now')
+                ORDER BY last_activity DESC
+            ''')
+        sessions = []
+        for row in cursor.fetchall():
+            session = dict(row)
+            # Mask token for security
+            session['token'] = session['token'][:8] + '...'
+            sessions.append(session)
+        return sessions
 
 
 # Initialize database on module import
