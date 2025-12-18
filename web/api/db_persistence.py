@@ -80,6 +80,9 @@ def init_database():
         ''')
 
         # Alarm Rules table
+        # NOTE: Alarm rules generate NOTIFICATIONS only.
+        # Interlocks are configured and executed on the RTU directly.
+        # The controller does NOT execute interlock logic.
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS alarm_rules (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -92,12 +95,6 @@ def init_database():
                 delay_ms INTEGER DEFAULT 0,
                 message TEXT,
                 enabled INTEGER DEFAULT 1,
-                interlock_enabled INTEGER DEFAULT 0,
-                target_rtu TEXT,
-                target_slot INTEGER,
-                interlock_action TEXT,
-                interlock_value REAL,
-                auto_release INTEGER DEFAULT 1,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (rtu_station) REFERENCES rtu_devices(station_name)
@@ -371,37 +368,40 @@ def get_alarm_rule(rule_id: int) -> Optional[Dict[str, Any]]:
 
 
 def create_alarm_rule(rule: Dict[str, Any]) -> int:
-    """Create a new alarm rule"""
+    """
+    Create a new alarm rule.
+
+    NOTE: Alarm rules generate NOTIFICATIONS only.
+    Interlocks are configured on the RTU directly.
+    """
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute('''
-            INSERT INTO alarm_rules (name, rtu_station, slot, condition, threshold, severity, delay_ms, message, enabled,
-                                     interlock_enabled, target_rtu, target_slot, interlock_action, interlock_value, auto_release)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO alarm_rules (name, rtu_station, slot, condition, threshold, severity, delay_ms, message, enabled)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (rule['name'], rule['rtu_station'], rule['slot'], rule['condition'], rule['threshold'],
-              rule['severity'], rule.get('delay_ms', 0), rule.get('message', ''), rule.get('enabled', True),
-              rule.get('interlock_enabled', False), rule.get('target_rtu'), rule.get('target_slot'),
-              rule.get('interlock_action'), rule.get('interlock_value'), rule.get('auto_release', True)))
+              rule['severity'], rule.get('delay_ms', 0), rule.get('message', ''), rule.get('enabled', True)))
         conn.commit()
         log_audit('system', 'create', 'alarm_rule', str(cursor.lastrowid), f"Created alarm rule {rule['name']}")
         return cursor.lastrowid
 
 
 def update_alarm_rule(rule_id: int, rule: Dict[str, Any]) -> bool:
-    """Update an alarm rule"""
+    """
+    Update an alarm rule.
+
+    NOTE: Alarm rules generate NOTIFICATIONS only.
+    Interlocks are configured on the RTU directly.
+    """
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute('''
             UPDATE alarm_rules
             SET name = ?, rtu_station = ?, slot = ?, condition = ?, threshold = ?, severity = ?,
-                delay_ms = ?, message = ?, enabled = ?, interlock_enabled = ?, target_rtu = ?,
-                target_slot = ?, interlock_action = ?, interlock_value = ?, auto_release = ?,
-                updated_at = CURRENT_TIMESTAMP
+                delay_ms = ?, message = ?, enabled = ?, updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
         ''', (rule['name'], rule['rtu_station'], rule['slot'], rule['condition'], rule['threshold'],
-              rule['severity'], rule.get('delay_ms', 0), rule.get('message', ''), rule.get('enabled', True),
-              rule.get('interlock_enabled', False), rule.get('target_rtu'), rule.get('target_slot'),
-              rule.get('interlock_action'), rule.get('interlock_value'), rule.get('auto_release', True), rule_id))
+              rule['severity'], rule.get('delay_ms', 0), rule.get('message', ''), rule.get('enabled', True), rule_id))
         conn.commit()
         return cursor.rowcount > 0
 

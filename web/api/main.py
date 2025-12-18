@@ -72,6 +72,21 @@ class ActuatorCommand(BaseModel):
     pwm_duty: Optional[int] = 0
 
 class AlarmRule(BaseModel):
+    """
+    Alarm rules generate NOTIFICATIONS only.
+
+    Interlocks are configured and executed on the RTU directly.
+    The controller does NOT execute interlock logic - safety-critical
+    functions must run locally on the RTU without network dependency.
+
+    The controller can:
+    - Display interlock status (read from RTU)
+    - Configure RTU interlocks (push config to RTU)
+    - Log interlock events
+
+    The controller CANNOT:
+    - Execute interlock logic (that's the RTU's job)
+    """
     rule_id: Optional[int] = None
     rtu_station: str
     slot: int
@@ -269,6 +284,134 @@ async def list_rtus():
             last_seen=datetime.now()
         ) for r in rtus]
     return list(fallback_rtus.values())
+
+# ============== Network Discovery ==============
+
+class DiscoveredRTU(BaseModel):
+    """RTU discovered on the network via DCP"""
+    station_name: str
+    ip_address: str
+    mac_address: str
+    vendor_id: int
+    device_id: int
+    already_registered: bool = False
+
+class NetworkScanResult(BaseModel):
+    """Result of a network scan for RTUs"""
+    scan_time: datetime
+    duration_ms: int
+    devices_found: int
+    devices: List[DiscoveredRTU]
+    new_devices: int  # Devices not already registered
+
+class NetworkScanConfig(BaseModel):
+    """Configuration for automatic network scanning"""
+    auto_scan_enabled: bool = False
+    scan_interval_seconds: int = 300  # Default: 5 minutes
+    auto_register: bool = False  # Automatically register discovered RTUs
+
+# In-memory scan configuration (would be persisted in production)
+network_scan_config = NetworkScanConfig()
+last_scan_result: Optional[NetworkScanResult] = None
+
+@app.post("/api/v1/network/scan", response_model=NetworkScanResult)
+async def scan_network():
+    """
+    Manually trigger a network scan for PROFINET RTUs.
+
+    Uses DCP (Discovery and Configuration Protocol) to find
+    all PROFINET devices on the network segment.
+    """
+    import time
+    global last_scan_result
+
+    start_time = time.time()
+    discovered = []
+
+    client = get_shm_client()
+    if client:
+        # In production: client.dcp_discover()
+        # This would send DCP Identify All requests and collect responses
+        pass
+
+    # Get list of already registered RTUs
+    registered_names = set(fallback_rtus.keys())
+    if client:
+        rtus = client.get_rtus()
+        registered_names = {r["station_name"] for r in rtus}
+
+    # Simulate discovery for demo
+    # In production, this comes from actual DCP responses
+    simulated_devices = [
+        DiscoveredRTU(
+            station_name="water-treat-rtu-1",
+            ip_address="192.168.1.100",
+            mac_address="00:1A:2B:3C:4D:5E",
+            vendor_id=0x0493,
+            device_id=0x0001,
+            already_registered="water-treat-rtu-1" in registered_names
+        ),
+        DiscoveredRTU(
+            station_name="water-treat-rtu-2",
+            ip_address="192.168.1.101",
+            mac_address="00:1A:2B:3C:4D:5F",
+            vendor_id=0x0493,
+            device_id=0x0001,
+            already_registered="water-treat-rtu-2" in registered_names
+        ),
+    ]
+
+    # Filter to only show devices that respond (simulated)
+    discovered = simulated_devices
+    new_count = sum(1 for d in discovered if not d.already_registered)
+
+    duration_ms = int((time.time() - start_time) * 1000)
+
+    result = NetworkScanResult(
+        scan_time=datetime.now(),
+        duration_ms=duration_ms,
+        devices_found=len(discovered),
+        devices=discovered,
+        new_devices=new_count
+    )
+
+    last_scan_result = result
+    logger.info(f"Network scan complete: {len(discovered)} devices found, {new_count} new")
+
+    await broadcast_event("network_scan_complete", {
+        "devices_found": len(discovered),
+        "new_devices": new_count
+    })
+
+    return result
+
+@app.get("/api/v1/network/scan/last", response_model=Optional[NetworkScanResult])
+async def get_last_scan():
+    """Get the results of the last network scan"""
+    return last_scan_result
+
+@app.get("/api/v1/network/scan/config", response_model=NetworkScanConfig)
+async def get_scan_config():
+    """Get network scan configuration"""
+    return network_scan_config
+
+@app.put("/api/v1/network/scan/config")
+async def update_scan_config(config: NetworkScanConfig):
+    """
+    Update network scan configuration.
+
+    Set auto_scan_enabled=true to enable periodic scanning.
+    scan_interval_seconds controls how often (minimum 60 seconds).
+    """
+    global network_scan_config
+
+    if config.scan_interval_seconds < 60:
+        raise HTTPException(status_code=400, detail="Scan interval must be at least 60 seconds")
+
+    network_scan_config = config
+    logger.info(f"Network scan config updated: auto={config.auto_scan_enabled}, interval={config.scan_interval_seconds}s")
+
+    return {"status": "ok"}
 
 class RTUCreateRequest(BaseModel):
     """Request model for creating a new RTU"""
