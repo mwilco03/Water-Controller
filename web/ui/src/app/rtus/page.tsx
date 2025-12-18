@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
+import { useWebSocket } from '@/hooks/useWebSocket';
 
 interface RTUDevice {
   station_name: string;
@@ -30,6 +31,7 @@ export default function RTUsPage() {
   const [showDeleteModal, setShowDeleteModal] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   // Form state for adding RTU
   const [newRtu, setNewRtu] = useState({
@@ -40,18 +42,7 @@ export default function RTUsPage() {
     slot_count: 16,
   });
 
-  useEffect(() => {
-    fetchRtus();
-    const interval = setInterval(fetchRtus, 5000);
-    return () => clearInterval(interval);
-  }, []);
-
-  const showMessage = (type: 'success' | 'error', text: string) => {
-    setMessage({ type, text });
-    setTimeout(() => setMessage(null), 5000);
-  };
-
-  const fetchRtus = async () => {
+  const fetchRtus = useCallback(async () => {
     try {
       const res = await fetch('/api/v1/rtus');
       if (res.ok) {
@@ -66,6 +57,56 @@ export default function RTUsPage() {
     } catch (error) {
       console.error('Failed to fetch RTUs:', error);
     }
+  }, []);
+
+  // WebSocket for real-time updates
+  const { connected, subscribe } = useWebSocket({
+    onConnect: () => {
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+        pollIntervalRef.current = null;
+        console.log('WebSocket connected - RTU polling disabled');
+      }
+    },
+    onDisconnect: () => {
+      if (!pollIntervalRef.current) {
+        pollIntervalRef.current = setInterval(fetchRtus, 5000);
+        console.log('WebSocket disconnected - RTU polling enabled');
+      }
+    },
+  });
+
+  // Subscribe to RTU updates
+  useEffect(() => {
+    const unsub = subscribe('rtu_update', () => {
+      fetchRtus();
+    });
+
+    const unsubScan = subscribe('network_scan_complete', () => {
+      fetchRtus();
+    });
+
+    return () => {
+      unsub();
+      unsubScan();
+    };
+  }, [subscribe, fetchRtus]);
+
+  // Initial fetch and polling setup
+  useEffect(() => {
+    fetchRtus();
+    pollIntervalRef.current = setInterval(fetchRtus, 5000);
+
+    return () => {
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+      }
+    };
+  }, [fetchRtus]);
+
+  const showMessage = (type: 'success' | 'error', text: string) => {
+    setMessage({ type, text });
+    setTimeout(() => setMessage(null), 5000);
   };
 
   const fetchHealth = async (stationName: string) => {

@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { useSearchParams } from 'next/navigation';
+import { useWebSocket } from '@/hooks/useWebSocket';
 
 interface HistorianTag {
   tag_id: number;
@@ -35,29 +36,9 @@ export default function TrendsPage() {
   const [loading, setLoading] = useState(false);
   const [autoRefresh, setAutoRefresh] = useState(true);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
-  useEffect(() => {
-    fetchTags();
-  }, [rtuFilter]);
-
-  useEffect(() => {
-    if (selectedTags.length > 0) {
-      fetchTrendData();
-    }
-  }, [selectedTags, timeRange]);
-
-  useEffect(() => {
-    if (autoRefresh && selectedTags.length > 0) {
-      const interval = setInterval(fetchTrendData, 5000);
-      return () => clearInterval(interval);
-    }
-  }, [autoRefresh, selectedTags, timeRange]);
-
-  useEffect(() => {
-    drawChart();
-  }, [trendData]);
-
-  const fetchTags = async () => {
+  const fetchTags = useCallback(async () => {
     try {
       const res = await fetch('/api/v1/trends/tags');
       if (res.ok) {
@@ -70,9 +51,9 @@ export default function TrendsPage() {
     } catch (error) {
       console.error('Failed to fetch tags:', error);
     }
-  };
+  }, [rtuFilter]);
 
-  const fetchTrendData = async () => {
+  const fetchTrendData = useCallback(async () => {
     if (selectedTags.length === 0) return;
 
     setLoading(true);
@@ -109,7 +90,83 @@ export default function TrendsPage() {
 
     setTrendData(newData);
     setLoading(false);
-  };
+  }, [selectedTags, timeRange]);
+
+  // WebSocket for real-time sensor updates
+  const { connected, subscribe } = useWebSocket({
+    onConnect: () => {
+      // When WebSocket connects, we can receive live updates for selected tags
+      if (pollIntervalRef.current && autoRefresh) {
+        clearInterval(pollIntervalRef.current);
+        pollIntervalRef.current = null;
+        console.log('WebSocket connected - trend polling disabled');
+      }
+    },
+    onDisconnect: () => {
+      // Restart polling when WebSocket disconnects
+      if (!pollIntervalRef.current && autoRefresh && selectedTags.length > 0) {
+        pollIntervalRef.current = setInterval(fetchTrendData, 5000);
+        console.log('WebSocket disconnected - trend polling enabled');
+      }
+    },
+  });
+
+  // Subscribe to sensor updates for real-time trend data
+  useEffect(() => {
+    const unsub = subscribe('sensor_update', (_, data) => {
+      // Find if this sensor belongs to any selected tag
+      const matchingTag = tags.find(
+        (t) => t.rtu_station === data.station_name && t.slot === data.slot
+      );
+      if (matchingTag && selectedTags.includes(matchingTag.tag_id)) {
+        // Add the new sample to trend data
+        setTrendData((prev) => {
+          const tagSamples = prev[matchingTag.tag_id] || [];
+          const newSample: TrendSample = {
+            timestamp: new Date().toISOString(),
+            value: data.value,
+            quality: data.quality === 'good' ? 0 : 1,
+          };
+          return {
+            ...prev,
+            [matchingTag.tag_id]: [...tagSamples, newSample].slice(-500), // Keep last 500 samples
+          };
+        });
+      }
+    });
+
+    return unsub;
+  }, [subscribe, tags, selectedTags]);
+
+  useEffect(() => {
+    fetchTags();
+  }, [fetchTags]);
+
+  useEffect(() => {
+    if (selectedTags.length > 0) {
+      fetchTrendData();
+    }
+  }, [selectedTags, timeRange, fetchTrendData]);
+
+  // Auto-refresh with polling fallback
+  useEffect(() => {
+    if (autoRefresh && selectedTags.length > 0 && !connected) {
+      pollIntervalRef.current = setInterval(fetchTrendData, 5000);
+      return () => {
+        if (pollIntervalRef.current) {
+          clearInterval(pollIntervalRef.current);
+          pollIntervalRef.current = null;
+        }
+      };
+    } else if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
+    }
+  }, [autoRefresh, selectedTags, connected, fetchTrendData]);
+
+  useEffect(() => {
+    drawChart();
+  }, [trendData]);
 
   const toggleTag = (tagId: number) => {
     setSelectedTags((prev) =>

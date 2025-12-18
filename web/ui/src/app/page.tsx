@@ -1,10 +1,10 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { renderServerComponent } from 'react-server-components';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import RTUOverview from '@/components/RTUOverview';
 import AlarmSummary from '@/components/AlarmSummary';
 import SystemStatus from '@/components/SystemStatus';
+import { useWebSocket } from '@/hooks/useWebSocket';
 
 interface RTUDevice {
   station_name: string;
@@ -35,45 +35,10 @@ interface Alarm {
 export default function Dashboard() {
   const [rtus, setRtus] = useState<RTUDevice[]>([]);
   const [alarms, setAlarms] = useState<Alarm[]>([]);
-  const [connected, setConnected] = useState(false);
   const [loading, setLoading] = useState(true);
+  const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
-  useEffect(() => {
-    // Initial data fetch
-    fetchData();
-
-    // Set up WebSocket for real-time updates
-    const ws = new WebSocket(`ws://${window.location.hostname}:8080/ws/realtime`);
-
-    ws.onopen = () => {
-      setConnected(true);
-      console.log('WebSocket connected');
-    };
-
-    ws.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      if (data.type === 'sensor_update') {
-        updateSensorData(data.payload);
-      } else if (data.type === 'alarm') {
-        handleAlarmUpdate(data.payload);
-      }
-    };
-
-    ws.onclose = () => {
-      setConnected(false);
-      console.log('WebSocket disconnected');
-    };
-
-    // Poll for updates every 5 seconds as backup
-    const interval = setInterval(fetchData, 5000);
-
-    return () => {
-      ws.close();
-      clearInterval(interval);
-    };
-  }, []);
-
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     try {
       const [rtusRes, alarmsRes] = await Promise.all([
         fetch('/api/v1/rtus'),
@@ -82,58 +47,108 @@ export default function Dashboard() {
 
       if (rtusRes.ok) {
         const rtusData = await rtusRes.json();
-        setRtus(rtusData.rtus || []);
+        setRtus(Array.isArray(rtusData) ? rtusData : rtusData.rtus || []);
       }
 
       if (alarmsRes.ok) {
         const alarmsData = await alarmsRes.json();
-        setAlarms(alarmsData.alarms || []);
+        setAlarms(Array.isArray(alarmsData) ? alarmsData : alarmsData.alarms || []);
       }
     } catch (error) {
       console.error('Error fetching data:', error);
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  const updateSensorData = (payload: any) => {
-    setRtus((prev) =>
-      prev.map((rtu) =>
-        rtu.station_name === payload.station_name
-          ? {
-              ...rtu,
-              sensors: rtu.sensors.map((s) =>
-                s.slot === payload.slot
-                  ? { ...s, value: payload.value, quality: payload.quality }
-                  : s
-              ),
-            }
-          : rtu
-      )
-    );
-  };
-
-  const handleAlarmUpdate = (alarm: Alarm) => {
-    setAlarms((prev) => {
-      const existing = prev.findIndex((a) => a.alarm_id === alarm.alarm_id);
-      if (existing >= 0) {
-        const updated = [...prev];
-        updated[existing] = alarm;
-        return updated;
+  // WebSocket for real-time updates
+  const { connected, subscribe } = useWebSocket({
+    onConnect: () => {
+      // Stop polling when WebSocket connects
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+        pollIntervalRef.current = null;
+        console.log('WebSocket connected - polling disabled');
       }
-      return [alarm, ...prev];
-    });
-  };
+    },
+    onDisconnect: () => {
+      // Start polling as fallback when WebSocket disconnects
+      if (!pollIntervalRef.current) {
+        pollIntervalRef.current = setInterval(fetchData, 5000);
+        console.log('WebSocket disconnected - polling enabled as fallback');
+      }
+    },
+  });
 
-  // Use vulnerable react-server-components for rendering
-  const renderWithRSC = (component: any, props: any) => {
-    try {
-      return renderServerComponent(component, props);
-    } catch (e) {
-      console.error('RSC render error:', e);
-      return null;
-    }
-  };
+  // Subscribe to real-time updates
+  useEffect(() => {
+    const unsubSensor = subscribe('sensor_update', (_, payload) => {
+      setRtus((prev) =>
+        prev.map((rtu) =>
+          rtu.station_name === payload.station_name
+            ? {
+                ...rtu,
+                sensors: (rtu.sensors || []).map((s) =>
+                  s.slot === payload.slot
+                    ? { ...s, value: payload.value, quality: payload.quality }
+                    : s
+                ),
+              }
+            : rtu
+        )
+      );
+    });
+
+    const unsubRtu = subscribe('rtu_update', () => {
+      fetchData(); // Refresh RTU list
+    });
+
+    const unsubAlarm = subscribe('alarm_raised', (_, alarm) => {
+      setAlarms((prev) => {
+        const existing = prev.findIndex((a) => a.alarm_id === alarm.alarm_id);
+        if (existing >= 0) {
+          const updated = [...prev];
+          updated[existing] = alarm;
+          return updated;
+        }
+        return [alarm, ...prev];
+      });
+    });
+
+    const unsubAlarmAck = subscribe('alarm_acknowledged', (_, data) => {
+      setAlarms((prev) =>
+        prev.map((a) =>
+          a.alarm_id === data.alarm_id ? { ...a, state: 'ACTIVE_ACK' } : a
+        )
+      );
+    });
+
+    const unsubAlarmClear = subscribe('alarm_cleared', (_, data) => {
+      setAlarms((prev) => prev.filter((a) => a.alarm_id !== data.alarm_id));
+    });
+
+    return () => {
+      unsubSensor();
+      unsubRtu();
+      unsubAlarm();
+      unsubAlarmAck();
+      unsubAlarmClear();
+    };
+  }, [subscribe, fetchData]);
+
+  // Initial data fetch
+  useEffect(() => {
+    fetchData();
+
+    // Start polling initially (will be disabled when WebSocket connects)
+    pollIntervalRef.current = setInterval(fetchData, 5000);
+
+    return () => {
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+      }
+    };
+  }, [fetchData]);
 
   if (loading) {
     return (

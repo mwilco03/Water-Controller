@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import AlarmSummary from '@/components/AlarmSummary';
+import { useWebSocket } from '@/hooks/useWebSocket';
 
 interface Alarm {
   alarm_id: number;
@@ -22,14 +23,9 @@ export default function AlarmsPage() {
   const [history, setHistory] = useState<Alarm[]>([]);
   const [activeTab, setActiveTab] = useState<'active' | 'history'>('active');
   const [loading, setLoading] = useState(true);
+  const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
-  useEffect(() => {
-    fetchAlarms();
-    const interval = setInterval(fetchAlarms, 5000);
-    return () => clearInterval(interval);
-  }, []);
-
-  const fetchAlarms = async () => {
+  const fetchAlarms = useCallback(async () => {
     try {
       const [activeRes, historyRes] = await Promise.all([
         fetch('/api/v1/alarms'),
@@ -50,7 +46,71 @@ export default function AlarmsPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
+
+  // WebSocket for real-time alarm updates
+  const { connected, subscribe } = useWebSocket({
+    onConnect: () => {
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+        pollIntervalRef.current = null;
+        console.log('WebSocket connected - alarm polling disabled');
+      }
+    },
+    onDisconnect: () => {
+      if (!pollIntervalRef.current) {
+        pollIntervalRef.current = setInterval(fetchAlarms, 5000);
+        console.log('WebSocket disconnected - alarm polling enabled');
+      }
+    },
+  });
+
+  // Subscribe to alarm events
+  useEffect(() => {
+    const unsubRaised = subscribe('alarm_raised', (_, alarm) => {
+      setAlarms((prev) => {
+        const existing = prev.findIndex((a) => a.alarm_id === alarm.alarm_id);
+        if (existing >= 0) {
+          const updated = [...prev];
+          updated[existing] = alarm;
+          return updated;
+        }
+        return [alarm, ...prev];
+      });
+    });
+
+    const unsubAck = subscribe('alarm_acknowledged', (_, data) => {
+      setAlarms((prev) =>
+        prev.map((a) =>
+          a.alarm_id === data.alarm_id ? { ...a, state: 'ACTIVE_ACK' } : a
+        )
+      );
+    });
+
+    const unsubCleared = subscribe('alarm_cleared', (_, data) => {
+      setAlarms((prev) => prev.filter((a) => a.alarm_id !== data.alarm_id));
+      // Refresh history when alarm clears
+      fetchAlarms();
+    });
+
+    return () => {
+      unsubRaised();
+      unsubAck();
+      unsubCleared();
+    };
+  }, [subscribe, fetchAlarms]);
+
+  // Initial fetch and polling setup
+  useEffect(() => {
+    fetchAlarms();
+    pollIntervalRef.current = setInterval(fetchAlarms, 5000);
+
+    return () => {
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+      }
+    };
+  }, [fetchAlarms]);
 
   const stats = {
     total: alarms.length,
