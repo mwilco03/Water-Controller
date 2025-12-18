@@ -374,7 +374,7 @@ wtc_result_t rtu_registry_update_sensor(rtu_registry_t *registry,
                                          int slot,
                                          float value,
                                          iops_t status) {
-    if (!registry || !station_name || slot < 1) {
+    if (!registry || !station_name || slot < 0) {
         return WTC_ERROR_INVALID_PARAM;
     }
 
@@ -383,15 +383,15 @@ wtc_result_t rtu_registry_update_sensor(rtu_registry_t *registry,
         return WTC_ERROR_NOT_FOUND;
     }
 
-    int sensor_idx = slot - 1;
-    if (sensor_idx >= device->sensor_capacity) {
+    /* Slot index is 0-based; RTU dictates slot configuration */
+    if (slot >= device->sensor_capacity) {
         return WTC_ERROR_INVALID_PARAM;
     }
 
-    device->sensors[sensor_idx].value = value;
-    device->sensors[sensor_idx].status = status;
-    device->sensors[sensor_idx].timestamp_ms = time_get_ms();
-    device->sensors[sensor_idx].stale = false;
+    device->sensors[slot].value = value;
+    device->sensors[slot].status = status;
+    device->sensors[slot].timestamp_ms = time_get_ms();
+    device->sensors[slot].stale = false;
 
     return WTC_OK;
 }
@@ -400,7 +400,7 @@ wtc_result_t rtu_registry_update_actuator(rtu_registry_t *registry,
                                            const char *station_name,
                                            int slot,
                                            const actuator_output_t *output) {
-    if (!registry || !station_name || !output || slot < 1) {
+    if (!registry || !station_name || !output || slot < 0) {
         return WTC_ERROR_INVALID_PARAM;
     }
 
@@ -409,14 +409,13 @@ wtc_result_t rtu_registry_update_actuator(rtu_registry_t *registry,
         return WTC_ERROR_NOT_FOUND;
     }
 
-    /* Actuator index - slots are 1-based, actuators can start at any configured slot */
-    int actuator_idx = slot - 1;
-    if (actuator_idx >= device->actuator_capacity) {
+    /* Slot index is 0-based; RTU dictates slot configuration */
+    if (slot >= device->actuator_capacity) {
         return WTC_ERROR_INVALID_PARAM;
     }
 
-    memcpy(&device->actuators[actuator_idx].output, output, sizeof(actuator_output_t));
-    device->actuators[actuator_idx].last_change_ms = time_get_ms();
+    memcpy(&device->actuators[slot].output, output, sizeof(actuator_output_t));
+    device->actuators[slot].last_change_ms = time_get_ms();
 
     return WTC_OK;
 }
@@ -425,7 +424,7 @@ wtc_result_t rtu_registry_get_sensor(rtu_registry_t *registry,
                                       const char *station_name,
                                       int slot,
                                       sensor_data_t *data) {
-    if (!registry || !station_name || !data || slot < 1) {
+    if (!registry || !station_name || !data || slot < 0) {
         return WTC_ERROR_INVALID_PARAM;
     }
 
@@ -434,12 +433,12 @@ wtc_result_t rtu_registry_get_sensor(rtu_registry_t *registry,
         return WTC_ERROR_NOT_FOUND;
     }
 
-    int sensor_idx = slot - 1;
-    if (sensor_idx >= device->sensor_capacity) {
+    /* Slot index is 0-based; RTU dictates slot configuration */
+    if (slot >= device->sensor_capacity) {
         return WTC_ERROR_INVALID_PARAM;
     }
 
-    memcpy(data, &device->sensors[sensor_idx], sizeof(sensor_data_t));
+    memcpy(data, &device->sensors[slot], sizeof(sensor_data_t));
 
     /* Check staleness */
     uint64_t now = time_get_ms();
@@ -454,7 +453,7 @@ wtc_result_t rtu_registry_get_actuator(rtu_registry_t *registry,
                                         const char *station_name,
                                         int slot,
                                         actuator_state_t *state) {
-    if (!registry || !station_name || !state || slot < 1) {
+    if (!registry || !station_name || !state || slot < 0) {
         return WTC_ERROR_INVALID_PARAM;
     }
 
@@ -463,12 +462,12 @@ wtc_result_t rtu_registry_get_actuator(rtu_registry_t *registry,
         return WTC_ERROR_NOT_FOUND;
     }
 
-    int actuator_idx = slot - 1;
-    if (actuator_idx >= device->actuator_capacity) {
+    /* Slot index is 0-based; RTU dictates slot configuration */
+    if (slot >= device->actuator_capacity) {
         return WTC_ERROR_INVALID_PARAM;
     }
 
-    memcpy(state, &device->actuators[actuator_idx], sizeof(actuator_state_t));
+    memcpy(state, &device->actuators[slot], sizeof(actuator_state_t));
 
     return WTC_OK;
 }

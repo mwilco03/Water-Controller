@@ -125,28 +125,37 @@ When communication is lost to an RTU:
 2. **RTU Side**: Maintains last known state or enters safe mode (RTU firmware responsibility)
 3. **On Reconnection**: Controller detects RTU online, resumes cyclic data exchange, clears communication alarms
 
-## RTU Slot Architecture
+## Dynamic Slot Configuration
 
-Each Water Treatment RTU supports 16 I/O slots:
+**The RTU dictates slot configuration; the controller adapts dynamically.**
+
+There is **no fixed limit** on the number of slots. Each RTU reports its own configuration at connection time, including:
+
+- Number of sensors and actuators
+- Slot assignments (any slot can be sensor or actuator)
+- Measurement types, units, and ranges
+- Actuator types (relay, PWM, valve, pump)
+
+The controller dynamically:
+- Creates UI elements for reported slots
+- Configures historian tags based on RTU metadata
+- Sets up alarm rules using RTU-provided ranges
+- Adapts to multiple RTUs with different configurations
+
+### Example RTU Configuration
+
+An RTU might report any slot layout, such as:
 
 | Slot | Type | Function |
 |------|------|----------|
-| 1 | Sensor | pH (0-14) |
-| 2 | Sensor | Temperature (0-100 C) |
-| 3 | Sensor | Turbidity (0-1000 NTU) |
-| 4 | Sensor | TDS (0-2000 ppm) |
-| 5 | Sensor | Dissolved Oxygen (0-20 mg/L) |
-| 6 | Sensor | Flow Rate (0-500 L/min) |
-| 7 | Sensor | Level (0-100%) |
-| 8 | Sensor | Pressure (0-10 bar) |
-| 9 | Actuator | Main Pump (On/Off) |
-| 10 | Actuator | Inlet Valve (On/Off) |
-| 11 | Actuator | Outlet Valve (On/Off) |
-| 12 | Actuator | Dosing Pump (PWM) |
-| 13 | Actuator | Aerator (On/Off) |
-| 14 | Actuator | Heater (PWM) |
-| 15 | Actuator | Mixer (On/Off) |
-| 16 | Actuator | Spare |
+| 0 | Sensor | pH (0-14) |
+| 1 | Sensor | Temperature (0-100 C) |
+| 2 | Actuator | Main Pump (On/Off) |
+| 3 | Sensor | Flow Rate (0-500 L/min) |
+| 4 | Actuator | Dosing Pump (PWM) |
+| ... | ... | ... |
+
+Slots are 0-indexed and can be assigned in any order. The controller does not assume any fixed layout.
 
 ## Quick Start
 

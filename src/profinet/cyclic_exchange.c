@@ -68,8 +68,9 @@ static wtc_result_t build_output_frame(profinet_ar_t *ar,
                           ar->iocr[output_iocr].data_length);
     }
 
-    /* IOPS for each subslot (simplified - one byte per slot) */
-    for (int slot = 0; slot < 8; slot++) {
+    /* IOPS for each subslot (one byte per slot, based on actual data length) */
+    int output_slot_count = ar->iocr[output_iocr].data_length / 4;
+    for (int slot = 0; slot < output_slot_count; slot++) {
         uint8_t iops = IOPS_GOOD;
         frame_append_data(&builder, &iops, 1);
     }
@@ -139,8 +140,9 @@ wtc_result_t parse_input_frame(profinet_ar_t *ar,
         }
     }
 
-    /* Skip IOCS bytes (one per slot) */
-    frame_skip_bytes(&parser, 8);
+    /* Skip IOCS bytes (one per slot, based on actual data length) */
+    int input_slot_count = data_len / 4;
+    frame_skip_bytes(&parser, input_slot_count);
 
     /* Read RT header */
     if (cycle_counter && frame_parser_remaining(&parser) >= 2) {
@@ -175,24 +177,23 @@ bool check_frame_timeout(profinet_ar_t *ar, uint32_t timeout_us) {
     return false;
 }
 
-/* Get input slot data (float) */
+/* Get input slot data (float) - dynamic slot support
+ * slot_index: 0-based index into the input data buffer
+ * RTU dictates slot configuration; controller adapts dynamically
+ */
 wtc_result_t get_slot_input_float(profinet_ar_t *ar,
-                                   int slot,
+                                   int slot_index,
                                    float *value,
                                    iops_t *status) {
-    if (!ar || !value) {
+    if (!ar || !value || slot_index < 0) {
         return WTC_ERROR_INVALID_PARAM;
     }
 
     /* Find input IOCR */
     for (int i = 0; i < ar->iocr_count; i++) {
         if (ar->iocr[i].type == IOCR_TYPE_INPUT) {
-            /* Calculate offset - slots 1-8 are sensors */
-            if (slot < 1 || slot > 8) {
-                return WTC_ERROR_INVALID_PARAM;
-            }
-
-            size_t offset = (slot - 1) * 4; /* 4 bytes per float */
+            /* Calculate offset - no hardcoded slot limits */
+            size_t offset = slot_index * 4; /* 4 bytes per float */
             if (offset + 4 <= ar->iocr[i].data_length &&
                 ar->iocr[i].data_buffer) {
                 /* Read float value (already in host byte order from device) */
@@ -215,24 +216,23 @@ wtc_result_t get_slot_input_float(profinet_ar_t *ar,
     return WTC_ERROR_NOT_FOUND;
 }
 
-/* Set output slot data */
+/* Set output slot data - dynamic slot support
+ * slot_index: 0-based index into the output data buffer
+ * RTU dictates slot configuration; controller adapts dynamically
+ */
 wtc_result_t set_slot_output(profinet_ar_t *ar,
-                              int slot,
+                              int slot_index,
                               uint8_t command,
                               uint8_t pwm_duty) {
-    if (!ar) {
+    if (!ar || slot_index < 0) {
         return WTC_ERROR_INVALID_PARAM;
     }
 
     /* Find output IOCR */
     for (int i = 0; i < ar->iocr_count; i++) {
         if (ar->iocr[i].type == IOCR_TYPE_OUTPUT) {
-            /* Calculate offset - slots 9-16 are actuators */
-            if (slot < 9 || slot > 16) {
-                return WTC_ERROR_INVALID_PARAM;
-            }
-
-            size_t offset = (slot - 9) * 4; /* 4 bytes per actuator */
+            /* Calculate offset - no hardcoded slot limits */
+            size_t offset = slot_index * 4; /* 4 bytes per actuator */
             if (offset + 4 <= ar->iocr[i].data_length &&
                 ar->iocr[i].data_buffer) {
                 actuator_output_t output;

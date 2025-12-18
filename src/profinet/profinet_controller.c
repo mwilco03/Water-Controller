@@ -646,11 +646,14 @@ wtc_result_t profinet_controller_write_output(profinet_controller_t *controller,
         return WTC_ERROR_NOT_INITIALIZED;
     }
 
-    /* Find output IOCR for this slot */
+    /* Find output IOCR for this slot
+     * slot is a 0-based index into the output data buffer
+     * RTU dictates slot configuration; controller adapts dynamically
+     */
     for (int i = 0; i < ar->iocr_count; i++) {
         if (ar->iocr[i].type == IOCR_TYPE_OUTPUT) {
-            /* Calculate offset for slot (slots 9-16 are actuators) */
-            size_t offset = (slot - 9) * 4; /* 4 bytes per actuator slot */
+            /* Calculate offset - no hardcoded slot assumptions */
+            size_t offset = slot * 4; /* 4 bytes per actuator slot */
             if (offset + len <= ar->iocr[i].data_length && ar->iocr[i].data_buffer) {
                 memcpy(ar->iocr[i].data_buffer + offset, data, len);
                 pthread_mutex_unlock(&controller->lock);
