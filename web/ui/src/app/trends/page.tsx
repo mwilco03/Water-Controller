@@ -1,0 +1,381 @@
+'use client';
+
+import { useEffect, useState, useRef } from 'react';
+import { useSearchParams } from 'next/navigation';
+
+interface HistorianTag {
+  tag_id: number;
+  rtu_station: string;
+  slot: number;
+  tag_name: string;
+  sample_rate_ms: number;
+  deadband: number;
+  compression: string;
+}
+
+interface TrendSample {
+  timestamp: string;
+  value: number;
+  quality: number;
+}
+
+interface TrendData {
+  tag_id: number;
+  samples: TrendSample[];
+}
+
+export default function TrendsPage() {
+  const searchParams = useSearchParams();
+  const rtuFilter = searchParams.get('rtu');
+
+  const [tags, setTags] = useState<HistorianTag[]>([]);
+  const [selectedTags, setSelectedTags] = useState<number[]>([]);
+  const [trendData, setTrendData] = useState<{ [tagId: number]: TrendSample[] }>({});
+  const [timeRange, setTimeRange] = useState<'1h' | '6h' | '24h' | '7d' | '30d'>('1h');
+  const [loading, setLoading] = useState(false);
+  const [autoRefresh, setAutoRefresh] = useState(true);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    fetchTags();
+  }, [rtuFilter]);
+
+  useEffect(() => {
+    if (selectedTags.length > 0) {
+      fetchTrendData();
+    }
+  }, [selectedTags, timeRange]);
+
+  useEffect(() => {
+    if (autoRefresh && selectedTags.length > 0) {
+      const interval = setInterval(fetchTrendData, 5000);
+      return () => clearInterval(interval);
+    }
+  }, [autoRefresh, selectedTags, timeRange]);
+
+  useEffect(() => {
+    drawChart();
+  }, [trendData]);
+
+  const fetchTags = async () => {
+    try {
+      const res = await fetch('/api/v1/trends/tags');
+      if (res.ok) {
+        let data = await res.json();
+        if (rtuFilter) {
+          data = data.filter((t: HistorianTag) => t.rtu_station === rtuFilter);
+        }
+        setTags(data);
+      }
+    } catch (error) {
+      console.error('Failed to fetch tags:', error);
+    }
+  };
+
+  const fetchTrendData = async () => {
+    if (selectedTags.length === 0) return;
+
+    setLoading(true);
+    const now = new Date();
+    const ranges: { [key: string]: number } = {
+      '1h': 60 * 60 * 1000,
+      '6h': 6 * 60 * 60 * 1000,
+      '24h': 24 * 60 * 60 * 1000,
+      '7d': 7 * 24 * 60 * 60 * 1000,
+      '30d': 30 * 24 * 60 * 60 * 1000,
+    };
+
+    const startTime = new Date(now.getTime() - ranges[timeRange]);
+
+    const newData: { [tagId: number]: TrendSample[] } = {};
+
+    for (const tagId of selectedTags) {
+      try {
+        const res = await fetch(
+          `/api/v1/trends/${tagId}?` +
+            new URLSearchParams({
+              start_time: startTime.toISOString(),
+              end_time: now.toISOString(),
+            })
+        );
+        if (res.ok) {
+          const data = await res.json();
+          newData[tagId] = data.samples || [];
+        }
+      } catch (error) {
+        console.error('Failed to fetch trend data:', error);
+      }
+    }
+
+    setTrendData(newData);
+    setLoading(false);
+  };
+
+  const toggleTag = (tagId: number) => {
+    setSelectedTags((prev) =>
+      prev.includes(tagId) ? prev.filter((id) => id !== tagId) : [...prev, tagId]
+    );
+  };
+
+  const drawChart = () => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const width = canvas.width;
+    const height = canvas.height;
+    const padding = { top: 20, right: 60, bottom: 40, left: 60 };
+
+    // Clear canvas
+    ctx.fillStyle = '#1a1a2e';
+    ctx.fillRect(0, 0, width, height);
+
+    // Get all samples and find min/max
+    const allSamples: { time: number; value: number; tagId: number }[] = [];
+    Object.entries(trendData).forEach(([tagId, samples]) => {
+      samples.forEach((s) => {
+        allSamples.push({
+          time: new Date(s.timestamp).getTime(),
+          value: s.value,
+          tagId: parseInt(tagId),
+        });
+      });
+    });
+
+    if (allSamples.length === 0) {
+      ctx.fillStyle = '#888';
+      ctx.textAlign = 'center';
+      ctx.font = '14px sans-serif';
+      ctx.fillText('No data to display', width / 2, height / 2);
+      return;
+    }
+
+    const minTime = Math.min(...allSamples.map((s) => s.time));
+    const maxTime = Math.max(...allSamples.map((s) => s.time));
+    const minValue = Math.min(...allSamples.map((s) => s.value));
+    const maxValue = Math.max(...allSamples.map((s) => s.value));
+    const valueRange = maxValue - minValue || 1;
+
+    const chartWidth = width - padding.left - padding.right;
+    const chartHeight = height - padding.top - padding.bottom;
+
+    // Draw grid
+    ctx.strokeStyle = '#333';
+    ctx.lineWidth = 1;
+
+    // Horizontal grid lines
+    for (let i = 0; i <= 5; i++) {
+      const y = padding.top + (chartHeight / 5) * i;
+      ctx.beginPath();
+      ctx.moveTo(padding.left, y);
+      ctx.lineTo(width - padding.right, y);
+      ctx.stroke();
+
+      // Y-axis labels
+      const value = maxValue - (valueRange / 5) * i;
+      ctx.fillStyle = '#888';
+      ctx.textAlign = 'right';
+      ctx.font = '12px sans-serif';
+      ctx.fillText(value.toFixed(2), padding.left - 10, y + 4);
+    }
+
+    // Draw time axis
+    const timeFormat = new Intl.DateTimeFormat('en-US', {
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+    for (let i = 0; i <= 4; i++) {
+      const x = padding.left + (chartWidth / 4) * i;
+      const time = new Date(minTime + ((maxTime - minTime) / 4) * i);
+      ctx.fillStyle = '#888';
+      ctx.textAlign = 'center';
+      ctx.fillText(timeFormat.format(time), x, height - padding.bottom + 20);
+    }
+
+    // Colors for different tags
+    const colors = ['#4ade80', '#60a5fa', '#f472b6', '#facc15', '#a78bfa', '#fb923c'];
+
+    // Draw lines for each tag
+    Object.entries(trendData).forEach(([tagId, samples], index) => {
+      if (samples.length === 0) return;
+
+      ctx.strokeStyle = colors[index % colors.length];
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+
+      samples.forEach((sample, i) => {
+        const x = padding.left + ((new Date(sample.timestamp).getTime() - minTime) / (maxTime - minTime)) * chartWidth;
+        const y = padding.top + chartHeight - ((sample.value - minValue) / valueRange) * chartHeight;
+
+        if (i === 0) {
+          ctx.moveTo(x, y);
+        } else {
+          ctx.lineTo(x, y);
+        }
+      });
+
+      ctx.stroke();
+    });
+
+    // Draw legend
+    Object.entries(trendData).forEach(([tagId, _], index) => {
+      const tag = tags.find((t) => t.tag_id === parseInt(tagId));
+      if (!tag) return;
+
+      const x = padding.left + index * 150;
+      const y = 10;
+
+      ctx.fillStyle = colors[index % colors.length];
+      ctx.fillRect(x, y, 20, 10);
+
+      ctx.fillStyle = '#ccc';
+      ctx.textAlign = 'left';
+      ctx.font = '12px sans-serif';
+      ctx.fillText(tag.tag_name, x + 25, y + 9);
+    });
+  };
+
+  const groupedTags = tags.reduce((acc, tag) => {
+    if (!acc[tag.rtu_station]) {
+      acc[tag.rtu_station] = [];
+    }
+    acc[tag.rtu_station].push(tag);
+    return acc;
+  }, {} as { [key: string]: HistorianTag[] });
+
+  return (
+    <div className="space-y-6">
+      <div className="flex justify-between items-center">
+        <h1 className="text-2xl font-bold text-white">Historical Trends</h1>
+        <div className="flex items-center space-x-4">
+          <label className="flex items-center text-gray-300">
+            <input
+              type="checkbox"
+              checked={autoRefresh}
+              onChange={(e) => setAutoRefresh(e.target.checked)}
+              className="mr-2"
+            />
+            Auto-refresh
+          </label>
+          <select
+            value={timeRange}
+            onChange={(e) => setTimeRange(e.target.value as any)}
+            className="px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white"
+          >
+            <option value="1h">Last 1 Hour</option>
+            <option value="6h">Last 6 Hours</option>
+            <option value="24h">Last 24 Hours</option>
+            <option value="7d">Last 7 Days</option>
+            <option value="30d">Last 30 Days</option>
+          </select>
+          <button
+            onClick={fetchTrendData}
+            disabled={loading || selectedTags.length === 0}
+            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded text-white disabled:opacity-50"
+          >
+            {loading ? 'Loading...' : 'Refresh'}
+          </button>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+        {/* Tag Selection */}
+        <div className="lg:col-span-1 scada-panel p-4 max-h-[600px] overflow-y-auto">
+          <h2 className="text-lg font-semibold text-white mb-4">Available Tags</h2>
+
+          {Object.entries(groupedTags).map(([rtuStation, rtuTags]) => (
+            <div key={rtuStation} className="mb-4">
+              <h3 className="text-sm font-medium text-gray-400 mb-2">{rtuStation}</h3>
+              <div className="space-y-1">
+                {rtuTags.map((tag) => (
+                  <label
+                    key={tag.tag_id}
+                    className="flex items-center p-2 rounded hover:bg-gray-800 cursor-pointer"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selectedTags.includes(tag.tag_id)}
+                      onChange={() => toggleTag(tag.tag_id)}
+                      className="mr-3"
+                    />
+                    <div>
+                      <div className="text-white text-sm">{tag.tag_name}</div>
+                      <div className="text-gray-500 text-xs">Slot {tag.slot}</div>
+                    </div>
+                  </label>
+                ))}
+              </div>
+            </div>
+          ))}
+
+          {tags.length === 0 && (
+            <p className="text-gray-400 text-sm">No historian tags configured</p>
+          )}
+        </div>
+
+        {/* Chart */}
+        <div className="lg:col-span-3 scada-panel p-4">
+          <h2 className="text-lg font-semibold text-white mb-4">Trend Chart</h2>
+          <canvas
+            ref={canvasRef}
+            width={800}
+            height={400}
+            className="w-full rounded bg-gray-900"
+          />
+
+          {selectedTags.length === 0 && (
+            <div className="text-center text-gray-400 mt-4">
+              Select one or more tags from the left panel to view trends
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Data Table */}
+      {selectedTags.length > 0 && Object.keys(trendData).length > 0 && (
+        <div className="scada-panel p-4">
+          <h2 className="text-lg font-semibold text-white mb-4">Recent Values</h2>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left">
+              <thead>
+                <tr className="border-b border-gray-700">
+                  <th className="pb-2 text-gray-400">Tag</th>
+                  <th className="pb-2 text-gray-400">Current Value</th>
+                  <th className="pb-2 text-gray-400">Min</th>
+                  <th className="pb-2 text-gray-400">Max</th>
+                  <th className="pb-2 text-gray-400">Average</th>
+                  <th className="pb-2 text-gray-400">Samples</th>
+                </tr>
+              </thead>
+              <tbody>
+                {Object.entries(trendData).map(([tagId, samples]) => {
+                  const tag = tags.find((t) => t.tag_id === parseInt(tagId));
+                  if (!tag || samples.length === 0) return null;
+
+                  const values = samples.map((s) => s.value);
+                  const min = Math.min(...values);
+                  const max = Math.max(...values);
+                  const avg = values.reduce((a, b) => a + b, 0) / values.length;
+                  const current = samples[samples.length - 1]?.value;
+
+                  return (
+                    <tr key={tagId} className="border-b border-gray-800">
+                      <td className="py-2 text-white">{tag.tag_name}</td>
+                      <td className="py-2 text-green-400 font-mono">{current?.toFixed(3)}</td>
+                      <td className="py-2 text-gray-300 font-mono">{min.toFixed(3)}</td>
+                      <td className="py-2 text-gray-300 font-mono">{max.toFixed(3)}</td>
+                      <td className="py-2 text-gray-300 font-mono">{avg.toFixed(3)}</td>
+                      <td className="py-2 text-gray-400">{samples.length}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

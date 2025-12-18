@@ -152,6 +152,42 @@ class SystemHealth(BaseModel):
     cpu_percent: float
     memory_percent: float
 
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+class LoginResponse(BaseModel):
+    success: bool
+    token: Optional[str] = None
+    user: Optional[str] = None
+    groups: Optional[List[str]] = None
+    message: Optional[str] = None
+
+class LogForwardingConfig(BaseModel):
+    enabled: bool = False
+    forward_type: str = "syslog"  # "syslog", "elastic", "graylog"
+    host: str = "localhost"
+    port: int = 514
+    protocol: str = "udp"  # "udp", "tcp", "http"
+    index: Optional[str] = None  # For Elasticsearch
+    api_key: Optional[str] = None  # For authenticated endpoints
+    tls_enabled: bool = False
+    tls_verify: bool = True
+    include_alarms: bool = True
+    include_events: bool = True
+    include_audit: bool = True
+    log_level: str = "INFO"  # Minimum level to forward
+
+class ADConfig(BaseModel):
+    enabled: bool = False
+    server: str = ""
+    port: int = 389
+    use_ssl: bool = False
+    base_dn: str = ""
+    admin_group: str = "WTC-Admins"
+    bind_user: Optional[str] = None
+    bind_password: Optional[str] = None
+
 # ============== Shared Memory Client ==============
 
 def get_shm_client() -> Optional[WtcShmClient]:
@@ -233,6 +269,199 @@ async def list_rtus():
             last_seen=datetime.now()
         ) for r in rtus]
     return list(fallback_rtus.values())
+
+class RTUCreateRequest(BaseModel):
+    """Request model for creating a new RTU"""
+    station_name: str
+    ip_address: str
+    vendor_id: int = 0x0493  # Default: Water Treatment Training
+    device_id: int = 0x0001  # Default: Water Treatment RTU
+    slot_count: int = 16
+    slots: Optional[List[Dict[str, Any]]] = None  # Slot configuration
+
+@app.post("/api/v1/rtus", response_model=RTUDevice)
+async def create_rtu(request: RTUCreateRequest):
+    """
+    Add a new RTU to the system.
+
+    This creates the RTU configuration and initiates PROFINET connection.
+    """
+    # Check if RTU already exists
+    if request.station_name in fallback_rtus:
+        raise HTTPException(status_code=409, detail="RTU already exists")
+
+    # Create RTU device
+    rtu = RTUDevice(
+        station_name=request.station_name,
+        ip_address=request.ip_address,
+        vendor_id=request.vendor_id,
+        device_id=request.device_id,
+        connection_state="OFFLINE",
+        slot_count=request.slot_count,
+        last_seen=datetime.now()
+    )
+
+    # Store in fallback (in production, this goes to database via IPC)
+    fallback_rtus[request.station_name] = rtu
+
+    # TODO: Send IPC command to add RTU to PROFINET controller
+
+    logger.info(f"Created RTU: {request.station_name} at {request.ip_address}")
+
+    # Broadcast RTU added event
+    await broadcast_event("rtu_added", {
+        "station_name": request.station_name,
+        "ip_address": request.ip_address
+    })
+
+    return rtu
+
+@app.delete("/api/v1/rtus/{station_name}")
+async def delete_rtu(station_name: str, cascade: bool = True):
+    """
+    Remove an RTU from the system.
+
+    If cascade=True (default), this will also delete:
+    - All alarm rules referencing this RTU
+    - All PID loops using this RTU as input or output
+    - All historian tags tracking this RTU
+    - All Modbus mappings for this RTU
+    - Any active alarms for this RTU
+
+    This is a correlated workflow that ensures no orphaned references.
+    """
+    global fallback_rtus, alarm_rules, fallback_pid_loops, historian_tags, modbus_config
+
+    if station_name not in fallback_rtus:
+        raise HTTPException(status_code=404, detail="RTU not found")
+
+    deleted_items = {
+        "alarm_rules": 0,
+        "pid_loops": 0,
+        "historian_tags": 0,
+        "modbus_mappings": 0,
+        "active_alarms": 0
+    }
+
+    if cascade:
+        # Delete alarm rules for this RTU
+        rules_to_delete = [r.rule_id for r in alarm_rules.values()
+                          if r.rtu_station == station_name]
+        for rule_id in rules_to_delete:
+            del alarm_rules[rule_id]
+            deleted_items["alarm_rules"] += 1
+
+        # Delete PID loops using this RTU
+        loops_to_delete = [l.loop_id for l in fallback_pid_loops.values()
+                          if l.input_rtu == station_name or l.output_rtu == station_name]
+        for loop_id in loops_to_delete:
+            del fallback_pid_loops[loop_id]
+            deleted_items["pid_loops"] += 1
+
+        # Delete historian tags for this RTU
+        tags_to_delete = [t.tag_id for t in historian_tags.values()
+                         if t.rtu_station == station_name]
+        for tag_id in tags_to_delete:
+            del historian_tags[tag_id]
+            deleted_items["historian_tags"] += 1
+
+        # Delete Modbus mappings for this RTU
+        if modbus_config.get("register_mappings"):
+            original_count = len(modbus_config["register_mappings"])
+            modbus_config["register_mappings"] = [
+                m for m in modbus_config["register_mappings"]
+                if m.get("rtu_station") != station_name
+            ]
+            deleted_items["modbus_mappings"] = original_count - len(modbus_config["register_mappings"])
+
+        # Clear active alarms for this RTU
+        alarms_to_clear = [a.alarm_id for a in fallback_alarms.values()
+                          if a.rtu_station == station_name]
+        for alarm_id in alarms_to_clear:
+            del fallback_alarms[alarm_id]
+            deleted_items["active_alarms"] += 1
+
+    # Remove the RTU
+    del fallback_rtus[station_name]
+
+    # TODO: Send IPC command to disconnect RTU from PROFINET controller
+
+    logger.info(f"Deleted RTU: {station_name}, cascade cleanup: {deleted_items}")
+
+    # Broadcast RTU removed event
+    await broadcast_event("rtu_removed", {
+        "station_name": station_name,
+        "cascade_deleted": deleted_items
+    })
+
+    return {
+        "status": "ok",
+        "station_name": station_name,
+        "cascade_deleted": deleted_items
+    }
+
+@app.put("/api/v1/rtus/{station_name}")
+async def update_rtu(station_name: str, request: RTUCreateRequest):
+    """Update RTU configuration"""
+    if station_name not in fallback_rtus:
+        raise HTTPException(status_code=404, detail="RTU not found")
+
+    # Update RTU
+    rtu = fallback_rtus[station_name]
+    rtu.ip_address = request.ip_address
+    rtu.vendor_id = request.vendor_id
+    rtu.device_id = request.device_id
+    rtu.slot_count = request.slot_count
+
+    logger.info(f"Updated RTU: {station_name}")
+    return rtu
+
+@app.post("/api/v1/rtus/{station_name}/connect")
+async def connect_rtu(station_name: str):
+    """Initiate connection to an RTU"""
+    if station_name not in fallback_rtus:
+        raise HTTPException(status_code=404, detail="RTU not found")
+
+    rtu = fallback_rtus[station_name]
+    rtu.connection_state = "CONNECTING"
+
+    # TODO: Send IPC command to connect via PROFINET
+
+    logger.info(f"Connecting to RTU: {station_name}")
+    return {"status": "connecting", "station_name": station_name}
+
+@app.post("/api/v1/rtus/{station_name}/disconnect")
+async def disconnect_rtu(station_name: str):
+    """Disconnect from an RTU"""
+    if station_name not in fallback_rtus:
+        raise HTTPException(status_code=404, detail="RTU not found")
+
+    rtu = fallback_rtus[station_name]
+    rtu.connection_state = "OFFLINE"
+
+    # TODO: Send IPC command to disconnect
+
+    logger.info(f"Disconnected RTU: {station_name}")
+    return {"status": "disconnected", "station_name": station_name}
+
+@app.get("/api/v1/rtus/{station_name}/health")
+async def get_rtu_health(station_name: str):
+    """Get RTU health and connection status"""
+    if station_name not in fallback_rtus:
+        raise HTTPException(status_code=404, detail="RTU not found")
+
+    rtu = fallback_rtus[station_name]
+
+    # In production, get from failover manager via IPC
+    return {
+        "station_name": station_name,
+        "connection_state": rtu.connection_state,
+        "healthy": rtu.connection_state == "RUNNING",
+        "last_seen": rtu.last_seen.isoformat() if rtu.last_seen else None,
+        "packet_loss_percent": 0.0,
+        "consecutive_failures": 0,
+        "in_failover": False
+    }
 
 @app.get("/api/v1/rtus/{station_name}", response_model=RTUDevice)
 async def get_rtu(station_name: str):
@@ -1132,6 +1361,310 @@ async def control_service(service_name: str, action: str):
         return {"status": "ok", "action": action, "service": service_name}
     except subprocess.TimeoutExpired:
         raise HTTPException(status_code=504, detail="Operation timed out")
+
+# ============== Authentication Endpoints ==============
+
+# In-memory session store (would use Redis/DB in production)
+active_sessions: Dict[str, Dict[str, Any]] = {}
+
+# Active Directory configuration store
+ad_config_store: ADConfig = ADConfig()
+
+# Log forwarding configuration store
+log_forward_config_store: LogForwardingConfig = LogForwardingConfig()
+
+@app.post("/api/v1/auth/login", response_model=LoginResponse)
+async def login(request: LoginRequest):
+    """
+    Authenticate user with username and password.
+    Supports Active Directory group-based authentication when configured.
+    """
+    import hashlib
+    import secrets
+
+    username = request.username
+    password = request.password
+
+    # Check if AD authentication is enabled
+    if ad_config_store.enabled:
+        try:
+            # Attempt LDAP authentication
+            import ldap3
+
+            server = ldap3.Server(
+                ad_config_store.server,
+                port=ad_config_store.port,
+                use_ssl=ad_config_store.use_ssl
+            )
+
+            # Bind with user credentials
+            user_dn = f"cn={username},{ad_config_store.base_dn}"
+            conn = ldap3.Connection(server, user=user_dn, password=password)
+
+            if not conn.bind():
+                logger.warning(f"AD auth failed for user: {username}")
+                return LoginResponse(
+                    success=False,
+                    message="Invalid credentials"
+                )
+
+            # Check group membership
+            conn.search(
+                ad_config_store.base_dn,
+                f"(&(objectClass=user)(cn={username}))",
+                attributes=['memberOf']
+            )
+
+            groups = []
+            is_admin = False
+            if conn.entries:
+                for entry in conn.entries:
+                    member_of = entry.memberOf.values if hasattr(entry, 'memberOf') else []
+                    for group_dn in member_of:
+                        group_cn = group_dn.split(',')[0].replace('cn=', '').replace('CN=', '')
+                        groups.append(group_cn)
+                        if group_cn == ad_config_store.admin_group:
+                            is_admin = True
+
+            if not is_admin:
+                logger.warning(f"User {username} not in admin group")
+                return LoginResponse(
+                    success=False,
+                    message=f"User not in {ad_config_store.admin_group} group"
+                )
+
+            conn.unbind()
+
+        except ImportError:
+            logger.error("ldap3 module not installed, falling back to local auth")
+        except Exception as e:
+            logger.error(f"AD authentication error: {e}")
+            return LoginResponse(
+                success=False,
+                message="Authentication service unavailable"
+            )
+    else:
+        # Local authentication fallback (demo mode)
+        # In production, this would check against a database
+        if username == "admin" and password == "admin":
+            groups = ["WTC-Admins"]
+        elif username == "operator" and password == "operator":
+            groups = ["WTC-Operators"]
+        else:
+            logger.warning(f"Local auth failed for user: {username}")
+            return LoginResponse(
+                success=False,
+                message="Invalid credentials"
+            )
+
+    # Generate session token
+    token = secrets.token_hex(32)
+
+    # Store session
+    active_sessions[token] = {
+        "username": username,
+        "groups": groups,
+        "created": datetime.now().isoformat(),
+        "last_activity": datetime.now().isoformat()
+    }
+
+    logger.info(f"User {username} logged in successfully")
+
+    return LoginResponse(
+        success=True,
+        token=token,
+        user=username,
+        groups=groups
+    )
+
+@app.post("/api/v1/auth/logout")
+async def logout(token: str = None):
+    """Logout and invalidate session token"""
+    if token and token in active_sessions:
+        del active_sessions[token]
+        return {"status": "ok", "message": "Logged out"}
+    return {"status": "ok", "message": "Session not found"}
+
+@app.get("/api/v1/auth/session")
+async def get_session(token: str):
+    """Validate session token and return session info"""
+    if token in active_sessions:
+        session = active_sessions[token]
+        session["last_activity"] = datetime.now().isoformat()
+        return {
+            "valid": True,
+            "user": session["username"],
+            "groups": session["groups"]
+        }
+    return {"valid": False}
+
+@app.get("/api/v1/auth/ad-config", response_model=ADConfig)
+async def get_ad_config():
+    """Get Active Directory configuration (passwords redacted)"""
+    config = ad_config_store.model_copy()
+    config.bind_password = "***" if config.bind_password else None
+    return config
+
+@app.put("/api/v1/auth/ad-config")
+async def update_ad_config(config: ADConfig):
+    """Update Active Directory configuration"""
+    global ad_config_store
+
+    # Preserve existing password if not provided
+    if config.bind_password == "***" or config.bind_password is None:
+        config.bind_password = ad_config_store.bind_password
+
+    ad_config_store = config
+    logger.info(f"AD configuration updated: server={config.server}, enabled={config.enabled}")
+    return {"status": "ok", "message": "AD configuration updated"}
+
+# ============== Log Forwarding Endpoints ==============
+
+@app.get("/api/v1/logging/config", response_model=LogForwardingConfig)
+async def get_log_forwarding_config():
+    """Get log forwarding configuration (API keys redacted)"""
+    config = log_forward_config_store.model_copy()
+    config.api_key = "***" if config.api_key else None
+    return config
+
+@app.put("/api/v1/logging/config")
+async def update_log_forwarding_config(config: LogForwardingConfig):
+    """Update log forwarding configuration"""
+    global log_forward_config_store
+
+    # Preserve existing API key if not provided
+    if config.api_key == "***" or config.api_key is None:
+        config.api_key = log_forward_config_store.api_key
+
+    log_forward_config_store = config
+    logger.info(f"Log forwarding updated: type={config.forward_type}, host={config.host}, enabled={config.enabled}")
+    return {"status": "ok", "message": "Log forwarding configuration updated"}
+
+@app.post("/api/v1/logging/test")
+async def test_log_forwarding():
+    """Send a test log message to the configured destination"""
+    import socket
+
+    config = log_forward_config_store
+
+    if not config.enabled:
+        raise HTTPException(status_code=400, detail="Log forwarding is not enabled")
+
+    test_message = {
+        "timestamp": datetime.now().isoformat(),
+        "level": "INFO",
+        "source": "water-controller",
+        "message": "Test log message from Water Treatment Controller",
+        "type": "test"
+    }
+
+    try:
+        if config.forward_type == "syslog":
+            # Send to syslog server
+            if config.protocol == "udp":
+                sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            else:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.connect((config.host, config.port))
+
+            # Format as syslog message (RFC 5424)
+            priority = 14  # facility=user, severity=info
+            syslog_msg = f"<{priority}>1 {test_message['timestamp']} water-controller - - - {test_message['message']}"
+
+            if config.protocol == "udp":
+                sock.sendto(syslog_msg.encode(), (config.host, config.port))
+            else:
+                sock.send(syslog_msg.encode())
+            sock.close()
+
+        elif config.forward_type == "elastic":
+            # Send to Elasticsearch
+            import urllib.request
+            import ssl
+
+            url = f"{'https' if config.tls_enabled else 'http'}://{config.host}:{config.port}/{config.index or 'wtc-logs'}/_doc"
+
+            req = urllib.request.Request(
+                url,
+                data=json.dumps(test_message).encode(),
+                headers={
+                    "Content-Type": "application/json",
+                    **({"Authorization": f"ApiKey {config.api_key}"} if config.api_key else {})
+                },
+                method="POST"
+            )
+
+            context = ssl.create_default_context()
+            if not config.tls_verify:
+                context.check_hostname = False
+                context.verify_mode = ssl.CERT_NONE
+
+            urllib.request.urlopen(req, context=context if config.tls_enabled else None, timeout=10)
+
+        elif config.forward_type == "graylog":
+            # Send to Graylog via GELF
+            gelf_message = {
+                "version": "1.1",
+                "host": "water-controller",
+                "short_message": test_message["message"],
+                "timestamp": datetime.now().timestamp(),
+                "level": 6,  # INFO
+                "_source": test_message["source"],
+                "_type": test_message["type"]
+            }
+
+            if config.protocol == "udp":
+                sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                sock.sendto(json.dumps(gelf_message).encode(), (config.host, config.port))
+                sock.close()
+            else:
+                # TCP/HTTP
+                import urllib.request
+                url = f"{'https' if config.tls_enabled else 'http'}://{config.host}:{config.port}/gelf"
+                req = urllib.request.Request(
+                    url,
+                    data=json.dumps(gelf_message).encode(),
+                    headers={"Content-Type": "application/json"},
+                    method="POST"
+                )
+                urllib.request.urlopen(req, timeout=10)
+
+        logger.info(f"Test log sent to {config.forward_type} at {config.host}:{config.port}")
+        return {"status": "ok", "message": f"Test log sent to {config.forward_type}"}
+
+    except Exception as e:
+        logger.error(f"Failed to send test log: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to send test log: {str(e)}")
+
+@app.get("/api/v1/logging/destinations")
+async def list_log_destinations():
+    """List available log forwarding destination types"""
+    return {
+        "destinations": [
+            {
+                "type": "syslog",
+                "name": "Syslog Server",
+                "description": "Forward logs to a syslog server (RFC 5424)",
+                "default_port": 514,
+                "protocols": ["udp", "tcp"]
+            },
+            {
+                "type": "elastic",
+                "name": "Elasticsearch",
+                "description": "Forward logs to Elasticsearch cluster",
+                "default_port": 9200,
+                "protocols": ["http", "https"],
+                "requires_index": True
+            },
+            {
+                "type": "graylog",
+                "name": "Graylog",
+                "description": "Forward logs to Graylog via GELF",
+                "default_port": 12201,
+                "protocols": ["udp", "tcp", "http"]
+            }
+        ]
+    }
 
 # ============== WebSocket Endpoints ==============
 

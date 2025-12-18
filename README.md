@@ -44,6 +44,87 @@ This project implements a complete SCADA/DCS system for water treatment faciliti
 +-----------------+    +-------------------+    +-------------------+
 ```
 
+## Two-Plane Architecture
+
+This system implements a clear separation between **two operational planes**:
+
+### RTU/Sensor Plane (Field Layer)
+
+The RTU plane contains all physical I/O devices directly connected to the process:
+
+- **Sensors**: pH probes, temperature sensors, flow meters, level transmitters, pressure transducers
+- **Actuators**: Pumps, valves, heaters, aerators, mixers, dosing systems
+
+**Important**: Actuators and sensors are NOT directly controlled by this controller. All physical I/O is managed through the RTU (Remote Terminal Unit). Commands to actuators are sent **to the RTU**, which then controls the physical device. This provides:
+
+- Electrical isolation between control systems and field devices
+- Local safety interlocks on the RTU
+- Continued operation during controller communication loss
+- Standardized PROFINET interface regardless of physical I/O type
+
+```
+[Physical World]
+      |
+      v
++-----------------+
+|   RTU Device    |  <-- Physical sensors/actuators connect HERE
+|  (Water-Treat)  |
++-----------------+
+      |
+      | PROFINET
+      v
++-----------------+
+|   Controller    |  <-- This codebase (commands flow THROUGH RTU)
+|  (This Project) |
++-----------------+
+```
+
+### Controller Plane (Management Layer)
+
+The controller plane provides supervisory functions:
+
+| Function | Description |
+|----------|-------------|
+| **HMI/Web Interface** | Real-time visualization, operator interaction |
+| **Data Collection** | Historian, trending, long-term storage |
+| **State Monitoring** | Connection status, configuration drift detection |
+| **Alarm Management** | ISA-18.2 compliant alarm handling, notifications |
+| **Control Logic** | PID loops, sequences (commands sent via RTU) |
+| **External Communication** | Modbus gateway, log forwarding, SIEM integration |
+| **Failover Management** | RTU health monitoring, reconnection handling |
+| **Configuration Management** | Database-backed config, backup/restore |
+| **Authentication** | User access control, AD group integration |
+
+### Communication Flow
+
+```
+User Action (e.g., "Turn on pump")
+            |
+            v
+    [Web HMI / API]
+            |
+            v
+    [Controller Engine]
+            |
+            v
+    [PROFINET IO Controller]
+            |
+            | Cyclic I/O Frame
+            v
+    [RTU Device] <-- Command processed HERE
+            |
+            v
+    [Physical Actuator] <-- Pump turns on
+```
+
+### Failover Behavior
+
+When communication is lost to an RTU:
+
+1. **Controller Side**: Marks RTU as OFFLINE, triggers alarms, continues monitoring
+2. **RTU Side**: Maintains last known state or enters safe mode (RTU firmware responsibility)
+3. **On Reconnection**: Controller detects RTU online, resumes cyclic data exchange, clears communication alarms
+
 ## RTU Slot Architecture
 
 Each Water Treatment RTU supports 16 I/O slots:
@@ -202,6 +283,21 @@ Options:
 - `GET /api/v1/services` - List service status
 - `POST /api/v1/services/{name}/{action}` - Control service (start/stop/restart)
 
+### Authentication
+
+- `POST /api/v1/auth/login` - Authenticate user (AD or local)
+- `POST /api/v1/auth/logout` - Logout and invalidate session
+- `GET /api/v1/auth/session` - Validate session token
+- `GET /api/v1/auth/ad-config` - Get AD configuration
+- `PUT /api/v1/auth/ad-config` - Update AD configuration
+
+### Log Forwarding
+
+- `GET /api/v1/logging/config` - Get log forwarding configuration
+- `PUT /api/v1/logging/config` - Update log forwarding configuration
+- `POST /api/v1/logging/test` - Send test log message
+- `GET /api/v1/logging/destinations` - List available log destinations (Syslog, Elastic, Graylog)
+
 ### WebSocket Endpoints
 
 - `WS /ws/realtime` - Real-time sensor data streaming
@@ -255,7 +351,10 @@ Water-Controller/
 │           ├── page.tsx          # Dashboard
 │           ├── alarms/           # Alarm management
 │           ├── control/          # PID control
-│           └── settings/         # Configuration & backup
+│           ├── rtus/             # RTU management
+│           ├── trends/           # Historical trends
+│           ├── login/            # Authentication
+│           └── settings/         # Configuration, backup, log forwarding
 ├── systemd/
 │   ├── water-controller.service
 │   ├── water-controller-api.service

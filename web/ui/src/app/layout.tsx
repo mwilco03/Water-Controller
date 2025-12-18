@@ -42,6 +42,9 @@ export default function RootLayout({
                 <a href="/settings" className="text-gray-300 hover:text-white transition-colors">
                   Settings
                 </a>
+                <a href="/login" className="text-gray-300 hover:text-white transition-colors">
+                  Login
+                </a>
               </nav>
             </div>
           </header>

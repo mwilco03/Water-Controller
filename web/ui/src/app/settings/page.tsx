@@ -42,12 +42,39 @@ interface ModbusDownstreamDevice {
   enabled: boolean;
 }
 
+interface LogForwardingConfig {
+  enabled: boolean;
+  forward_type: string;
+  host: string;
+  port: number;
+  protocol: string;
+  index?: string;
+  api_key?: string;
+  tls_enabled: boolean;
+  tls_verify: boolean;
+  include_alarms: boolean;
+  include_events: boolean;
+  include_audit: boolean;
+  log_level: string;
+}
+
+interface LogDestination {
+  type: string;
+  name: string;
+  description: string;
+  default_port: number;
+  protocols: string[];
+  requires_index?: boolean;
+}
+
 export default function SettingsPage() {
-  const [activeTab, setActiveTab] = useState<'general' | 'backup' | 'modbus' | 'services'>('general');
+  const [activeTab, setActiveTab] = useState<'general' | 'backup' | 'modbus' | 'services' | 'logging'>('general');
   const [backups, setBackups] = useState<Backup[]>([]);
   const [services, setServices] = useState<ServiceStatus>({});
   const [modbusConfig, setModbusConfig] = useState<ModbusServerConfig | null>(null);
   const [downstreamDevices, setDownstreamDevices] = useState<ModbusDownstreamDevice[]>([]);
+  const [logConfig, setLogConfig] = useState<LogForwardingConfig | null>(null);
+  const [logDestinations, setLogDestinations] = useState<LogDestination[]>([]);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [newBackupDesc, setNewBackupDesc] = useState('');
@@ -57,6 +84,7 @@ export default function SettingsPage() {
     fetchBackups();
     fetchServices();
     fetchModbusConfig();
+    fetchLogConfig();
   }, []);
 
   const showMessage = (type: 'success' | 'error', text: string) => {
@@ -283,6 +311,71 @@ export default function SettingsPage() {
     }
   };
 
+  // ============== Log Forwarding Functions ==============
+
+  const fetchLogConfig = async () => {
+    try {
+      const [configRes, destRes] = await Promise.all([
+        fetch('/api/v1/logging/config'),
+        fetch('/api/v1/logging/destinations'),
+      ]);
+
+      if (configRes.ok) {
+        setLogConfig(await configRes.json());
+      }
+      if (destRes.ok) {
+        const data = await destRes.json();
+        setLogDestinations(data.destinations || []);
+      }
+    } catch (error) {
+      console.error('Failed to fetch log config:', error);
+    }
+  };
+
+  const saveLogConfig = async () => {
+    if (!logConfig) return;
+
+    setLoading(true);
+    try {
+      const res = await fetch('/api/v1/logging/config', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(logConfig),
+      });
+
+      if (res.ok) {
+        showMessage('success', 'Log forwarding configuration saved');
+      } else {
+        showMessage('error', 'Failed to save log configuration');
+      }
+    } catch (error) {
+      showMessage('error', 'Error saving configuration');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const testLogForwarding = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch('/api/v1/logging/test', { method: 'POST' });
+      if (res.ok) {
+        showMessage('success', 'Test log message sent successfully');
+      } else {
+        const data = await res.json();
+        showMessage('error', data.detail || 'Failed to send test log');
+      }
+    } catch (error) {
+      showMessage('error', 'Error sending test log');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const getSelectedDestination = (): LogDestination | undefined => {
+    return logDestinations.find(d => d.type === logConfig?.forward_type);
+  };
+
   const formatBytes = (bytes: number) => {
     if (bytes < 1024) return `${bytes} B`;
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -327,6 +420,7 @@ export default function SettingsPage() {
           { id: 'general', label: 'General' },
           { id: 'backup', label: 'Backup & Restore' },
           { id: 'modbus', label: 'Modbus Gateway' },
+          { id: 'logging', label: 'Log Forwarding' },
           { id: 'services', label: 'Services' },
         ].map((tab) => (
           <button
@@ -688,6 +782,231 @@ export default function SettingsPage() {
                 ))}
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Logging Tab */}
+      {activeTab === 'logging' && logConfig && (
+        <div className="space-y-6">
+          {/* Destination Configuration */}
+          <div className="scada-panel p-6">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-lg font-semibold text-white">Log Forwarding Configuration</h2>
+              <div className="flex space-x-2">
+                <button
+                  onClick={testLogForwarding}
+                  disabled={loading || !logConfig.enabled}
+                  className="px-3 py-1 bg-yellow-600 hover:bg-yellow-700 disabled:opacity-50 rounded text-sm text-white"
+                >
+                  Test Connection
+                </button>
+              </div>
+            </div>
+
+            <div className="space-y-6">
+              {/* Enable Toggle */}
+              <div className="flex items-center space-x-2">
+                <input
+                  type="checkbox"
+                  id="logEnabled"
+                  checked={logConfig.enabled}
+                  onChange={(e) => setLogConfig({ ...logConfig, enabled: e.target.checked })}
+                />
+                <label htmlFor="logEnabled" className="text-sm text-gray-300">
+                  Enable Log Forwarding
+                </label>
+              </div>
+
+              {/* Destination Type */}
+              <div>
+                <label className="block text-sm text-gray-400 mb-1">Destination Type</label>
+                <select
+                  value={logConfig.forward_type}
+                  onChange={(e) => {
+                    const dest = logDestinations.find(d => d.type === e.target.value);
+                    setLogConfig({
+                      ...logConfig,
+                      forward_type: e.target.value,
+                      port: dest?.default_port || logConfig.port,
+                      protocol: dest?.protocols[0] || logConfig.protocol,
+                    });
+                  }}
+                  className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white"
+                >
+                  {logDestinations.map((dest) => (
+                    <option key={dest.type} value={dest.type}>
+                      {dest.name}
+                    </option>
+                  ))}
+                </select>
+                {getSelectedDestination() && (
+                  <p className="text-xs text-gray-500 mt-1">{getSelectedDestination()?.description}</p>
+                )}
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {/* Host */}
+                <div>
+                  <label className="block text-sm text-gray-400 mb-1">Host</label>
+                  <input
+                    type="text"
+                    value={logConfig.host}
+                    onChange={(e) => setLogConfig({ ...logConfig, host: e.target.value })}
+                    placeholder="localhost"
+                    className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white"
+                  />
+                </div>
+
+                {/* Port */}
+                <div>
+                  <label className="block text-sm text-gray-400 mb-1">Port</label>
+                  <input
+                    type="number"
+                    value={logConfig.port}
+                    onChange={(e) => setLogConfig({ ...logConfig, port: parseInt(e.target.value) })}
+                    className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white"
+                  />
+                </div>
+
+                {/* Protocol */}
+                <div>
+                  <label className="block text-sm text-gray-400 mb-1">Protocol</label>
+                  <select
+                    value={logConfig.protocol}
+                    onChange={(e) => setLogConfig({ ...logConfig, protocol: e.target.value })}
+                    className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white"
+                  >
+                    {(getSelectedDestination()?.protocols || ['udp', 'tcp']).map((proto) => (
+                      <option key={proto} value={proto}>
+                        {proto.toUpperCase()}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* Elasticsearch-specific: Index */}
+              {logConfig.forward_type === 'elastic' && (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm text-gray-400 mb-1">Index Name</label>
+                    <input
+                      type="text"
+                      value={logConfig.index || ''}
+                      onChange={(e) => setLogConfig({ ...logConfig, index: e.target.value })}
+                      placeholder="wtc-logs"
+                      className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm text-gray-400 mb-1">API Key (optional)</label>
+                    <input
+                      type="password"
+                      value={logConfig.api_key || ''}
+                      onChange={(e) => setLogConfig({ ...logConfig, api_key: e.target.value })}
+                      placeholder="Enter API key"
+                      className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* TLS Settings */}
+              <div className="flex items-center space-x-6">
+                <div className="flex items-center space-x-2">
+                  <input
+                    type="checkbox"
+                    id="tlsEnabled"
+                    checked={logConfig.tls_enabled}
+                    onChange={(e) => setLogConfig({ ...logConfig, tls_enabled: e.target.checked })}
+                  />
+                  <label htmlFor="tlsEnabled" className="text-sm text-gray-300">
+                    Enable TLS
+                  </label>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <input
+                    type="checkbox"
+                    id="tlsVerify"
+                    checked={logConfig.tls_verify}
+                    onChange={(e) => setLogConfig({ ...logConfig, tls_verify: e.target.checked })}
+                    disabled={!logConfig.tls_enabled}
+                  />
+                  <label htmlFor="tlsVerify" className={`text-sm ${logConfig.tls_enabled ? 'text-gray-300' : 'text-gray-500'}`}>
+                    Verify Certificate
+                  </label>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Log Content Settings */}
+          <div className="scada-panel p-6">
+            <h2 className="text-lg font-semibold text-white mb-4">Log Content</h2>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm text-gray-400 mb-1">Minimum Log Level</label>
+                <select
+                  value={logConfig.log_level}
+                  onChange={(e) => setLogConfig({ ...logConfig, log_level: e.target.value })}
+                  className="w-full md:w-48 px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white"
+                >
+                  <option value="DEBUG">DEBUG</option>
+                  <option value="INFO">INFO</option>
+                  <option value="WARNING">WARNING</option>
+                  <option value="ERROR">ERROR</option>
+                  <option value="CRITICAL">CRITICAL</option>
+                </select>
+              </div>
+
+              <div className="flex flex-wrap gap-6">
+                <div className="flex items-center space-x-2">
+                  <input
+                    type="checkbox"
+                    id="includeAlarms"
+                    checked={logConfig.include_alarms}
+                    onChange={(e) => setLogConfig({ ...logConfig, include_alarms: e.target.checked })}
+                  />
+                  <label htmlFor="includeAlarms" className="text-sm text-gray-300">
+                    Include Alarm Events
+                  </label>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <input
+                    type="checkbox"
+                    id="includeEvents"
+                    checked={logConfig.include_events}
+                    onChange={(e) => setLogConfig({ ...logConfig, include_events: e.target.checked })}
+                  />
+                  <label htmlFor="includeEvents" className="text-sm text-gray-300">
+                    Include System Events
+                  </label>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <input
+                    type="checkbox"
+                    id="includeAudit"
+                    checked={logConfig.include_audit}
+                    onChange={(e) => setLogConfig({ ...logConfig, include_audit: e.target.checked })}
+                  />
+                  <label htmlFor="includeAudit" className="text-sm text-gray-300">
+                    Include Audit Logs
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-6">
+              <button
+                onClick={saveLogConfig}
+                disabled={loading}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded text-white disabled:opacity-50"
+              >
+                {loading ? 'Saving...' : 'Save Configuration'}
+              </button>
+            </div>
           </div>
         </div>
       )}
