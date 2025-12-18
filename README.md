@@ -11,7 +11,10 @@ This project implements a complete SCADA/DCS system for water treatment faciliti
 - **Control Engine**: PID loops, interlocks, and sequence control for automated process operation
 - **Alarm Management**: ISA-18.2 compliant alarm system with acknowledgment, suppression, and shelving
 - **Data Historian**: Time-series data storage with deadband and swinging-door compression
+- **Modbus Gateway**: Protocol bridge for PROFINET-to-Modbus TCP/RTU translation
 - **Web HMI**: FastAPI backend with REST API and WebSocket real-time streaming
+- **Backup/Restore**: Configuration backup with import/export functionality
+- **systemd Integration**: Full service management with systemctl
 
 ## Architecture
 
@@ -63,6 +66,25 @@ Each Water Treatment RTU supports 16 I/O slots:
 | 14 | Actuator | Heater (PWM) |
 | 15 | Actuator | Mixer (On/Off) |
 | 16 | Actuator | Spare |
+
+## Quick Start
+
+```bash
+# Clone and build
+git clone https://github.com/mwilco03/Water-Controller.git
+cd Water-Controller
+
+# Install (as root)
+sudo ./scripts/install.sh
+
+# Start services
+sudo systemctl start water-controller
+
+# Access web UI
+open http://localhost:3000
+```
+
+For detailed deployment instructions, see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
 ## Building
 
@@ -156,6 +178,30 @@ Options:
 - `GET /api/v1/trends/tags` - List historian tags
 - `GET /api/v1/trends/{tag_id}` - Get trend data
 
+### Modbus Gateway
+
+- `GET /api/v1/modbus/config` - Get Modbus gateway configuration
+- `PUT /api/v1/modbus/config` - Update configuration
+- `GET /api/v1/modbus/mappings` - List register mappings
+- `POST /api/v1/modbus/mappings` - Create register mapping
+- `GET /api/v1/modbus/downstream` - List downstream devices
+- `POST /api/v1/modbus/downstream` - Add downstream device
+- `GET /api/v1/modbus/stats` - Get gateway statistics
+
+### Backup/Restore
+
+- `GET /api/v1/backups` - List available backups
+- `POST /api/v1/backups` - Create new backup
+- `GET /api/v1/backups/{id}/download` - Download backup
+- `POST /api/v1/backups/{id}/restore` - Restore from backup
+- `GET /api/v1/system/config` - Export configuration
+- `POST /api/v1/system/config` - Import configuration
+
+### Services
+
+- `GET /api/v1/services` - List service status
+- `POST /api/v1/services/{name}/{action}` - Control service (start/stop/restart)
+
 ### WebSocket Endpoints
 
 - `WS /ws/realtime` - Real-time sensor data streaming
@@ -166,6 +212,7 @@ Options:
 ```
 Water-Controller/
 ├── CMakeLists.txt
+├── README.md
 ├── src/
 │   ├── main.c                    # Application entry point
 │   ├── types.h                   # Common type definitions
@@ -187,25 +234,43 @@ Water-Controller/
 │   │   └── alarm_manager.c/h
 │   ├── historian/                # Data historian
 │   │   └── historian.c/h
+│   ├── modbus/                   # Modbus gateway
+│   │   ├── modbus_common.c/h     # CRC, PDU builders
+│   │   ├── modbus_tcp.c/h        # TCP client/server
+│   │   ├── modbus_rtu.c/h        # RTU serial client/server
+│   │   ├── register_map.c/h      # Register mapping
+│   │   └── modbus_gateway.c/h    # Gateway engine
 │   └── utils/                    # Utility functions
 │       ├── logger.c/h
 │       ├── time_utils.c/h
 │       ├── buffer.c/h
 │       └── crc.c/h
 ├── web/
-│   └── api/
-│       ├── main.py               # FastAPI application
-│       └── requirements.txt
+│   ├── api/
+│   │   ├── main.py               # FastAPI application
+│   │   ├── shm_client.py         # Shared memory IPC
+│   │   └── requirements.txt
+│   └── ui/
+│       └── src/app/              # Next.js React UI
+│           ├── page.tsx          # Dashboard
+│           ├── alarms/           # Alarm management
+│           ├── control/          # PID control
+│           └── settings/         # Configuration & backup
+├── systemd/
+│   ├── water-controller.service
+│   ├── water-controller-api.service
+│   ├── water-controller-ui.service
+│   └── water-controller-modbus.service
+├── scripts/
+│   └── install.sh                # Installation script
+├── docs/
+│   └── DEPLOYMENT.md             # Deployment guide
 ├── docker/
 │   ├── docker-compose.yml
 │   ├── Dockerfile.controller
 │   └── Dockerfile.web
 └── tests/
-    ├── test_profinet.c
-    ├── test_control.c
-    ├── test_alarms.c
-    ├── test_historian.c
-    └── test_registry.c
+    └── *.c                       # Unit tests
 ```
 
 ## Standards Compliance

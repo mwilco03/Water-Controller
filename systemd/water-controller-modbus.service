@@ -1,0 +1,35 @@
+[Unit]
+Description=Water Treatment Modbus Gateway
+Documentation=https://github.com/mwilco03/Water-Controller
+After=network.target water-controller.service
+BindsTo=water-controller.service
+PartOf=water-controller.service
+
+[Service]
+Type=notify
+User=wtc
+Group=wtc
+WorkingDirectory=/opt/water-controller
+ExecStart=/opt/water-controller/bin/modbus_gateway -c /etc/water-controller/modbus.conf
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=water-controller-modbus
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/water-controller /dev/shm
+
+# Serial port access for RTU mode
+SupplementaryGroups=dialout
+
+# Environment
+EnvironmentFile=-/etc/water-controller/environment
+
+[Install]
+WantedBy=multi-user.target

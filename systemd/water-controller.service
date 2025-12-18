@@ -1,0 +1,38 @@
+[Unit]
+Description=Water Treatment PROFINET Controller
+Documentation=https://github.com/mwilco03/Water-Controller
+After=network.target postgresql.service
+Wants=water-controller-api.service
+
+[Service]
+Type=simple
+User=wtc
+Group=wtc
+WorkingDirectory=/opt/water-controller
+ExecStart=/opt/water-controller/bin/water_treat_controller -c /etc/water-controller/controller.conf
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=water-controller
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/water-controller /var/log/water-controller /dev/shm
+
+# Network capabilities for PROFINET
+AmbientCapabilities=CAP_NET_RAW CAP_NET_ADMIN
+CapabilityBoundingSet=CAP_NET_RAW CAP_NET_ADMIN
+
+# Environment
+Environment=WT_LOG_LEVEL=INFO
+Environment=WT_CONFIG_DIR=/etc/water-controller
+Environment=WT_DATA_DIR=/var/lib/water-controller
+EnvironmentFile=-/etc/water-controller/environment
+
+[Install]
+WantedBy=multi-user.target

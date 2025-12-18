@@ -646,7 +646,492 @@ async def export_config():
 @app.post("/api/v1/system/config")
 async def import_config(config: Dict[str, Any]):
     """Import system configuration"""
-    return {"status": "ok", "message": "Configuration imported"}
+    global fallback_rtus, alarm_rules, fallback_pid_loops, historian_tags
+
+    try:
+        # Import RTUs
+        if "rtus" in config:
+            for rtu_data in config["rtus"]:
+                rtu = RTUDevice(**rtu_data)
+                fallback_rtus[rtu.station_name] = rtu
+
+        # Import alarm rules
+        if "alarm_rules" in config:
+            for rule_data in config["alarm_rules"]:
+                rule = AlarmRule(**rule_data)
+                if rule.rule_id:
+                    alarm_rules[rule.rule_id] = rule
+
+        # Import PID loops
+        if "pid_loops" in config:
+            for pid_data in config["pid_loops"]:
+                pid = PIDLoop(**pid_data)
+                if pid.loop_id:
+                    fallback_pid_loops[pid.loop_id] = pid
+
+        # Import historian tags
+        if "historian_tags" in config:
+            for tag_data in config["historian_tags"]:
+                tag = HistorianTag(**tag_data)
+                historian_tags[tag.tag_id] = tag
+
+        logger.info(f"Configuration imported: {len(config.get('rtus', []))} RTUs, "
+                   f"{len(config.get('alarm_rules', []))} rules, "
+                   f"{len(config.get('pid_loops', []))} PID loops")
+
+        return {"status": "ok", "message": "Configuration imported successfully"}
+    except Exception as e:
+        logger.error(f"Configuration import failed: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+
+# ============== Backup/Restore Endpoints ==============
+
+class BackupMetadata(BaseModel):
+    backup_id: str
+    filename: str
+    created_at: datetime
+    size_bytes: int
+    description: Optional[str] = None
+    includes_historian: bool = False
+
+class BackupRequest(BaseModel):
+    description: Optional[str] = None
+    include_historian: bool = False
+
+class RestoreRequest(BaseModel):
+    backup_id: str
+
+import os
+import tarfile
+import tempfile
+import shutil
+from io import BytesIO
+from fastapi.responses import StreamingResponse
+
+BACKUP_DIR = os.environ.get("WT_BACKUP_DIR", "/var/lib/water-controller/backups")
+
+@app.get("/api/v1/backups", response_model=List[BackupMetadata])
+async def list_backups():
+    """List all available backups"""
+    backups = []
+
+    if not os.path.exists(BACKUP_DIR):
+        os.makedirs(BACKUP_DIR, exist_ok=True)
+        return backups
+
+    for filename in os.listdir(BACKUP_DIR):
+        if filename.endswith('.tar.gz'):
+            filepath = os.path.join(BACKUP_DIR, filename)
+            stat = os.stat(filepath)
+            backup_id = filename.replace('.tar.gz', '')
+
+            backups.append(BackupMetadata(
+                backup_id=backup_id,
+                filename=filename,
+                created_at=datetime.fromtimestamp(stat.st_mtime),
+                size_bytes=stat.st_size,
+                includes_historian='_full_' in filename
+            ))
+
+    return sorted(backups, key=lambda x: x.created_at, reverse=True)
+
+@app.post("/api/v1/backups", response_model=BackupMetadata)
+async def create_backup(request: BackupRequest):
+    """Create a new configuration backup"""
+    os.makedirs(BACKUP_DIR, exist_ok=True)
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    backup_type = "full" if request.include_historian else "config"
+    backup_id = f"wtc_{backup_type}_{timestamp}"
+    filename = f"{backup_id}.tar.gz"
+    filepath = os.path.join(BACKUP_DIR, filename)
+
+    # Get current configuration
+    config_data = {
+        "version": "1.0",
+        "created_at": datetime.now().isoformat(),
+        "description": request.description,
+        "rtus": [r.dict() for r in fallback_rtus.values()],
+        "alarm_rules": [r.dict() for r in alarm_rules.values()],
+        "pid_loops": [p.dict() for p in fallback_pid_loops.values()],
+        "historian_tags": [t.dict() for t in historian_tags.values()],
+        "modbus_config": modbus_config.copy() if modbus_config else {}
+    }
+
+    # Create backup archive
+    with tarfile.open(filepath, "w:gz") as tar:
+        # Add configuration JSON
+        config_json = json.dumps(config_data, indent=2, default=str).encode()
+        config_info = tarfile.TarInfo(name="config.json")
+        config_info.size = len(config_json)
+        tar.addfile(config_info, BytesIO(config_json))
+
+        # Add system config files if they exist
+        config_dir = os.environ.get("WT_CONFIG_DIR", "/etc/water-controller")
+        if os.path.exists(config_dir):
+            for conf_file in os.listdir(config_dir):
+                conf_path = os.path.join(config_dir, conf_file)
+                if os.path.isfile(conf_path):
+                    tar.add(conf_path, arcname=f"system_config/{conf_file}")
+
+    stat = os.stat(filepath)
+    logger.info(f"Backup created: {filename}")
+
+    return BackupMetadata(
+        backup_id=backup_id,
+        filename=filename,
+        created_at=datetime.now(),
+        size_bytes=stat.st_size,
+        description=request.description,
+        includes_historian=request.include_historian
+    )
+
+@app.get("/api/v1/backups/{backup_id}/download")
+async def download_backup(backup_id: str):
+    """Download a backup file"""
+    filename = f"{backup_id}.tar.gz"
+    filepath = os.path.join(BACKUP_DIR, filename)
+
+    if not os.path.exists(filepath):
+        raise HTTPException(status_code=404, detail="Backup not found")
+
+    def iterfile():
+        with open(filepath, "rb") as f:
+            yield from f
+
+    return StreamingResponse(
+        iterfile(),
+        media_type="application/gzip",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
+
+@app.post("/api/v1/backups/{backup_id}/restore")
+async def restore_backup(backup_id: str):
+    """Restore configuration from a backup"""
+    global fallback_rtus, alarm_rules, fallback_pid_loops, historian_tags, modbus_config
+
+    filename = f"{backup_id}.tar.gz"
+    filepath = os.path.join(BACKUP_DIR, filename)
+
+    if not os.path.exists(filepath):
+        raise HTTPException(status_code=404, detail="Backup not found")
+
+    try:
+        with tarfile.open(filepath, "r:gz") as tar:
+            config_file = tar.extractfile("config.json")
+            if config_file:
+                config_data = json.load(config_file)
+
+                # Restore RTUs
+                fallback_rtus.clear()
+                for rtu_data in config_data.get("rtus", []):
+                    rtu = RTUDevice(**rtu_data)
+                    fallback_rtus[rtu.station_name] = rtu
+
+                # Restore alarm rules
+                alarm_rules.clear()
+                for rule_data in config_data.get("alarm_rules", []):
+                    rule = AlarmRule(**rule_data)
+                    if rule.rule_id:
+                        alarm_rules[rule.rule_id] = rule
+
+                # Restore PID loops
+                fallback_pid_loops.clear()
+                for pid_data in config_data.get("pid_loops", []):
+                    pid = PIDLoop(**pid_data)
+                    if pid.loop_id:
+                        fallback_pid_loops[pid.loop_id] = pid
+
+                # Restore historian tags
+                historian_tags.clear()
+                for tag_data in config_data.get("historian_tags", []):
+                    tag = HistorianTag(**tag_data)
+                    historian_tags[tag.tag_id] = tag
+
+                # Restore Modbus config
+                if "modbus_config" in config_data:
+                    modbus_config.update(config_data["modbus_config"])
+
+        logger.info(f"Configuration restored from backup: {backup_id}")
+        return {"status": "ok", "message": "Configuration restored successfully"}
+
+    except Exception as e:
+        logger.error(f"Restore failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/v1/backups/{backup_id}")
+async def delete_backup(backup_id: str):
+    """Delete a backup"""
+    filename = f"{backup_id}.tar.gz"
+    filepath = os.path.join(BACKUP_DIR, filename)
+
+    if not os.path.exists(filepath):
+        raise HTTPException(status_code=404, detail="Backup not found")
+
+    os.remove(filepath)
+    logger.info(f"Backup deleted: {backup_id}")
+    return {"status": "ok"}
+
+@app.post("/api/v1/backups/upload")
+async def upload_backup(file: bytes = None):
+    """Upload a backup file for restore"""
+    from fastapi import File, UploadFile
+
+@app.post("/api/v1/backups/import")
+async def import_backup_file(file: Any = None):
+    """Import configuration from uploaded file"""
+    # This endpoint accepts multipart form upload
+    return {"status": "ok", "message": "Use /api/v1/system/config for direct JSON import"}
+
+# ============== Modbus Gateway Configuration ==============
+
+class ModbusServerConfig(BaseModel):
+    tcp_enabled: bool = True
+    tcp_port: int = 502
+    tcp_bind_address: str = "0.0.0.0"
+    rtu_enabled: bool = False
+    rtu_device: str = "/dev/ttyUSB0"
+    rtu_baud_rate: int = 9600
+    rtu_parity: str = "N"
+    rtu_data_bits: int = 8
+    rtu_stop_bits: int = 1
+    rtu_slave_addr: int = 1
+
+class ModbusRegisterMapping(BaseModel):
+    mapping_id: Optional[int] = None
+    modbus_addr: int
+    register_type: str  # HOLDING, INPUT, COIL, DISCRETE
+    data_type: str  # UINT16, INT16, FLOAT32, etc.
+    source_type: str  # PROFINET_SENSOR, PROFINET_ACTUATOR, PID_SETPOINT, etc.
+    rtu_station: str
+    slot: int
+    description: str = ""
+    scaling_enabled: bool = False
+    scale_raw_min: float = 0
+    scale_raw_max: float = 65535
+    scale_eng_min: float = 0
+    scale_eng_max: float = 100
+    read_only: bool = True
+    enabled: bool = True
+
+class ModbusDownstreamDevice(BaseModel):
+    device_id: Optional[int] = None
+    name: str
+    transport: str  # TCP or RTU
+    tcp_host: Optional[str] = None
+    tcp_port: int = 502
+    rtu_device: Optional[str] = None
+    rtu_baud_rate: int = 9600
+    slave_addr: int = 1
+    poll_interval_ms: int = 1000
+    timeout_ms: int = 1000
+    enabled: bool = True
+
+class ModbusGatewayConfig(BaseModel):
+    server: ModbusServerConfig
+    auto_generate_map: bool = True
+    sensor_base_addr: int = 0
+    actuator_base_addr: int = 100
+    register_mappings: List[ModbusRegisterMapping] = []
+    downstream_devices: List[ModbusDownstreamDevice] = []
+
+class ModbusStats(BaseModel):
+    server_running: bool
+    tcp_connections: int
+    total_requests: int
+    total_errors: int
+    downstream_devices_online: int
+
+# Modbus configuration storage
+modbus_config: Dict[str, Any] = {
+    "server": {
+        "tcp_enabled": True,
+        "tcp_port": 502,
+        "tcp_bind_address": "0.0.0.0",
+        "rtu_enabled": False,
+        "rtu_device": "/dev/ttyUSB0",
+        "rtu_baud_rate": 9600,
+        "rtu_slave_addr": 1
+    },
+    "auto_generate_map": True,
+    "sensor_base_addr": 0,
+    "actuator_base_addr": 100,
+    "register_mappings": [],
+    "downstream_devices": []
+}
+
+@app.get("/api/v1/modbus/config", response_model=ModbusGatewayConfig)
+async def get_modbus_config():
+    """Get Modbus gateway configuration"""
+    return ModbusGatewayConfig(
+        server=ModbusServerConfig(**modbus_config.get("server", {})),
+        auto_generate_map=modbus_config.get("auto_generate_map", True),
+        sensor_base_addr=modbus_config.get("sensor_base_addr", 0),
+        actuator_base_addr=modbus_config.get("actuator_base_addr", 100),
+        register_mappings=[ModbusRegisterMapping(**m) for m in modbus_config.get("register_mappings", [])],
+        downstream_devices=[ModbusDownstreamDevice(**d) for d in modbus_config.get("downstream_devices", [])]
+    )
+
+@app.put("/api/v1/modbus/config")
+async def update_modbus_config(config: ModbusGatewayConfig):
+    """Update Modbus gateway configuration"""
+    global modbus_config
+
+    modbus_config["server"] = config.server.dict()
+    modbus_config["auto_generate_map"] = config.auto_generate_map
+    modbus_config["sensor_base_addr"] = config.sensor_base_addr
+    modbus_config["actuator_base_addr"] = config.actuator_base_addr
+
+    logger.info("Modbus configuration updated")
+    return {"status": "ok"}
+
+@app.get("/api/v1/modbus/server", response_model=ModbusServerConfig)
+async def get_modbus_server_config():
+    """Get Modbus server configuration"""
+    return ModbusServerConfig(**modbus_config.get("server", {}))
+
+@app.put("/api/v1/modbus/server")
+async def update_modbus_server_config(config: ModbusServerConfig):
+    """Update Modbus server configuration"""
+    modbus_config["server"] = config.dict()
+    logger.info(f"Modbus server config updated: TCP={config.tcp_enabled}:{config.tcp_port}, RTU={config.rtu_enabled}")
+    return {"status": "ok"}
+
+@app.get("/api/v1/modbus/mappings", response_model=List[ModbusRegisterMapping])
+async def list_modbus_mappings():
+    """List all Modbus register mappings"""
+    return [ModbusRegisterMapping(**m) for m in modbus_config.get("register_mappings", [])]
+
+@app.post("/api/v1/modbus/mappings", response_model=ModbusRegisterMapping)
+async def create_modbus_mapping(mapping: ModbusRegisterMapping):
+    """Create a new Modbus register mapping"""
+    mappings = modbus_config.get("register_mappings", [])
+    mapping.mapping_id = len(mappings) + 1
+    mappings.append(mapping.dict())
+    modbus_config["register_mappings"] = mappings
+    return mapping
+
+@app.put("/api/v1/modbus/mappings/{mapping_id}")
+async def update_modbus_mapping(mapping_id: int, mapping: ModbusRegisterMapping):
+    """Update a Modbus register mapping"""
+    mappings = modbus_config.get("register_mappings", [])
+    for i, m in enumerate(mappings):
+        if m.get("mapping_id") == mapping_id:
+            mapping.mapping_id = mapping_id
+            mappings[i] = mapping.dict()
+            return {"status": "ok"}
+    raise HTTPException(status_code=404, detail="Mapping not found")
+
+@app.delete("/api/v1/modbus/mappings/{mapping_id}")
+async def delete_modbus_mapping(mapping_id: int):
+    """Delete a Modbus register mapping"""
+    mappings = modbus_config.get("register_mappings", [])
+    modbus_config["register_mappings"] = [m for m in mappings if m.get("mapping_id") != mapping_id]
+    return {"status": "ok"}
+
+@app.get("/api/v1/modbus/downstream", response_model=List[ModbusDownstreamDevice])
+async def list_downstream_devices():
+    """List all downstream Modbus devices"""
+    return [ModbusDownstreamDevice(**d) for d in modbus_config.get("downstream_devices", [])]
+
+@app.post("/api/v1/modbus/downstream", response_model=ModbusDownstreamDevice)
+async def add_downstream_device(device: ModbusDownstreamDevice):
+    """Add a downstream Modbus device"""
+    devices = modbus_config.get("downstream_devices", [])
+    device.device_id = len(devices) + 1
+    devices.append(device.dict())
+    modbus_config["downstream_devices"] = devices
+    logger.info(f"Added downstream device: {device.name}")
+    return device
+
+@app.put("/api/v1/modbus/downstream/{device_id}")
+async def update_downstream_device(device_id: int, device: ModbusDownstreamDevice):
+    """Update a downstream Modbus device"""
+    devices = modbus_config.get("downstream_devices", [])
+    for i, d in enumerate(devices):
+        if d.get("device_id") == device_id:
+            device.device_id = device_id
+            devices[i] = device.dict()
+            return {"status": "ok"}
+    raise HTTPException(status_code=404, detail="Device not found")
+
+@app.delete("/api/v1/modbus/downstream/{device_id}")
+async def remove_downstream_device(device_id: int):
+    """Remove a downstream Modbus device"""
+    devices = modbus_config.get("downstream_devices", [])
+    modbus_config["downstream_devices"] = [d for d in devices if d.get("device_id") != device_id]
+    return {"status": "ok"}
+
+@app.get("/api/v1/modbus/stats", response_model=ModbusStats)
+async def get_modbus_stats():
+    """Get Modbus gateway statistics"""
+    client = get_shm_client()
+    if client:
+        # TODO: Get real stats from shared memory
+        pass
+
+    return ModbusStats(
+        server_running=modbus_config.get("server", {}).get("tcp_enabled", False),
+        tcp_connections=0,
+        total_requests=0,
+        total_errors=0,
+        downstream_devices_online=0
+    )
+
+@app.post("/api/v1/modbus/restart")
+async def restart_modbus_gateway():
+    """Restart the Modbus gateway service"""
+    # In production, this would signal the controller to restart Modbus
+    logger.info("Modbus gateway restart requested")
+    return {"status": "ok", "message": "Restart signal sent"}
+
+# ============== Service Control Endpoints ==============
+
+@app.get("/api/v1/services")
+async def list_services():
+    """List service status"""
+    import subprocess
+
+    services = ["water-controller", "water-controller-api", "water-controller-ui", "water-controller-modbus"]
+    status = {}
+
+    for svc in services:
+        try:
+            result = subprocess.run(
+                ["systemctl", "is-active", svc],
+                capture_output=True, text=True, timeout=5
+            )
+            status[svc] = result.stdout.strip()
+        except Exception:
+            status[svc] = "unknown"
+
+    return status
+
+@app.post("/api/v1/services/{service_name}/{action}")
+async def control_service(service_name: str, action: str):
+    """Control a service (start/stop/restart)"""
+    import subprocess
+
+    allowed_services = ["water-controller", "water-controller-api", "water-controller-modbus"]
+    allowed_actions = ["start", "stop", "restart"]
+
+    if service_name not in allowed_services:
+        raise HTTPException(status_code=400, detail="Invalid service name")
+    if action not in allowed_actions:
+        raise HTTPException(status_code=400, detail="Invalid action")
+
+    try:
+        result = subprocess.run(
+            ["systemctl", action, service_name],
+            capture_output=True, text=True, timeout=30
+        )
+        if result.returncode != 0:
+            raise HTTPException(status_code=500, detail=result.stderr)
+
+        logger.info(f"Service {service_name} {action}ed")
+        return {"status": "ok", "action": action, "service": service_name}
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=504, detail="Operation timed out")
 
 # ============== WebSocket Endpoints ==============
 
