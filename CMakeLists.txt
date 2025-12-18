@@ -5,6 +5,12 @@ set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# Include board auto-detection
+include(${CMAKE_SOURCE_DIR}/cmake/board-detect.cmake)
+
+# Configure board-specific settings
+configure_board_settings()
+
 # Build options
 option(BUILD_TESTS "Build test suite" ON)
 option(BUILD_SHARED_LIBS "Build shared libraries" ON)
@@ -179,6 +185,9 @@ target_link_libraries(water_treat_controller
     rt
     m
 )
+
+# Export board-specific definitions to main executable
+export_board_definitions(water_treat_controller)
 
 # Tests
 if(BUILD_TESTS)
