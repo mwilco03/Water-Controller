@@ -60,6 +60,8 @@ typedef enum {
     WTC_ERROR_PERMISSION = -12,
     WTC_ERROR_FULL = -13,
     WTC_ERROR_EMPTY = -14,
+    WTC_ERROR_INTERNAL = -15,
+    WTC_ERROR_NOT_CONNECTED = -16,
 } wtc_result_t;
 
 /* PROFINET connection states */

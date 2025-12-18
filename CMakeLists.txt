@@ -48,6 +48,7 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/src/config
     ${CMAKE_SOURCE_DIR}/src/db
     ${CMAKE_SOURCE_DIR}/src/ipc
+    ${CMAKE_SOURCE_DIR}/src/modbus
     ${CMAKE_SOURCE_DIR}/src/utils
 )
 
@@ -110,6 +111,15 @@ set(IPC_SOURCES
     src/ipc/ipc_server.c
 )
 
+# Modbus module sources
+set(MODBUS_SOURCES
+    src/modbus/modbus_common.c
+    src/modbus/modbus_tcp.c
+    src/modbus/modbus_rtu.c
+    src/modbus/register_map.c
+    src/modbus/modbus_gateway.c
+)
+
 # Create core library
 add_library(wtc_core ${CORE_SOURCES})
 target_link_libraries(wtc_core Threads::Threads)
@@ -150,6 +160,10 @@ target_link_libraries(wtc_coordination wtc_core wtc_registry wtc_control)
 add_library(wtc_ipc ${IPC_SOURCES})
 target_link_libraries(wtc_ipc wtc_core wtc_registry wtc_alarms wtc_control rt)
 
+# Create Modbus library
+add_library(wtc_modbus ${MODBUS_SOURCES})
+target_link_libraries(wtc_modbus wtc_core wtc_registry wtc_control wtc_alarms)
+
 # Main executable
 add_executable(water_treat_controller src/main.c)
 target_link_libraries(water_treat_controller
@@ -161,6 +175,7 @@ target_link_libraries(water_treat_controller
     wtc_historian
     wtc_coordination
     wtc_ipc
+    wtc_modbus
     rt
     m
 )
@@ -195,7 +210,7 @@ install(TARGETS water_treat_controller
     RUNTIME DESTINATION bin
 )
 
-install(TARGETS wtc_core wtc_profinet wtc_registry wtc_control wtc_alarms wtc_historian wtc_coordination
+install(TARGETS wtc_core wtc_profinet wtc_registry wtc_control wtc_alarms wtc_historian wtc_coordination wtc_modbus
     LIBRARY DESTINATION lib
     ARCHIVE DESTINATION lib
 )

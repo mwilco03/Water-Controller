@@ -13,6 +13,7 @@
 #include "alarms/alarm_manager.h"
 #include "historian/historian.h"
 #include "ipc/ipc_server.h"
+#include "modbus/modbus_gateway.h"
 #include "utils/logger.h"
 #include "utils/time_utils.h"
 
@@ -33,6 +34,7 @@ static control_engine_t *g_control = NULL;
 static alarm_manager_t *g_alarms = NULL;
 static historian_t *g_historian = NULL;
 static ipc_server_t *g_ipc = NULL;
+static modbus_gateway_t *g_modbus = NULL;
 
 /* Configuration */
 typedef struct {
@@ -43,6 +45,11 @@ typedef struct {
     uint32_t cycle_time_ms;
     uint16_t web_port;
     bool daemon_mode;
+    bool modbus_tcp_enabled;
+    uint16_t modbus_tcp_port;
+    bool modbus_rtu_enabled;
+    char modbus_rtu_device[64];
+    uint8_t modbus_slave_addr;
 } app_config_t;
 
 static app_config_t g_config = {
@@ -53,6 +60,11 @@ static app_config_t g_config = {
     .cycle_time_ms = 1000,
     .web_port = 8080,
     .daemon_mode = false,
+    .modbus_tcp_enabled = true,
+    .modbus_tcp_port = 502,
+    .modbus_rtu_enabled = false,
+    .modbus_rtu_device = "",
+    .modbus_slave_addr = 1,
 };
 
 /* Signal handler */
@@ -244,6 +256,32 @@ static wtc_result_t initialize_components(void) {
     ipc_server_set_alarm_manager(g_ipc, g_alarms);
     ipc_server_set_control_engine(g_ipc, g_control);
 
+    /* Initialize Modbus gateway */
+    modbus_gateway_config_t mb_config = {
+        .server = {
+            .tcp_enabled = g_config.modbus_tcp_enabled,
+            .tcp_port = g_config.modbus_tcp_port,
+            .rtu_enabled = g_config.modbus_rtu_enabled,
+            .rtu_baud_rate = 9600,
+            .rtu_slave_addr = g_config.modbus_slave_addr,
+        },
+        .auto_generate_map = true,
+        .sensor_base_addr = 0,
+        .actuator_base_addr = 1000,
+    };
+    if (g_config.modbus_rtu_device[0]) {
+        strncpy(mb_config.server.rtu_device, g_config.modbus_rtu_device, 63);
+    }
+
+    res = modbus_gateway_init(&g_modbus, &mb_config);
+    if (res != WTC_OK) {
+        LOG_ERROR("Failed to initialize Modbus gateway");
+        return res;
+    }
+    modbus_gateway_set_registry(g_modbus, g_registry);
+    modbus_gateway_set_control_engine(g_modbus, g_control);
+    modbus_gateway_set_alarm_manager(g_modbus, g_alarms);
+
     LOG_INFO("All components initialized successfully");
     return WTC_OK;
 }
@@ -282,6 +320,12 @@ static wtc_result_t start_components(void) {
         return res;
     }
 
+    res = modbus_gateway_start(g_modbus);
+    if (res != WTC_OK) {
+        LOG_ERROR("Failed to start Modbus gateway");
+        return res;
+    }
+
     LOG_INFO("All components started successfully");
     return WTC_OK;
 }
@@ -290,6 +334,7 @@ static wtc_result_t start_components(void) {
 static void stop_components(void) {
     LOG_INFO("Stopping components...");
 
+    if (g_modbus) modbus_gateway_stop(g_modbus);
     if (g_ipc) ipc_server_stop(g_ipc);
     if (g_historian) historian_stop(g_historian);
     if (g_alarms) alarm_manager_stop(g_alarms);
@@ -301,6 +346,7 @@ static void stop_components(void) {
 static void cleanup_components(void) {
     LOG_INFO("Cleaning up components...");
 
+    modbus_gateway_cleanup(g_modbus);
     ipc_server_cleanup(g_ipc);
     historian_cleanup(g_historian);
     alarm_manager_cleanup(g_alarms);
@@ -357,6 +403,9 @@ int main(int argc, char *argv[]) {
         /* Update IPC shared memory and process commands */
         ipc_server_update(g_ipc);
         ipc_server_process_commands(g_ipc);
+
+        /* Process Modbus gateway (poll downstream devices) */
+        modbus_gateway_process(g_modbus);
 
         /* Periodic status (every 10 seconds) */
         static uint64_t last_status_ms = 0;
