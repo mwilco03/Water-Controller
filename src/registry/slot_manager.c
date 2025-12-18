@@ -47,12 +47,14 @@ const measurement_info_t *get_measurement_info(measurement_type_t type) {
     return &measurement_info[sizeof(measurement_info) / sizeof(measurement_info[0]) - 1];
 }
 
-/* Create default slot configuration for sensors */
+/* Create slot configuration for sensors - any slot number allowed
+ * Slot assignment is dictated by RTU; controller adapts dynamically
+ */
 wtc_result_t create_sensor_slot_config(slot_config_t *slot,
                                         int slot_number,
                                         measurement_type_t type,
                                         const char *name) {
-    if (!slot || slot_number < 1 || slot_number > 8) {
+    if (!slot || slot_number < 0) {
         return WTC_ERROR_INVALID_PARAM;
     }
 
@@ -89,12 +91,14 @@ wtc_result_t create_sensor_slot_config(slot_config_t *slot,
     return WTC_OK;
 }
 
-/* Create default slot configuration for actuators */
+/* Create slot configuration for actuators - any slot number allowed
+ * Slot assignment is dictated by RTU; controller adapts dynamically
+ */
 wtc_result_t create_actuator_slot_config(slot_config_t *slot,
                                           int slot_number,
                                           actuator_type_t type,
                                           const char *name) {
-    if (!slot || slot_number < 9 || slot_number > 16) {
+    if (!slot || slot_number < 0) {
         return WTC_ERROR_INVALID_PARAM;
     }
 
@@ -121,7 +125,16 @@ wtc_result_t create_actuator_slot_config(slot_config_t *slot,
     return WTC_OK;
 }
 
-/* Create standard Water Treatment RTU configuration */
+/* LEGACY: Create default Water Treatment RTU configuration
+ *
+ * NOTE: This is a fallback template only. In production, the RTU dictates
+ * its own slot configuration and the controller adapts dynamically.
+ * RTU sends its configuration at connection time; this function is only
+ * used when no RTU configuration is available (simulation/testing).
+ *
+ * The actual slot layout depends entirely on how the RTU is configured.
+ * Sensors and actuators can be assigned to any slot number.
+ */
 wtc_result_t create_water_treatment_rtu_config(slot_config_t *slots, int *slot_count) {
     if (!slots || !slot_count) {
         return WTC_ERROR_INVALID_PARAM;
@@ -131,25 +144,25 @@ wtc_result_t create_water_treatment_rtu_config(slot_config_t *slots, int *slot_c
 
     /* Slot 0: DAP (Device Access Point) - implicit */
 
-    /* Sensor slots 1-8 */
-    create_sensor_slot_config(&slots[idx++], 1, MEASUREMENT_PH, "pH Sensor");
-    create_sensor_slot_config(&slots[idx++], 2, MEASUREMENT_TEMPERATURE, "Temperature");
-    create_sensor_slot_config(&slots[idx++], 3, MEASUREMENT_TURBIDITY, "Turbidity");
-    create_sensor_slot_config(&slots[idx++], 4, MEASUREMENT_TDS, "TDS");
-    create_sensor_slot_config(&slots[idx++], 5, MEASUREMENT_DISSOLVED_OXYGEN, "DO");
-    create_sensor_slot_config(&slots[idx++], 6, MEASUREMENT_FLOW_RATE, "Flow Rate");
-    create_sensor_slot_config(&slots[idx++], 7, MEASUREMENT_LEVEL, "Tank Level");
-    create_sensor_slot_config(&slots[idx++], 8, MEASUREMENT_PRESSURE, "Pressure");
+    /* Example sensor configuration - RTU dictates actual layout */
+    create_sensor_slot_config(&slots[idx++], 0, MEASUREMENT_PH, "pH Sensor");
+    create_sensor_slot_config(&slots[idx++], 1, MEASUREMENT_TEMPERATURE, "Temperature");
+    create_sensor_slot_config(&slots[idx++], 2, MEASUREMENT_TURBIDITY, "Turbidity");
+    create_sensor_slot_config(&slots[idx++], 3, MEASUREMENT_TDS, "TDS");
+    create_sensor_slot_config(&slots[idx++], 4, MEASUREMENT_DISSOLVED_OXYGEN, "DO");
+    create_sensor_slot_config(&slots[idx++], 5, MEASUREMENT_FLOW_RATE, "Flow Rate");
+    create_sensor_slot_config(&slots[idx++], 6, MEASUREMENT_LEVEL, "Tank Level");
+    create_sensor_slot_config(&slots[idx++], 7, MEASUREMENT_PRESSURE, "Pressure");
 
-    /* Actuator slots 9-16 */
-    create_actuator_slot_config(&slots[idx++], 9, ACTUATOR_PUMP, "Main Pump");
-    create_actuator_slot_config(&slots[idx++], 10, ACTUATOR_VALVE, "Inlet Valve");
-    create_actuator_slot_config(&slots[idx++], 11, ACTUATOR_VALVE, "Outlet Valve");
-    create_actuator_slot_config(&slots[idx++], 12, ACTUATOR_PWM, "Dosing Pump");
-    create_actuator_slot_config(&slots[idx++], 13, ACTUATOR_RELAY, "Aerator");
-    create_actuator_slot_config(&slots[idx++], 14, ACTUATOR_RELAY, "Heater");
-    create_actuator_slot_config(&slots[idx++], 15, ACTUATOR_RELAY, "Mixer");
-    create_actuator_slot_config(&slots[idx++], 16, ACTUATOR_RELAY, "Spare");
+    /* Example actuator configuration - RTU dictates actual layout */
+    create_actuator_slot_config(&slots[idx++], 8, ACTUATOR_PUMP, "Main Pump");
+    create_actuator_slot_config(&slots[idx++], 9, ACTUATOR_VALVE, "Inlet Valve");
+    create_actuator_slot_config(&slots[idx++], 10, ACTUATOR_VALVE, "Outlet Valve");
+    create_actuator_slot_config(&slots[idx++], 11, ACTUATOR_PWM, "Dosing Pump");
+    create_actuator_slot_config(&slots[idx++], 12, ACTUATOR_RELAY, "Aerator");
+    create_actuator_slot_config(&slots[idx++], 13, ACTUATOR_RELAY, "Heater");
+    create_actuator_slot_config(&slots[idx++], 14, ACTUATOR_RELAY, "Mixer");
+    create_actuator_slot_config(&slots[idx++], 15, ACTUATOR_RELAY, "Spare");
 
     *slot_count = idx;
     return WTC_OK;
