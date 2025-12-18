@@ -39,6 +39,8 @@ SHM_CMD_DCP_DISCOVER = 10
 SHM_CMD_I2C_DISCOVER = 11
 SHM_CMD_ONEWIRE_DISCOVER = 12
 SHM_CMD_CONFIGURE_SLOT = 13
+SHM_CMD_USER_SYNC = 14
+SHM_CMD_USER_SYNC_ALL = 15
 
 # Connection states
 CONN_STATE_IDLE = 0
@@ -723,6 +725,103 @@ class WtcShmClient:
         except Exception as e:
             logger.error(f"Failed to send slot config command: {e}")
             return False
+
+    # ============== User Sync Methods ==============
+
+    def sync_users_to_rtu(self, station_name: str, users: List[Dict[str, Any]]) -> bool:
+        """
+        Send user sync command to a specific RTU.
+
+        Users will be synced via PROFINET acyclic write to the RTU.
+        The RTU stores these users for local TUI authentication.
+
+        Args:
+            station_name: Target RTU station name
+            users: List of user dicts with username, password_hash, role, active
+
+        Returns:
+            True if command was sent successfully
+        """
+        if not self.mm:
+            logger.warning("Cannot sync users: shared memory not connected")
+            return False
+
+        if not users:
+            logger.info(f"No users to sync to {station_name}")
+            return True
+
+        logger.info(f"Syncing {len(users)} users to RTU {station_name}")
+        self._command_seq += 1
+
+        # Build command data
+        # Format: seq(4) + cmd_type(4) + station_name(64) + user_count(4) + users...
+        cmd_data = bytearray(4096)  # Large buffer for user data
+        struct.pack_into('II', cmd_data, 0, self._command_seq, SHM_CMD_USER_SYNC)
+
+        station_bytes = station_name.encode('utf-8')[:63]
+        struct.pack_into(f'{len(station_bytes)}s', cmd_data, 8, station_bytes)
+
+        user_count = min(len(users), 32)  # Max 32 users per sync
+        struct.pack_into('I', cmd_data, 72, user_count)
+
+        # Pack user records: username(32) + password_hash(64) + role(1) + flags(1)
+        offset = 76
+        for i in range(user_count):
+            user = users[i]
+            username = user.get('username', '')[:31].encode('utf-8')
+            password_hash = user.get('password_hash', '')[:63].encode('utf-8')
+            role = {'viewer': 0, 'operator': 1, 'engineer': 2, 'admin': 3}.get(user.get('role', 'viewer'), 0)
+            active = 1 if user.get('active', True) else 0
+            flags = active | 0x02  # Bit 1 = synced_from_controller
+
+            struct.pack_into(f'32s64sBB', cmd_data, offset,
+                            username.ljust(32, b'\x00'),
+                            password_hash.ljust(64, b'\x00'),
+                            role, flags)
+            offset += 98
+
+        try:
+            cmd_offset = ctypes.sizeof(WtcSharedMemory) - ctypes.sizeof(ShmCommand) - 8
+            self.mm.seek(cmd_offset)
+            self.mm.write(bytes(cmd_data[:512]))  # Command struct is limited
+            logger.debug(f"User sync command sent for {station_name}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to send user sync command: {e}")
+            return False
+
+    def sync_users_to_all_rtus(self, users: List[Dict[str, Any]]) -> int:
+        """
+        Send user sync command to all connected RTUs.
+
+        Args:
+            users: List of user dicts with username, password_hash, role, active
+
+        Returns:
+            Number of RTUs that received the sync command
+        """
+        if not self.mm:
+            logger.warning("Cannot sync users: shared memory not connected")
+            return 0
+
+        if not users:
+            logger.info("No users to sync")
+            return 0
+
+        # Get list of connected RTUs
+        rtus = self.get_rtus()
+        if not rtus:
+            logger.info("No RTUs available for user sync")
+            return 0
+
+        success_count = 0
+        for rtu in rtus:
+            if rtu.get('connection_state') == CONN_STATE_RUNNING:
+                if self.sync_users_to_rtu(rtu['station_name'], users):
+                    success_count += 1
+
+        logger.info(f"User sync sent to {success_count}/{len(rtus)} RTUs")
+        return success_count
 
 
 # Global client instance

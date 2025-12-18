@@ -171,6 +171,16 @@ typedef struct {
             int measurement_type;
             int actuator_type;
         } configure_slot_cmd;
+        struct {
+            char station_name[64];   /* Target RTU (empty = all RTUs) */
+            uint32_t user_count;
+            struct {
+                char username[32];
+                char password_hash[64];
+                uint8_t role;        /* 0=viewer, 1=operator, 2=engineer, 3=admin */
+                uint8_t flags;       /* Bit 0: active, Bit 1: synced_from_controller */
+            } users[USER_SYNC_MAX_USERS];
+        } user_sync_cmd;
     };
 } shm_command_t;
 
@@ -189,6 +199,11 @@ typedef struct {
 #define SHM_CMD_I2C_DISCOVER    11
 #define SHM_CMD_ONEWIRE_DISCOVER 12
 #define SHM_CMD_CONFIGURE_SLOT  13
+#define SHM_CMD_USER_SYNC       14
+#define SHM_CMD_USER_SYNC_ALL   15
+
+/* User sync constants */
+#define USER_SYNC_MAX_USERS     32
 
 /* Discovery result limits */
 #define WTC_MAX_DISCOVERY_DEVICES 32

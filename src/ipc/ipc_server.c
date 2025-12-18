@@ -10,6 +10,7 @@
 #include "control_engine.h"
 #include "dcp_discovery.h"
 #include "profinet_controller.h"
+#include "user/user_sync.h"
 #include "logger.h"
 #include "time_utils.h"
 
@@ -585,6 +586,109 @@ static wtc_result_t handle_configure_slot(ipc_server_t *server, shm_command_t *c
     return result;
 }
 
+/* Handle user sync command */
+static wtc_result_t handle_user_sync_command(ipc_server_t *server, shm_command_t *cmd) {
+    if (!server->profinet) {
+        LOG_ERROR(LOG_TAG, "User sync failed: PROFINET controller not initialized");
+        server->shm->command_result = WTC_ERROR_NOT_INITIALIZED;
+        return WTC_ERROR_NOT_INITIALIZED;
+    }
+
+    uint32_t user_count = cmd->user_sync_cmd.user_count;
+    if (user_count > USER_SYNC_MAX_USERS) {
+        user_count = USER_SYNC_MAX_USERS;
+    }
+
+    LOG_INFO(LOG_TAG, "User sync command: %d users to %s",
+             user_count,
+             cmd->user_sync_cmd.station_name[0] ? cmd->user_sync_cmd.station_name : "all RTUs");
+
+    /* Convert IPC user data to user_t array for sync module */
+    user_t users[USER_SYNC_MAX_USERS];
+    for (uint32_t i = 0; i < user_count; i++) {
+        memset(&users[i], 0, sizeof(user_t));
+        users[i].user_id = i + 1;
+        strncpy(users[i].username, cmd->user_sync_cmd.users[i].username,
+                WTC_MAX_USERNAME - 1);
+        strncpy(users[i].password_hash, cmd->user_sync_cmd.users[i].password_hash,
+                255);
+        users[i].role = (user_role_t)cmd->user_sync_cmd.users[i].role;
+        users[i].active = (cmd->user_sync_cmd.users[i].flags & 0x01) != 0;
+    }
+
+    /* Serialize users for PROFINET transfer */
+    user_sync_payload_t payload;
+    user_sync_result_t sync_result = user_sync_serialize(users, user_count, &payload);
+    if (sync_result != USER_SYNC_OK) {
+        LOG_ERROR(LOG_TAG, "Failed to serialize users: %d", sync_result);
+        server->shm->command_result = WTC_ERROR_INTERNAL;
+        return WTC_ERROR_INTERNAL;
+    }
+
+    size_t payload_size = sizeof(user_sync_header_t) +
+                          (payload.header.user_count * sizeof(user_sync_record_t));
+
+    wtc_result_t result = WTC_OK;
+
+    if (cmd->command_type == SHM_CMD_USER_SYNC && cmd->user_sync_cmd.station_name[0]) {
+        /* Sync to specific RTU */
+        result = profinet_controller_write_record(
+            server->profinet,
+            cmd->user_sync_cmd.station_name,
+            0,                          /* API */
+            0,                          /* Slot (DAP) */
+            1,                          /* Subslot */
+            USER_SYNC_RECORD_INDEX,     /* Index */
+            &payload,
+            payload_size
+        );
+
+        if (result == WTC_OK) {
+            LOG_INFO(LOG_TAG, "User sync to %s successful (%d users)",
+                     cmd->user_sync_cmd.station_name, user_count);
+        } else {
+            LOG_ERROR(LOG_TAG, "User sync to %s failed: %d",
+                      cmd->user_sync_cmd.station_name, result);
+        }
+    } else {
+        /* Sync to all RTUs */
+        int success_count = 0;
+        int total_count = 0;
+
+        if (server->registry) {
+            rtu_device_t *devices = NULL;
+            int device_count = 0;
+
+            if (rtu_registry_list_devices(server->registry, &devices, &device_count,
+                                           WTC_MAX_RTUS) == WTC_OK) {
+                for (int i = 0; i < device_count; i++) {
+                    if (devices[i].connection_state == PROFINET_STATE_RUNNING) {
+                        total_count++;
+                        wtc_result_t r = profinet_controller_write_record(
+                            server->profinet,
+                            devices[i].station_name,
+                            0, 0, 1,
+                            USER_SYNC_RECORD_INDEX,
+                            &payload,
+                            payload_size
+                        );
+                        if (r == WTC_OK) {
+                            success_count++;
+                        }
+                    }
+                }
+            }
+        }
+
+        LOG_INFO(LOG_TAG, "User sync to all RTUs: %d/%d successful (%d users)",
+                 success_count, total_count, user_count);
+        result = (success_count == total_count) ? WTC_OK : WTC_ERROR;
+    }
+
+    server->shm->command_result = result;
+    return result;
+}
+
 /* Process incoming commands */
 wtc_result_t ipc_server_process_commands(ipc_server_t *server) {
     if (!server || !server->running) return WTC_ERROR_NOT_INITIALIZED;
@@ -681,6 +785,12 @@ wtc_result_t ipc_server_process_commands(ipc_server_t *server) {
             /* Slot configuration */
             case SHM_CMD_CONFIGURE_SLOT:
                 handle_configure_slot(server, cmd);
+                break;
+
+            /* User sync commands */
+            case SHM_CMD_USER_SYNC:
+            case SHM_CMD_USER_SYNC_ALL:
+                handle_user_sync_command(server, cmd);
                 break;
 
             default:

@@ -2592,6 +2592,278 @@ async def update_ad_config(config: ADConfig):
     logger.info(f"AD configuration updated: server={config.server}, enabled={config.enabled}")
     return {"status": "ok", "message": "AD configuration updated"}
 
+# ============== User Management Endpoints ==============
+
+class UserCreate(BaseModel):
+    username: str
+    password: str
+    role: str = "viewer"
+    active: bool = True
+    sync_to_rtus: bool = True
+
+class UserUpdate(BaseModel):
+    password: Optional[str] = None
+    role: Optional[str] = None
+    active: Optional[bool] = None
+    sync_to_rtus: Optional[bool] = None
+
+class UserResponse(BaseModel):
+    id: int
+    username: str
+    role: str
+    active: bool
+    sync_to_rtus: bool
+    created_at: Optional[str] = None
+    last_login: Optional[str] = None
+
+class UserSyncRequest(BaseModel):
+    station_name: Optional[str] = None  # None = sync to all RTUs
+
+
+@app.get("/api/v1/users", response_model=List[UserResponse])
+async def list_users(include_inactive: bool = False, user: Dict = Depends(get_current_user)):
+    """
+    List all users.
+
+    Requires: Admin role
+    """
+    check_role(user, UserRole.ADMIN)
+
+    users = db.get_users(include_inactive=include_inactive)
+    return [UserResponse(
+        id=u['id'],
+        username=u['username'],
+        role=u['role'],
+        active=bool(u.get('active', True)),
+        sync_to_rtus=bool(u.get('sync_to_rtus', True)),
+        created_at=u.get('created_at'),
+        last_login=u.get('last_login')
+    ) for u in users]
+
+
+@app.get("/api/v1/users/{user_id}", response_model=UserResponse)
+async def get_user(user_id: int, user: Dict = Depends(get_current_user)):
+    """
+    Get a specific user.
+
+    Requires: Admin role
+    """
+    check_role(user, UserRole.ADMIN)
+
+    u = db.get_user(user_id)
+    if not u:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    return UserResponse(
+        id=u['id'],
+        username=u['username'],
+        role=u['role'],
+        active=bool(u.get('active', True)),
+        sync_to_rtus=bool(u.get('sync_to_rtus', True)),
+        created_at=u.get('created_at'),
+        last_login=u.get('last_login')
+    )
+
+
+@app.post("/api/v1/users", response_model=UserResponse)
+async def create_user(request: UserCreate, user: Dict = Depends(get_current_user)):
+    """
+    Create a new user.
+
+    Requires: Admin role
+
+    The user will be synced to all connected RTUs if sync_to_rtus is true.
+    """
+    check_role(user, UserRole.ADMIN)
+
+    # Check if username already exists
+    existing = db.get_user_by_username(request.username)
+    if existing:
+        raise HTTPException(status_code=409, detail="Username already exists")
+
+    # Validate role
+    valid_roles = ['viewer', 'operator', 'engineer', 'admin']
+    if request.role not in valid_roles:
+        raise HTTPException(status_code=400, detail=f"Invalid role. Must be one of: {valid_roles}")
+
+    user_id = db.create_user({
+        'username': request.username,
+        'password': request.password,
+        'role': request.role,
+        'active': request.active,
+        'sync_to_rtus': request.sync_to_rtus
+    })
+
+    # Trigger sync to RTUs if enabled
+    if request.sync_to_rtus:
+        await _trigger_user_sync()
+
+    u = db.get_user(user_id)
+    return UserResponse(
+        id=u['id'],
+        username=u['username'],
+        role=u['role'],
+        active=bool(u.get('active', True)),
+        sync_to_rtus=bool(u.get('sync_to_rtus', True)),
+        created_at=u.get('created_at'),
+        last_login=u.get('last_login')
+    )
+
+
+@app.put("/api/v1/users/{user_id}", response_model=UserResponse)
+async def update_user(user_id: int, request: UserUpdate, user: Dict = Depends(get_current_user)):
+    """
+    Update a user.
+
+    Requires: Admin role
+
+    If any user settings change, the user list will be synced to RTUs.
+    """
+    check_role(user, UserRole.ADMIN)
+
+    existing = db.get_user(user_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # Validate role if provided
+    if request.role:
+        valid_roles = ['viewer', 'operator', 'engineer', 'admin']
+        if request.role not in valid_roles:
+            raise HTTPException(status_code=400, detail=f"Invalid role. Must be one of: {valid_roles}")
+
+    update_data = {}
+    if request.password:
+        update_data['password'] = request.password
+    if request.role is not None:
+        update_data['role'] = request.role
+    if request.active is not None:
+        update_data['active'] = request.active
+    if request.sync_to_rtus is not None:
+        update_data['sync_to_rtus'] = request.sync_to_rtus
+
+    if update_data:
+        db.update_user(user_id, update_data)
+        # Trigger sync to RTUs
+        await _trigger_user_sync()
+
+    u = db.get_user(user_id)
+    return UserResponse(
+        id=u['id'],
+        username=u['username'],
+        role=u['role'],
+        active=bool(u.get('active', True)),
+        sync_to_rtus=bool(u.get('sync_to_rtus', True)),
+        created_at=u.get('created_at'),
+        last_login=u.get('last_login')
+    )
+
+
+@app.delete("/api/v1/users/{user_id}")
+async def delete_user(user_id: int, user: Dict = Depends(get_current_user)):
+    """
+    Delete a user.
+
+    Requires: Admin role
+
+    The user will be removed from the RTU user lists on next sync.
+    """
+    check_role(user, UserRole.ADMIN)
+
+    existing = db.get_user(user_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # Don't allow deleting the last admin
+    if existing['role'] == 'admin':
+        admins = [u for u in db.get_users() if u['role'] == 'admin']
+        if len(admins) <= 1:
+            raise HTTPException(status_code=400, detail="Cannot delete the last admin user")
+
+    db.delete_user(user_id)
+
+    # Trigger sync to RTUs to remove user
+    await _trigger_user_sync()
+
+    return {"status": "ok", "message": f"User {existing['username']} deleted"}
+
+
+@app.post("/api/v1/users/sync")
+async def sync_users_to_rtus(request: UserSyncRequest, user: Dict = Depends(get_current_user)):
+    """
+    Manually trigger user sync to RTUs.
+
+    Requires: Admin role
+
+    If station_name is provided, only that RTU will be synced.
+    Otherwise, all connected RTUs will be synced.
+    """
+    check_role(user, UserRole.ADMIN)
+
+    users_to_sync = db.get_users_for_sync()
+    if not users_to_sync:
+        return {"status": "ok", "message": "No users to sync", "synced_rtus": 0}
+
+    client = get_shm_client()
+    if not client:
+        raise HTTPException(status_code=503, detail="Controller not running")
+
+    if request.station_name:
+        # Sync to specific RTU
+        success = await _sync_users_to_rtu(client, request.station_name, users_to_sync)
+        return {
+            "status": "ok" if success else "error",
+            "message": f"Synced {len(users_to_sync)} users to {request.station_name}",
+            "synced_rtus": 1 if success else 0
+        }
+    else:
+        # Sync to all RTUs
+        count = await _sync_users_to_all_rtus(client, users_to_sync)
+        return {
+            "status": "ok",
+            "message": f"Synced {len(users_to_sync)} users to {count} RTUs",
+            "synced_rtus": count
+        }
+
+
+async def _trigger_user_sync():
+    """Trigger user sync to all RTUs (called after user changes)"""
+    client = get_shm_client()
+    if not client:
+        logger.warning("Cannot sync users: controller not running")
+        return
+
+    users_to_sync = db.get_users_for_sync()
+    if users_to_sync:
+        await _sync_users_to_all_rtus(client, users_to_sync)
+
+
+async def _sync_users_to_rtu(client, station_name: str, users: List[Dict]) -> bool:
+    """Sync users to a specific RTU via IPC command"""
+    try:
+        # The actual sync happens in the C controller via IPC
+        # We send a user sync command with serialized user data
+        success = client.sync_users_to_rtu(station_name, users)
+        if success:
+            logger.info(f"User sync to {station_name} initiated: {len(users)} users")
+        else:
+            logger.error(f"Failed to initiate user sync to {station_name}")
+        return success
+    except Exception as e:
+        logger.error(f"User sync error: {e}")
+        return False
+
+
+async def _sync_users_to_all_rtus(client, users: List[Dict]) -> int:
+    """Sync users to all connected RTUs"""
+    try:
+        count = client.sync_users_to_all_rtus(users)
+        logger.info(f"User sync initiated to {count} RTUs: {len(users)} users")
+        return count
+    except Exception as e:
+        logger.error(f"User sync error: {e}")
+        return 0
+
+
 # ============== Log Forwarding Endpoints ==============
 
 @app.get("/api/v1/logging/config", response_model=LogForwardingConfig)
