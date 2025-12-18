@@ -313,14 +313,12 @@ class NetworkScanConfig(BaseModel):
 # In-memory scan configuration (would be persisted in production)
 network_scan_config = NetworkScanConfig()
 last_scan_result: Optional[NetworkScanResult] = None
+scan_task: Optional[asyncio.Task] = None  # Background scan task
 
-@app.post("/api/v1/network/scan", response_model=NetworkScanResult)
-async def scan_network():
+async def _perform_network_scan() -> NetworkScanResult:
     """
-    Manually trigger a network scan for PROFINET RTUs.
-
-    Uses DCP (Discovery and Configuration Protocol) to find
-    all PROFINET devices on the network segment.
+    Internal function to perform network scan.
+    Used by both manual and automatic scanning.
     """
     import time
     global last_scan_result
@@ -376,11 +374,72 @@ async def scan_network():
     )
 
     last_scan_result = result
-    logger.info(f"Network scan complete: {len(discovered)} devices found, {new_count} new")
+
+    # Auto-register new devices if enabled
+    if network_scan_config.auto_register and new_count > 0:
+        for device in discovered:
+            if not device.already_registered:
+                try:
+                    # Create RTU from discovered device
+                    new_rtu = RTUDevice(
+                        station_name=device.station_name,
+                        ip_address=device.ip_address,
+                        vendor_id=device.vendor_id,
+                        device_id=device.device_id,
+                        connection_state="OFFLINE",
+                        slot_count=16
+                    )
+                    fallback_rtus[device.station_name] = new_rtu
+                    logger.info(f"Auto-registered new RTU: {device.station_name}")
+                except Exception as e:
+                    logger.error(f"Failed to auto-register {device.station_name}: {e}")
+
+    return result
+
+async def _background_scan_loop():
+    """Background task that performs periodic network scans"""
+    logger.info("Background network scan task started")
+    while True:
+        try:
+            if network_scan_config.auto_scan_enabled:
+                logger.debug(f"Running scheduled network scan (interval: {network_scan_config.scan_interval_seconds}s)")
+                result = await _perform_network_scan()
+                logger.info(f"Scheduled scan complete: {result.devices_found} devices, {result.new_devices} new")
+
+                await broadcast_event("network_scan_complete", {
+                    "devices_found": result.devices_found,
+                    "new_devices": result.new_devices,
+                    "scheduled": True
+                })
+
+            # Wait for the configured interval
+            await asyncio.sleep(network_scan_config.scan_interval_seconds)
+
+        except asyncio.CancelledError:
+            logger.info("Background network scan task cancelled")
+            break
+        except Exception as e:
+            logger.error(f"Error in background scan: {e}")
+            await asyncio.sleep(60)  # Wait before retrying on error
+
+@app.post("/api/v1/network/scan", response_model=NetworkScanResult)
+async def scan_network():
+    """
+    Manually trigger a network scan for PROFINET RTUs.
+
+    Uses DCP (Discovery and Configuration Protocol) to find
+    all PROFINET devices on the network segment.
+
+    This is an on-demand scan - for continuous scanning,
+    configure auto_scan_enabled via PUT /api/v1/network/scan/config
+    """
+    result = await _perform_network_scan()
+    logger.info(f"Manual network scan complete: {result.devices_found} devices found, {result.new_devices} new")
 
     await broadcast_event("network_scan_complete", {
-        "devices_found": len(discovered),
-        "new_devices": new_count
+        "devices_found": result.devices_found,
+        "new_devices": result.new_devices,
+        "scheduled": False
     })
 
     return result
@@ -395,6 +454,15 @@ async def get_scan_config():
     """Get network scan configuration"""
     return network_scan_config
 
+@app.get("/api/v1/network/scan/status")
+async def get_scan_status():
+    """Get current network scan status including background task state"""
+    return {
+        "config": network_scan_config.dict(),
+        "background_task_running": scan_task is not None and not scan_task.done(),
+        "last_scan": last_scan_result.dict() if last_scan_result else None
+    }
+
 @app.put("/api/v1/network/scan/config")
 async def update_scan_config(config: NetworkScanConfig):
     """
@@ -402,16 +470,34 @@ async def update_scan_config(config: NetworkScanConfig):
 
     Set auto_scan_enabled=true to enable periodic scanning.
     scan_interval_seconds controls how often (minimum 60 seconds).
+    auto_register=true will automatically add discovered RTUs.
+
+    The background scan task runs continuously - when auto_scan_enabled
+    is true, it performs scans at the configured interval. When false,
+    it still runs but skips the actual scanning.
     """
     global network_scan_config
 
     if config.scan_interval_seconds < 60:
         raise HTTPException(status_code=400, detail="Scan interval must be at least 60 seconds")
 
+    old_enabled = network_scan_config.auto_scan_enabled
     network_scan_config = config
-    logger.info(f"Network scan config updated: auto={config.auto_scan_enabled}, interval={config.scan_interval_seconds}s")
 
-    return {"status": "ok"}
+    # Log state change
+    if config.auto_scan_enabled and not old_enabled:
+        logger.info(f"Continuous network scanning ENABLED (interval: {config.scan_interval_seconds}s)")
+    elif not config.auto_scan_enabled and old_enabled:
+        logger.info("Continuous network scanning DISABLED")
+    else:
+        logger.info(f"Network scan config updated: auto={config.auto_scan_enabled}, interval={config.scan_interval_seconds}s")
+
+    return {
+        "status": "ok",
+        "auto_scan_enabled": config.auto_scan_enabled,
+        "scan_interval_seconds": config.scan_interval_seconds,
+        "auto_register": config.auto_register
+    }
 
 class RTUCreateRequest(BaseModel):
     """Request model for creating a new RTU"""
@@ -2258,6 +2344,8 @@ async def broadcast_event(event_type: str, data: Dict[str, Any]):
 @app.on_event("startup")
 async def startup_event():
     """Initialize on startup"""
+    global scan_task
+
     # Try to connect to shared memory
     if SHM_AVAILABLE:
         client = get_client()
@@ -2270,7 +2358,27 @@ async def startup_event():
         logger.warning("Shared memory client not available, using fallback mode")
         init_fallback_data()
 
+    # Start background network scan task
+    scan_task = asyncio.create_task(_background_scan_loop())
+    logger.info("Background network scan task initialized (disabled by default)")
+
     logger.info("Water Treatment Controller API started")
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Cleanup on shutdown"""
+    global scan_task
+
+    # Cancel background scan task
+    if scan_task and not scan_task.done():
+        scan_task.cancel()
+        try:
+            await scan_task
+        except asyncio.CancelledError:
+            pass
+        logger.info("Background network scan task stopped")
+
+    logger.info("Water Treatment Controller API stopped")
 
 def init_fallback_data():
     """Initialize sample data for fallback mode"""
