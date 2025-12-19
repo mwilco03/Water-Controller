@@ -109,6 +109,9 @@ typedef struct {
     char description[64];
 } shm_onewire_device_t;
 
+/* User sync constants - must be defined before use in structs */
+#define USER_SYNC_MAX_USERS     32
+
 /* Command structure for write operations */
 typedef struct {
     uint32_t sequence;
@@ -201,9 +204,6 @@ typedef struct {
 #define SHM_CMD_CONFIGURE_SLOT  13
 #define SHM_CMD_USER_SYNC       14
 #define SHM_CMD_USER_SYNC_ALL   15
-
-/* User sync constants */
-#define USER_SYNC_MAX_USERS     32
 
 /* Discovery result limits */
 #define WTC_MAX_DISCOVERY_DEVICES 32

@@ -1,0 +1,201 @@
+name: Create Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  BUILD_TYPE: Release
+
+jobs:
+  build:
+    name: Build ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: x86_64
+            arch: x86_64
+            toolchain: ""
+            packages: ""
+            cross: false
+
+          - name: aarch64
+            arch: aarch64
+            toolchain: cmake/toolchain-aarch64.cmake
+            packages: gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+            cross: true
+
+          - name: armhf
+            arch: armhf
+            toolchain: cmake/toolchain-arm.cmake
+            packages: gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf
+            cross: true
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          if [ "${{ matrix.cross }}" = "true" ]; then
+            sudo apt-get install -y cmake pkg-config ${{ matrix.packages }}
+          else
+            sudo apt-get install -y \
+              build-essential cmake pkg-config \
+              libpq-dev libjson-c-dev \
+              libsqlite3-dev libcurl4-openssl-dev
+          fi
+
+      - name: Configure CMake
+        run: |
+          if [ "${{ matrix.cross }}" = "true" ]; then
+            cmake -B build \
+              -DCMAKE_TOOLCHAIN_FILE=${{ matrix.toolchain }} \
+              -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+              -DBUILD_TESTS=OFF
+          else
+            cmake -B build \
+              -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+              -DBUILD_TESTS=ON
+          fi
+
+      - name: Build
+        run: cmake --build build --parallel $(nproc)
+
+      - name: Run Tests (native only)
+        if: matrix.cross == false
+        run: cd build && ctest --output-on-failure
+
+      - name: Package
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          mkdir -p release/water-controller-${{ matrix.arch }}
+
+          # Copy binary
+          cp build/water_treat_controller release/water-controller-${{ matrix.arch }}/
+
+          # Copy shared libraries if they exist
+          cp build/lib*.so* release/water-controller-${{ matrix.arch }}/ 2>/dev/null || true
+
+          # Copy scripts
+          cp -r scripts release/water-controller-${{ matrix.arch }}/ 2>/dev/null || true
+
+          # Copy documentation
+          cp README.md release/water-controller-${{ matrix.arch }}/ 2>/dev/null || true
+          cp LICENSE release/water-controller-${{ matrix.arch }}/ 2>/dev/null || true
+          cp -r docs release/water-controller-${{ matrix.arch }}/ 2>/dev/null || true
+
+          # Copy systemd service file if it exists
+          if [ -f scripts/water-controller.service ]; then
+            cp scripts/water-controller.service release/water-controller-${{ matrix.arch }}/
+          fi
+
+          # Strip binaries for cross-compiled builds
+          if [ "${{ matrix.cross }}" = "true" ]; then
+            case "${{ matrix.arch }}" in
+              aarch64) aarch64-linux-gnu-strip release/water-controller-${{ matrix.arch }}/water_treat_controller || true ;;
+              armhf) arm-linux-gnueabihf-strip release/water-controller-${{ matrix.arch }}/water_treat_controller || true ;;
+            esac
+          else
+            strip release/water-controller-${{ matrix.arch }}/water_treat_controller || true
+          fi
+
+          # Create tarball
+          cd release
+          tar czf water-controller-${VERSION}-${{ matrix.arch }}.tar.gz water-controller-${{ matrix.arch }}
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: water-controller-${{ matrix.arch }}
+          path: release/*.tar.gz
+
+  release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare release files
+        run: |
+          mkdir -p release
+          find artifacts -name "*.tar.gz" -exec cp {} release/ \;
+          ls -la release/
+
+      - name: Generate checksums
+        run: |
+          cd release
+          sha256sum *.tar.gz > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Generate release notes
+        id: release_notes
+        run: |
+          VERSION=${GITHUB_REF_NAME}
+
+          # Get previous tag
+          PREV_TAG=$(git describe --tags --abbrev=0 ${VERSION}^ 2>/dev/null || echo "")
+
+          # Generate changelog
+          if [ -n "$PREV_TAG" ]; then
+            CHANGELOG=$(git log ${PREV_TAG}..${VERSION} --pretty=format:"- %s (%h)" --no-merges)
+          else
+            CHANGELOG=$(git log --pretty=format:"- %s (%h)" --no-merges -20)
+          fi
+
+          # Write release notes to file
+          cat > release_notes.md << EOF
+          ## Water Treatment Controller ${VERSION}
+
+          ### Changes
+
+          ${CHANGELOG}
+
+          ### Downloads
+
+          | Platform | Architecture | File |
+          |----------|-------------|------|
+          | Linux x86_64 | Intel/AMD 64-bit | \`water-controller-*-x86_64.tar.gz\` |
+          | Linux ARM64 | Raspberry Pi 4/5, Orange Pi 5 | \`water-controller-*-aarch64.tar.gz\` |
+          | Linux ARMhf | Raspberry Pi 3, Orange Pi Zero | \`water-controller-*-armhf.tar.gz\` |
+
+          ### Installation
+
+          \`\`\`bash
+          # Extract
+          tar xzf water-controller-<version>-<arch>.tar.gz
+          cd water-controller-<arch>
+
+          # Install (optional)
+          sudo ./scripts/install.sh
+          \`\`\`
+
+          ### Checksums
+
+          See \`SHA256SUMS.txt\` for file integrity verification.
+          EOF
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          draft: false
+          prerelease: ${{ contains(github.ref, '-rc') || contains(github.ref, '-beta') || contains(github.ref, '-alpha') }}
+          generate_release_notes: true
+          body_path: release_notes.md
+          files: |
+            release/*.tar.gz
+            release/SHA256SUMS.txt
