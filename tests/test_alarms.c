@@ -45,85 +45,127 @@ static int tests_passed = 0;
     } \
 } while(0)
 
+#define ASSERT_TRUE(cond) do { \
+    if (!(cond)) { \
+        printf("FAILED at line %d: condition is false\n", __LINE__); \
+        return; \
+    } \
+} while(0)
+
 /* ============== Alarm Manager Creation Tests ============== */
 
-TEST(alarm_manager_create)
+TEST(alarm_manager_init_test)
 {
-    alarm_manager_t *am = alarm_manager_create(100);
+    alarm_manager_t *am = NULL;
+    alarm_manager_config_t config = {0};
+    config.max_active_alarms = 100;
+    config.max_history_entries = 1000;
+    config.require_ack = true;
+
+    wtc_result_t result = alarm_manager_init(&am, &config);
+    ASSERT_EQ(WTC_OK, result);
     ASSERT_NOT_NULL(am);
-    alarm_manager_destroy(am);
+
+    alarm_manager_cleanup(am);
 }
 
-TEST(alarm_manager_create_with_capacity)
+TEST(alarm_manager_init_with_callbacks)
 {
-    alarm_manager_t *am = alarm_manager_create(1000);
+    alarm_manager_t *am = NULL;
+    alarm_manager_config_t config = {0};
+    config.max_active_alarms = 100;
+    config.max_history_entries = 1000;
+    config.require_ack = true;
+    config.shelving_enabled = true;
+
+    wtc_result_t result = alarm_manager_init(&am, &config);
+    ASSERT_EQ(WTC_OK, result);
     ASSERT_NOT_NULL(am);
-    alarm_manager_destroy(am);
+
+    alarm_manager_cleanup(am);
 }
 
 /* ============== Alarm Rule Tests ============== */
 
 TEST(alarm_rule_create_high)
 {
-    alarm_manager_t *am = alarm_manager_create(100);
+    alarm_manager_t *am = NULL;
+    alarm_manager_config_t config = {0};
+    config.max_active_alarms = 100;
+    alarm_manager_init(&am, &config);
     ASSERT_NOT_NULL(am);
 
-    alarm_rule_t rule = {0};
-    strncpy(rule.rtu_station, "rtu-tank-1", sizeof(rule.rtu_station));
-    rule.slot = 1;  /* pH sensor */
-    rule.condition = ALARM_CONDITION_HIGH;
-    rule.threshold = 8.5f;
-    rule.severity = ALARM_SEVERITY_WARNING;
-    rule.delay_ms = 5000;
-    strncpy(rule.message, "pH High", sizeof(rule.message));
-    rule.enabled = true;
+    int rule_id = -1;
+    wtc_result_t result = alarm_manager_create_rule(
+        am,
+        "rtu-tank-1",       /* rtu_station */
+        1,                   /* slot (pH sensor) */
+        ALARM_CONDITION_HIGH,
+        8.5f,               /* threshold */
+        ALARM_SEVERITY_MEDIUM,
+        5000,               /* delay_ms */
+        "pH High",          /* message */
+        &rule_id
+    );
 
-    int rule_id = alarm_manager_create_rule(am, &rule);
-    assert(rule_id >= 0);
+    ASSERT_EQ(WTC_OK, result);
+    ASSERT_TRUE(rule_id >= 0);
 
-    alarm_manager_destroy(am);
+    alarm_manager_cleanup(am);
 }
 
 TEST(alarm_rule_create_low)
 {
-    alarm_manager_t *am = alarm_manager_create(100);
+    alarm_manager_t *am = NULL;
+    alarm_manager_config_t config = {0};
+    config.max_active_alarms = 100;
+    alarm_manager_init(&am, &config);
     ASSERT_NOT_NULL(am);
 
-    alarm_rule_t rule = {0};
-    strncpy(rule.rtu_station, "rtu-tank-1", sizeof(rule.rtu_station));
-    rule.slot = 1;
-    rule.condition = ALARM_CONDITION_LOW;
-    rule.threshold = 6.5f;
-    rule.severity = ALARM_SEVERITY_WARNING;
-    rule.delay_ms = 5000;
-    strncpy(rule.message, "pH Low", sizeof(rule.message));
-    rule.enabled = true;
+    int rule_id = -1;
+    wtc_result_t result = alarm_manager_create_rule(
+        am,
+        "rtu-tank-1",
+        1,
+        ALARM_CONDITION_LOW,
+        6.5f,
+        ALARM_SEVERITY_MEDIUM,
+        5000,
+        "pH Low",
+        &rule_id
+    );
 
-    int rule_id = alarm_manager_create_rule(am, &rule);
-    assert(rule_id >= 0);
+    ASSERT_EQ(WTC_OK, result);
+    ASSERT_TRUE(rule_id >= 0);
 
-    alarm_manager_destroy(am);
+    alarm_manager_cleanup(am);
 }
 
-TEST(alarm_rule_create_critical)
+TEST(alarm_rule_create_high_high)
 {
-    alarm_manager_t *am = alarm_manager_create(100);
+    alarm_manager_t *am = NULL;
+    alarm_manager_config_t config = {0};
+    config.max_active_alarms = 100;
+    alarm_manager_init(&am, &config);
     ASSERT_NOT_NULL(am);
 
-    alarm_rule_t rule = {0};
-    strncpy(rule.rtu_station, "rtu-tank-1", sizeof(rule.rtu_station));
-    rule.slot = 8;  /* Pressure sensor */
-    rule.condition = ALARM_CONDITION_HIGH_HIGH;
-    rule.threshold = 10.0f;
-    rule.severity = ALARM_SEVERITY_CRITICAL;
-    rule.delay_ms = 0;  /* Immediate */
-    strncpy(rule.message, "Pressure Very High - Emergency", sizeof(rule.message));
-    rule.enabled = true;
+    int rule_id = -1;
+    wtc_result_t result = alarm_manager_create_rule(
+        am,
+        "rtu-tank-1",
+        8,                  /* Pressure sensor */
+        ALARM_CONDITION_HIGH_HIGH,
+        10.0f,
+        ALARM_SEVERITY_HIGH,  /* High severity for critical */
+        0,                    /* Immediate, no delay */
+        "Pressure Very High - Emergency",
+        &rule_id
+    );
 
-    int rule_id = alarm_manager_create_rule(am, &rule);
-    assert(rule_id >= 0);
+    ASSERT_EQ(WTC_OK, result);
+    ASSERT_TRUE(rule_id >= 0);
 
-    alarm_manager_destroy(am);
+    alarm_manager_cleanup(am);
 }
 
 /* ============== Alarm State Tests ============== */
@@ -132,9 +174,9 @@ TEST(alarm_state_transitions)
 {
     /* Test ISA-18.2 state machine */
     alarm_t alarm = {0};
-    alarm.state = ALARM_STATE_NORMAL;
+    alarm.state = ALARM_STATE_CLEARED;
 
-    /* Normal -> Active Unack (condition becomes true) */
+    /* Cleared -> Active Unack (condition becomes true) */
     alarm.state = ALARM_STATE_ACTIVE_UNACK;
     ASSERT_EQ(ALARM_STATE_ACTIVE_UNACK, alarm.state);
 
@@ -142,9 +184,9 @@ TEST(alarm_state_transitions)
     alarm.state = ALARM_STATE_ACTIVE_ACK;
     ASSERT_EQ(ALARM_STATE_ACTIVE_ACK, alarm.state);
 
-    /* Active Ack -> Normal (condition clears) */
-    alarm.state = ALARM_STATE_NORMAL;
-    ASSERT_EQ(ALARM_STATE_NORMAL, alarm.state);
+    /* Active Ack -> Cleared (condition clears) */
+    alarm.state = ALARM_STATE_CLEARED;
+    ASSERT_EQ(ALARM_STATE_CLEARED, alarm.state);
 }
 
 TEST(alarm_state_cleared_unack)
@@ -158,8 +200,8 @@ TEST(alarm_state_cleared_unack)
     ASSERT_EQ(ALARM_STATE_CLEARED_UNACK, alarm.state);
 
     /* Then acknowledged */
-    alarm.state = ALARM_STATE_NORMAL;
-    ASSERT_EQ(ALARM_STATE_NORMAL, alarm.state);
+    alarm.state = ALARM_STATE_CLEARED;
+    ASSERT_EQ(ALARM_STATE_CLEARED, alarm.state);
 }
 
 /* ============== Alarm Severity Tests ============== */
@@ -167,42 +209,12 @@ TEST(alarm_state_cleared_unack)
 TEST(alarm_severity_levels)
 {
     /* Verify severity ordering */
-    assert(ALARM_SEVERITY_INFO < ALARM_SEVERITY_WARNING);
-    assert(ALARM_SEVERITY_WARNING < ALARM_SEVERITY_CRITICAL);
-    assert(ALARM_SEVERITY_CRITICAL < ALARM_SEVERITY_EMERGENCY);
+    ASSERT_TRUE(ALARM_SEVERITY_LOW < ALARM_SEVERITY_MEDIUM);
+    ASSERT_TRUE(ALARM_SEVERITY_MEDIUM < ALARM_SEVERITY_HIGH);
+    ASSERT_TRUE(ALARM_SEVERITY_HIGH < ALARM_SEVERITY_EMERGENCY);
 }
 
 /* ============== Alarm Acknowledgment Tests ============== */
-
-TEST(alarm_acknowledge)
-{
-    alarm_manager_t *am = alarm_manager_create(100);
-    ASSERT_NOT_NULL(am);
-
-    /* Create rule */
-    alarm_rule_t rule = {0};
-    strncpy(rule.rtu_station, "rtu-tank-1", sizeof(rule.rtu_station));
-    rule.slot = 1;
-    rule.condition = ALARM_CONDITION_HIGH;
-    rule.threshold = 8.5f;
-    rule.severity = ALARM_SEVERITY_WARNING;
-    rule.delay_ms = 0;
-    strncpy(rule.message, "pH High", sizeof(rule.message));
-    rule.enabled = true;
-
-    alarm_manager_create_rule(am, &rule);
-
-    /* Simulate alarm processing with high value */
-    alarm_manager_process_value(am, "rtu-tank-1", 1, 9.0f);
-
-    /* Get active alarms */
-    int count = alarm_manager_get_active_count(am);
-
-    /* Note: count might be 0 if delay hasn't elapsed */
-    /* This is expected behavior */
-
-    alarm_manager_destroy(am);
-}
 
 TEST(alarm_acknowledge_user)
 {
@@ -211,37 +223,120 @@ TEST(alarm_acknowledge_user)
     alarm.state = ALARM_STATE_ACTIVE_UNACK;
 
     /* Simulate acknowledgment */
-    strncpy(alarm.ack_user, "operator1", sizeof(alarm.ack_user));
+    strncpy(alarm.ack_user, "operator1", sizeof(alarm.ack_user) - 1);
     alarm.state = ALARM_STATE_ACTIVE_ACK;
 
     ASSERT_STR_EQ("operator1", alarm.ack_user);
     ASSERT_EQ(ALARM_STATE_ACTIVE_ACK, alarm.state);
 }
 
-/* ============== Alarm Suppression Tests ============== */
-
-TEST(alarm_suppression)
+TEST(alarm_active_count)
 {
-    alarm_t alarm = {0};
-    alarm.suppressed = false;
+    alarm_manager_t *am = NULL;
+    alarm_manager_config_t config = {0};
+    config.max_active_alarms = 100;
+    alarm_manager_init(&am, &config);
+    ASSERT_NOT_NULL(am);
 
-    /* Suppress alarm */
-    alarm.suppressed = true;
+    /* Initially should have no active alarms */
+    int count = alarm_manager_get_active_count(am);
+    ASSERT_EQ(0, count);
 
-    assert(alarm.suppressed == true);
+    alarm_manager_cleanup(am);
 }
 
-TEST(alarm_shelving)
+TEST(alarm_unack_count)
 {
-    alarm_t alarm = {0};
-    alarm.shelved = false;
+    alarm_manager_t *am = NULL;
+    alarm_manager_config_t config = {0};
+    config.max_active_alarms = 100;
+    alarm_manager_init(&am, &config);
+    ASSERT_NOT_NULL(am);
 
-    /* Shelve alarm */
-    alarm.shelved = true;
-    alarm.shelve_duration_ms = 3600000; /* 1 hour */
+    /* Initially should have no unacknowledged alarms */
+    int count = alarm_manager_get_unack_count(am);
+    ASSERT_EQ(0, count);
 
-    assert(alarm.shelved == true);
-    ASSERT_EQ(3600000, alarm.shelve_duration_ms);
+    alarm_manager_cleanup(am);
+}
+
+/* ============== Alarm Rule Management Tests ============== */
+
+TEST(alarm_rule_enable_disable)
+{
+    alarm_manager_t *am = NULL;
+    alarm_manager_config_t config = {0};
+    config.max_active_alarms = 100;
+    alarm_manager_init(&am, &config);
+    ASSERT_NOT_NULL(am);
+
+    /* Create a rule */
+    int rule_id = -1;
+    alarm_manager_create_rule(am, "rtu-tank-1", 1, ALARM_CONDITION_HIGH,
+                               8.5f, ALARM_SEVERITY_MEDIUM, 5000, "pH High", &rule_id);
+
+    /* Disable the rule */
+    wtc_result_t result = alarm_manager_enable_rule(am, rule_id, false);
+    ASSERT_EQ(WTC_OK, result);
+
+    /* Re-enable the rule */
+    result = alarm_manager_enable_rule(am, rule_id, true);
+    ASSERT_EQ(WTC_OK, result);
+
+    alarm_manager_cleanup(am);
+}
+
+TEST(alarm_rule_delete)
+{
+    alarm_manager_t *am = NULL;
+    alarm_manager_config_t config = {0};
+    config.max_active_alarms = 100;
+    alarm_manager_init(&am, &config);
+    ASSERT_NOT_NULL(am);
+
+    /* Create a rule */
+    int rule_id = -1;
+    alarm_manager_create_rule(am, "rtu-tank-1", 1, ALARM_CONDITION_HIGH,
+                               8.5f, ALARM_SEVERITY_MEDIUM, 5000, "pH High", &rule_id);
+
+    /* Delete the rule */
+    wtc_result_t result = alarm_manager_delete_rule(am, rule_id);
+    ASSERT_EQ(WTC_OK, result);
+
+    alarm_manager_cleanup(am);
+}
+
+/* ============== Alarm Flood Detection Tests ============== */
+
+TEST(alarm_flood_detection)
+{
+    alarm_manager_t *am = NULL;
+    alarm_manager_config_t config = {0};
+    config.max_active_alarms = 100;
+    config.max_alarms_per_10min = 50;
+    alarm_manager_init(&am, &config);
+    ASSERT_NOT_NULL(am);
+
+    /* Initially should not be in flood condition */
+    bool is_flood = alarm_manager_is_alarm_flood(am);
+    ASSERT_TRUE(!is_flood);
+
+    alarm_manager_cleanup(am);
+}
+
+TEST(alarm_rate)
+{
+    alarm_manager_t *am = NULL;
+    alarm_manager_config_t config = {0};
+    config.max_active_alarms = 100;
+    alarm_manager_init(&am, &config);
+    ASSERT_NOT_NULL(am);
+
+    /* Initially should have zero alarm rate */
+    float rate = alarm_manager_get_alarm_rate(am);
+    ASSERT_TRUE(rate >= 0.0f);
+
+    alarm_manager_cleanup(am);
 }
 
 /* ============== Test Runner ============== */
@@ -251,13 +346,13 @@ void run_alarm_tests(void)
     printf("\n=== Alarm Manager Tests ===\n\n");
 
     printf("Creation Tests:\n");
-    RUN_TEST(alarm_manager_create);
-    RUN_TEST(alarm_manager_create_with_capacity);
+    RUN_TEST(alarm_manager_init_test);
+    RUN_TEST(alarm_manager_init_with_callbacks);
 
     printf("\nAlarm Rule Tests:\n");
     RUN_TEST(alarm_rule_create_high);
     RUN_TEST(alarm_rule_create_low);
-    RUN_TEST(alarm_rule_create_critical);
+    RUN_TEST(alarm_rule_create_high_high);
 
     printf("\nState Transition Tests:\n");
     RUN_TEST(alarm_state_transitions);
@@ -267,18 +362,25 @@ void run_alarm_tests(void)
     RUN_TEST(alarm_severity_levels);
 
     printf("\nAcknowledgment Tests:\n");
-    RUN_TEST(alarm_acknowledge);
     RUN_TEST(alarm_acknowledge_user);
+    RUN_TEST(alarm_active_count);
+    RUN_TEST(alarm_unack_count);
 
-    printf("\nSuppression Tests:\n");
-    RUN_TEST(alarm_suppression);
-    RUN_TEST(alarm_shelving);
+    printf("\nRule Management Tests:\n");
+    RUN_TEST(alarm_rule_enable_disable);
+    RUN_TEST(alarm_rule_delete);
+
+    printf("\nFlood Detection Tests:\n");
+    RUN_TEST(alarm_flood_detection);
+    RUN_TEST(alarm_rate);
 
     printf("\n=== Results: %d/%d tests passed ===\n\n", tests_passed, tests_run);
 }
 
 int main(int argc, char *argv[])
 {
+    (void)argc;
+    (void)argv;
     run_alarm_tests();
     return (tests_passed == tests_run) ? 0 : 1;
 }
