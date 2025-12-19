@@ -1249,10 +1249,11 @@ async def test_rtu(station_name: str, test_actuators: bool = True, blink_duratio
                     tests_failed += 1
                 break
     else:
-        # Fallback mode
-        if station_name in fallback_rtus:
+        # Controller not running - check if RTU exists in database
+        db_rtu = _get_rtu_from_db(station_name)
+        if db_rtu:
             rtu_found = True
-            results.append({"test": "connection", "status": "pass", "detail": "RTU registered (fallback mode)"})
+            results.append({"test": "connection", "status": "warn", "detail": "RTU registered but controller not running"})
             tests_passed += 1
 
     if not rtu_found:
@@ -1539,33 +1540,30 @@ async def provision_discovered_sensors(
             "configured": configured
         })
 
-        # Create historian tag
+        # Create historian tag in database
         if create_historian_tags:
             tag_name = f"{station_name}.{sensor.name}"
-            historian_tags[len(historian_tags) + 1] = HistorianTag(
-                tag_id=len(historian_tags) + 1,
-                rtu_station=station_name,
-                slot=slot,
-                tag_name=tag_name,
-                sample_rate_ms=1000,
-                deadband=0.1,
-                compression="swinging_door"
-            )
+            db.upsert_historian_tag({
+                "rtu_station": station_name,
+                "slot": slot,
+                "tag_name": tag_name,
+                "sample_rate_ms": 1000,
+                "deadband": 0.1,
+                "compression": "swinging_door"
+            })
 
-        # Create default alarm rules
+        # Create default alarm rules in database
         if create_alarm_rules and sensor.suggested_measurement_type in ["TEMPERATURE", "PRESSURE", "PH"]:
-            rule_id = len(alarm_rules) + 1
-            alarm_rules[rule_id] = AlarmRule(
-                rule_id=rule_id,
-                rtu_station=station_name,
-                slot=slot,
-                condition="HIGH",
-                threshold=100.0,  # Default - should be configured
-                severity="MEDIUM",
-                delay_ms=5000,
-                message=f"{sensor.name} high alarm",
-                enabled=False  # Disabled by default - user should configure
-            )
+            db.create_alarm_rule({
+                "rtu_station": station_name,
+                "slot": slot,
+                "condition": "HIGH",
+                "threshold": 100.0,  # Default - should be configured
+                "severity": "MEDIUM",
+                "delay_ms": 5000,
+                "message": f"{sensor.name} high alarm",
+                "enabled": False  # Disabled by default - user should configure
+            })
 
     logger.info(f"Provisioned {len(provisioned)} sensors on {station_name}")
 
@@ -1580,27 +1578,27 @@ async def provision_discovered_sensors(
 
 @app.get("/api/v1/alarms", response_model=List[Alarm])
 async def get_active_alarms():
-    """Get all active alarms"""
+    """Get all active alarms. Alarms are runtime state from the controller."""
     client = get_shm_client()
-    if client:
-        alarms = client.get_alarms()
-        return [Alarm(
-            alarm_id=a["alarm_id"],
-            rule_id=a["rule_id"],
-            rtu_station=a["rtu_station"],
-            slot=a["slot"],
-            severity=ALARM_SEVERITY.get(a["severity"], "UNKNOWN"),
-            state=ALARM_STATE.get(a["state"], "UNKNOWN"),
-            message=a["message"],
-            value=a["value"],
-            threshold=a["threshold"],
-            raise_time=datetime.fromtimestamp(a["raise_time_ms"] / 1000.0),
-            ack_time=datetime.fromtimestamp(a["ack_time_ms"] / 1000.0) if a["ack_time_ms"] > 0 else None,
-            ack_user=a["ack_user"] if a["ack_user"] else None
-        ) for a in alarms if a["state"] in [1, 2]]  # ACTIVE_UNACK or ACTIVE_ACK
+    if not client:
+        # No alarms when controller not running
+        return []
 
-    active = [a for a in fallback_alarms.values() if a.state in ["ACTIVE_UNACK", "ACTIVE_ACK"]]
-    return active
+    alarms = client.get_alarms()
+    return [Alarm(
+        alarm_id=a["alarm_id"],
+        rule_id=a["rule_id"],
+        rtu_station=a["rtu_station"],
+        slot=a["slot"],
+        severity=ALARM_SEVERITY.get(a["severity"], "UNKNOWN"),
+        state=ALARM_STATE.get(a["state"], "UNKNOWN"),
+        message=a["message"],
+        value=a["value"],
+        threshold=a["threshold"],
+        raise_time=datetime.fromtimestamp(a["raise_time_ms"] / 1000.0),
+        ack_time=datetime.fromtimestamp(a["ack_time_ms"] / 1000.0) if a["ack_time_ms"] > 0 else None,
+        ack_user=a["ack_user"] if a["ack_user"] else None
+    ) for a in alarms if a["state"] in [1, 2]]  # ACTIVE_UNACK or ACTIVE_ACK
 
 @app.get("/api/v1/alarms/history", response_model=List[Alarm])
 async def get_alarm_history(
@@ -1608,47 +1606,38 @@ async def get_alarm_history(
     end_time: Optional[datetime] = None,
     limit: int = 100
 ):
-    """Get alarm history"""
+    """Get alarm history. Alarms are runtime state from the controller."""
     client = get_shm_client()
-    if client:
-        alarms = client.get_alarms()
-        return [Alarm(
-            alarm_id=a["alarm_id"],
-            rule_id=a["rule_id"],
-            rtu_station=a["rtu_station"],
-            slot=a["slot"],
-            severity=ALARM_SEVERITY.get(a["severity"], "UNKNOWN"),
-            state=ALARM_STATE.get(a["state"], "UNKNOWN"),
-            message=a["message"],
-            value=a["value"],
-            threshold=a["threshold"],
-            raise_time=datetime.fromtimestamp(a["raise_time_ms"] / 1000.0),
-            ack_time=datetime.fromtimestamp(a["ack_time_ms"] / 1000.0) if a["ack_time_ms"] > 0 else None,
-            ack_user=a["ack_user"] if a["ack_user"] else None
-        ) for a in alarms[:limit]]
+    if not client:
+        # No alarm history when controller not running
+        return []
 
-    return list(fallback_alarms.values())[:limit]
+    alarms = client.get_alarms()
+    return [Alarm(
+        alarm_id=a["alarm_id"],
+        rule_id=a["rule_id"],
+        rtu_station=a["rtu_station"],
+        slot=a["slot"],
+        severity=ALARM_SEVERITY.get(a["severity"], "UNKNOWN"),
+        state=ALARM_STATE.get(a["state"], "UNKNOWN"),
+        message=a["message"],
+        value=a["value"],
+        threshold=a["threshold"],
+        raise_time=datetime.fromtimestamp(a["raise_time_ms"] / 1000.0),
+        ack_time=datetime.fromtimestamp(a["ack_time_ms"] / 1000.0) if a["ack_time_ms"] > 0 else None,
+        ack_user=a["ack_user"] if a["ack_user"] else None
+    ) for a in alarms[:limit]]
 
 @app.post("/api/v1/alarms/{alarm_id}/acknowledge")
 async def acknowledge_alarm(alarm_id: int, request: AcknowledgeRequest):
-    """Acknowledge an alarm"""
+    """Acknowledge an alarm. Requires the controller to be running."""
     client = get_shm_client()
-    if client:
-        success = client.acknowledge_alarm(alarm_id, request.user)
-        if not success:
-            raise HTTPException(status_code=500, detail="Failed to acknowledge alarm")
-    else:
-        if alarm_id not in fallback_alarms:
-            raise HTTPException(status_code=404, detail="Alarm not found")
+    if not client:
+        raise HTTPException(status_code=503, detail="Controller not running - cannot acknowledge alarms")
 
-        alarm = fallback_alarms[alarm_id]
-        if alarm.state == "ACTIVE_UNACK":
-            alarm.state = "ACTIVE_ACK"
-        elif alarm.state == "CLEARED_UNACK":
-            alarm.state = "CLEARED"
-
-        alarm.ack_time = datetime.now()
-        alarm.ack_user = request.user
+    success = client.acknowledge_alarm(alarm_id, request.user)
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to acknowledge alarm")
 
     await broadcast_event("alarm_acknowledged", {"alarm_id": alarm_id, "user": request.user})
     return {"status": "ok"}
@@ -1758,60 +1747,86 @@ async def delete_alarm_rule(rule_id: int, user: Dict = Depends(get_current_user)
 
 # ============== Control Endpoints ==============
 
+def _get_pid_loop_with_live_values(loop_config: Dict, shm_loops: List[Dict] = None) -> PIDLoop:
+    """
+    Build PIDLoop from database config, merging live values from shared memory if available.
+    """
+    loop_id = loop_config.get('id') or loop_config.get('loop_id')
+
+    # Default runtime values
+    pv = 0.0
+    cv = 0.0
+    mode = loop_config.get('mode', 'MANUAL')
+
+    # Merge live values from shared memory if available
+    if shm_loops:
+        for shm_loop in shm_loops:
+            if shm_loop.get('loop_id') == loop_id:
+                pv = shm_loop.get('pv', 0.0)
+                cv = shm_loop.get('cv', 0.0)
+                mode = PID_MODES.get(shm_loop.get('mode', 0), mode)
+                break
+
+    return PIDLoop(
+        loop_id=loop_id,
+        name=loop_config.get('name', ''),
+        enabled=bool(loop_config.get('enabled', True)),
+        input_rtu=loop_config.get('input_rtu', ''),
+        input_slot=loop_config.get('input_slot', 0),
+        output_rtu=loop_config.get('output_rtu', ''),
+        output_slot=loop_config.get('output_slot', 0),
+        kp=loop_config.get('kp', 1.0),
+        ki=loop_config.get('ki', 0.0),
+        kd=loop_config.get('kd', 0.0),
+        setpoint=loop_config.get('setpoint', 0.0),
+        mode=mode,
+        pv=pv,
+        cv=cv
+    )
+
+
 @app.get("/api/v1/control/pid", response_model=List[PIDLoop])
 async def list_pid_loops():
-    """List all PID control loops"""
+    """
+    List all PID control loops.
+    Configuration from database, live values (pv, cv) from shared memory.
+    """
+    # Get configuration from database (source of truth)
+    db_loops = db.get_pid_loops()
+
+    # Try to get live values from shared memory
+    shm_loops = None
     client = get_shm_client()
     if client:
-        loops = client.get_pid_loops()
-        return [PIDLoop(
-            loop_id=l["loop_id"],
-            name=l["name"],
-            enabled=l["enabled"],
-            input_rtu=l["input_rtu"],
-            input_slot=l["input_slot"],
-            output_rtu=l["output_rtu"],
-            output_slot=l["output_slot"],
-            kp=l["kp"],
-            ki=l["ki"],
-            kd=l["kd"],
-            setpoint=l["setpoint"],
-            mode=PID_MODES.get(l["mode"], "MANUAL"),
-            pv=l["pv"],
-            cv=l["cv"]
-        ) for l in loops]
+        try:
+            shm_loops = client.get_pid_loops()
+        except Exception as e:
+            logger.warning(f"Failed to get PID loops from shared memory: {e}")
 
-    return list(fallback_pid_loops.values())
+    return [_get_pid_loop_with_live_values(loop, shm_loops) for loop in db_loops]
+
 
 @app.get("/api/v1/control/pid/{loop_id}", response_model=PIDLoop)
 async def get_pid_loop(loop_id: int):
-    """Get PID loop details"""
-    client = get_shm_client()
-    if client:
-        loops = client.get_pid_loops()
-        for l in loops:
-            if l["loop_id"] == loop_id:
-                return PIDLoop(
-                    loop_id=l["loop_id"],
-                    name=l["name"],
-                    enabled=l["enabled"],
-                    input_rtu=l["input_rtu"],
-                    input_slot=l["input_slot"],
-                    output_rtu=l["output_rtu"],
-                    output_slot=l["output_slot"],
-                    kp=l["kp"],
-                    ki=l["ki"],
-                    kd=l["kd"],
-                    setpoint=l["setpoint"],
-                    mode=PID_MODES.get(l["mode"], "MANUAL"),
-                    pv=l["pv"],
-                    cv=l["cv"]
-                )
+    """
+    Get PID loop details.
+    Configuration from database, live values (pv, cv) from shared memory.
+    """
+    # Get configuration from database (source of truth)
+    loop_config = db.get_pid_loop(loop_id)
+    if not loop_config:
         raise HTTPException(status_code=404, detail="PID loop not found")
 
-    if loop_id not in fallback_pid_loops:
-        raise HTTPException(status_code=404, detail="PID loop not found")
-    return fallback_pid_loops[loop_id]
+    # Try to get live values from shared memory
+    shm_loops = None
+    client = get_shm_client()
+    if client:
+        try:
+            shm_loops = client.get_pid_loops()
+        except Exception as e:
+            logger.warning(f"Failed to get PID loops from shared memory: {e}")
+
+    return _get_pid_loop_with_live_values(loop_config, shm_loops)
 
 @app.put("/api/v1/control/pid/{loop_id}/setpoint")
 async def update_pid_setpoint(loop_id: int, update: SetpointUpdate,
@@ -1823,22 +1838,20 @@ async def update_pid_setpoint(loop_id: int, update: SetpointUpdate,
     """
     check_role(user, UserRole.OPERATOR)
 
-    # Persist to database
+    # Persist to database (source of truth)
     if not db.update_pid_setpoint(loop_id, update.setpoint):
         raise HTTPException(status_code=404, detail="PID loop not found")
 
-    # Send to C controller via shared memory
+    # Send to C controller via shared memory for real-time control
     client = get_shm_client()
     if client:
         success = client.set_setpoint(loop_id, update.setpoint)
         if not success:
             logger.warning(f"Failed to send setpoint to controller for PID loop {loop_id}")
-    else:
-        if loop_id in fallback_pid_loops:
-            fallback_pid_loops[loop_id].setpoint = update.setpoint
 
     logger.info(f"PID loop {loop_id} setpoint changed to {update.setpoint}")
     return {"status": "ok"}
+
 
 @app.put("/api/v1/control/pid/{loop_id}/mode")
 async def update_pid_mode(loop_id: int, update: ModeUpdate, user: Dict = Depends(get_current_user)):
@@ -1849,11 +1862,11 @@ async def update_pid_mode(loop_id: int, update: ModeUpdate, user: Dict = Depends
     """
     check_role(user, UserRole.OPERATOR)
 
-    # Persist to database
+    # Persist to database (source of truth)
     if not db.update_pid_mode(loop_id, update.mode):
         raise HTTPException(status_code=404, detail="PID loop not found")
 
-    # Send to C controller via shared memory
+    # Send to C controller via shared memory for real-time control
     mode_map = {"MANUAL": 0, "AUTO": 1, "CASCADE": 2}
     mode_int = mode_map.get(update.mode, 0)
 
@@ -1862,9 +1875,6 @@ async def update_pid_mode(loop_id: int, update: ModeUpdate, user: Dict = Depends
         success = client.set_pid_mode(loop_id, mode_int)
         if not success:
             logger.warning(f"Failed to send mode to controller for PID loop {loop_id}")
-    else:
-        if loop_id in fallback_pid_loops:
-            fallback_pid_loops[loop_id].mode = update.mode
 
     logger.info(f"PID loop {loop_id} mode changed to {update.mode}")
     return {"status": "ok"}
@@ -1878,7 +1888,7 @@ async def update_pid_tuning(loop_id: int, tuning: TuningUpdate, user: Dict = Dep
     """
     check_role(user, UserRole.ENGINEER)
 
-    # Check if loop exists in database
+    # Check if loop exists in database (source of truth)
     loop = db.get_pid_loop(loop_id)
     if not loop:
         raise HTTPException(status_code=404, detail="PID loop not found")
@@ -1890,12 +1900,6 @@ async def update_pid_tuning(loop_id: int, tuning: TuningUpdate, user: Dict = Dep
         'ki': tuning.ki,
         'kd': tuning.kd
     })
-
-    # Also update fallback in-memory store
-    if loop_id in fallback_pid_loops:
-        fallback_pid_loops[loop_id].kp = tuning.kp
-        fallback_pid_loops[loop_id].ki = tuning.ki
-        fallback_pid_loops[loop_id].kd = tuning.kd
 
     logger.info(f"PID loop {loop_id} tuning updated: Kp={tuning.kp}, Ki={tuning.ki}, Kd={tuning.kd}")
     return {"status": "ok"}
@@ -1976,10 +1980,6 @@ async def delete_pid_loop(loop_id: int, user: Dict = Depends(get_current_user)):
 
     if not db.delete_pid_loop(loop_id):
         raise HTTPException(status_code=404, detail="PID loop not found")
-
-    # Also remove from fallback store
-    if loop_id in fallback_pid_loops:
-        del fallback_pid_loops[loop_id]
 
     logger.info(f"Deleted PID loop {loop_id}")
     return {"status": "deleted", "loop_id": loop_id}
@@ -2348,7 +2348,7 @@ async def list_backups():
 @app.post("/api/v1/backups", response_model=BackupMetadata)
 async def create_backup(request: BackupRequest, user: Dict = Depends(get_current_user)):
     """
-    Create a new configuration backup.
+    Create a new configuration backup from database.
 
     Requires: Admin role
     """
@@ -2362,17 +2362,9 @@ async def create_backup(request: BackupRequest, user: Dict = Depends(get_current
     filename = f"{backup_id}.tar.gz"
     filepath = os.path.join(BACKUP_DIR, filename)
 
-    # Get current configuration
-    config_data = {
-        "version": "1.0",
-        "created_at": datetime.now().isoformat(),
-        "description": request.description,
-        "rtus": [r.dict() for r in fallback_rtus.values()],
-        "alarm_rules": [r.dict() for r in alarm_rules.values()],
-        "pid_loops": [p.dict() for p in fallback_pid_loops.values()],
-        "historian_tags": [t.dict() for t in historian_tags.values()],
-        "modbus_config": modbus_config.copy() if modbus_config else {}
-    }
+    # Get current configuration from database (source of truth)
+    config_data = db.export_configuration()
+    config_data["description"] = request.description
 
     # Create backup archive
     with tarfile.open(filepath, "w:gz") as tar:
@@ -3466,14 +3458,17 @@ async def websocket_realtime(websocket: WebSocket):
 
                 await websocket.send_json(data)
             else:
-                # Send simulated data as fallback
+                # Send simulated data as fallback when controller not running
                 data = {
                     "type": "sensor_update",
                     "timestamp": datetime.now().isoformat(),
                     "data": {}
                 }
 
-                for station_name in fallback_rtus:
+                # Get RTU names from database for simulation
+                db_rtus = _get_all_rtus_from_db()
+                for rtu in db_rtus:
+                    station_name = rtu.get("station_name")
                     data["data"][station_name] = {
                         "sensors": [
                             {"slot": 1, "value": 7.0 + 0.1 * (datetime.now().second % 5)},
@@ -3567,55 +3562,6 @@ async def shutdown_event():
         logger.info("Background network scan task stopped")
 
     logger.info("Water Treatment Controller API stopped")
-
-def init_fallback_data():
-    """Initialize sample data for fallback mode"""
-    fallback_rtus["rtu-tank-1"] = RTUDevice(
-        station_name="rtu-tank-1",
-        ip_address="192.168.1.100",
-        vendor_id=0x0001,
-        device_id=0x0001,
-        connection_state="RUNNING",
-        slot_count=16,
-        last_seen=datetime.now()
-    )
-
-    fallback_rtus["rtu-pump-station"] = RTUDevice(
-        station_name="rtu-pump-station",
-        ip_address="192.168.1.101",
-        vendor_id=0x0001,
-        device_id=0x0001,
-        connection_state="RUNNING",
-        slot_count=16,
-        last_seen=datetime.now()
-    )
-
-    fallback_pid_loops[1] = PIDLoop(
-        loop_id=1,
-        name="pH Control",
-        enabled=True,
-        input_rtu="rtu-tank-1",
-        input_slot=1,
-        output_rtu="rtu-tank-1",
-        output_slot=12,
-        kp=2.0,
-        ki=0.1,
-        kd=0.5,
-        setpoint=7.0,
-        mode="AUTO",
-        pv=7.2,
-        cv=35.0
-    )
-
-    historian_tags[1] = HistorianTag(
-        tag_id=1,
-        rtu_station="rtu-tank-1",
-        slot=1,
-        tag_name="rtu-tank-1.pH",
-        sample_rate_ms=1000,
-        deadband=0.05,
-        compression="SWINGING_DOOR"
-    )
 
 # ============== Main Entry Point ==============
 
