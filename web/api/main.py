@@ -2273,26 +2273,8 @@ async def get_system_health():
 @app.get("/api/v1/system/config")
 async def export_config():
     """Export complete system configuration from database"""
-    return {
-        "version": "1.0",
-        "exported_at": datetime.now().isoformat(),
-        "rtus": db.get_rtu_devices(),
-        "slot_configs": db.get_all_slot_configs(),
-        "alarm_rules": db.get_alarm_rules(),
-        "pid_loops": db.get_pid_loops(),
-        "historian_tags": db.get_historian_tags(),
-        "modbus_server": db.get_modbus_server_config(),
-        "modbus_devices": db.get_modbus_downstream_devices(),
-        "modbus_mappings": db.get_modbus_register_mappings(),
-        "log_forwarding": db.get_log_forwarding_config(),
-        "ad_config": db.get_ad_config(),
-        "users": [
-            {"username": u["username"], "role": u["role"], "active": u["active"],
-             "sync_to_rtus": u["sync_to_rtus"]}
-            for u in db.get_users(include_inactive=True)
-            if u["username"] != "admin"  # Don't export default admin
-        ]
-    }
+    return db.export_configuration()
+
 
 @app.post("/api/v1/system/config")
 async def import_config(config: Dict[str, Any], user: Dict = Depends(get_current_user)):
@@ -2303,112 +2285,11 @@ async def import_config(config: Dict[str, Any], user: Dict = Depends(get_current
     """
     check_role(user, UserRole.ADMIN)
 
-    imported = {"rtus": 0, "slot_configs": 0, "alarm_rules": 0, "pid_loops": 0,
-                "historian_tags": 0, "modbus_devices": 0, "users": 0}
-
     try:
-        # Import RTUs
-        if "rtus" in config:
-            for rtu_data in config["rtus"]:
-                try:
-                    existing = db.get_rtu_device(rtu_data.get("station_name", ""))
-                    if existing:
-                        db.update_rtu_device(rtu_data["station_name"], rtu_data)
-                    else:
-                        db.create_rtu_device(rtu_data)
-                    imported["rtus"] += 1
-                except Exception as e:
-                    logger.warning(f"Failed to import RTU {rtu_data.get('station_name')}: {e}")
-
-        # Import slot configs
-        if "slot_configs" in config:
-            for slot_data in config["slot_configs"]:
-                try:
-                    db.upsert_slot_config(slot_data)
-                    imported["slot_configs"] += 1
-                except Exception as e:
-                    logger.warning(f"Failed to import slot config: {e}")
-
-        # Import alarm rules (to database)
-        if "alarm_rules" in config:
-            for rule_data in config["alarm_rules"]:
-                try:
-                    existing = db.get_alarm_rule(rule_data.get("id"))
-                    if existing:
-                        db.update_alarm_rule(rule_data["id"], rule_data)
-                    else:
-                        db.create_alarm_rule(rule_data)
-                    imported["alarm_rules"] += 1
-                except Exception as e:
-                    logger.warning(f"Failed to import alarm rule: {e}")
-
-        # Import PID loops (to database)
-        if "pid_loops" in config:
-            for pid_data in config["pid_loops"]:
-                try:
-                    existing = db.get_pid_loop(pid_data.get("id"))
-                    if existing:
-                        db.update_pid_loop(pid_data["id"], pid_data)
-                    else:
-                        db.create_pid_loop(pid_data)
-                    imported["pid_loops"] += 1
-                except Exception as e:
-                    logger.warning(f"Failed to import PID loop: {e}")
-
-        # Import historian tags (to database)
-        if "historian_tags" in config:
-            for tag_data in config["historian_tags"]:
-                try:
-                    db.upsert_historian_tag(tag_data)
-                    imported["historian_tags"] += 1
-                except Exception as e:
-                    logger.warning(f"Failed to import historian tag: {e}")
-
-        # Import modbus devices
-        if "modbus_devices" in config:
-            for device_data in config["modbus_devices"]:
-                try:
-                    db.create_modbus_downstream_device(device_data)
-                    imported["modbus_devices"] += 1
-                except Exception as e:
-                    logger.warning(f"Failed to import modbus device: {e}")
-
-        # Import modbus server config
-        if "modbus_server" in config:
-            db.update_modbus_server_config(config["modbus_server"])
-
-        # Import log forwarding config
-        if "log_forwarding" in config:
-            db.update_log_forwarding_config(config["log_forwarding"])
-
-        # Import AD config
-        if "ad_config" in config:
-            db.update_ad_config(config["ad_config"])
-
-        # Import users (without passwords - they must be reset)
-        if "users" in config:
-            for user_data in config["users"]:
-                try:
-                    existing = db.get_user_by_username(user_data.get("username", ""))
-                    if not existing:
-                        # Create with temporary password
-                        db.create_user({
-                            "username": user_data["username"],
-                            "password": "changeme",  # Must be changed
-                            "role": user_data.get("role", "viewer"),
-                            "active": user_data.get("active", True),
-                            "sync_to_rtus": user_data.get("sync_to_rtus", True)
-                        })
-                        imported["users"] += 1
-                except Exception as e:
-                    logger.warning(f"Failed to import user {user_data.get('username')}: {e}")
-
-        db.log_audit(request_user.get(), 'import', 'config', None,
-                     f"Imported config: {imported}")
-
-        logger.info(f"Configuration imported: {imported}")
+        username = user.get('username', 'unknown')
+        imported = db.import_configuration(config, user=username)
+        logger.info(f"Configuration imported by {username}: {imported}")
         return {"status": "ok", "imported": imported}
-
     except Exception as e:
         logger.error(f"Configuration import failed: {e}")
         raise HTTPException(status_code=400, detail=str(e))
@@ -2543,13 +2424,11 @@ async def download_backup(backup_id: str):
 @app.post("/api/v1/backups/{backup_id}/restore")
 async def restore_backup(backup_id: str, user: Dict = Depends(get_current_user)):
     """
-    Restore configuration from a backup.
+    Restore configuration from a backup to the database.
 
     Requires: Admin role
     """
     check_role(user, UserRole.ADMIN)
-
-    global fallback_rtus, alarm_rules, fallback_pid_loops, historian_tags, modbus_config
 
     filename = f"{backup_id}.tar.gz"
     filepath = os.path.join(BACKUP_DIR, filename)
@@ -2560,42 +2439,28 @@ async def restore_backup(backup_id: str, user: Dict = Depends(get_current_user))
     try:
         with tarfile.open(filepath, "r:gz") as tar:
             config_file = tar.extractfile("config.json")
-            if config_file:
-                config_data = json.load(config_file)
+            if not config_file:
+                raise HTTPException(status_code=400, detail="Backup does not contain config.json")
 
-                # Restore RTUs
-                fallback_rtus.clear()
-                for rtu_data in config_data.get("rtus", []):
-                    rtu = RTUDevice(**rtu_data)
-                    fallback_rtus[rtu.station_name] = rtu
+            config_data = json.load(config_file)
 
-                # Restore alarm rules
-                alarm_rules.clear()
-                for rule_data in config_data.get("alarm_rules", []):
-                    rule = AlarmRule(**rule_data)
-                    if rule.rule_id:
-                        alarm_rules[rule.rule_id] = rule
+            # Use the shared import function to restore to database
+            username = user.get('username', 'unknown')
+            imported = db.import_configuration(config_data, user=username)
 
-                # Restore PID loops
-                fallback_pid_loops.clear()
-                for pid_data in config_data.get("pid_loops", []):
-                    pid = PIDLoop(**pid_data)
-                    if pid.loop_id:
-                        fallback_pid_loops[pid.loop_id] = pid
+            db.log_audit(username, 'restore', 'backup', backup_id,
+                         f"Restored from backup {backup_id}: {imported}")
 
-                # Restore historian tags
-                historian_tags.clear()
-                for tag_data in config_data.get("historian_tags", []):
-                    tag = HistorianTag(**tag_data)
-                    historian_tags[tag.tag_id] = tag
+        logger.info(f"Configuration restored from backup {backup_id} by {username}: {imported}")
+        return {
+            "status": "ok",
+            "message": "Configuration restored successfully to database",
+            "imported": imported
+        }
 
-                # Restore Modbus config
-                if "modbus_config" in config_data:
-                    modbus_config.update(config_data["modbus_config"])
-
-        logger.info(f"Configuration restored from backup: {backup_id}")
-        return {"status": "ok", "message": "Configuration restored successfully"}
-
+    except json.JSONDecodeError as e:
+        logger.error(f"Restore failed - invalid JSON in backup: {e}")
+        raise HTTPException(status_code=400, detail=f"Invalid JSON in backup: {e}")
     except Exception as e:
         logger.error(f"Restore failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -2700,79 +2565,11 @@ async def import_backup_file(
         content = await file.read()
         config = json.loads(content.decode('utf-8'))
 
-        # Delegate to the existing import_config logic
-        imported = {"rtus": 0, "slot_configs": 0, "alarm_rules": 0, "pid_loops": 0,
-                    "historian_tags": 0, "modbus_devices": 0, "users": 0}
+        # Use shared import function
+        username = user.get('username', 'unknown')
+        imported = db.import_configuration(config, user=username)
 
-        # Import RTUs
-        if "rtus" in config:
-            for rtu_data in config["rtus"]:
-                try:
-                    existing = db.get_rtu_device(rtu_data.get("station_name", ""))
-                    if existing:
-                        db.update_rtu_device(rtu_data["station_name"], rtu_data)
-                    else:
-                        db.create_rtu_device(rtu_data)
-                    imported["rtus"] += 1
-                except Exception as e:
-                    logger.warning(f"Failed to import RTU: {e}")
-
-        # Import slot configs
-        if "slot_configs" in config:
-            for slot_data in config["slot_configs"]:
-                try:
-                    db.upsert_slot_config(slot_data)
-                    imported["slot_configs"] += 1
-                except Exception as e:
-                    logger.warning(f"Failed to import slot config: {e}")
-
-        # Import alarm rules
-        if "alarm_rules" in config:
-            for rule_data in config["alarm_rules"]:
-                try:
-                    db.create_alarm_rule(rule_data)
-                    imported["alarm_rules"] += 1
-                except Exception as e:
-                    logger.warning(f"Failed to import alarm rule: {e}")
-
-        # Import PID loops
-        if "pid_loops" in config:
-            for pid_data in config["pid_loops"]:
-                try:
-                    db.create_pid_loop(pid_data)
-                    imported["pid_loops"] += 1
-                except Exception as e:
-                    logger.warning(f"Failed to import PID loop: {e}")
-
-        # Import historian tags
-        if "historian_tags" in config:
-            for tag_data in config["historian_tags"]:
-                try:
-                    db.upsert_historian_tag(tag_data)
-                    imported["historian_tags"] += 1
-                except Exception as e:
-                    logger.warning(f"Failed to import historian tag: {e}")
-
-        # Import users (with temporary password)
-        if "users" in config:
-            for user_data in config["users"]:
-                try:
-                    existing = db.get_user_by_username(user_data.get("username", ""))
-                    if not existing:
-                        db.create_user({
-                            "username": user_data["username"],
-                            "password": "changeme",
-                            "role": user_data.get("role", "viewer"),
-                            "active": user_data.get("active", True)
-                        })
-                        imported["users"] += 1
-                except Exception as e:
-                    logger.warning(f"Failed to import user: {e}")
-
-        db.log_audit(user.get('username', 'unknown'), 'import', 'config', None,
-                     f"Imported from file {file.filename}: {imported}")
-
-        logger.info(f"Configuration imported from file: {imported}")
+        logger.info(f"Configuration imported from file {file.filename} by {username}: {imported}")
         return {"status": "ok", "imported": imported}
 
     except json.JSONDecodeError as e:

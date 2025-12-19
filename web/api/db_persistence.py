@@ -986,12 +986,12 @@ def ensure_default_admin():
     if not admin:
         create_user({
             'username': 'admin',
-            'password': 'admin',  # Default password - should be changed!
+            'password': 'H2OhYeah!',
             'role': 'admin',
             'active': True,
             'sync_to_rtus': True
         })
-        logger.info("Created default admin user (username: admin, password: admin)")
+        logger.info("Created default admin user (username: admin)")
 
 
 # ============== Slot Configuration Operations ==============
@@ -1254,6 +1254,227 @@ def delete_backup_record(backup_id: str) -> bool:
         return False
 
 
-# Initialize database on module import
-init_database()
-ensure_default_admin()
+# ============== Shared Import Logic ==============
+
+def import_configuration(config: Dict[str, Any], user: str = "system") -> Dict[str, int]:
+    """
+    Import configuration from a dictionary.
+    This is the single source of truth for all import operations.
+
+    Args:
+        config: Configuration dictionary containing entities to import
+        user: Username for audit logging
+
+    Returns:
+        Dictionary with counts of imported entities
+    """
+    imported = {
+        "rtus": 0,
+        "slot_configs": 0,
+        "alarm_rules": 0,
+        "pid_loops": 0,
+        "historian_tags": 0,
+        "modbus_devices": 0,
+        "modbus_mappings": 0,
+        "users": 0
+    }
+
+    # Import RTUs
+    if "rtus" in config:
+        for rtu_data in config["rtus"]:
+            try:
+                existing = get_rtu_device(rtu_data.get("station_name", ""))
+                if existing:
+                    update_rtu_device(rtu_data["station_name"], rtu_data)
+                else:
+                    create_rtu_device(rtu_data)
+                imported["rtus"] += 1
+            except Exception as e:
+                logger.warning(f"Failed to import RTU {rtu_data.get('station_name')}: {e}")
+
+    # Import slot configs
+    if "slot_configs" in config:
+        for slot_data in config["slot_configs"]:
+            try:
+                upsert_slot_config(slot_data)
+                imported["slot_configs"] += 1
+            except Exception as e:
+                logger.warning(f"Failed to import slot config: {e}")
+
+    # Import alarm rules
+    if "alarm_rules" in config:
+        for rule_data in config["alarm_rules"]:
+            try:
+                rule_id = rule_data.get("id") or rule_data.get("rule_id")
+                if rule_id:
+                    existing = get_alarm_rule(rule_id)
+                    if existing:
+                        update_alarm_rule(rule_id, rule_data)
+                    else:
+                        create_alarm_rule(rule_data)
+                else:
+                    create_alarm_rule(rule_data)
+                imported["alarm_rules"] += 1
+            except Exception as e:
+                logger.warning(f"Failed to import alarm rule: {e}")
+
+    # Import PID loops
+    if "pid_loops" in config:
+        for pid_data in config["pid_loops"]:
+            try:
+                loop_id = pid_data.get("id") or pid_data.get("loop_id")
+                if loop_id:
+                    existing = get_pid_loop(loop_id)
+                    if existing:
+                        update_pid_loop(loop_id, pid_data)
+                    else:
+                        create_pid_loop(pid_data)
+                else:
+                    create_pid_loop(pid_data)
+                imported["pid_loops"] += 1
+            except Exception as e:
+                logger.warning(f"Failed to import PID loop: {e}")
+
+    # Import historian tags
+    if "historian_tags" in config:
+        for tag_data in config["historian_tags"]:
+            try:
+                upsert_historian_tag(tag_data)
+                imported["historian_tags"] += 1
+            except Exception as e:
+                logger.warning(f"Failed to import historian tag: {e}")
+
+    # Import modbus downstream devices
+    if "modbus_devices" in config:
+        for device_data in config["modbus_devices"]:
+            try:
+                create_modbus_downstream_device(device_data)
+                imported["modbus_devices"] += 1
+            except Exception as e:
+                logger.warning(f"Failed to import modbus device: {e}")
+
+    # Import modbus register mappings
+    if "modbus_mappings" in config:
+        for mapping_data in config["modbus_mappings"]:
+            try:
+                create_modbus_register_mapping(mapping_data)
+                imported["modbus_mappings"] += 1
+            except Exception as e:
+                logger.warning(f"Failed to import modbus mapping: {e}")
+
+    # Import modbus server config (singleton)
+    if "modbus_server" in config:
+        try:
+            update_modbus_server_config(config["modbus_server"])
+        except Exception as e:
+            logger.warning(f"Failed to import modbus server config: {e}")
+
+    # Import log forwarding config (singleton)
+    if "log_forwarding" in config:
+        try:
+            update_log_forwarding_config(config["log_forwarding"])
+        except Exception as e:
+            logger.warning(f"Failed to import log forwarding config: {e}")
+
+    # Import AD config (singleton)
+    if "ad_config" in config:
+        try:
+            update_ad_config(config["ad_config"])
+        except Exception as e:
+            logger.warning(f"Failed to import AD config: {e}")
+
+    # Import users (without passwords - they must be reset)
+    if "users" in config:
+        for user_data in config["users"]:
+            try:
+                existing = get_user_by_username(user_data.get("username", ""))
+                if not existing:
+                    create_user({
+                        "username": user_data["username"],
+                        "password": "changeme",  # Must be changed by user
+                        "role": user_data.get("role", "viewer"),
+                        "active": user_data.get("active", True),
+                        "sync_to_rtus": user_data.get("sync_to_rtus", True)
+                    })
+                    imported["users"] += 1
+            except Exception as e:
+                logger.warning(f"Failed to import user {user_data.get('username')}: {e}")
+
+    log_audit(user, 'import', 'configuration', None, f"Imported: {imported}")
+    return imported
+
+
+def export_configuration() -> Dict[str, Any]:
+    """
+    Export all configuration to a dictionary.
+    This is the single source of truth for all export operations.
+
+    Returns:
+        Dictionary containing all configuration entities
+    """
+    from datetime import datetime
+
+    # Get users without password hashes for export
+    users = get_users(include_inactive=True)
+    users_export = [{
+        "username": u["username"],
+        "role": u["role"],
+        "active": bool(u.get("active", True)),
+        "sync_to_rtus": bool(u.get("sync_to_rtus", True))
+    } for u in users if u["username"] != "admin"]  # Don't export admin
+
+    return {
+        "version": "1.0",
+        "exported_at": datetime.now().isoformat(),
+        "rtus": get_rtu_devices(),
+        "slot_configs": get_all_slot_configs(),
+        "alarm_rules": get_alarm_rules(),
+        "pid_loops": get_pid_loops(),
+        "historian_tags": get_historian_tags(),
+        "modbus_server": get_modbus_server_config(),
+        "modbus_devices": get_modbus_downstream_devices(),
+        "modbus_mappings": get_modbus_register_mappings(),
+        "log_forwarding": get_log_forwarding_config(),
+        "ad_config": get_ad_config(),
+        "users": users_export
+    }
+
+
+# Flag to track initialization state
+_initialized = False
+
+
+def initialize() -> bool:
+    """
+    Explicitly initialize the database.
+    Call this from application startup, not at import time.
+    Returns True if successful, False otherwise.
+    """
+    global _initialized
+    if _initialized:
+        return True
+
+    try:
+        # Ensure database directory exists
+        db_dir = os.path.dirname(DB_PATH)
+        if db_dir:
+            os.makedirs(db_dir, exist_ok=True)
+
+        init_database()
+        ensure_default_admin()
+        _initialized = True
+        logger.info("Database initialized successfully")
+        return True
+    except Exception as e:
+        logger.critical(f"Database initialization failed: {e}")
+        return False
+
+
+def is_initialized() -> bool:
+    """Check if database has been initialized"""
+    return _initialized
+
+
+# Auto-initialize for backward compatibility (can be disabled via env var)
+if os.environ.get('WTC_DB_AUTO_INIT', '1') == '1':
+    initialize()
