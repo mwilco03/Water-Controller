@@ -1097,6 +1097,99 @@ async def command_actuator(station_name: str, slot: int, command: ActuatorComman
 
     return {"status": "ok"}
 
+
+# ============== Slot Configuration Endpoints ==============
+
+class SlotConfig(BaseModel):
+    """Slot configuration model"""
+    rtu_station: str
+    slot: int
+    subslot: int = 1
+    slot_type: str  # "sensor" or "actuator"
+    name: Optional[str] = None
+    unit: Optional[str] = None
+    measurement_type: Optional[str] = None
+    actuator_type: Optional[str] = None
+    scale_min: float = 0
+    scale_max: float = 100
+    alarm_low: Optional[float] = None
+    alarm_high: Optional[float] = None
+    alarm_low_low: Optional[float] = None
+    alarm_high_high: Optional[float] = None
+    warning_low: Optional[float] = None
+    warning_high: Optional[float] = None
+    deadband: float = 0
+    enabled: bool = True
+
+
+@app.get("/api/v1/rtus/{station_name}/slots", response_model=List[SlotConfig])
+async def list_slot_configs(station_name: str):
+    """Get all slot configurations for an RTU"""
+    slots = db.get_slot_configs_by_rtu(station_name)
+    return [SlotConfig(**s) for s in slots]
+
+
+@app.get("/api/v1/rtus/{station_name}/slots/{slot}", response_model=SlotConfig)
+async def get_slot_config(station_name: str, slot: int):
+    """Get a specific slot configuration"""
+    config = db.get_slot_config(station_name, slot)
+    if not config:
+        raise HTTPException(status_code=404, detail="Slot config not found")
+    return SlotConfig(**config)
+
+
+@app.post("/api/v1/rtus/{station_name}/slots", response_model=SlotConfig)
+async def create_slot_config(station_name: str, config: SlotConfig, user: Dict = Depends(get_current_user)):
+    """
+    Create or update a slot configuration.
+
+    Requires: Engineer role or higher
+    """
+    check_role(user, UserRole.ENGINEER)
+
+    # Verify RTU exists
+    rtu = db.get_rtu_device(station_name)
+    if not rtu:
+        raise HTTPException(status_code=404, detail="RTU not found")
+
+    config.rtu_station = station_name
+    db.upsert_slot_config(config.dict())
+    logger.info(f"Created/updated slot config for {station_name} slot {config.slot}")
+    return config
+
+
+@app.put("/api/v1/rtus/{station_name}/slots/{slot}", response_model=SlotConfig)
+async def update_slot_config(station_name: str, slot: int, config: SlotConfig, user: Dict = Depends(get_current_user)):
+    """
+    Update a slot configuration.
+
+    Requires: Engineer role or higher
+    """
+    check_role(user, UserRole.ENGINEER)
+
+    config.rtu_station = station_name
+    config.slot = slot
+    db.upsert_slot_config(config.dict())
+    logger.info(f"Updated slot config for {station_name} slot {slot}")
+    return config
+
+
+@app.delete("/api/v1/rtus/{station_name}/slots/{slot}")
+async def delete_slot_config(station_name: str, slot: int, user: Dict = Depends(get_current_user)):
+    """
+    Delete a slot configuration.
+
+    Requires: Engineer role or higher
+    """
+    check_role(user, UserRole.ENGINEER)
+
+    if not db.delete_slot_config(station_name, slot):
+        raise HTTPException(status_code=404, detail="Slot config not found")
+
+    logger.info(f"Deleted slot config for {station_name} slot {slot}")
+    return {"status": "deleted", "station_name": station_name, "slot": slot}
+
+
 # ============== RTU Test and Discovery Endpoints ==============
 
 class RTUTestResult(BaseModel):
@@ -1563,7 +1656,40 @@ async def acknowledge_alarm(alarm_id: int, request: AcknowledgeRequest):
 @app.get("/api/v1/alarms/rules", response_model=List[AlarmRule])
 async def list_alarm_rules():
     """List all alarm rules"""
-    return list(alarm_rules.values())
+    rules = db.get_alarm_rules()
+    return [AlarmRule(
+        rule_id=r['id'],
+        name=r['name'],
+        rtu_station=r['rtu_station'],
+        slot=r['slot'],
+        condition=AlarmCondition(r['condition']),
+        threshold=r['threshold'],
+        severity=AlarmSeverity(r['severity']),
+        delay_ms=r.get('delay_ms', 0),
+        message=r.get('message', ''),
+        enabled=bool(r.get('enabled', True))
+    ) for r in rules]
+
+
+@app.get("/api/v1/alarms/rules/{rule_id}", response_model=AlarmRule)
+async def get_alarm_rule(rule_id: int):
+    """Get a specific alarm rule"""
+    rule = db.get_alarm_rule(rule_id)
+    if not rule:
+        raise HTTPException(status_code=404, detail="Alarm rule not found")
+    return AlarmRule(
+        rule_id=rule['id'],
+        name=rule['name'],
+        rtu_station=rule['rtu_station'],
+        slot=rule['slot'],
+        condition=AlarmCondition(rule['condition']),
+        threshold=rule['threshold'],
+        severity=AlarmSeverity(rule['severity']),
+        delay_ms=rule.get('delay_ms', 0),
+        message=rule.get('message', ''),
+        enabled=bool(rule.get('enabled', True))
+    )
+
 
 @app.post("/api/v1/alarms/rules", response_model=AlarmRule)
 async def create_alarm_rule(rule: AlarmRule, user: Dict = Depends(get_current_user)):
@@ -1574,10 +1700,61 @@ async def create_alarm_rule(rule: AlarmRule, user: Dict = Depends(get_current_us
     """
     check_role(user, UserRole.ENGINEER)
 
-    rule_id = len(alarm_rules) + 1
+    rule_id = db.create_alarm_rule({
+        'name': rule.name,
+        'rtu_station': rule.rtu_station,
+        'slot': rule.slot,
+        'condition': rule.condition.value,
+        'threshold': rule.threshold,
+        'severity': rule.severity.value,
+        'delay_ms': rule.delay_ms,
+        'message': rule.message,
+        'enabled': rule.enabled
+    })
     rule.rule_id = rule_id
-    alarm_rules[rule_id] = rule
     return rule
+
+
+@app.put("/api/v1/alarms/rules/{rule_id}", response_model=AlarmRule)
+async def update_alarm_rule(rule_id: int, rule: AlarmRule, user: Dict = Depends(get_current_user)):
+    """
+    Update an alarm rule.
+
+    Requires: Engineer role or higher
+    """
+    check_role(user, UserRole.ENGINEER)
+
+    existing = db.get_alarm_rule(rule_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Alarm rule not found")
+
+    db.update_alarm_rule(rule_id, {
+        'name': rule.name,
+        'rtu_station': rule.rtu_station,
+        'slot': rule.slot,
+        'condition': rule.condition.value,
+        'threshold': rule.threshold,
+        'severity': rule.severity.value,
+        'delay_ms': rule.delay_ms,
+        'message': rule.message,
+        'enabled': rule.enabled
+    })
+    rule.rule_id = rule_id
+    return rule
+
+
+@app.delete("/api/v1/alarms/rules/{rule_id}")
+async def delete_alarm_rule(rule_id: int, user: Dict = Depends(get_current_user)):
+    """
+    Delete an alarm rule.
+
+    Requires: Engineer role or higher
+    """
+    check_role(user, UserRole.ENGINEER)
+
+    if not db.delete_alarm_rule(rule_id):
+        raise HTTPException(status_code=404, detail="Alarm rule not found")
+    return {"status": "deleted", "rule_id": rule_id}
 
 # ============== Control Endpoints ==============
 
@@ -1645,22 +1822,38 @@ async def update_pid_setpoint(loop_id: int, update: SetpointUpdate,
     Requires: Operator role or higher
     """
     check_role(user, UserRole.OPERATOR)
+
+    # Persist to database
+    if not db.update_pid_setpoint(loop_id, update.setpoint):
+        raise HTTPException(status_code=404, detail="PID loop not found")
+
+    # Send to C controller via shared memory
     client = get_shm_client()
     if client:
         success = client.set_setpoint(loop_id, update.setpoint)
         if not success:
-            raise HTTPException(status_code=500, detail="Failed to update setpoint")
+            logger.warning(f"Failed to send setpoint to controller for PID loop {loop_id}")
     else:
-        if loop_id not in fallback_pid_loops:
-            raise HTTPException(status_code=404, detail="PID loop not found")
-        fallback_pid_loops[loop_id].setpoint = update.setpoint
+        if loop_id in fallback_pid_loops:
+            fallback_pid_loops[loop_id].setpoint = update.setpoint
 
     logger.info(f"PID loop {loop_id} setpoint changed to {update.setpoint}")
     return {"status": "ok"}
 
 @app.put("/api/v1/control/pid/{loop_id}/mode")
-async def update_pid_mode(loop_id: int, update: ModeUpdate):
-    """Update PID loop mode"""
+async def update_pid_mode(loop_id: int, update: ModeUpdate, user: Dict = Depends(get_current_user)):
+    """
+    Update PID loop mode.
+
+    Requires: Operator role or higher
+    """
+    check_role(user, UserRole.OPERATOR)
+
+    # Persist to database
+    if not db.update_pid_mode(loop_id, update.mode):
+        raise HTTPException(status_code=404, detail="PID loop not found")
+
+    # Send to C controller via shared memory
     mode_map = {"MANUAL": 0, "AUTO": 1, "CASCADE": 2}
     mode_int = mode_map.get(update.mode, 0)
 
@@ -1668,26 +1861,129 @@ async def update_pid_mode(loop_id: int, update: ModeUpdate):
     if client:
         success = client.set_pid_mode(loop_id, mode_int)
         if not success:
-            raise HTTPException(status_code=500, detail="Failed to update mode")
+            logger.warning(f"Failed to send mode to controller for PID loop {loop_id}")
     else:
-        if loop_id not in fallback_pid_loops:
-            raise HTTPException(status_code=404, detail="PID loop not found")
-        fallback_pid_loops[loop_id].mode = update.mode
+        if loop_id in fallback_pid_loops:
+            fallback_pid_loops[loop_id].mode = update.mode
 
     logger.info(f"PID loop {loop_id} mode changed to {update.mode}")
     return {"status": "ok"}
 
 @app.put("/api/v1/control/pid/{loop_id}/tuning")
-async def update_pid_tuning(loop_id: int, tuning: TuningUpdate):
-    """Update PID loop tuning parameters"""
-    if loop_id not in fallback_pid_loops:
+async def update_pid_tuning(loop_id: int, tuning: TuningUpdate, user: Dict = Depends(get_current_user)):
+    """
+    Update PID loop tuning parameters.
+
+    Requires: Engineer role or higher
+    """
+    check_role(user, UserRole.ENGINEER)
+
+    # Check if loop exists in database
+    loop = db.get_pid_loop(loop_id)
+    if not loop:
         raise HTTPException(status_code=404, detail="PID loop not found")
 
-    fallback_pid_loops[loop_id].kp = tuning.kp
-    fallback_pid_loops[loop_id].ki = tuning.ki
-    fallback_pid_loops[loop_id].kd = tuning.kd
+    # Update in database
+    db.update_pid_loop(loop_id, {
+        **loop,
+        'kp': tuning.kp,
+        'ki': tuning.ki,
+        'kd': tuning.kd
+    })
 
+    # Also update fallback in-memory store
+    if loop_id in fallback_pid_loops:
+        fallback_pid_loops[loop_id].kp = tuning.kp
+        fallback_pid_loops[loop_id].ki = tuning.ki
+        fallback_pid_loops[loop_id].kd = tuning.kd
+
+    logger.info(f"PID loop {loop_id} tuning updated: Kp={tuning.kp}, Ki={tuning.ki}, Kd={tuning.kd}")
     return {"status": "ok"}
+
+
+@app.post("/api/v1/control/pid", response_model=PIDLoop)
+async def create_pid_loop(loop: PIDLoop, user: Dict = Depends(get_current_user)):
+    """
+    Create a new PID control loop.
+
+    Requires: Engineer role or higher
+    """
+    check_role(user, UserRole.ENGINEER)
+
+    loop_id = db.create_pid_loop({
+        'name': loop.name,
+        'enabled': loop.enabled,
+        'input_rtu': loop.input_rtu,
+        'input_slot': loop.input_slot,
+        'output_rtu': loop.output_rtu,
+        'output_slot': loop.output_slot,
+        'kp': loop.kp,
+        'ki': loop.ki,
+        'kd': loop.kd,
+        'setpoint': loop.setpoint,
+        'output_min': loop.output_min if hasattr(loop, 'output_min') else 0,
+        'output_max': loop.output_max if hasattr(loop, 'output_max') else 100,
+        'deadband': loop.deadband if hasattr(loop, 'deadband') else 0,
+        'mode': loop.mode
+    })
+    loop.loop_id = loop_id
+    logger.info(f"Created PID loop {loop_id}: {loop.name}")
+    return loop
+
+
+@app.put("/api/v1/control/pid/{loop_id}", response_model=PIDLoop)
+async def update_pid_loop_config(loop_id: int, loop: PIDLoop, user: Dict = Depends(get_current_user)):
+    """
+    Update PID loop configuration.
+
+    Requires: Engineer role or higher
+    """
+    check_role(user, UserRole.ENGINEER)
+
+    existing = db.get_pid_loop(loop_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="PID loop not found")
+
+    db.update_pid_loop(loop_id, {
+        'name': loop.name,
+        'enabled': loop.enabled,
+        'input_rtu': loop.input_rtu,
+        'input_slot': loop.input_slot,
+        'output_rtu': loop.output_rtu,
+        'output_slot': loop.output_slot,
+        'kp': loop.kp,
+        'ki': loop.ki,
+        'kd': loop.kd,
+        'setpoint': loop.setpoint,
+        'output_min': loop.output_min if hasattr(loop, 'output_min') else 0,
+        'output_max': loop.output_max if hasattr(loop, 'output_max') else 100,
+        'deadband': loop.deadband if hasattr(loop, 'deadband') else 0,
+        'mode': loop.mode
+    })
+    loop.loop_id = loop_id
+    logger.info(f"Updated PID loop {loop_id}: {loop.name}")
+    return loop
+
+
+@app.delete("/api/v1/control/pid/{loop_id}")
+async def delete_pid_loop(loop_id: int, user: Dict = Depends(get_current_user)):
+    """
+    Delete a PID control loop.
+
+    Requires: Engineer role or higher
+    """
+    check_role(user, UserRole.ENGINEER)
+
+    if not db.delete_pid_loop(loop_id):
+        raise HTTPException(status_code=404, detail="PID loop not found")
+
+    # Also remove from fallback store
+    if loop_id in fallback_pid_loops:
+        del fallback_pid_loops[loop_id]
+
+    logger.info(f"Deleted PID loop {loop_id}")
+    return {"status": "deleted", "loop_id": loop_id}
+
 
 # ============== Interlock Endpoints ==============
 
@@ -1705,35 +2001,118 @@ async def reset_interlock(interlock_id: int):
 
 # ============== Trend Endpoints ==============
 
-# In-memory historian tags cache (loaded from database)
-_historian_tags_cache: Dict[int, HistorianTag] = {}
-
-def _refresh_historian_tags():
-    """Refresh historian tags from database"""
-    global _historian_tags_cache
-    # In production, this would query the historian_tags table
-    # For now, generate tags from registered RTUs and their slots
-    _historian_tags_cache.clear()
-    tag_id = 1
-    for rtu in _get_all_rtus_from_db():
-        station = rtu["station_name"]
-        for slot in range(rtu.get("slot_count", 16)):
-            _historian_tags_cache[tag_id] = HistorianTag(
-                tag_id=tag_id,
-                rtu_station=station,
-                slot=slot,
-                tag_name=f"{station}.slot{slot}",
-                sample_rate_ms=1000,
-                deadband=0.1,
-                compression="swinging_door"
-            )
-            tag_id += 1
-
 @app.get("/api/v1/trends/tags", response_model=List[HistorianTag])
 async def list_historian_tags():
-    """List all historian tags based on configured RTUs"""
-    _refresh_historian_tags()
-    return list(_historian_tags_cache.values())
+    """List all historian tags from database"""
+    tags = db.get_historian_tags()
+    return [HistorianTag(
+        tag_id=t['id'],
+        rtu_station=t['rtu_station'],
+        slot=t['slot'],
+        tag_name=t['tag_name'],
+        sample_rate_ms=t.get('sample_rate_ms', 1000),
+        deadband=t.get('deadband', 0.1),
+        compression=t.get('compression', 'swinging_door')
+    ) for t in tags]
+
+
+@app.get("/api/v1/trends/tags/{tag_id}", response_model=HistorianTag)
+async def get_historian_tag(tag_id: int):
+    """Get a specific historian tag"""
+    tag = db.get_historian_tag(tag_id)
+    if not tag:
+        raise HTTPException(status_code=404, detail="Historian tag not found")
+    return HistorianTag(
+        tag_id=tag['id'],
+        rtu_station=tag['rtu_station'],
+        slot=tag['slot'],
+        tag_name=tag['tag_name'],
+        sample_rate_ms=tag.get('sample_rate_ms', 1000),
+        deadband=tag.get('deadband', 0.1),
+        compression=tag.get('compression', 'swinging_door')
+    )
+
+
+@app.post("/api/v1/trends/tags", response_model=HistorianTag)
+async def create_historian_tag(tag: HistorianTag, user: Dict = Depends(get_current_user)):
+    """
+    Create a new historian tag.
+
+    Requires: Engineer role or higher
+    """
+    check_role(user, UserRole.ENGINEER)
+
+    tag_id = db.upsert_historian_tag({
+        'rtu_station': tag.rtu_station,
+        'slot': tag.slot,
+        'tag_name': tag.tag_name,
+        'unit': getattr(tag, 'unit', None),
+        'sample_rate_ms': tag.sample_rate_ms,
+        'deadband': tag.deadband,
+        'compression': tag.compression
+    })
+    tag.tag_id = tag_id
+    logger.info(f"Created historian tag {tag.tag_name}")
+    return tag
+
+
+@app.put("/api/v1/trends/tags/{tag_id}", response_model=HistorianTag)
+async def update_historian_tag(tag_id: int, tag: HistorianTag, user: Dict = Depends(get_current_user)):
+    """
+    Update a historian tag.
+
+    Requires: Engineer role or higher
+    """
+    check_role(user, UserRole.ENGINEER)
+
+    existing = db.get_historian_tag(tag_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Historian tag not found")
+
+    db.upsert_historian_tag({
+        'rtu_station': tag.rtu_station,
+        'slot': tag.slot,
+        'tag_name': tag.tag_name,
+        'unit': getattr(tag, 'unit', None),
+        'sample_rate_ms': tag.sample_rate_ms,
+        'deadband': tag.deadband,
+        'compression': tag.compression
+    })
+    tag.tag_id = tag_id
+    logger.info(f"Updated historian tag {tag.tag_name}")
+    return tag
+
+
+@app.delete("/api/v1/trends/tags/{tag_id}")
+async def delete_historian_tag_endpoint(tag_id: int, user: Dict = Depends(get_current_user)):
+    """
+    Delete a historian tag.
+
+    Requires: Engineer role or higher
+    """
+    check_role(user, UserRole.ENGINEER)
+
+    if not db.delete_historian_tag(tag_id):
+        raise HTTPException(status_code=404, detail="Historian tag not found")
+
+    logger.info(f"Deleted historian tag {tag_id}")
+    return {"status": "deleted", "tag_id": tag_id}
+
+
+def _get_historian_tag_from_db(tag_id: int) -> Optional[HistorianTag]:
+    """Helper to get historian tag from database"""
+    tag = db.get_historian_tag(tag_id)
+    if tag:
+        return HistorianTag(
+            tag_id=tag['id'],
+            rtu_station=tag['rtu_station'],
+            slot=tag['slot'],
+            tag_name=tag['tag_name'],
+            sample_rate_ms=tag.get('sample_rate_ms', 1000),
+            deadband=tag.get('deadband', 0.1),
+            compression=tag.get('compression', 'swinging_door')
+        )
+    return None
 
 @app.get("/api/v1/trends/{tag_id}")
 async def get_trend_data(
@@ -1756,8 +2135,8 @@ async def get_trend_data(
         aggregate: If true, return aggregated data (min/max/avg)
         interval_seconds: Aggregation interval in seconds (default 60)
     """
-    _refresh_historian_tags()
-    if tag_id not in _historian_tags_cache:
+    tag = db.get_historian_tag(tag_id)
+    if not tag:
         raise HTTPException(status_code=404, detail="Tag not found")
 
     logger.debug(f"Trend query for tag {tag_id}: {start_time} to {end_time}")
@@ -1777,8 +2156,8 @@ async def get_trend_data(
 @app.get("/api/v1/trends/{tag_id}/latest")
 async def get_trend_latest(tag_id: int):
     """Get the latest value for a historian tag."""
-    _refresh_historian_tags()
-    if tag_id not in _historian_tags_cache:
+    tag = db.get_historian_tag(tag_id)
+    if not tag:
         raise HTTPException(status_code=404, detail="Tag not found")
 
     try:
@@ -1798,8 +2177,8 @@ async def record_trend_sample(tag_id: int, value: float, quality: int = 192):
 
     In production, samples are recorded automatically by the historian service.
     """
-    _refresh_historian_tags()
-    if tag_id not in _historian_tags_cache:
+    tag = db.get_historian_tag(tag_id)
+    if not tag:
         raise HTTPException(status_code=404, detail="Tag not found")
 
     try:
@@ -1893,19 +2272,39 @@ async def get_system_health():
 
 @app.get("/api/v1/system/config")
 async def export_config():
-    """Export system configuration from database"""
+    """Export complete system configuration from database"""
     return {
+        "version": "1.0",
+        "exported_at": datetime.now().isoformat(),
         "rtus": db.get_rtu_devices(),
+        "slot_configs": db.get_all_slot_configs(),
         "alarm_rules": db.get_alarm_rules(),
+        "pid_loops": db.get_pid_loops(),
+        "historian_tags": db.get_historian_tags(),
         "modbus_server": db.get_modbus_server_config(),
         "modbus_devices": db.get_modbus_downstream_devices(),
-        "modbus_mappings": db.get_modbus_register_mappings()
+        "modbus_mappings": db.get_modbus_register_mappings(),
+        "log_forwarding": db.get_log_forwarding_config(),
+        "ad_config": db.get_ad_config(),
+        "users": [
+            {"username": u["username"], "role": u["role"], "active": u["active"],
+             "sync_to_rtus": u["sync_to_rtus"]}
+            for u in db.get_users(include_inactive=True)
+            if u["username"] != "admin"  # Don't export default admin
+        ]
     }
 
 @app.post("/api/v1/system/config")
-async def import_config(config: Dict[str, Any]):
-    """Import system configuration into database"""
-    imported = {"rtus": 0, "alarm_rules": 0, "modbus_devices": 0}
+async def import_config(config: Dict[str, Any], user: Dict = Depends(get_current_user)):
+    """
+    Import system configuration into database.
+
+    Requires: Admin role
+    """
+    check_role(user, UserRole.ADMIN)
+
+    imported = {"rtus": 0, "slot_configs": 0, "alarm_rules": 0, "pid_loops": 0,
+                "historian_tags": 0, "modbus_devices": 0, "users": 0}
 
     try:
         # Import RTUs
@@ -1921,31 +2320,95 @@ async def import_config(config: Dict[str, Any]):
                 except Exception as e:
                     logger.warning(f"Failed to import RTU {rtu_data.get('station_name')}: {e}")
 
-        # Import alarm rules
+        # Import slot configs
+        if "slot_configs" in config:
+            for slot_data in config["slot_configs"]:
+                try:
+                    db.upsert_slot_config(slot_data)
+                    imported["slot_configs"] += 1
+                except Exception as e:
+                    logger.warning(f"Failed to import slot config: {e}")
+
+        # Import alarm rules (to database)
         if "alarm_rules" in config:
             for rule_data in config["alarm_rules"]:
-                rule = AlarmRule(**rule_data)
-                if rule.rule_id:
-                    alarm_rules[rule.rule_id] = rule
+                try:
+                    existing = db.get_alarm_rule(rule_data.get("id"))
+                    if existing:
+                        db.update_alarm_rule(rule_data["id"], rule_data)
+                    else:
+                        db.create_alarm_rule(rule_data)
+                    imported["alarm_rules"] += 1
+                except Exception as e:
+                    logger.warning(f"Failed to import alarm rule: {e}")
 
-        # Import PID loops
+        # Import PID loops (to database)
         if "pid_loops" in config:
             for pid_data in config["pid_loops"]:
-                pid = PIDLoop(**pid_data)
-                if pid.loop_id:
-                    fallback_pid_loops[pid.loop_id] = pid
+                try:
+                    existing = db.get_pid_loop(pid_data.get("id"))
+                    if existing:
+                        db.update_pid_loop(pid_data["id"], pid_data)
+                    else:
+                        db.create_pid_loop(pid_data)
+                    imported["pid_loops"] += 1
+                except Exception as e:
+                    logger.warning(f"Failed to import PID loop: {e}")
 
-        # Import historian tags
+        # Import historian tags (to database)
         if "historian_tags" in config:
             for tag_data in config["historian_tags"]:
-                tag = HistorianTag(**tag_data)
-                historian_tags[tag.tag_id] = tag
+                try:
+                    db.upsert_historian_tag(tag_data)
+                    imported["historian_tags"] += 1
+                except Exception as e:
+                    logger.warning(f"Failed to import historian tag: {e}")
 
-        logger.info(f"Configuration imported: {len(config.get('rtus', []))} RTUs, "
-                   f"{len(config.get('alarm_rules', []))} rules, "
-                   f"{len(config.get('pid_loops', []))} PID loops")
+        # Import modbus devices
+        if "modbus_devices" in config:
+            for device_data in config["modbus_devices"]:
+                try:
+                    db.create_modbus_downstream_device(device_data)
+                    imported["modbus_devices"] += 1
+                except Exception as e:
+                    logger.warning(f"Failed to import modbus device: {e}")
 
-        return {"status": "ok", "message": "Configuration imported successfully"}
+        # Import modbus server config
+        if "modbus_server" in config:
+            db.update_modbus_server_config(config["modbus_server"])
+
+        # Import log forwarding config
+        if "log_forwarding" in config:
+            db.update_log_forwarding_config(config["log_forwarding"])
+
+        # Import AD config
+        if "ad_config" in config:
+            db.update_ad_config(config["ad_config"])
+
+        # Import users (without passwords - they must be reset)
+        if "users" in config:
+            for user_data in config["users"]:
+                try:
+                    existing = db.get_user_by_username(user_data.get("username", ""))
+                    if not existing:
+                        # Create with temporary password
+                        db.create_user({
+                            "username": user_data["username"],
+                            "password": "changeme",  # Must be changed
+                            "role": user_data.get("role", "viewer"),
+                            "active": user_data.get("active", True),
+                            "sync_to_rtus": user_data.get("sync_to_rtus", True)
+                        })
+                        imported["users"] += 1
+                except Exception as e:
+                    logger.warning(f"Failed to import user {user_data.get('username')}: {e}")
+
+        db.log_audit(request_user.get(), 'import', 'config', None,
+                     f"Imported config: {imported}")
+
+        logger.info(f"Configuration imported: {imported}")
+        return {"status": "ok", "imported": imported}
+
     except Exception as e:
         logger.error(f"Configuration import failed: {e}")
         raise HTTPException(status_code=400, detail=str(e))
@@ -2151,15 +2614,172 @@ async def delete_backup(backup_id: str):
     return {"status": "ok"}
 
 @app.post("/api/v1/backups/upload")
-async def upload_backup(file: bytes = None):
-    """Upload a backup file for restore"""
-    from fastapi import File, UploadFile
+async def upload_backup(
+    file: Any,  # UploadFile
+    description: Optional[str] = None,
+    user: Dict = Depends(get_current_user)
+):
+    """
+    Upload a backup file (.tar.gz) for restore.
+
+    Requires: Admin role
+    """
+    from fastapi import UploadFile
+
+    check_role(user, UserRole.ADMIN)
+
+    if not hasattr(file, 'filename'):
+        raise HTTPException(status_code=400, detail="No file uploaded")
+
+    # Validate file extension
+    if not file.filename.endswith('.tar.gz'):
+        raise HTTPException(status_code=400, detail="File must be a .tar.gz archive")
+
+    # Generate backup ID
+    backup_id = f"uploaded_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    filename = f"{backup_id}.tar.gz"
+    filepath = os.path.join(BACKUP_DIR, filename)
+
+    # Ensure backup directory exists
+    os.makedirs(BACKUP_DIR, exist_ok=True)
+
+    # Save uploaded file
+    try:
+        content = await file.read()
+        with open(filepath, 'wb') as f:
+            f.write(content)
+
+        size_bytes = os.path.getsize(filepath)
+
+        # Create backup record in database
+        db.create_backup_record(
+            backup_id=backup_id,
+            filename=filename,
+            description=description or f"Uploaded: {file.filename}",
+            size_bytes=size_bytes,
+            includes_historian='_full_' in file.filename.lower()
+        )
+
+        db.log_audit(user.get('username', 'unknown'), 'upload', 'backup', backup_id,
+                     f"Uploaded backup: {filename}")
+
+        logger.info(f"Backup uploaded: {backup_id} ({size_bytes} bytes)")
+        return {
+            "status": "ok",
+            "backup_id": backup_id,
+            "filename": filename,
+            "size_bytes": size_bytes
+        }
+    except Exception as e:
+        logger.error(f"Failed to upload backup: {e}")
+        if os.path.exists(filepath):
+            os.remove(filepath)
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.post("/api/v1/backups/import")
-async def import_backup_file(file: Any = None):
-    """Import configuration from uploaded file"""
-    # This endpoint accepts multipart form upload
-    return {"status": "ok", "message": "Use /api/v1/system/config for direct JSON import"}
+async def import_backup_file(
+    file: Any,  # UploadFile
+    user: Dict = Depends(get_current_user)
+):
+    """
+    Import configuration from an uploaded JSON file.
+
+    Requires: Admin role
+    """
+    check_role(user, UserRole.ADMIN)
+
+    if not hasattr(file, 'filename'):
+        raise HTTPException(status_code=400, detail="No file uploaded")
+
+    # Validate file extension
+    if not file.filename.endswith('.json'):
+        raise HTTPException(status_code=400, detail="File must be a .json file")
+
+    try:
+        content = await file.read()
+        config = json.loads(content.decode('utf-8'))
+
+        # Delegate to the existing import_config logic
+        imported = {"rtus": 0, "slot_configs": 0, "alarm_rules": 0, "pid_loops": 0,
+                    "historian_tags": 0, "modbus_devices": 0, "users": 0}
+
+        # Import RTUs
+        if "rtus" in config:
+            for rtu_data in config["rtus"]:
+                try:
+                    existing = db.get_rtu_device(rtu_data.get("station_name", ""))
+                    if existing:
+                        db.update_rtu_device(rtu_data["station_name"], rtu_data)
+                    else:
+                        db.create_rtu_device(rtu_data)
+                    imported["rtus"] += 1
+                except Exception as e:
+                    logger.warning(f"Failed to import RTU: {e}")
+
+        # Import slot configs
+        if "slot_configs" in config:
+            for slot_data in config["slot_configs"]:
+                try:
+                    db.upsert_slot_config(slot_data)
+                    imported["slot_configs"] += 1
+                except Exception as e:
+                    logger.warning(f"Failed to import slot config: {e}")
+
+        # Import alarm rules
+        if "alarm_rules" in config:
+            for rule_data in config["alarm_rules"]:
+                try:
+                    db.create_alarm_rule(rule_data)
+                    imported["alarm_rules"] += 1
+                except Exception as e:
+                    logger.warning(f"Failed to import alarm rule: {e}")
+
+        # Import PID loops
+        if "pid_loops" in config:
+            for pid_data in config["pid_loops"]:
+                try:
+                    db.create_pid_loop(pid_data)
+                    imported["pid_loops"] += 1
+                except Exception as e:
+                    logger.warning(f"Failed to import PID loop: {e}")
+
+        # Import historian tags
+        if "historian_tags" in config:
+            for tag_data in config["historian_tags"]:
+                try:
+                    db.upsert_historian_tag(tag_data)
+                    imported["historian_tags"] += 1
+                except Exception as e:
+                    logger.warning(f"Failed to import historian tag: {e}")
+
+        # Import users (with temporary password)
+        if "users" in config:
+            for user_data in config["users"]:
+                try:
+                    existing = db.get_user_by_username(user_data.get("username", ""))
+                    if not existing:
+                        db.create_user({
+                            "username": user_data["username"],
+                            "password": "changeme",
+                            "role": user_data.get("role", "viewer"),
+                            "active": user_data.get("active", True)
+                        })
+                        imported["users"] += 1
+                except Exception as e:
+                    logger.warning(f"Failed to import user: {e}")
+
+        db.log_audit(user.get('username', 'unknown'), 'import', 'config', None,
+                     f"Imported from file {file.filename}: {imported}")
+
+        logger.info(f"Configuration imported from file: {imported}")
+        return {"status": "ok", "imported": imported}
+
+    except json.JSONDecodeError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid JSON file: {e}")
+    except Exception as e:
+        logger.error(f"Failed to import config file: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 # ============== Modbus Gateway Configuration ==============
 
@@ -2492,12 +3112,17 @@ async def login(request: LoginRequest):
                 message="Authentication service unavailable"
             )
     else:
-        # Local authentication fallback (demo mode)
-        # In production, this would check against a database
-        if username == "admin" and password == "admin":
-            groups = ["WTC-Admins"]
-        elif username == "operator" and password == "operator":
-            groups = ["WTC-Operators"]
+        # Local authentication using database users
+        user = db.authenticate_user(username, password)
+        if user:
+            # Map role to groups for consistency with AD auth
+            role_to_groups = {
+                'admin': ["WTC-Admins"],
+                'engineer': ["WTC-Engineers"],
+                'operator': ["WTC-Operators"],
+                'viewer': ["WTC-Viewers"]
+            }
+            groups = role_to_groups.get(user.get('role', 'viewer'), ["WTC-Viewers"])
         else:
             logger.warning(f"Local auth failed for user: {username}")
             return LoginResponse(
