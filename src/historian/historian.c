@@ -359,6 +359,53 @@ wtc_result_t historian_get_tag(historian_t *historian,
     return WTC_ERROR_NOT_FOUND;
 }
 
+wtc_result_t historian_record_sample(historian_t *historian,
+                                      int tag_id,
+                                      uint64_t timestamp_ms,
+                                      float value,
+                                      uint8_t quality) {
+    if (!historian) {
+        return WTC_ERROR_INVALID_PARAM;
+    }
+
+    pthread_mutex_lock(&historian->lock);
+
+    /* Find tag */
+    historian_tag_internal_t *tag = NULL;
+    for (int i = 0; i < historian->tag_count; i++) {
+        if (historian->tags[i].info.tag_id == tag_id) {
+            tag = &historian->tags[i];
+            break;
+        }
+    }
+
+    if (!tag) {
+        pthread_mutex_unlock(&historian->lock);
+        return WTC_ERROR_NOT_FOUND;
+    }
+
+    /* Create sample */
+    historian_sample_t sample;
+    sample.timestamp_ms = timestamp_ms;
+    sample.tag_id = tag_id;
+    sample.value = value;
+    sample.quality = quality;
+
+    /* Add to buffer */
+    buffer_add_sample(&tag->buffer, &sample);
+
+    /* Update tag stats */
+    tag->info.total_samples++;
+    tag->info.last_value = value;
+    tag->info.last_sample_ms = timestamp_ms;
+    tag->last_stored_value = value;
+
+    historian->stats.total_samples++;
+
+    pthread_mutex_unlock(&historian->lock);
+    return WTC_OK;
+}
+
 wtc_result_t historian_process(historian_t *historian) {
     if (!historian || !historian->registry) {
         return WTC_ERROR_INVALID_PARAM;

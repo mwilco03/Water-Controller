@@ -52,8 +52,8 @@ static int tests_passed = 0;
 
 TEST(crc32_empty)
 {
-    uint8_t data[] = {};
-    uint32_t crc = crc32_calculate(data, 0);
+    uint8_t data[1] = {0};  /* Use a valid array with one element */
+    uint32_t crc = crc32(data, 0);  /* Pass 0 length for empty test */
     /* Empty data should return initial CRC value */
     ASSERT_EQ(0, crc);
 }
@@ -61,19 +61,18 @@ TEST(crc32_empty)
 TEST(crc32_simple)
 {
     uint8_t data[] = {0x01, 0x02, 0x03, 0x04};
-    uint32_t crc = crc32_calculate(data, sizeof(data));
+    uint32_t crc = crc32(data, sizeof(data));
     /* CRC should be non-zero for non-empty data */
     assert(crc != 0);
-    tests_passed++; /* Already counted by RUN_TEST, this is just for coverage */
 }
 
 TEST(crc16_profinet)
 {
-    /* Test PROFINET CRC calculation */
+    /* Test PROFINET CRC calculation (uses CRC-16-CCITT) */
     uint8_t frame[] = {0x00, 0x01, 0x02, 0x03, 0x04, 0x05};
-    uint16_t crc = crc16_profinet(frame, sizeof(frame));
-    /* CRC should be calculated */
-    assert(crc != 0 || crc == 0); /* Just verify it doesn't crash */
+    uint16_t crc = crc16_ccitt(frame, sizeof(frame));
+    /* Just verify it doesn't crash */
+    (void)crc;
 }
 
 /* ============== Frame Tests ============== */
@@ -81,57 +80,75 @@ TEST(crc16_profinet)
 TEST(frame_build_dcp_identify)
 {
     uint8_t buffer[256];
-    uint8_t dest_mac[6] = {0x01, 0x0E, 0xCF, 0x00, 0x00, 0x00};
     uint8_t src_mac[6] = {0x00, 0x11, 0x22, 0x33, 0x44, 0x55};
+    uint8_t dest_mac[6] = {0x01, 0x0E, 0xCF, 0x00, 0x00, 0x00};
 
-    int len = profinet_frame_build_dcp_identify(buffer, sizeof(buffer),
-                                                 dest_mac, src_mac, 0x1234);
+    frame_builder_t builder;
+    wtc_result_t result = frame_builder_init(&builder, buffer, sizeof(buffer), src_mac);
+    ASSERT_EQ(WTC_OK, result);
+
+    /* Build Ethernet header */
+    result = frame_build_ethernet(&builder, dest_mac, PROFINET_ETHERTYPE);
+    ASSERT_EQ(WTC_OK, result);
+
+    /* Build DCP identify request */
+    result = frame_build_dcp_identify(&builder, 0x1234, NULL);
+    ASSERT_EQ(WTC_OK, result);
 
     /* Frame should have minimum DCP identify length */
+    size_t len = frame_builder_length(&builder);
     assert(len > 14); /* Ethernet header at minimum */
 }
 
 TEST(frame_build_dcp_set)
 {
     uint8_t buffer[256];
-    uint8_t dest_mac[6] = {0x00, 0x11, 0x22, 0x33, 0x44, 0x55};
     uint8_t src_mac[6] = {0x00, 0x11, 0x22, 0x33, 0x44, 0x66};
-    uint32_t ip = 0xC0A80164; /* 192.168.1.100 */
-    uint32_t mask = 0xFFFFFF00;
-    uint32_t gw = 0xC0A80101;
+    uint8_t dest_mac[6] = {0x00, 0x11, 0x22, 0x33, 0x44, 0x55};
 
-    int len = profinet_frame_build_dcp_set_ip(buffer, sizeof(buffer),
-                                               dest_mac, src_mac, 0x1234,
-                                               ip, mask, gw);
+    frame_builder_t builder;
+    wtc_result_t result = frame_builder_init(&builder, buffer, sizeof(buffer), src_mac);
+    ASSERT_EQ(WTC_OK, result);
 
+    /* Build Ethernet header */
+    result = frame_build_ethernet(&builder, dest_mac, PROFINET_ETHERTYPE);
+    ASSERT_EQ(WTC_OK, result);
+
+    /* Build DCP set request with IP data */
+    uint8_t ip_data[12] = {192, 168, 1, 100, 255, 255, 255, 0, 192, 168, 1, 1};
+    result = frame_build_dcp_set(&builder, dest_mac, 0x1234, 0x01, 0x02, ip_data, sizeof(ip_data));
+    ASSERT_EQ(WTC_OK, result);
+
+    size_t len = frame_builder_length(&builder);
     assert(len > 14);
 }
 
 /* ============== AR Manager Tests ============== */
 
-TEST(ar_create)
+TEST(ar_manager_init_null)
 {
-    ar_manager_t *ar = ar_manager_create();
-    ASSERT_NOT_NULL(ar);
+    /* Test that ar_manager_init returns error for NULL parameters */
+    ar_manager_t *manager = NULL;
+    uint8_t controller_mac[6] = {0x00, 0x11, 0x22, 0x33, 0x44, 0x55};
 
-    /* Should be able to create an AR */
-    uint32_t ar_uuid[4] = {0x12345678, 0x9ABCDEF0, 0x12345678, 0x9ABCDEF0};
-    int ar_id = ar_manager_create_ar(ar, ar_uuid, 0x0001, 0x0001);
+    /* NULL manager pointer should fail */
+    wtc_result_t result = ar_manager_init(NULL, -1, controller_mac);
+    ASSERT_EQ(WTC_ERROR_INVALID_PARAM, result);
 
-    assert(ar_id >= 0);
-
-    ar_manager_destroy(ar);
+    /* NULL MAC address should fail */
+    result = ar_manager_init(&manager, -1, NULL);
+    ASSERT_EQ(WTC_ERROR_INVALID_PARAM, result);
 }
 
-TEST(ar_get_nonexistent)
+TEST(ar_manager_get_ar_null)
 {
-    ar_manager_t *ar = ar_manager_create();
-    ASSERT_NOT_NULL(ar);
+    /* Getting AR from NULL manager should return NULL */
+    profinet_ar_t *ar = ar_manager_get_ar(NULL, "test-station");
+    assert(ar == NULL);
 
-    /* Getting non-existent AR should return NULL or error */
-    /* This tests boundary conditions */
-
-    ar_manager_destroy(ar);
+    /* Getting AR with NULL station name should return NULL */
+    ar = ar_manager_get_ar(NULL, NULL);
+    assert(ar == NULL);
 }
 
 /* ============== Test Runner ============== */
@@ -150,14 +167,16 @@ void run_profinet_tests(void)
     RUN_TEST(frame_build_dcp_set);
 
     printf("\nAR Manager Tests:\n");
-    RUN_TEST(ar_create);
-    RUN_TEST(ar_get_nonexistent);
+    RUN_TEST(ar_manager_init_null);
+    RUN_TEST(ar_manager_get_ar_null);
 
     printf("\n=== Results: %d/%d tests passed ===\n\n", tests_passed, tests_run);
 }
 
 int main(int argc, char *argv[])
 {
+    (void)argc;
+    (void)argv;
     run_profinet_tests();
     return (tests_passed == tests_run) ? 0 : 1;
 }

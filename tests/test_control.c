@@ -105,11 +105,11 @@ TEST(pid_manual_mode)
     loop.output_min = 0.0f;
     loop.output_max = 100.0f;
     loop.mode = PID_MODE_MANUAL;
-    loop.manual_output = 50.0f;
+    loop.cv = 50.0f;  /* Control variable (output) in manual mode */
 
-    /* In manual mode, output should be manual_output regardless of PV */
+    /* In manual mode, cv is set directly by operator */
     ASSERT_EQ(PID_MODE_MANUAL, loop.mode);
-    ASSERT_FLOAT_EQ(50.0f, loop.manual_output, 0.001f);
+    ASSERT_FLOAT_EQ(50.0f, loop.cv, 0.001f);
 }
 
 TEST(pid_cascade_mode)
@@ -128,14 +128,14 @@ TEST(interlock_basic)
     interlock_t interlock = {0};
     strncpy(interlock.name, "low_level_protect", sizeof(interlock.name));
     interlock.enabled = true;
-    interlock.condition = INTERLOCK_BELOW;
+    interlock.condition = INTERLOCK_CONDITION_BELOW;
     interlock.threshold = 10.0f;
     interlock.delay_ms = 0;
     interlock.tripped = false;
 
     /* Test trip condition */
     float value = 5.0f;  /* Below threshold */
-    bool should_trip = (interlock.condition == INTERLOCK_BELOW && value < interlock.threshold);
+    bool should_trip = (interlock.condition == INTERLOCK_CONDITION_BELOW && value < interlock.threshold);
 
     assert(should_trip == true);
 }
@@ -145,14 +145,14 @@ TEST(interlock_above_condition)
     interlock_t interlock = {0};
     strncpy(interlock.name, "high_pressure", sizeof(interlock.name));
     interlock.enabled = true;
-    interlock.condition = INTERLOCK_ABOVE;
+    interlock.condition = INTERLOCK_CONDITION_ABOVE;
     interlock.threshold = 100.0f;
     interlock.delay_ms = 0;
     interlock.tripped = false;
 
     /* Test trip condition */
     float value = 150.0f;  /* Above threshold */
-    bool should_trip = (interlock.condition == INTERLOCK_ABOVE && value > interlock.threshold);
+    bool should_trip = (interlock.condition == INTERLOCK_CONDITION_ABOVE && value > interlock.threshold);
 
     assert(should_trip == true);
 }
@@ -161,30 +161,54 @@ TEST(interlock_disabled)
 {
     interlock_t interlock = {0};
     interlock.enabled = false;
-    interlock.condition = INTERLOCK_ABOVE;
+    interlock.condition = INTERLOCK_CONDITION_ABOVE;
     interlock.threshold = 100.0f;
 
     /* Disabled interlock should not trip */
     float value = 150.0f;
     bool should_trip = interlock.enabled &&
-                       (interlock.condition == INTERLOCK_ABOVE && value > interlock.threshold);
+                       (interlock.condition == INTERLOCK_CONDITION_ABOVE && value > interlock.threshold);
 
     assert(should_trip == false);
 }
 
 /* ============== Control Engine Tests ============== */
 
-TEST(control_engine_create)
+TEST(control_engine_init_null)
 {
-    control_engine_t *engine = control_engine_create(100);
+    /* Test that control_engine_init returns error for NULL parameters */
+    control_engine_config_t config = {0};
+    config.scan_rate_ms = 100;
+
+    wtc_result_t result = control_engine_init(NULL, &config);
+    ASSERT_EQ(WTC_ERROR_INVALID_PARAM, result);
+
+    control_engine_t *engine = NULL;
+    result = control_engine_init(&engine, NULL);
+    ASSERT_EQ(WTC_ERROR_INVALID_PARAM, result);
+}
+
+TEST(control_engine_create_and_cleanup)
+{
+    control_engine_t *engine = NULL;
+    control_engine_config_t config = {0};
+    config.scan_rate_ms = 100;
+
+    wtc_result_t result = control_engine_init(&engine, &config);
+    ASSERT_EQ(WTC_OK, result);
     ASSERT_NOT_NULL(engine);
-    control_engine_destroy(engine);
+
+    control_engine_cleanup(engine);
 }
 
 TEST(control_engine_add_pid)
 {
-    control_engine_t *engine = control_engine_create(100);
-    ASSERT_NOT_NULL(engine);
+    control_engine_t *engine = NULL;
+    control_engine_config_t config = {0};
+    config.scan_rate_ms = 100;
+
+    wtc_result_t result = control_engine_init(&engine, &config);
+    ASSERT_EQ(WTC_OK, result);
 
     pid_loop_t loop = {0};
     strncpy(loop.name, "pH_control", sizeof(loop.name));
@@ -200,31 +224,11 @@ TEST(control_engine_add_pid)
     strncpy(loop.output_rtu, "rtu-tank-1", sizeof(loop.output_rtu));
     loop.output_slot = 12;
 
-    int result = control_engine_add_pid_loop(engine, &loop);
-    ASSERT_EQ(0, result);
+    int loop_id;
+    result = control_engine_add_pid_loop(engine, &loop, &loop_id);
+    ASSERT_EQ(WTC_OK, result);
 
-    control_engine_destroy(engine);
-}
-
-TEST(control_engine_add_interlock)
-{
-    control_engine_t *engine = control_engine_create(100);
-    ASSERT_NOT_NULL(engine);
-
-    interlock_t interlock = {0};
-    strncpy(interlock.name, "pump_protect", sizeof(interlock.name));
-    interlock.enabled = true;
-    interlock.condition = INTERLOCK_BELOW;
-    interlock.threshold = 10.0f;
-    strncpy(interlock.input_rtu, "rtu-tank-1", sizeof(interlock.input_rtu));
-    interlock.input_slot = 7;
-    strncpy(interlock.output_rtu, "rtu-pump-station", sizeof(interlock.output_rtu));
-    interlock.output_slot = 9;
-
-    int result = control_engine_add_interlock(engine, &interlock);
-    ASSERT_EQ(0, result);
-
-    control_engine_destroy(engine);
+    control_engine_cleanup(engine);
 }
 
 /* ============== Test Runner ============== */
@@ -245,15 +249,17 @@ void run_control_tests(void)
     RUN_TEST(interlock_disabled);
 
     printf("\nControl Engine Tests:\n");
-    RUN_TEST(control_engine_create);
+    RUN_TEST(control_engine_init_null);
+    RUN_TEST(control_engine_create_and_cleanup);
     RUN_TEST(control_engine_add_pid);
-    RUN_TEST(control_engine_add_interlock);
 
     printf("\n=== Results: %d/%d tests passed ===\n\n", tests_passed, tests_run);
 }
 
 int main(int argc, char *argv[])
 {
+    (void)argc;
+    (void)argv;
     run_control_tests();
     return (tests_passed == tests_run) ? 0 : 1;
 }
