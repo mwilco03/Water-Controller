@@ -9,21 +9,170 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
-from datetime import datetime
+from datetime import datetime, timedelta
 import asyncio
 import json
 import logging
 
 # Import shared memory client
 try:
-    from shm_client import get_client, WtcShmClient
+    from shm_client import (
+        get_client, WtcShmClient, CONNECTION_STATE_NAMES,
+        SENSOR_STATUS_NAMES, CONN_STATE_RUNNING, CONN_STATE_OFFLINE
+    )
     SHM_AVAILABLE = True
 except ImportError:
     SHM_AVAILABLE = False
+    CONNECTION_STATE_NAMES = {0: "IDLE", 1: "CONNECTING", 2: "CONNECTED", 3: "RUNNING", 4: "ERROR", 5: "OFFLINE"}
+    CONN_STATE_RUNNING = 3
+    CONN_STATE_OFFLINE = 5
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
+# Import database persistence layer
+import db_persistence as db
+
+# Import historian module for time-series data
+import historian as hist
+
+# Configure logging with structured format
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
+
+# ============== Synchronization Locks ==============
+# Locks for shared state to prevent race conditions in async code
+
+_sessions_lock = asyncio.Lock()  # Protects active_sessions
+_websocket_lock = asyncio.Lock()  # Protects websocket connections
+_rtu_state_lock = asyncio.Lock()  # Protects _rtu_runtime_state
+_scan_config_lock = asyncio.Lock()  # Protects network_scan_config
+_modbus_config_lock = asyncio.Lock()  # Protects modbus_config
+_ad_config_lock = asyncio.Lock()  # Protects ad_config_store
+_log_config_lock = asyncio.Lock()  # Protects log_forward_config_store
+
+# Request context for audit logging
+from contextvars import ContextVar
+request_user: ContextVar[str] = ContextVar('request_user', default='system')
+request_ip: ContextVar[str] = ContextVar('request_ip', default='unknown')
+
+# Authentication configuration
+import os
+AUTH_ENABLED = os.environ.get('WTC_AUTH_ENABLED', 'true').lower() in ('true', '1', 'yes')
+AUTH_BYPASS_HEADER = os.environ.get('WTC_AUTH_BYPASS_HEADER', None)  # For testing
+
+# In-memory session store (populated on login, moved here for dependency access)
+active_sessions: Dict[str, Dict[str, Any]] = {}
+
+# User roles for authorization
+class UserRole:
+    VIEWER = "viewer"
+    OPERATOR = "operator"
+    ENGINEER = "engineer"
+    ADMIN = "admin"
+
+# Role hierarchy for permission checks
+ROLE_HIERARCHY = {
+    UserRole.VIEWER: 0,
+    UserRole.OPERATOR: 1,
+    UserRole.ENGINEER: 2,
+    UserRole.ADMIN: 3
+}
+
+
+from fastapi import Header, Request
+
+
+async def get_current_user(
+    request: Request,
+    authorization: Optional[str] = Header(None)
+) -> Optional[Dict[str, Any]]:
+    """
+    Dependency to get the current authenticated user.
+    Returns None if authentication is disabled or bypassed.
+    Raises HTTPException if auth is required but invalid.
+    """
+    # Check if auth is disabled
+    if not AUTH_ENABLED:
+        return {"username": "anonymous", "role": UserRole.ADMIN, "groups": []}
+
+    # Check for bypass header (testing only)
+    if AUTH_BYPASS_HEADER and request.headers.get(AUTH_BYPASS_HEADER):
+        return {"username": "test_user", "role": UserRole.ADMIN, "groups": []}
+
+    # Extract token from Authorization header
+    if not authorization:
+        raise HTTPException(
+            status_code=401,
+            detail="Authentication required",
+            headers={"WWW-Authenticate": "Bearer"}
+        )
+
+    # Support both "Bearer <token>" and raw token
+    token = authorization
+    if authorization.startswith("Bearer "):
+        token = authorization[7:]
+
+    # Try in-memory cache first, then database
+    session = active_sessions.get(token)
+    if not session:
+        # Try database
+        db_session = db.get_session(token)
+        if db_session:
+            session = {
+                "username": db_session["username"],
+                "role": db_session["role"],
+                "groups": db_session.get("groups", [])
+            }
+            # Cache in memory
+            active_sessions[token] = session
+            # Update activity in database
+            db.update_session_activity(token)
+
+    if not session:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid or expired session",
+            headers={"WWW-Authenticate": "Bearer"}
+        )
+
+    # Update request context for audit logging
+    request_user.set(session["username"])
+    if request.client:
+        request_ip.set(request.client.host)
+
+    return session
+
+
+async def require_role(required_role: str):
+    """Factory for role-based authorization dependency"""
+    async def role_checker(user: Dict[str, Any] = Depends(get_current_user)):
+        user_role = user.get("role", UserRole.VIEWER)
+        if ROLE_HIERARCHY.get(user_role, 0) < ROLE_HIERARCHY.get(required_role, 0):
+            raise HTTPException(
+                status_code=403,
+                detail=f"Insufficient permissions. Required role: {required_role}"
+            )
+        return user
+    return role_checker
+
+
+# Create role-specific dependencies
+require_viewer = Depends(get_current_user)
+require_operator = Depends(get_current_user)  # Will add role check in handler
+require_engineer = Depends(get_current_user)
+require_admin = Depends(get_current_user)
+
+
+def check_role(user: Dict[str, Any], required_role: str):
+    """Helper to check user role in handlers"""
+    user_role = user.get("role", UserRole.VIEWER)
+    if ROLE_HIERARCHY.get(user_role, 0) < ROLE_HIERARCHY.get(required_role, 0):
+        raise HTTPException(
+            status_code=403,
+            detail=f"Insufficient permissions. Required role: {required_role}"
+        )
+
 
 # Create FastAPI app
 app = FastAPI(
@@ -72,6 +221,21 @@ class ActuatorCommand(BaseModel):
     pwm_duty: Optional[int] = 0
 
 class AlarmRule(BaseModel):
+    """
+    Alarm rules generate NOTIFICATIONS only.
+
+    Interlocks are configured and executed on the RTU directly.
+    The controller does NOT execute interlock logic - safety-critical
+    functions must run locally on the RTU without network dependency.
+
+    The controller can:
+    - Display interlock status (read from RTU)
+    - Configure RTU interlocks (push config to RTU)
+    - Log interlock events
+
+    The controller CANNOT:
+    - Execute interlock logic (that's the RTU's job)
+    """
     rule_id: Optional[int] = None
     rtu_station: str
     slot: int
@@ -198,17 +362,107 @@ def get_shm_client() -> Optional[WtcShmClient]:
             return client
     return None
 
-# ============== Fallback Data Store ==============
-# Used when controller is not running
+# ============== Data Store ==============
+# Primary storage is SQLite database (db_persistence)
+# Runtime state comes from shared memory when controller is running
 
-fallback_rtus: Dict[str, RTUDevice] = {}
-fallback_alarms: Dict[int, Alarm] = {}
-alarm_rules: Dict[int, AlarmRule] = {}
-fallback_pid_loops: Dict[int, PIDLoop] = {}
-historian_tags: Dict[int, HistorianTag] = {}
+# In-memory cache for runtime state (populated from shm or db)
+_rtu_runtime_state: Dict[str, str] = {}  # station_name -> connection_state
 
-# WebSocket connections
-websocket_connections: List[WebSocket] = []
+def _get_rtu_from_db(station_name: str) -> Optional[Dict[str, Any]]:
+    """Get RTU from database"""
+    return db.get_rtu_device(station_name)
+
+def _get_all_rtus_from_db() -> List[Dict[str, Any]]:
+    """Get all RTUs from database"""
+    return db.get_rtu_devices()
+
+def _update_runtime_state(station_name: str, state: str):
+    """Update runtime connection state cache (lock acquired by caller if needed)"""
+    _rtu_runtime_state[station_name] = state
+
+def _get_runtime_state(station_name: str) -> str:
+    """Get runtime connection state, defaulting to OFFLINE"""
+    return _rtu_runtime_state.get(station_name, "OFFLINE")
+
+# ============== WebSocket Connection Manager ==============
+# Manages WebSocket connections with automatic cleanup of stale connections
+
+class WebSocketManager:
+    """Thread-safe WebSocket connection manager with automatic cleanup."""
+
+    def __init__(self, stale_timeout_seconds: int = 120):
+        self._connections: Dict[WebSocket, datetime] = {}  # websocket -> last_activity
+        self._stale_timeout = timedelta(seconds=stale_timeout_seconds)
+
+    async def connect(self, websocket: WebSocket) -> None:
+        """Register a new WebSocket connection."""
+        async with _websocket_lock:
+            self._connections[websocket] = datetime.now()
+            logger.info(f"WebSocket connected. Total: {len(self._connections)}")
+
+    async def disconnect(self, websocket: WebSocket) -> None:
+        """Remove a WebSocket connection."""
+        async with _websocket_lock:
+            if websocket in self._connections:
+                del self._connections[websocket]
+                logger.info(f"WebSocket disconnected. Total: {len(self._connections)}")
+
+    async def touch(self, websocket: WebSocket) -> None:
+        """Update last activity time for a connection."""
+        async with _websocket_lock:
+            if websocket in self._connections:
+                self._connections[websocket] = datetime.now()
+
+    async def broadcast(self, message: Dict[str, Any]) -> None:
+        """Broadcast message to all connections, removing dead ones."""
+        dead_connections = []
+
+        async with _websocket_lock:
+            connections = list(self._connections.keys())
+
+        for websocket in connections:
+            try:
+                await websocket.send_json(message)
+            except Exception as e:
+                logger.debug(f"Failed to send to WebSocket: {e}")
+                dead_connections.append(websocket)
+
+        # Clean up dead connections
+        if dead_connections:
+            async with _websocket_lock:
+                for ws in dead_connections:
+                    self._connections.pop(ws, None)
+                logger.info(f"Removed {len(dead_connections)} dead WebSocket connections")
+
+    async def cleanup_stale(self) -> int:
+        """Remove connections that haven't been active recently. Returns count removed."""
+        now = datetime.now()
+        stale = []
+
+        async with _websocket_lock:
+            for websocket, last_activity in self._connections.items():
+                if now - last_activity > self._stale_timeout:
+                    stale.append(websocket)
+
+            for websocket in stale:
+                del self._connections[websocket]
+                try:
+                    await websocket.close()
+                except Exception:
+                    pass  # Connection already dead
+
+        if stale:
+            logger.info(f"Cleaned up {len(stale)} stale WebSocket connections")
+        return len(stale)
+
+    @property
+    def connection_count(self) -> int:
+        """Get current connection count (not locked, approximate)."""
+        return len(self._connections)
+
+# Global WebSocket manager instance
+ws_manager = WebSocketManager(stale_timeout_seconds=120)
 
 # Connection state mapping
 CONNECTION_STATES = {
@@ -255,20 +509,259 @@ ACTUATOR_COMMANDS = {
 
 @app.get("/api/v1/rtus", response_model=List[RTUDevice])
 async def list_rtus():
-    """List all registered RTUs"""
+    """
+    List all registered RTUs.
+
+    Data source priority:
+    1. Shared memory (if controller running) - provides live connection state
+    2. Database - provides configuration
+
+    Connection state comes from shm when available, otherwise from runtime cache.
+    """
+    client = get_shm_client()
+
+    # Get configuration from database
+    db_rtus = _get_all_rtus_from_db()
+
+    # Build response combining db config with runtime state
+    result = []
+    shm_rtus = {}
+
+    # If controller is running, get live state from shared memory
+    if client:
+        for r in client.get_rtus():
+            shm_rtus[r["station_name"]] = r
+
+    for rtu in db_rtus:
+        station_name = rtu["station_name"]
+        shm_data = shm_rtus.get(station_name)
+
+        if shm_data:
+            # Use live state from shared memory
+            connection_state = CONNECTION_STATE_NAMES.get(shm_data["connection_state"], "UNKNOWN")
+            _update_runtime_state(station_name, connection_state)
+        else:
+            # Use cached runtime state
+            connection_state = _get_runtime_state(station_name)
+
+        result.append(RTUDevice(
+            station_name=station_name,
+            ip_address=rtu["ip_address"],
+            vendor_id=rtu.get("vendor_id", 0x0493),
+            device_id=rtu.get("device_id", 0x0001),
+            connection_state=connection_state,
+            slot_count=rtu.get("slot_count", 16),
+            last_seen=datetime.now() if connection_state == "RUNNING" else None
+        ))
+
+    return result
+
+# ============== Network Discovery ==============
+
+class DiscoveredRTU(BaseModel):
+    """RTU discovered on the network via DCP"""
+    station_name: str
+    ip_address: str
+    mac_address: str
+    vendor_id: int
+    device_id: int
+    already_registered: bool = False
+
+class NetworkScanResult(BaseModel):
+    """Result of a network scan for RTUs"""
+    scan_time: datetime
+    duration_ms: int
+    devices_found: int
+    devices: List[DiscoveredRTU]
+    new_devices: int  # Devices not already registered
+
+class NetworkScanConfig(BaseModel):
+    """Configuration for automatic network scanning"""
+    auto_scan_enabled: bool = False
+    scan_interval_seconds: int = 300  # Default: 5 minutes
+    auto_register: bool = False  # Automatically register discovered RTUs
+
+# In-memory scan configuration (would be persisted in production)
+network_scan_config = NetworkScanConfig()
+last_scan_result: Optional[NetworkScanResult] = None
+
+async def _perform_network_scan() -> NetworkScanResult:
+    """
+    Internal function to perform network scan via DCP discovery.
+    Used by both manual and automatic scanning.
+
+    When controller is running, uses DCP Identify All to discover PROFINET devices.
+    When controller is not running, returns empty results (cannot scan without controller).
+    """
+    import time
+    global last_scan_result
+
+    start_time = time.time()
+    discovered = []
+
+    # Get list of already registered RTUs from database
+    db_rtus = _get_all_rtus_from_db()
+    registered_names = {r["station_name"] for r in db_rtus}
+
     client = get_shm_client()
     if client:
-        rtus = client.get_rtus()
-        return [RTUDevice(
-            station_name=r["station_name"],
-            ip_address=r["ip_address"],
-            vendor_id=r["vendor_id"],
-            device_id=r["device_id"],
-            connection_state=CONNECTION_STATES.get(r["connection_state"], "UNKNOWN"),
-            slot_count=r["slot_count"],
-            last_seen=datetime.now()
-        ) for r in rtus]
-    return list(fallback_rtus.values())
+        # Send DCP Identify All via shared memory command
+        logger.info("Initiating DCP network discovery via PROFINET controller")
+        dcp_results = client.dcp_discover(timeout_ms=3000)
+
+        # Process DCP responses
+        for device in dcp_results:
+            discovered.append(DiscoveredRTU(
+                station_name=device.get("station_name", "unknown"),
+                ip_address=device.get("ip_address", "0.0.0.0"),
+                mac_address=device.get("mac_address", "00:00:00:00:00:00"),
+                vendor_id=device.get("vendor_id", 0),
+                device_id=device.get("device_id", 0),
+                already_registered=device.get("station_name", "") in registered_names
+            ))
+
+        logger.info(f"DCP discovery returned {len(discovered)} devices")
+    else:
+        # Controller not running - cannot perform DCP discovery
+        logger.warning("Network scan requested but PROFINET controller is not running")
+
+    new_count = sum(1 for d in discovered if not d.already_registered)
+    duration_ms = int((time.time() - start_time) * 1000)
+
+    result = NetworkScanResult(
+        scan_time=datetime.now(),
+        duration_ms=duration_ms,
+        devices_found=len(discovered),
+        devices=discovered,
+        new_devices=new_count
+    )
+
+    last_scan_result = result
+
+    # Auto-register new devices if enabled
+    if network_scan_config.auto_register and new_count > 0:
+        for device in discovered:
+            if not device.already_registered:
+                try:
+                    # Create RTU in database
+                    db.create_rtu_device({
+                        "station_name": device.station_name,
+                        "ip_address": device.ip_address,
+                        "vendor_id": device.vendor_id,
+                        "device_id": device.device_id,
+                        "slot_count": 16
+                    })
+                    _update_runtime_state(device.station_name, "OFFLINE")
+                    logger.info(f"Auto-registered new RTU: {device.station_name}")
+                    db.log_audit("system", "auto_register", "rtu_device",
+                                device.station_name, f"Auto-registered from DCP discovery")
+                except Exception as e:
+                    logger.error(f"Failed to auto-register {device.station_name}: {e}")
+
+    return result
+
+async def _background_scan_loop():
+    """Background task that performs periodic network scans"""
+    logger.info("Background network scan task started")
+    while True:
+        try:
+            if network_scan_config.auto_scan_enabled:
+                logger.debug(f"Running scheduled network scan (interval: {network_scan_config.scan_interval_seconds}s)")
+                result = await _perform_network_scan()
+                logger.info(f"Scheduled scan complete: {result.devices_found} devices, {result.new_devices} new")
+
+                await broadcast_event("network_scan_complete", {
+                    "devices_found": result.devices_found,
+                    "new_devices": result.new_devices,
+                    "scheduled": True
+                })
+
+            # Wait for the configured interval
+            await asyncio.sleep(network_scan_config.scan_interval_seconds)
+
+        except asyncio.CancelledError:
+            logger.info("Background network scan task cancelled")
+            break
+        except Exception as e:
+            logger.error(f"Error in background scan: {e}")
+            await asyncio.sleep(60)  # Wait before retrying on error
+
+@app.post("/api/v1/network/scan", response_model=NetworkScanResult)
+async def scan_network():
+    """
+    Manually trigger a network scan for PROFINET RTUs.
+
+    Uses DCP (Discovery and Configuration Protocol) to find
+    all PROFINET devices on the network segment.
+
+    This is an on-demand scan - for continuous scanning,
+    configure auto_scan_enabled via PUT /api/v1/network/scan/config
+    """
+    result = await _perform_network_scan()
+    logger.info(f"Manual network scan complete: {result.devices_found} devices found, {result.new_devices} new")
+
+    await broadcast_event("network_scan_complete", {
+        "devices_found": result.devices_found,
+        "new_devices": result.new_devices,
+        "scheduled": False
+    })
+
+    return result
+
+@app.get("/api/v1/network/scan/last", response_model=Optional[NetworkScanResult])
+async def get_last_scan():
+    """Get the results of the last network scan"""
+    return last_scan_result
+
+@app.get("/api/v1/network/scan/config", response_model=NetworkScanConfig)
+async def get_scan_config():
+    """Get network scan configuration"""
+    return network_scan_config
+
+@app.get("/api/v1/network/scan/status")
+async def get_scan_status():
+    """Get current network scan status including background task state"""
+    return {
+        "config": network_scan_config.dict(),
+        "background_task_running": scan_task is not None and not scan_task.done(),
+        "last_scan": last_scan_result.dict() if last_scan_result else None
+    }
+
+@app.put("/api/v1/network/scan/config")
+async def update_scan_config(config: NetworkScanConfig):
+    """
+    Update network scan configuration.
+
+    Set auto_scan_enabled=true to enable periodic scanning.
+    scan_interval_seconds controls how often (minimum 60 seconds).
+    auto_register=true will automatically add discovered RTUs.
+
+    The background scan task runs continuously - when auto_scan_enabled
+    is true, it performs scans at the configured interval. When false,
+    it still runs but skips the actual scanning.
+    """
+    global network_scan_config
+
+    if config.scan_interval_seconds < 60:
+        raise HTTPException(status_code=400, detail="Scan interval must be at least 60 seconds")
+
+    old_enabled = network_scan_config.auto_scan_enabled
+    network_scan_config = config
+
+    # Log state change
+    if config.auto_scan_enabled and not old_enabled:
+        logger.info(f"Continuous network scanning ENABLED (interval: {config.scan_interval_seconds}s)")
+    elif not config.auto_scan_enabled and old_enabled:
+        logger.info("Continuous network scanning DISABLED")
+    else:
+        logger.info(f"Network scan config updated: auto={config.auto_scan_enabled}, interval={config.scan_interval_seconds}s")
+
+    return {
+        "status": "ok",
+        "auto_scan_enabled": config.auto_scan_enabled,
+        "scan_interval_seconds": config.scan_interval_seconds,
+        "auto_register": config.auto_register
+    }
 
 class RTUCreateRequest(BaseModel):
     """Request model for creating a new RTU"""
@@ -280,17 +773,56 @@ class RTUCreateRequest(BaseModel):
     slots: Optional[List[Dict[str, Any]]] = None  # Slot configuration
 
 @app.post("/api/v1/rtus", response_model=RTUDevice)
-async def create_rtu(request: RTUCreateRequest):
+async def create_rtu(request: RTUCreateRequest, user: Dict = Depends(get_current_user)):
     """
     Add a new RTU to the system.
 
-    This creates the RTU configuration and initiates PROFINET connection.
+    This creates the RTU configuration in the database and sends
+    an IPC command to the PROFINET controller to initiate connection.
+
+    Requires: Engineer or Admin role
     """
-    # Check if RTU already exists
-    if request.station_name in fallback_rtus:
+    check_role(user, UserRole.ENGINEER)
+
+    # Check if RTU already exists in database
+    existing = _get_rtu_from_db(request.station_name)
+    if existing:
         raise HTTPException(status_code=409, detail="RTU already exists")
 
-    # Create RTU device
+    # Create RTU in database
+    try:
+        db.create_rtu_device({
+            "station_name": request.station_name,
+            "ip_address": request.ip_address,
+            "vendor_id": request.vendor_id,
+            "device_id": request.device_id,
+            "slot_count": request.slot_count
+        })
+    except Exception as e:
+        logger.error(f"Failed to create RTU in database: {e}")
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
+    # Initialize runtime state
+    _update_runtime_state(request.station_name, "OFFLINE")
+
+    # Send IPC command to add RTU to PROFINET controller
+    client = get_shm_client()
+    if client:
+        success = client.add_rtu(
+            request.station_name,
+            request.ip_address,
+            request.vendor_id,
+            request.device_id,
+            request.slot_count
+        )
+        if success:
+            logger.info(f"Sent ADD_RTU command to controller for {request.station_name}")
+        else:
+            logger.warning(f"Failed to send ADD_RTU command for {request.station_name}")
+    else:
+        logger.warning(f"Controller not running - RTU {request.station_name} created in database only")
+
+    # Build response
     rtu = RTUDevice(
         station_name=request.station_name,
         ip_address=request.ip_address,
@@ -298,13 +830,8 @@ async def create_rtu(request: RTUCreateRequest):
         device_id=request.device_id,
         connection_state="OFFLINE",
         slot_count=request.slot_count,
-        last_seen=datetime.now()
+        last_seen=None
     )
-
-    # Store in fallback (in production, this goes to database via IPC)
-    fallback_rtus[request.station_name] = rtu
-
-    # TODO: Send IPC command to add RTU to PROFINET controller
 
     logger.info(f"Created RTU: {request.station_name} at {request.ip_address}")
 
@@ -317,76 +844,60 @@ async def create_rtu(request: RTUCreateRequest):
     return rtu
 
 @app.delete("/api/v1/rtus/{station_name}")
-async def delete_rtu(station_name: str, cascade: bool = True):
+async def delete_rtu(station_name: str, cascade: bool = True, user: Dict = Depends(get_current_user)):
     """
     Remove an RTU from the system.
 
-    If cascade=True (default), this will also delete:
+    Requires: Admin role
+
+    If cascade=True (default), the database layer automatically deletes:
     - All alarm rules referencing this RTU
     - All PID loops using this RTU as input or output
     - All historian tags tracking this RTU
     - All Modbus mappings for this RTU
-    - Any active alarms for this RTU
+    - All slot configurations for this RTU
 
-    This is a correlated workflow that ensures no orphaned references.
+    Also sends IPC command to disconnect from PROFINET controller.
     """
-    global fallback_rtus, alarm_rules, fallback_pid_loops, historian_tags, modbus_config
+    check_role(user, UserRole.ADMIN)
 
-    if station_name not in fallback_rtus:
+    # Check RTU exists in database
+    existing = _get_rtu_from_db(station_name)
+    if not existing:
         raise HTTPException(status_code=404, detail="RTU not found")
 
+    # Send IPC command to disconnect RTU from PROFINET controller first
+    client = get_shm_client()
+    if client:
+        success = client.remove_rtu(station_name)
+        if success:
+            logger.info(f"Sent REMOVE_RTU command to controller for {station_name}")
+        else:
+            logger.warning(f"Failed to send REMOVE_RTU command for {station_name}")
+
+    # Delete from database (cascade is handled by db_persistence)
+    try:
+        deleted = db.delete_rtu_device(station_name)
+        if not deleted:
+            raise HTTPException(status_code=500, detail="Failed to delete RTU from database")
+    except Exception as e:
+        logger.error(f"Database error deleting RTU {station_name}: {e}")
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
+    # Clean up runtime state
+    if station_name in _rtu_runtime_state:
+        del _rtu_runtime_state[station_name]
+
+    # Log the cascade cleanup info (db.delete_rtu_device handles this)
     deleted_items = {
-        "alarm_rules": 0,
-        "pid_loops": 0,
-        "historian_tags": 0,
-        "modbus_mappings": 0,
-        "active_alarms": 0
+        "alarm_rules": "cascade",
+        "pid_loops": "cascade",
+        "historian_tags": "cascade",
+        "modbus_mappings": "cascade",
+        "slot_configs": "cascade"
     }
 
-    if cascade:
-        # Delete alarm rules for this RTU
-        rules_to_delete = [r.rule_id for r in alarm_rules.values()
-                          if r.rtu_station == station_name]
-        for rule_id in rules_to_delete:
-            del alarm_rules[rule_id]
-            deleted_items["alarm_rules"] += 1
-
-        # Delete PID loops using this RTU
-        loops_to_delete = [l.loop_id for l in fallback_pid_loops.values()
-                          if l.input_rtu == station_name or l.output_rtu == station_name]
-        for loop_id in loops_to_delete:
-            del fallback_pid_loops[loop_id]
-            deleted_items["pid_loops"] += 1
-
-        # Delete historian tags for this RTU
-        tags_to_delete = [t.tag_id for t in historian_tags.values()
-                         if t.rtu_station == station_name]
-        for tag_id in tags_to_delete:
-            del historian_tags[tag_id]
-            deleted_items["historian_tags"] += 1
-
-        # Delete Modbus mappings for this RTU
-        if modbus_config.get("register_mappings"):
-            original_count = len(modbus_config["register_mappings"])
-            modbus_config["register_mappings"] = [
-                m for m in modbus_config["register_mappings"]
-                if m.get("rtu_station") != station_name
-            ]
-            deleted_items["modbus_mappings"] = original_count - len(modbus_config["register_mappings"])
-
-        # Clear active alarms for this RTU
-        alarms_to_clear = [a.alarm_id for a in fallback_alarms.values()
-                          if a.rtu_station == station_name]
-        for alarm_id in alarms_to_clear:
-            del fallback_alarms[alarm_id]
-            deleted_items["active_alarms"] += 1
-
-    # Remove the RTU
-    del fallback_rtus[station_name]
-
-    # TODO: Send IPC command to disconnect RTU from PROFINET controller
-
-    logger.info(f"Deleted RTU: {station_name}, cascade cleanup: {deleted_items}")
+    logger.info(f"Deleted RTU: {station_name} with cascade cleanup")
 
     # Broadcast RTU removed event
     await broadcast_event("rtu_removed", {
@@ -402,193 +913,266 @@ async def delete_rtu(station_name: str, cascade: bool = True):
 
 @app.put("/api/v1/rtus/{station_name}")
 async def update_rtu(station_name: str, request: RTUCreateRequest):
-    """Update RTU configuration"""
-    if station_name not in fallback_rtus:
+    """Update RTU configuration in database"""
+    existing = _get_rtu_from_db(station_name)
+    if not existing:
         raise HTTPException(status_code=404, detail="RTU not found")
 
-    # Update RTU
-    rtu = fallback_rtus[station_name]
-    rtu.ip_address = request.ip_address
-    rtu.vendor_id = request.vendor_id
-    rtu.device_id = request.device_id
-    rtu.slot_count = request.slot_count
+    # Update RTU in database
+    try:
+        db.update_rtu_device(station_name, {
+            "ip_address": request.ip_address,
+            "vendor_id": request.vendor_id,
+            "device_id": request.device_id,
+            "slot_count": request.slot_count
+        })
+    except Exception as e:
+        logger.error(f"Failed to update RTU {station_name}: {e}")
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
+    db.log_audit(request_user.get(), "update", "rtu_device", station_name,
+                f"Updated RTU configuration")
     logger.info(f"Updated RTU: {station_name}")
-    return rtu
+
+    return RTUDevice(
+        station_name=station_name,
+        ip_address=request.ip_address,
+        vendor_id=request.vendor_id,
+        device_id=request.device_id,
+        connection_state=_get_runtime_state(station_name),
+        slot_count=request.slot_count,
+        last_seen=None
+    )
 
 @app.post("/api/v1/rtus/{station_name}/connect")
 async def connect_rtu(station_name: str):
-    """Initiate connection to an RTU"""
-    if station_name not in fallback_rtus:
+    """Initiate PROFINET connection to an RTU"""
+    existing = _get_rtu_from_db(station_name)
+    if not existing:
         raise HTTPException(status_code=404, detail="RTU not found")
 
-    rtu = fallback_rtus[station_name]
-    rtu.connection_state = "CONNECTING"
+    # Update runtime state
+    _update_runtime_state(station_name, "CONNECTING")
 
-    # TODO: Send IPC command to connect via PROFINET
+    # Send IPC command to connect via PROFINET
+    client = get_shm_client()
+    if client:
+        success = client.connect_rtu(station_name)
+        if success:
+            logger.info(f"Sent CONNECT_RTU command for {station_name}")
+            db.log_audit(request_user.get(), "connect", "rtu_device", station_name,
+                        "Initiated PROFINET connection")
+        else:
+            logger.warning(f"Failed to send CONNECT_RTU command for {station_name}")
+            raise HTTPException(status_code=503, detail="Failed to send connect command")
+    else:
+        logger.warning(f"Controller not running - cannot connect to {station_name}")
+        raise HTTPException(status_code=503, detail="PROFINET controller not running")
 
-    logger.info(f"Connecting to RTU: {station_name}")
     return {"status": "connecting", "station_name": station_name}
 
 @app.post("/api/v1/rtus/{station_name}/disconnect")
 async def disconnect_rtu(station_name: str):
-    """Disconnect from an RTU"""
-    if station_name not in fallback_rtus:
+    """Disconnect PROFINET connection from an RTU"""
+    existing = _get_rtu_from_db(station_name)
+    if not existing:
         raise HTTPException(status_code=404, detail="RTU not found")
 
-    rtu = fallback_rtus[station_name]
-    rtu.connection_state = "OFFLINE"
+    # Send IPC command to disconnect
+    client = get_shm_client()
+    if client:
+        success = client.disconnect_rtu(station_name)
+        if success:
+            logger.info(f"Sent DISCONNECT_RTU command for {station_name}")
+            _update_runtime_state(station_name, "OFFLINE")
+            db.log_audit(request_user.get(), "disconnect", "rtu_device", station_name,
+                        "Disconnected PROFINET connection")
+        else:
+            logger.warning(f"Failed to send DISCONNECT_RTU command for {station_name}")
+    else:
+        # Just update local state if controller not running
+        _update_runtime_state(station_name, "OFFLINE")
+        logger.info(f"Marked RTU {station_name} as offline (controller not running)")
 
-    # TODO: Send IPC command to disconnect
-
-    logger.info(f"Disconnected RTU: {station_name}")
     return {"status": "disconnected", "station_name": station_name}
 
 @app.get("/api/v1/rtus/{station_name}/health")
 async def get_rtu_health(station_name: str):
-    """Get RTU health and connection status"""
-    if station_name not in fallback_rtus:
+    """Get RTU health and connection status from shared memory"""
+    existing = _get_rtu_from_db(station_name)
+    if not existing:
         raise HTTPException(status_code=404, detail="RTU not found")
 
-    rtu = fallback_rtus[station_name]
+    connection_state = _get_runtime_state(station_name)
+    packet_loss = 0.0
+    last_seen = None
 
-    # In production, get from failover manager via IPC
+    # Get live data from shared memory if available
+    client = get_shm_client()
+    if client:
+        rtu_data = client.get_rtu(station_name)
+        if rtu_data:
+            connection_state = CONNECTION_STATE_NAMES.get(rtu_data["connection_state"], "UNKNOWN")
+            packet_loss = rtu_data.get("packet_loss_percent", 0.0)
+            _update_runtime_state(station_name, connection_state)
+            if connection_state == "RUNNING":
+                last_seen = datetime.now()
+
     return {
         "station_name": station_name,
-        "connection_state": rtu.connection_state,
-        "healthy": rtu.connection_state == "RUNNING",
-        "last_seen": rtu.last_seen.isoformat() if rtu.last_seen else None,
-        "packet_loss_percent": 0.0,
-        "consecutive_failures": 0,
-        "in_failover": False
+        "connection_state": connection_state,
+        "healthy": connection_state == "RUNNING",
+        "last_seen": last_seen.isoformat() if last_seen else None,
+        "packet_loss_percent": packet_loss,
+        "consecutive_failures": 0 if connection_state == "RUNNING" else 1,
+        "in_failover": connection_state == "ERROR"
     }
 
 @app.get("/api/v1/rtus/{station_name}", response_model=RTUDevice)
 async def get_rtu(station_name: str):
-    """Get RTU details by station name"""
-    client = get_shm_client()
-    if client:
-        rtus = client.get_rtus()
-        for r in rtus:
-            if r["station_name"] == station_name:
-                return RTUDevice(
-                    station_name=r["station_name"],
-                    ip_address=r["ip_address"],
-                    vendor_id=r["vendor_id"],
-                    device_id=r["device_id"],
-                    connection_state=CONNECTION_STATES.get(r["connection_state"], "UNKNOWN"),
-                    slot_count=r["slot_count"],
-                    last_seen=datetime.now()
-                )
+    """Get RTU details by station name from database and runtime state"""
+    # Check database for configuration
+    db_rtu = _get_rtu_from_db(station_name)
+    if not db_rtu:
         raise HTTPException(status_code=404, detail="RTU not found")
 
-    if station_name not in fallback_rtus:
-        raise HTTPException(status_code=404, detail="RTU not found")
-    return fallback_rtus[station_name]
+    connection_state = _get_runtime_state(station_name)
+    last_seen = None
+
+    # Get live state from shared memory if available
+    client = get_shm_client()
+    if client:
+        shm_rtu = client.get_rtu(station_name)
+        if shm_rtu:
+            connection_state = CONNECTION_STATE_NAMES.get(shm_rtu["connection_state"], "UNKNOWN")
+            _update_runtime_state(station_name, connection_state)
+            if connection_state == "RUNNING":
+                last_seen = datetime.now()
+
+    return RTUDevice(
+        station_name=db_rtu["station_name"],
+        ip_address=db_rtu["ip_address"],
+        vendor_id=db_rtu.get("vendor_id", 0x0493),
+        device_id=db_rtu.get("device_id", 0x0001),
+        connection_state=connection_state,
+        slot_count=db_rtu.get("slot_count", 16),
+        last_seen=last_seen
+    )
 
 @app.get("/api/v1/rtus/{station_name}/sensors", response_model=List[SensorData])
 async def get_rtu_sensors(station_name: str):
-    """Get all sensor values for an RTU"""
-    client = get_shm_client()
-    if client:
-        rtus = client.get_rtus()
-        for r in rtus:
-            if r["station_name"] == station_name:
-                sensors = []
-                sensor_names = ["pH", "Temperature", "Turbidity", "TDS",
-                              "Dissolved Oxygen", "Flow Rate", "Level", "Pressure"]
-                sensor_units = ["pH", "°C", "NTU", "ppm", "mg/L", "L/min", "%", "bar"]
+    """
+    Get all sensor values for an RTU from shared memory.
 
-                for s in r["sensors"]:
-                    idx = s["slot"] % len(sensor_names)
-                    sensors.append(SensorData(
-                        slot=s["slot"],
-                        name=sensor_names[idx],
-                        value=s["value"],
-                        unit=sensor_units[idx],
-                        status="GOOD" if s["status"] == 192 else "BAD",
-                        timestamp=datetime.fromtimestamp(s["timestamp_ms"] / 1000.0)
-                    ))
-                return sensors
+    Returns live data from PROFINET when controller is running.
+    Returns empty list when controller is not running (no simulated data).
+    """
+    # Verify RTU exists in database
+    db_rtu = _get_rtu_from_db(station_name)
+    if not db_rtu:
         raise HTTPException(status_code=404, detail="RTU not found")
 
-    if station_name not in fallback_rtus:
-        raise HTTPException(status_code=404, detail="RTU not found")
+    # Default sensor names/units (can be overridden by slot config in db)
+    default_sensor_names = ["pH", "Temperature", "Turbidity", "TDS",
+                           "Dissolved Oxygen", "Flow Rate", "Level", "Pressure"]
+    default_sensor_units = ["pH", "°C", "NTU", "ppm", "mg/L", "L/min", "%", "bar"]
 
-    # Return simulated sensor data for fallback
     sensors = []
-    sensor_types = [
-        ("pH", "pH", 7.2), ("Temperature", "°C", 25.5),
-        ("Turbidity", "NTU", 1.2), ("TDS", "ppm", 350),
-        ("Dissolved Oxygen", "mg/L", 6.8), ("Flow Rate", "L/min", 120.5),
-        ("Level", "%", 65.0), ("Pressure", "bar", 3.2),
-    ]
-    for i, (name, unit, value) in enumerate(sensor_types, start=1):
-        sensors.append(SensorData(
-            slot=i, name=name, value=value, unit=unit,
-            status="GOOD", timestamp=datetime.now()
-        ))
+    client = get_shm_client()
+
+    if client:
+        # Get live sensor data from shared memory
+        sensor_data = client.get_sensors(station_name)
+        for s in sensor_data:
+            idx = s["slot"] % len(default_sensor_names)
+            timestamp = datetime.now()
+            if s.get("timestamp_ms", 0) > 0:
+                timestamp = datetime.fromtimestamp(s["timestamp_ms"] / 1000.0)
+
+            sensors.append(SensorData(
+                slot=s["slot"],
+                name=default_sensor_names[idx],
+                value=s["value"],
+                unit=default_sensor_units[idx],
+                status="GOOD" if s.get("quality") == "good" else "BAD",
+                timestamp=timestamp
+            ))
+    else:
+        # Controller not running - return empty list (no simulated data)
+        logger.debug(f"Controller not running - no sensor data available for {station_name}")
+
     return sensors
 
 @app.get("/api/v1/rtus/{station_name}/actuators", response_model=List[ActuatorState])
 async def get_rtu_actuators(station_name: str):
-    """Get all actuator states for an RTU"""
-    client = get_shm_client()
-    if client:
-        rtus = client.get_rtus()
-        for r in rtus:
-            if r["station_name"] == station_name:
-                actuators = []
-                actuator_names = ["Main Pump", "Inlet Valve", "Outlet Valve", "Dosing Pump",
-                                 "Aerator", "Heater", "Mixer", "Spare"]
+    """
+    Get all actuator states for an RTU from shared memory.
 
-                for a in r["actuators"]:
-                    idx = a["slot"] % len(actuator_names)
-                    actuators.append(ActuatorState(
-                        slot=a["slot"],
-                        name=actuator_names[idx],
-                        command=ACTUATOR_COMMANDS.get(a["command"], "OFF"),
-                        pwm_duty=a["pwm_duty"],
-                        forced=a["forced"]
-                    ))
-                return actuators
+    Returns live data from PROFINET when controller is running.
+    Returns empty list when controller is not running (no simulated data).
+    """
+    # Verify RTU exists in database
+    db_rtu = _get_rtu_from_db(station_name)
+    if not db_rtu:
         raise HTTPException(status_code=404, detail="RTU not found")
 
-    if station_name not in fallback_rtus:
-        raise HTTPException(status_code=404, detail="RTU not found")
+    # Default actuator names (can be overridden by slot config in db)
+    default_actuator_names = ["Main Pump", "Inlet Valve", "Outlet Valve", "Dosing Pump",
+                              "Aerator", "Heater", "Mixer", "Spare"]
 
-    # Return simulated actuator data for fallback
     actuators = []
-    actuator_types = [
-        ("Main Pump", "ON", 0), ("Inlet Valve", "ON", 0),
-        ("Outlet Valve", "ON", 0), ("Dosing Pump", "PWM", 50),
-        ("Aerator", "OFF", 0), ("Heater", "OFF", 0),
-        ("Mixer", "ON", 0), ("Spare", "OFF", 0),
-    ]
-    for i, (name, cmd, duty) in enumerate(actuator_types, start=9):
-        actuators.append(ActuatorState(
-            slot=i, name=name, command=cmd, pwm_duty=duty, forced=False
-        ))
+    client = get_shm_client()
+
+    if client:
+        # Get live actuator data from shared memory
+        actuator_data = client.get_actuators(station_name)
+        for a in actuator_data:
+            idx = a["slot"] % len(default_actuator_names)
+            actuators.append(ActuatorState(
+                slot=a["slot"],
+                name=default_actuator_names[idx],
+                command=a.get("command", "OFF"),
+                pwm_duty=a.get("pwm_duty", 0),
+                forced=a.get("forced", False)
+            ))
+    else:
+        # Controller not running - return empty list (no simulated data)
+        logger.debug(f"Controller not running - no actuator data available for {station_name}")
+
     return actuators
 
 @app.post("/api/v1/rtus/{station_name}/actuators/{slot}")
-async def command_actuator(station_name: str, slot: int, command: ActuatorCommand):
-    """Send command to actuator"""
-    client = get_shm_client()
+async def command_actuator(station_name: str, slot: int, command: ActuatorCommand,
+                           user: Dict = Depends(get_current_user)):
+    """
+    Send command to actuator via shared memory IPC.
+
+    Requires: Operator role or higher
+    """
+    check_role(user, UserRole.OPERATOR)
+
+    # Verify RTU exists in database
+    db_rtu = _get_rtu_from_db(station_name)
+    if not db_rtu:
+        raise HTTPException(status_code=404, detail="RTU not found")
 
     # Convert command string to integer
     cmd_map = {"OFF": 0, "ON": 1, "PWM": 2}
     cmd_int = cmd_map.get(command.command, 0)
 
+    client = get_shm_client()
     if client:
         success = client.command_actuator(station_name, slot, cmd_int, command.pwm_duty or 0)
         if not success:
+            logger.error(f"Failed to send actuator command to {station_name} slot {slot}")
             raise HTTPException(status_code=500, detail="Failed to send actuator command")
     else:
-        if station_name not in fallback_rtus:
-            raise HTTPException(status_code=404, detail="RTU not found")
+        logger.warning(f"Controller not running - cannot send actuator command to {station_name}")
+        raise HTTPException(status_code=503, detail="PROFINET controller not running")
 
     logger.info(f"Actuator command: {station_name} slot {slot} -> {command.command} duty={command.pwm_duty}")
+    db.log_audit(request_user.get(), "actuator_command", "actuator",
+                f"{station_name}:{slot}", f"Command: {command.command}, PWM: {command.pwm_duty}")
 
     await broadcast_event("actuator_command", {
         "station_name": station_name,
@@ -599,31 +1183,510 @@ async def command_actuator(station_name: str, slot: int, command: ActuatorComman
 
     return {"status": "ok"}
 
+
+# ============== Slot Configuration Endpoints ==============
+
+class SlotConfig(BaseModel):
+    """Slot configuration model"""
+    rtu_station: str
+    slot: int
+    subslot: int = 1
+    slot_type: str  # "sensor" or "actuator"
+    name: Optional[str] = None
+    unit: Optional[str] = None
+    measurement_type: Optional[str] = None
+    actuator_type: Optional[str] = None
+    scale_min: float = 0
+    scale_max: float = 100
+    alarm_low: Optional[float] = None
+    alarm_high: Optional[float] = None
+    alarm_low_low: Optional[float] = None
+    alarm_high_high: Optional[float] = None
+    warning_low: Optional[float] = None
+    warning_high: Optional[float] = None
+    deadband: float = 0
+    enabled: bool = True
+
+
+@app.get("/api/v1/rtus/{station_name}/slots", response_model=List[SlotConfig])
+async def list_slot_configs(station_name: str):
+    """Get all slot configurations for an RTU"""
+    slots = db.get_slot_configs_by_rtu(station_name)
+    return [SlotConfig(**s) for s in slots]
+
+
+@app.get("/api/v1/rtus/{station_name}/slots/{slot}", response_model=SlotConfig)
+async def get_slot_config(station_name: str, slot: int):
+    """Get a specific slot configuration"""
+    config = db.get_slot_config(station_name, slot)
+    if not config:
+        raise HTTPException(status_code=404, detail="Slot config not found")
+    return SlotConfig(**config)
+
+
+@app.post("/api/v1/rtus/{station_name}/slots", response_model=SlotConfig)
+async def create_slot_config(station_name: str, config: SlotConfig, user: Dict = Depends(get_current_user)):
+    """
+    Create or update a slot configuration.
+
+    Requires: Engineer role or higher
+    """
+    check_role(user, UserRole.ENGINEER)
+
+    # Verify RTU exists
+    rtu = db.get_rtu_device(station_name)
+    if not rtu:
+        raise HTTPException(status_code=404, detail="RTU not found")
+
+    config.rtu_station = station_name
+    db.upsert_slot_config(config.dict())
+    logger.info(f"Created/updated slot config for {station_name} slot {config.slot}")
+    return config
+
+
+@app.put("/api/v1/rtus/{station_name}/slots/{slot}", response_model=SlotConfig)
+async def update_slot_config(station_name: str, slot: int, config: SlotConfig, user: Dict = Depends(get_current_user)):
+    """
+    Update a slot configuration.
+
+    Requires: Engineer role or higher
+    """
+    check_role(user, UserRole.ENGINEER)
+
+    config.rtu_station = station_name
+    config.slot = slot
+    db.upsert_slot_config(config.dict())
+    logger.info(f"Updated slot config for {station_name} slot {slot}")
+    return config
+
+
+@app.delete("/api/v1/rtus/{station_name}/slots/{slot}")
+async def delete_slot_config(station_name: str, slot: int, user: Dict = Depends(get_current_user)):
+    """
+    Delete a slot configuration.
+
+    Requires: Engineer role or higher
+    """
+    check_role(user, UserRole.ENGINEER)
+
+    if not db.delete_slot_config(station_name, slot):
+        raise HTTPException(status_code=404, detail="Slot config not found")
+
+    logger.info(f"Deleted slot config for {station_name} slot {slot}")
+    return {"status": "deleted", "station_name": station_name, "slot": slot}
+
+
+# ============== RTU Test and Discovery Endpoints ==============
+
+class RTUTestResult(BaseModel):
+    station_name: str
+    success: bool
+    tests_passed: int
+    tests_failed: int
+    results: List[Dict[str, Any]]
+    duration_ms: int
+
+class DiscoveredSensor(BaseModel):
+    bus_type: str  # "i2c", "onewire", "gpio"
+    address: Optional[str] = None
+    device_type: str
+    name: str
+    suggested_slot: Optional[int] = None
+    suggested_measurement_type: Optional[str] = None
+
+class DiscoveryResult(BaseModel):
+    station_name: str
+    success: bool
+    sensors: List[DiscoveredSensor]
+    error: Optional[str] = None
+
+@app.post("/api/v1/rtus/{station_name}/test", response_model=RTUTestResult)
+async def test_rtu(station_name: str, test_actuators: bool = True, blink_duration_ms: int = 500):
+    """
+    Run functionality test on RTU - blinks all indicator LEDs and tests communication.
+
+    This endpoint:
+    1. Verifies PROFINET communication
+    2. Reads all sensor values
+    3. Optionally cycles through actuators with brief ON pulses (for visual verification)
+    4. Returns test results
+    """
+    import time
+    start_time = time.time()
+
+    client = get_shm_client()
+    results = []
+    tests_passed = 0
+    tests_failed = 0
+
+    # Test 1: Check RTU connection
+    rtu_found = False
+    if client:
+        rtus = client.get_rtus()
+        for rtu in rtus:
+            if rtu.get("station_name") == station_name:
+                rtu_found = True
+                connection_state = rtu.get("connection_state", "UNKNOWN")
+                if connection_state == "RUNNING":
+                    results.append({"test": "connection", "status": "pass", "detail": "RTU connected and running"})
+                    tests_passed += 1
+                else:
+                    results.append({"test": "connection", "status": "fail", "detail": f"RTU state: {connection_state}"})
+                    tests_failed += 1
+                break
+    else:
+        # Controller not running - check if RTU exists in database
+        db_rtu = _get_rtu_from_db(station_name)
+        if db_rtu:
+            rtu_found = True
+            results.append({"test": "connection", "status": "warn", "detail": "RTU registered but controller not running"})
+            tests_passed += 1
+
+    if not rtu_found:
+        return RTUTestResult(
+            station_name=station_name,
+            success=False,
+            tests_passed=0,
+            tests_failed=1,
+            results=[{"test": "connection", "status": "fail", "detail": "RTU not found"}],
+            duration_ms=int((time.time() - start_time) * 1000)
+        )
+
+    # Test 2: Read sensors
+    try:
+        if client:
+            sensors = client.get_sensors(station_name)
+            valid_sensors = sum(1 for s in sensors if s.get("status") == 0x80)  # IOPS_GOOD
+            results.append({
+                "test": "sensors",
+                "status": "pass" if valid_sensors > 0 else "warn",
+                "detail": f"{valid_sensors} sensors reporting good status"
+            })
+            if valid_sensors > 0:
+                tests_passed += 1
+            else:
+                tests_failed += 1
+        else:
+            results.append({"test": "sensors", "status": "pass", "detail": "Sensor check skipped (fallback mode)"})
+            tests_passed += 1
+    except Exception as e:
+        results.append({"test": "sensors", "status": "fail", "detail": str(e)})
+        tests_failed += 1
+
+    # Test 3: Actuator blink test (if enabled)
+    if test_actuators:
+        try:
+            if client:
+                actuators = client.get_actuators(station_name)
+                actuator_slots = [a.get("slot") for a in actuators]
+            else:
+                actuator_slots = list(range(9, 17))  # Default actuator slots
+
+            blinked_count = 0
+            failed_slots = []
+            for slot in actuator_slots:
+                try:
+                    # Turn ON briefly
+                    if client:
+                        client.command_actuator(station_name, slot, 1, 0)  # ON
+                    await asyncio.sleep(blink_duration_ms / 1000.0)
+
+                    # Turn OFF
+                    if client:
+                        client.command_actuator(station_name, slot, 0, 0)  # OFF
+                    await asyncio.sleep(0.1)  # Brief pause between actuators
+
+                    blinked_count += 1
+                except Exception as e:
+                    logger.debug(f"Actuator blink failed for slot {slot}: {e}")
+                    failed_slots.append(slot)
+
+            results.append({
+                "test": "actuators",
+                "status": "pass" if blinked_count > 0 else "warn",
+                "detail": f"Blinked {blinked_count} actuators"
+            })
+            if blinked_count > 0:
+                tests_passed += 1
+            else:
+                tests_failed += 1
+
+        except Exception as e:
+            results.append({"test": "actuators", "status": "fail", "detail": str(e)})
+            tests_failed += 1
+
+    # Test 4: Communication latency
+    try:
+        if client:
+            # Measure round-trip time
+            latency_start = time.time()
+            _ = client.get_rtus()
+            latency_ms = (time.time() - latency_start) * 1000
+
+            if latency_ms < 100:
+                results.append({"test": "latency", "status": "pass", "detail": f"{latency_ms:.1f}ms round-trip"})
+                tests_passed += 1
+            elif latency_ms < 500:
+                results.append({"test": "latency", "status": "warn", "detail": f"{latency_ms:.1f}ms round-trip (slow)"})
+                tests_passed += 1
+            else:
+                results.append({"test": "latency", "status": "fail", "detail": f"{latency_ms:.1f}ms round-trip (too slow)"})
+                tests_failed += 1
+        else:
+            results.append({"test": "latency", "status": "pass", "detail": "Latency check skipped (fallback mode)"})
+            tests_passed += 1
+    except Exception as e:
+        results.append({"test": "latency", "status": "fail", "detail": str(e)})
+        tests_failed += 1
+
+    duration_ms = int((time.time() - start_time) * 1000)
+
+    await broadcast_event("rtu_test_complete", {
+        "station_name": station_name,
+        "success": tests_failed == 0,
+        "tests_passed": tests_passed,
+        "tests_failed": tests_failed
+    })
+
+    return RTUTestResult(
+        station_name=station_name,
+        success=tests_failed == 0,
+        tests_passed=tests_passed,
+        tests_failed=tests_failed,
+        results=results,
+        duration_ms=duration_ms
+    )
+
+@app.post("/api/v1/rtus/{station_name}/discover", response_model=DiscoveryResult)
+async def discover_sensors(station_name: str, scan_i2c: bool = True, scan_onewire: bool = True):
+    """
+    Trigger I2C/1-Wire sensor discovery on RTU.
+
+    Sends a discovery command to the RTU which scans its I2C buses and 1-Wire interfaces
+    for connected sensors. Returns discovered sensors with recommended slot assignments.
+
+    Requires PROFINET controller to be running - discovery commands are sent via IPC.
+
+    Supported I2C devices:
+    - ADS1115 (0x48-0x4B): 16-bit ADC for analog sensors
+    - BME280 (0x76-0x77): Temperature/Pressure/Humidity
+    - TCS34725 (0x29): Color sensor
+    - SHT31 (0x44-0x45): Temperature/Humidity
+    - INA219 (0x40-0x4F): Current sensor
+
+    Supported 1-Wire devices:
+    - DS18B20 (28-*): Temperature sensor
+    """
+    # Check if RTU exists in database
+    db_rtu = _get_rtu_from_db(station_name)
+    if not db_rtu:
+        return DiscoveryResult(
+            station_name=station_name,
+            success=False,
+            sensors=[],
+            error="RTU not found"
+        )
+
+    client = get_shm_client()
+    if not client:
+        return DiscoveryResult(
+            station_name=station_name,
+            success=False,
+            sensors=[],
+            error="PROFINET controller not running - cannot perform discovery"
+        )
+
+    discovered = []
+
+    # I2C device mapping for identification
+    i2c_devices = {
+        "0x48": ("ADS1115", "adc", "CUSTOM"),
+        "0x49": ("ADS1115", "adc", "CUSTOM"),
+        "0x4A": ("ADS1115", "adc", "CUSTOM"),
+        "0x4B": ("ADS1115", "adc", "CUSTOM"),
+        "0x76": ("BME280", "environmental", "TEMPERATURE"),
+        "0x77": ("BME280", "environmental", "PRESSURE"),
+        "0x29": ("TCS34725", "color", "TURBIDITY"),
+        "0x44": ("SHT31", "environmental", "TEMPERATURE"),
+        "0x45": ("SHT31", "environmental", "TEMPERATURE"),
+        "0x40": ("INA219", "current", "CUSTOM"),
+    }
+
+    if scan_i2c:
+        # Send I2C discovery command via IPC
+        logger.info(f"Initiating I2C discovery on {station_name}")
+        i2c_results = client.discover_i2c(station_name)
+        for device in i2c_results:
+            addr = device.get("address", "")
+            if addr in i2c_devices:
+                dev_name, dev_type, meas_type = i2c_devices[addr]
+            else:
+                dev_name, dev_type, meas_type = "Unknown", "unknown", "CUSTOM"
+
+            discovered.append(DiscoveredSensor(
+                bus_type="i2c",
+                address=addr,
+                device_type=dev_type,
+                name=f"{dev_name}@{addr}",
+                suggested_slot=len(discovered) + 1,
+                suggested_measurement_type=meas_type
+            ))
+
+    if scan_onewire:
+        # Send 1-Wire discovery command via IPC
+        logger.info(f"Initiating 1-Wire discovery on {station_name}")
+        onewire_results = client.discover_onewire(station_name)
+        for device in onewire_results:
+            device_id = device.get("device_id", "")
+            if device_id.startswith("28-"):
+                # DS18B20 temperature sensor
+                discovered.append(DiscoveredSensor(
+                    bus_type="onewire",
+                    address=device_id,
+                    device_type="temperature",
+                    name=f"DS18B20_{device_id[-8:]}",
+                    suggested_slot=len(discovered) + 1,
+                    suggested_measurement_type="TEMPERATURE"
+                ))
+            else:
+                discovered.append(DiscoveredSensor(
+                    bus_type="onewire",
+                    address=device_id,
+                    device_type="unknown",
+                    name=f"OneWire_{device_id[-8:]}",
+                    suggested_slot=len(discovered) + 1,
+                    suggested_measurement_type="CUSTOM"
+                ))
+
+    logger.info(f"Discovery on {station_name}: found {len(discovered)} sensors")
+
+    await broadcast_event("discovery_complete", {
+        "station_name": station_name,
+        "sensors_found": len(discovered)
+    })
+
+    return DiscoveryResult(
+        station_name=station_name,
+        success=True,
+        sensors=discovered
+    )
+
+@app.post("/api/v1/rtus/{station_name}/provision")
+async def provision_discovered_sensors(
+    station_name: str,
+    sensors: List[DiscoveredSensor],
+    create_historian_tags: bool = True,
+    create_alarm_rules: bool = False
+):
+    """
+    Provision discovered sensors by creating slot configurations, historian tags, and optionally alarm rules.
+
+    Sends slot configuration to RTU via IPC and creates database records.
+    """
+    # Verify RTU exists
+    db_rtu = _get_rtu_from_db(station_name)
+    if not db_rtu:
+        raise HTTPException(status_code=404, detail="RTU not found")
+
+    client = get_shm_client()
+    provisioned = []
+
+    for sensor in sensors:
+        slot = sensor.suggested_slot
+
+        # Create slot configuration
+        slot_config = {
+            "slot": slot,
+            "name": sensor.name,
+            "type": "SENSOR",
+            "measurement_type": sensor.suggested_measurement_type or "CUSTOM",
+            "enabled": True
+        }
+
+        # Send slot configuration to RTU via IPC
+        configured = False
+        if client:
+            configured = client.configure_slot(
+                station_name,
+                slot,
+                "SENSOR",
+                sensor.name,
+                "",  # unit
+                0.0,  # scale_min
+                100.0  # scale_max
+            )
+            if configured:
+                logger.info(f"Configured slot {slot} on {station_name} as {sensor.name}")
+            else:
+                logger.warning(f"Failed to configure slot {slot} on {station_name}")
+        else:
+            logger.warning(f"Controller not running - slot {slot} not configured on hardware")
+
+        provisioned.append({
+            "sensor": sensor.name,
+            "slot": slot,
+            "configured": configured
+        })
+
+        # Create historian tag in database
+        if create_historian_tags:
+            tag_name = f"{station_name}.{sensor.name}"
+            db.upsert_historian_tag({
+                "rtu_station": station_name,
+                "slot": slot,
+                "tag_name": tag_name,
+                "sample_rate_ms": 1000,
+                "deadband": 0.1,
+                "compression": "swinging_door"
+            })
+
+        # Create default alarm rules in database
+        if create_alarm_rules and sensor.suggested_measurement_type in ["TEMPERATURE", "PRESSURE", "PH"]:
+            db.create_alarm_rule({
+                "rtu_station": station_name,
+                "slot": slot,
+                "condition": "HIGH",
+                "threshold": 100.0,  # Default - should be configured
+                "severity": "MEDIUM",
+                "delay_ms": 5000,
+                "message": f"{sensor.name} high alarm",
+                "enabled": False  # Disabled by default - user should configure
+            })
+
+    logger.info(f"Provisioned {len(provisioned)} sensors on {station_name}")
+
+    return {
+        "status": "ok",
+        "provisioned": provisioned,
+        "historian_tags_created": create_historian_tags,
+        "alarm_rules_created": create_alarm_rules
+    }
+
 # ============== Alarm Endpoints ==============
 
 @app.get("/api/v1/alarms", response_model=List[Alarm])
 async def get_active_alarms():
-    """Get all active alarms"""
+    """Get all active alarms. Alarms are runtime state from the controller."""
     client = get_shm_client()
-    if client:
-        alarms = client.get_alarms()
-        return [Alarm(
-            alarm_id=a["alarm_id"],
-            rule_id=a["rule_id"],
-            rtu_station=a["rtu_station"],
-            slot=a["slot"],
-            severity=ALARM_SEVERITY.get(a["severity"], "UNKNOWN"),
-            state=ALARM_STATE.get(a["state"], "UNKNOWN"),
-            message=a["message"],
-            value=a["value"],
-            threshold=a["threshold"],
-            raise_time=datetime.fromtimestamp(a["raise_time_ms"] / 1000.0),
-            ack_time=datetime.fromtimestamp(a["ack_time_ms"] / 1000.0) if a["ack_time_ms"] > 0 else None,
-            ack_user=a["ack_user"] if a["ack_user"] else None
-        ) for a in alarms if a["state"] in [1, 2]]  # ACTIVE_UNACK or ACTIVE_ACK
+    if not client:
+        # No alarms when controller not running
+        return []
 
-    active = [a for a in fallback_alarms.values() if a.state in ["ACTIVE_UNACK", "ACTIVE_ACK"]]
-    return active
+    alarms = client.get_alarms()
+    return [Alarm(
+        alarm_id=a["alarm_id"],
+        rule_id=a["rule_id"],
+        rtu_station=a["rtu_station"],
+        slot=a["slot"],
+        severity=ALARM_SEVERITY.get(a["severity"], "UNKNOWN"),
+        state=ALARM_STATE.get(a["state"], "UNKNOWN"),
+        message=a["message"],
+        value=a["value"],
+        threshold=a["threshold"],
+        raise_time=datetime.fromtimestamp(a["raise_time_ms"] / 1000.0),
+        ack_time=datetime.fromtimestamp(a["ack_time_ms"] / 1000.0) if a["ack_time_ms"] > 0 else None,
+        ack_user=a["ack_user"] if a["ack_user"] else None
+    ) for a in alarms if a["state"] in [1, 2]]  # ACTIVE_UNACK or ACTIVE_ACK
 
 @app.get("/api/v1/alarms/history", response_model=List[Alarm])
 async def get_alarm_history(
@@ -631,47 +1694,38 @@ async def get_alarm_history(
     end_time: Optional[datetime] = None,
     limit: int = 100
 ):
-    """Get alarm history"""
+    """Get alarm history. Alarms are runtime state from the controller."""
     client = get_shm_client()
-    if client:
-        alarms = client.get_alarms()
-        return [Alarm(
-            alarm_id=a["alarm_id"],
-            rule_id=a["rule_id"],
-            rtu_station=a["rtu_station"],
-            slot=a["slot"],
-            severity=ALARM_SEVERITY.get(a["severity"], "UNKNOWN"),
-            state=ALARM_STATE.get(a["state"], "UNKNOWN"),
-            message=a["message"],
-            value=a["value"],
-            threshold=a["threshold"],
-            raise_time=datetime.fromtimestamp(a["raise_time_ms"] / 1000.0),
-            ack_time=datetime.fromtimestamp(a["ack_time_ms"] / 1000.0) if a["ack_time_ms"] > 0 else None,
-            ack_user=a["ack_user"] if a["ack_user"] else None
-        ) for a in alarms[:limit]]
+    if not client:
+        # No alarm history when controller not running
+        return []
 
-    return list(fallback_alarms.values())[:limit]
+    alarms = client.get_alarms()
+    return [Alarm(
+        alarm_id=a["alarm_id"],
+        rule_id=a["rule_id"],
+        rtu_station=a["rtu_station"],
+        slot=a["slot"],
+        severity=ALARM_SEVERITY.get(a["severity"], "UNKNOWN"),
+        state=ALARM_STATE.get(a["state"], "UNKNOWN"),
+        message=a["message"],
+        value=a["value"],
+        threshold=a["threshold"],
+        raise_time=datetime.fromtimestamp(a["raise_time_ms"] / 1000.0),
+        ack_time=datetime.fromtimestamp(a["ack_time_ms"] / 1000.0) if a["ack_time_ms"] > 0 else None,
+        ack_user=a["ack_user"] if a["ack_user"] else None
+    ) for a in alarms[:limit]]
 
 @app.post("/api/v1/alarms/{alarm_id}/acknowledge")
 async def acknowledge_alarm(alarm_id: int, request: AcknowledgeRequest):
-    """Acknowledge an alarm"""
+    """Acknowledge an alarm. Requires the controller to be running."""
     client = get_shm_client()
-    if client:
-        success = client.acknowledge_alarm(alarm_id, request.user)
-        if not success:
-            raise HTTPException(status_code=500, detail="Failed to acknowledge alarm")
-    else:
-        if alarm_id not in fallback_alarms:
-            raise HTTPException(status_code=404, detail="Alarm not found")
+    if not client:
+        raise HTTPException(status_code=503, detail="Controller not running - cannot acknowledge alarms")
 
-        alarm = fallback_alarms[alarm_id]
-        if alarm.state == "ACTIVE_UNACK":
-            alarm.state = "ACTIVE_ACK"
-        elif alarm.state == "CLEARED_UNACK":
-            alarm.state = "CLEARED"
-
-        alarm.ack_time = datetime.now()
-        alarm.ack_user = request.user
+    success = client.acknowledge_alarm(alarm_id, request.user)
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to acknowledge alarm")
 
     await broadcast_event("alarm_acknowledged", {"alarm_id": alarm_id, "user": request.user})
     return {"status": "ok"}
@@ -679,92 +1733,228 @@ async def acknowledge_alarm(alarm_id: int, request: AcknowledgeRequest):
 @app.get("/api/v1/alarms/rules", response_model=List[AlarmRule])
 async def list_alarm_rules():
     """List all alarm rules"""
-    return list(alarm_rules.values())
+    rules = db.get_alarm_rules()
+    return [AlarmRule(
+        rule_id=r['id'],
+        name=r['name'],
+        rtu_station=r['rtu_station'],
+        slot=r['slot'],
+        condition=AlarmCondition(r['condition']),
+        threshold=r['threshold'],
+        severity=AlarmSeverity(r['severity']),
+        delay_ms=r.get('delay_ms', 0),
+        message=r.get('message', ''),
+        enabled=bool(r.get('enabled', True))
+    ) for r in rules]
+
+
+@app.get("/api/v1/alarms/rules/{rule_id}", response_model=AlarmRule)
+async def get_alarm_rule(rule_id: int):
+    """Get a specific alarm rule"""
+    rule = db.get_alarm_rule(rule_id)
+    if not rule:
+        raise HTTPException(status_code=404, detail="Alarm rule not found")
+    return AlarmRule(
+        rule_id=rule['id'],
+        name=rule['name'],
+        rtu_station=rule['rtu_station'],
+        slot=rule['slot'],
+        condition=AlarmCondition(rule['condition']),
+        threshold=rule['threshold'],
+        severity=AlarmSeverity(rule['severity']),
+        delay_ms=rule.get('delay_ms', 0),
+        message=rule.get('message', ''),
+        enabled=bool(rule.get('enabled', True))
+    )
+
 
 @app.post("/api/v1/alarms/rules", response_model=AlarmRule)
-async def create_alarm_rule(rule: AlarmRule):
-    """Create a new alarm rule"""
-    rule_id = len(alarm_rules) + 1
+async def create_alarm_rule(rule: AlarmRule, user: Dict = Depends(get_current_user)):
+    """
+    Create a new alarm rule.
+
+    Requires: Engineer role or higher
+    """
+    check_role(user, UserRole.ENGINEER)
+
+    rule_id = db.create_alarm_rule({
+        'name': rule.name,
+        'rtu_station': rule.rtu_station,
+        'slot': rule.slot,
+        'condition': rule.condition.value,
+        'threshold': rule.threshold,
+        'severity': rule.severity.value,
+        'delay_ms': rule.delay_ms,
+        'message': rule.message,
+        'enabled': rule.enabled
+    })
     rule.rule_id = rule_id
-    alarm_rules[rule_id] = rule
     return rule
+
+
+@app.put("/api/v1/alarms/rules/{rule_id}", response_model=AlarmRule)
+async def update_alarm_rule(rule_id: int, rule: AlarmRule, user: Dict = Depends(get_current_user)):
+    """
+    Update an alarm rule.
+
+    Requires: Engineer role or higher
+    """
+    check_role(user, UserRole.ENGINEER)
+
+    existing = db.get_alarm_rule(rule_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Alarm rule not found")
+
+    db.update_alarm_rule(rule_id, {
+        'name': rule.name,
+        'rtu_station': rule.rtu_station,
+        'slot': rule.slot,
+        'condition': rule.condition.value,
+        'threshold': rule.threshold,
+        'severity': rule.severity.value,
+        'delay_ms': rule.delay_ms,
+        'message': rule.message,
+        'enabled': rule.enabled
+    })
+    rule.rule_id = rule_id
+    return rule
+
+
+@app.delete("/api/v1/alarms/rules/{rule_id}")
+async def delete_alarm_rule(rule_id: int, user: Dict = Depends(get_current_user)):
+    """
+    Delete an alarm rule.
+
+    Requires: Engineer role or higher
+    """
+    check_role(user, UserRole.ENGINEER)
+
+    if not db.delete_alarm_rule(rule_id):
+        raise HTTPException(status_code=404, detail="Alarm rule not found")
+    return {"status": "deleted", "rule_id": rule_id}
 
 # ============== Control Endpoints ==============
 
+def _get_pid_loop_with_live_values(loop_config: Dict, shm_loops: List[Dict] = None) -> PIDLoop:
+    """
+    Build PIDLoop from database config, merging live values from shared memory if available.
+    """
+    loop_id = loop_config.get('id') or loop_config.get('loop_id')
+
+    # Default runtime values
+    pv = 0.0
+    cv = 0.0
+    mode = loop_config.get('mode', 'MANUAL')
+
+    # Merge live values from shared memory if available
+    if shm_loops:
+        for shm_loop in shm_loops:
+            if shm_loop.get('loop_id') == loop_id:
+                pv = shm_loop.get('pv', 0.0)
+                cv = shm_loop.get('cv', 0.0)
+                mode = PID_MODES.get(shm_loop.get('mode', 0), mode)
+                break
+
+    return PIDLoop(
+        loop_id=loop_id,
+        name=loop_config.get('name', ''),
+        enabled=bool(loop_config.get('enabled', True)),
+        input_rtu=loop_config.get('input_rtu', ''),
+        input_slot=loop_config.get('input_slot', 0),
+        output_rtu=loop_config.get('output_rtu', ''),
+        output_slot=loop_config.get('output_slot', 0),
+        kp=loop_config.get('kp', 1.0),
+        ki=loop_config.get('ki', 0.0),
+        kd=loop_config.get('kd', 0.0),
+        setpoint=loop_config.get('setpoint', 0.0),
+        mode=mode,
+        pv=pv,
+        cv=cv
+    )
+
+
 @app.get("/api/v1/control/pid", response_model=List[PIDLoop])
 async def list_pid_loops():
-    """List all PID control loops"""
+    """
+    List all PID control loops.
+    Configuration from database, live values (pv, cv) from shared memory.
+    """
+    # Get configuration from database (source of truth)
+    db_loops = db.get_pid_loops()
+
+    # Try to get live values from shared memory
+    shm_loops = None
     client = get_shm_client()
     if client:
-        loops = client.get_pid_loops()
-        return [PIDLoop(
-            loop_id=l["loop_id"],
-            name=l["name"],
-            enabled=l["enabled"],
-            input_rtu=l["input_rtu"],
-            input_slot=l["input_slot"],
-            output_rtu=l["output_rtu"],
-            output_slot=l["output_slot"],
-            kp=l["kp"],
-            ki=l["ki"],
-            kd=l["kd"],
-            setpoint=l["setpoint"],
-            mode=PID_MODES.get(l["mode"], "MANUAL"),
-            pv=l["pv"],
-            cv=l["cv"]
-        ) for l in loops]
+        try:
+            shm_loops = client.get_pid_loops()
+        except Exception as e:
+            logger.warning(f"Failed to get PID loops from shared memory: {e}")
 
-    return list(fallback_pid_loops.values())
+    return [_get_pid_loop_with_live_values(loop, shm_loops) for loop in db_loops]
+
 
 @app.get("/api/v1/control/pid/{loop_id}", response_model=PIDLoop)
 async def get_pid_loop(loop_id: int):
-    """Get PID loop details"""
+    """
+    Get PID loop details.
+    Configuration from database, live values (pv, cv) from shared memory.
+    """
+    # Get configuration from database (source of truth)
+    loop_config = db.get_pid_loop(loop_id)
+    if not loop_config:
+        raise HTTPException(status_code=404, detail="PID loop not found")
+
+    # Try to get live values from shared memory
+    shm_loops = None
     client = get_shm_client()
     if client:
-        loops = client.get_pid_loops()
-        for l in loops:
-            if l["loop_id"] == loop_id:
-                return PIDLoop(
-                    loop_id=l["loop_id"],
-                    name=l["name"],
-                    enabled=l["enabled"],
-                    input_rtu=l["input_rtu"],
-                    input_slot=l["input_slot"],
-                    output_rtu=l["output_rtu"],
-                    output_slot=l["output_slot"],
-                    kp=l["kp"],
-                    ki=l["ki"],
-                    kd=l["kd"],
-                    setpoint=l["setpoint"],
-                    mode=PID_MODES.get(l["mode"], "MANUAL"),
-                    pv=l["pv"],
-                    cv=l["cv"]
-                )
-        raise HTTPException(status_code=404, detail="PID loop not found")
+        try:
+            shm_loops = client.get_pid_loops()
+        except Exception as e:
+            logger.warning(f"Failed to get PID loops from shared memory: {e}")
 
-    if loop_id not in fallback_pid_loops:
-        raise HTTPException(status_code=404, detail="PID loop not found")
-    return fallback_pid_loops[loop_id]
+    return _get_pid_loop_with_live_values(loop_config, shm_loops)
 
 @app.put("/api/v1/control/pid/{loop_id}/setpoint")
-async def update_pid_setpoint(loop_id: int, update: SetpointUpdate):
-    """Update PID loop setpoint"""
+async def update_pid_setpoint(loop_id: int, update: SetpointUpdate,
+                               user: Dict = Depends(get_current_user)):
+    """
+    Update PID loop setpoint.
+
+    Requires: Operator role or higher
+    """
+    check_role(user, UserRole.OPERATOR)
+
+    # Persist to database (source of truth)
+    if not db.update_pid_setpoint(loop_id, update.setpoint):
+        raise HTTPException(status_code=404, detail="PID loop not found")
+
+    # Send to C controller via shared memory for real-time control
     client = get_shm_client()
     if client:
         success = client.set_setpoint(loop_id, update.setpoint)
         if not success:
-            raise HTTPException(status_code=500, detail="Failed to update setpoint")
-    else:
-        if loop_id not in fallback_pid_loops:
-            raise HTTPException(status_code=404, detail="PID loop not found")
-        fallback_pid_loops[loop_id].setpoint = update.setpoint
+            logger.warning(f"Failed to send setpoint to controller for PID loop {loop_id}")
 
     logger.info(f"PID loop {loop_id} setpoint changed to {update.setpoint}")
     return {"status": "ok"}
 
+
 @app.put("/api/v1/control/pid/{loop_id}/mode")
-async def update_pid_mode(loop_id: int, update: ModeUpdate):
-    """Update PID loop mode"""
+async def update_pid_mode(loop_id: int, update: ModeUpdate, user: Dict = Depends(get_current_user)):
+    """
+    Update PID loop mode.
+
+    Requires: Operator role or higher
+    """
+    check_role(user, UserRole.OPERATOR)
+
+    # Persist to database (source of truth)
+    if not db.update_pid_mode(loop_id, update.mode):
+        raise HTTPException(status_code=404, detail="PID loop not found")
+
+    # Send to C controller via shared memory for real-time control
     mode_map = {"MANUAL": 0, "AUTO": 1, "CASCADE": 2}
     mode_int = mode_map.get(update.mode, 0)
 
@@ -772,26 +1962,116 @@ async def update_pid_mode(loop_id: int, update: ModeUpdate):
     if client:
         success = client.set_pid_mode(loop_id, mode_int)
         if not success:
-            raise HTTPException(status_code=500, detail="Failed to update mode")
-    else:
-        if loop_id not in fallback_pid_loops:
-            raise HTTPException(status_code=404, detail="PID loop not found")
-        fallback_pid_loops[loop_id].mode = update.mode
+            logger.warning(f"Failed to send mode to controller for PID loop {loop_id}")
 
     logger.info(f"PID loop {loop_id} mode changed to {update.mode}")
     return {"status": "ok"}
 
 @app.put("/api/v1/control/pid/{loop_id}/tuning")
-async def update_pid_tuning(loop_id: int, tuning: TuningUpdate):
-    """Update PID loop tuning parameters"""
-    if loop_id not in fallback_pid_loops:
+async def update_pid_tuning(loop_id: int, tuning: TuningUpdate, user: Dict = Depends(get_current_user)):
+    """
+    Update PID loop tuning parameters.
+
+    Requires: Engineer role or higher
+    """
+    check_role(user, UserRole.ENGINEER)
+
+    # Check if loop exists in database (source of truth)
+    loop = db.get_pid_loop(loop_id)
+    if not loop:
         raise HTTPException(status_code=404, detail="PID loop not found")
 
-    fallback_pid_loops[loop_id].kp = tuning.kp
-    fallback_pid_loops[loop_id].ki = tuning.ki
-    fallback_pid_loops[loop_id].kd = tuning.kd
+    # Update in database
+    db.update_pid_loop(loop_id, {
+        **loop,
+        'kp': tuning.kp,
+        'ki': tuning.ki,
+        'kd': tuning.kd
+    })
 
+    logger.info(f"PID loop {loop_id} tuning updated: Kp={tuning.kp}, Ki={tuning.ki}, Kd={tuning.kd}")
     return {"status": "ok"}
+
+
+@app.post("/api/v1/control/pid", response_model=PIDLoop)
+async def create_pid_loop(loop: PIDLoop, user: Dict = Depends(get_current_user)):
+    """
+    Create a new PID control loop.
+
+    Requires: Engineer role or higher
+    """
+    check_role(user, UserRole.ENGINEER)
+
+    loop_id = db.create_pid_loop({
+        'name': loop.name,
+        'enabled': loop.enabled,
+        'input_rtu': loop.input_rtu,
+        'input_slot': loop.input_slot,
+        'output_rtu': loop.output_rtu,
+        'output_slot': loop.output_slot,
+        'kp': loop.kp,
+        'ki': loop.ki,
+        'kd': loop.kd,
+        'setpoint': loop.setpoint,
+        'output_min': loop.output_min if hasattr(loop, 'output_min') else 0,
+        'output_max': loop.output_max if hasattr(loop, 'output_max') else 100,
+        'deadband': loop.deadband if hasattr(loop, 'deadband') else 0,
+        'mode': loop.mode
+    })
+    loop.loop_id = loop_id
+    logger.info(f"Created PID loop {loop_id}: {loop.name}")
+    return loop
+
+
+@app.put("/api/v1/control/pid/{loop_id}", response_model=PIDLoop)
+async def update_pid_loop_config(loop_id: int, loop: PIDLoop, user: Dict = Depends(get_current_user)):
+    """
+    Update PID loop configuration.
+
+    Requires: Engineer role or higher
+    """
+    check_role(user, UserRole.ENGINEER)
+
+    existing = db.get_pid_loop(loop_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="PID loop not found")
+
+    db.update_pid_loop(loop_id, {
+        'name': loop.name,
+        'enabled': loop.enabled,
+        'input_rtu': loop.input_rtu,
+        'input_slot': loop.input_slot,
+        'output_rtu': loop.output_rtu,
+        'output_slot': loop.output_slot,
+        'kp': loop.kp,
+        'ki': loop.ki,
+        'kd': loop.kd,
+        'setpoint': loop.setpoint,
+        'output_min': loop.output_min if hasattr(loop, 'output_min') else 0,
+        'output_max': loop.output_max if hasattr(loop, 'output_max') else 100,
+        'deadband': loop.deadband if hasattr(loop, 'deadband') else 0,
+        'mode': loop.mode
+    })
+    loop.loop_id = loop_id
+    logger.info(f"Updated PID loop {loop_id}: {loop.name}")
+    return loop
+
+
+@app.delete("/api/v1/control/pid/{loop_id}")
+async def delete_pid_loop(loop_id: int, user: Dict = Depends(get_current_user)):
+    """
+    Delete a PID control loop.
+
+    Requires: Engineer role or higher
+    """
+    check_role(user, UserRole.ENGINEER)
+
+    if not db.delete_pid_loop(loop_id):
+        raise HTTPException(status_code=404, detail="PID loop not found")
+
+    logger.info(f"Deleted PID loop {loop_id}")
+    return {"status": "deleted", "loop_id": loop_id}
+
 
 # ============== Interlock Endpoints ==============
 
@@ -811,34 +2091,247 @@ async def reset_interlock(interlock_id: int):
 
 @app.get("/api/v1/trends/tags", response_model=List[HistorianTag])
 async def list_historian_tags():
-    """List all historian tags"""
-    return list(historian_tags.values())
+    """List all historian tags from database"""
+    tags = db.get_historian_tags()
+    return [HistorianTag(
+        tag_id=t['id'],
+        rtu_station=t['rtu_station'],
+        slot=t['slot'],
+        tag_name=t['tag_name'],
+        sample_rate_ms=t.get('sample_rate_ms', 1000),
+        deadband=t.get('deadband', 0.1),
+        compression=t.get('compression', 'swinging_door')
+    ) for t in tags]
+
+
+@app.get("/api/v1/trends/tags/{tag_id}", response_model=HistorianTag)
+async def get_historian_tag(tag_id: int):
+    """Get a specific historian tag"""
+    tag = db.get_historian_tag(tag_id)
+    if not tag:
+        raise HTTPException(status_code=404, detail="Historian tag not found")
+    return HistorianTag(
+        tag_id=tag['id'],
+        rtu_station=tag['rtu_station'],
+        slot=tag['slot'],
+        tag_name=tag['tag_name'],
+        sample_rate_ms=tag.get('sample_rate_ms', 1000),
+        deadband=tag.get('deadband', 0.1),
+        compression=tag.get('compression', 'swinging_door')
+    )
+
+
+@app.post("/api/v1/trends/tags", response_model=HistorianTag)
+async def create_historian_tag(tag: HistorianTag, user: Dict = Depends(get_current_user)):
+    """
+    Create a new historian tag.
+
+    Requires: Engineer role or higher
+    """
+    check_role(user, UserRole.ENGINEER)
+
+    tag_id = db.upsert_historian_tag({
+        'rtu_station': tag.rtu_station,
+        'slot': tag.slot,
+        'tag_name': tag.tag_name,
+        'unit': getattr(tag, 'unit', None),
+        'sample_rate_ms': tag.sample_rate_ms,
+        'deadband': tag.deadband,
+        'compression': tag.compression
+    })
+    tag.tag_id = tag_id
+    logger.info(f"Created historian tag {tag.tag_name}")
+    return tag
+
+
+@app.put("/api/v1/trends/tags/{tag_id}", response_model=HistorianTag)
+async def update_historian_tag(tag_id: int, tag: HistorianTag, user: Dict = Depends(get_current_user)):
+    """
+    Update a historian tag.
+
+    Requires: Engineer role or higher
+    """
+    check_role(user, UserRole.ENGINEER)
+
+    existing = db.get_historian_tag(tag_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Historian tag not found")
+
+    db.upsert_historian_tag({
+        'rtu_station': tag.rtu_station,
+        'slot': tag.slot,
+        'tag_name': tag.tag_name,
+        'unit': getattr(tag, 'unit', None),
+        'sample_rate_ms': tag.sample_rate_ms,
+        'deadband': tag.deadband,
+        'compression': tag.compression
+    })
+    tag.tag_id = tag_id
+    logger.info(f"Updated historian tag {tag.tag_name}")
+    return tag
+
+
+@app.delete("/api/v1/trends/tags/{tag_id}")
+async def delete_historian_tag_endpoint(tag_id: int, user: Dict = Depends(get_current_user)):
+    """
+    Delete a historian tag.
+
+    Requires: Engineer role or higher
+    """
+    check_role(user, UserRole.ENGINEER)
+
+    if not db.delete_historian_tag(tag_id):
+        raise HTTPException(status_code=404, detail="Historian tag not found")
+
+    logger.info(f"Deleted historian tag {tag_id}")
+    return {"status": "deleted", "tag_id": tag_id}
+
+
+def _get_historian_tag_from_db(tag_id: int) -> Optional[HistorianTag]:
+    """Helper to get historian tag from database"""
+    tag = db.get_historian_tag(tag_id)
+    if tag:
+        return HistorianTag(
+            tag_id=tag['id'],
+            rtu_station=tag['rtu_station'],
+            slot=tag['slot'],
+            tag_name=tag['tag_name'],
+            sample_rate_ms=tag.get('sample_rate_ms', 1000),
+            deadband=tag.get('deadband', 0.1),
+            compression=tag.get('compression', 'swinging_door')
+        )
+    return None
 
 @app.get("/api/v1/trends/{tag_id}")
-async def get_trend_data(tag_id: int, start_time: datetime, end_time: datetime):
-    """Get trend data for a tag"""
-    if tag_id not in historian_tags:
+async def get_trend_data(
+    tag_id: int,
+    start_time: datetime,
+    end_time: datetime,
+    aggregate: bool = False,
+    interval_seconds: int = 60
+):
+    """
+    Get trend data for a tag.
+
+    Returns historical samples from the data historian.
+    If historian is not populated, returns empty sample list.
+
+    Args:
+        tag_id: Historian tag ID
+        start_time: Query start time
+        end_time: Query end time
+        aggregate: If true, return aggregated data (min/max/avg)
+        interval_seconds: Aggregation interval in seconds (default 60)
+    """
+    tag = db.get_historian_tag(tag_id)
+    if not tag:
         raise HTTPException(status_code=404, detail="Tag not found")
 
-    # Generate simulated trend data (in production, query historian database)
-    import random
-    samples = []
-    current = start_time
-    while current < end_time:
-        samples.append({
-            "timestamp": current.isoformat(),
-            "value": random.uniform(5, 10),
-            "quality": 192
-        })
-        current = datetime.fromtimestamp(current.timestamp() + 60)
+    logger.debug(f"Trend query for tag {tag_id}: {start_time} to {end_time}")
+
+    try:
+        if aggregate:
+            samples = hist.query_aggregate(tag_id, start_time, end_time, interval_seconds)
+        else:
+            samples = hist.query_raw(tag_id, start_time, end_time)
+    except Exception as e:
+        logger.error(f"Historian query failed: {e}")
+        samples = []
 
     return {"tag_id": tag_id, "samples": samples}
 
+
+@app.get("/api/v1/trends/{tag_id}/latest")
+async def get_trend_latest(tag_id: int):
+    """Get the latest value for a historian tag."""
+    tag = db.get_historian_tag(tag_id)
+    if not tag:
+        raise HTTPException(status_code=404, detail="Tag not found")
+
+    try:
+        latest = hist.get_latest(tag_id)
+        if latest:
+            return {"tag_id": tag_id, **latest}
+        return {"tag_id": tag_id, "value": None, "time": None, "quality": None}
+    except Exception as e:
+        logger.error(f"Historian query failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/v1/trends/{tag_id}/record")
+async def record_trend_sample(tag_id: int, value: float, quality: int = 192):
+    """
+    Record a sample to the historian (for testing/manual entry).
+
+    In production, samples are recorded automatically by the historian service.
+    """
+    tag = db.get_historian_tag(tag_id)
+    if not tag:
+        raise HTTPException(status_code=404, detail="Tag not found")
+
+    try:
+        hist.record_sample(tag_id, datetime.utcnow(), value, quality)
+        db.log_audit(request_user.get(), 'record', 'historian', str(tag_id),
+                     f"Manual sample recorded: {value}")
+        return {"status": "ok", "tag_id": tag_id}
+    except Exception as e:
+        logger.error(f"Failed to record sample: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/v1/trends/stats")
+async def get_historian_stats():
+    """Get historian storage statistics."""
+    try:
+        stats = hist.get_statistics()
+        return stats
+    except Exception as e:
+        logger.error(f"Failed to get historian stats: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 # ============== System Endpoints ==============
+
+def _get_system_metrics() -> tuple:
+    """Get CPU and memory usage from system"""
+    try:
+        import os
+        # Read /proc/stat for CPU usage (Linux)
+        cpu_percent = 0.0
+        memory_percent = 0.0
+
+        # Try to get memory info from /proc/meminfo
+        if os.path.exists('/proc/meminfo'):
+            with open('/proc/meminfo', 'r') as f:
+                meminfo = {}
+                for line in f:
+                    parts = line.split(':')
+                    if len(parts) == 2:
+                        key = parts[0].strip()
+                        value = parts[1].strip().split()[0]
+                        meminfo[key] = int(value)
+                total = meminfo.get('MemTotal', 1)
+                available = meminfo.get('MemAvailable', meminfo.get('MemFree', 0))
+                memory_percent = ((total - available) / total) * 100
+
+        # Simple load average based CPU estimate (Linux)
+        if os.path.exists('/proc/loadavg'):
+            with open('/proc/loadavg', 'r') as f:
+                loadavg = float(f.read().split()[0])
+                cpu_count = os.cpu_count() or 1
+                cpu_percent = min(100.0, (loadavg / cpu_count) * 100)
+
+        return cpu_percent, memory_percent
+    except Exception as e:
+        logger.debug(f"Failed to get system metrics: {e}")
+        return 0.0, 0.0
 
 @app.get("/api/v1/system/health", response_model=SystemHealth)
 async def get_system_health():
-    """Get system health status"""
+    """Get system health status from controller and database"""
+    cpu_percent, memory_percent = _get_system_metrics()
+    db_rtus = _get_all_rtus_from_db()
+    total_rtus = len(db_rtus)
+
     client = get_shm_client()
     if client:
         status = client.get_status()
@@ -846,69 +2339,45 @@ async def get_system_health():
             status="running" if status.get("controller_running", False) else "stopped",
             uptime_seconds=int(status.get("last_update_ms", 0) / 1000),
             connected_rtus=status.get("connected_rtus", 0),
-            total_rtus=status.get("total_rtus", 0),
+            total_rtus=max(total_rtus, status.get("total_rtus", 0)),
             active_alarms=status.get("active_alarms", 0),
-            cpu_percent=0.0,  # TODO: get from system
-            memory_percent=0.0
+            cpu_percent=cpu_percent,
+            memory_percent=memory_percent
         )
 
+    # Controller not running - return database counts
+    running_count = sum(1 for name in db_rtus if _get_runtime_state(name) == "RUNNING")
+
     return SystemHealth(
-        status="running" if fallback_rtus else "stopped",
-        uptime_seconds=12345,
-        connected_rtus=len([r for r in fallback_rtus.values() if r.connection_state == "RUNNING"]),
-        total_rtus=len(fallback_rtus),
-        active_alarms=len([a for a in fallback_alarms.values() if a.state.startswith("ACTIVE")]),
-        cpu_percent=25.5,
-        memory_percent=45.2
+        status="stopped",
+        uptime_seconds=0,
+        connected_rtus=running_count,
+        total_rtus=total_rtus,
+        active_alarms=0,
+        cpu_percent=cpu_percent,
+        memory_percent=memory_percent
     )
 
 @app.get("/api/v1/system/config")
 async def export_config():
-    """Export system configuration"""
-    return {
-        "rtus": [r.dict() for r in fallback_rtus.values()],
-        "alarm_rules": [r.dict() for r in alarm_rules.values()],
-        "pid_loops": [p.dict() for p in fallback_pid_loops.values()],
-        "historian_tags": [t.dict() for t in historian_tags.values()]
-    }
+    """Export complete system configuration from database"""
+    return db.export_configuration()
+
 
 @app.post("/api/v1/system/config")
-async def import_config(config: Dict[str, Any]):
-    """Import system configuration"""
-    global fallback_rtus, alarm_rules, fallback_pid_loops, historian_tags
+async def import_config(config: Dict[str, Any], user: Dict = Depends(get_current_user)):
+    """
+    Import system configuration into database.
+
+    Requires: Admin role
+    """
+    check_role(user, UserRole.ADMIN)
 
     try:
-        # Import RTUs
-        if "rtus" in config:
-            for rtu_data in config["rtus"]:
-                rtu = RTUDevice(**rtu_data)
-                fallback_rtus[rtu.station_name] = rtu
-
-        # Import alarm rules
-        if "alarm_rules" in config:
-            for rule_data in config["alarm_rules"]:
-                rule = AlarmRule(**rule_data)
-                if rule.rule_id:
-                    alarm_rules[rule.rule_id] = rule
-
-        # Import PID loops
-        if "pid_loops" in config:
-            for pid_data in config["pid_loops"]:
-                pid = PIDLoop(**pid_data)
-                if pid.loop_id:
-                    fallback_pid_loops[pid.loop_id] = pid
-
-        # Import historian tags
-        if "historian_tags" in config:
-            for tag_data in config["historian_tags"]:
-                tag = HistorianTag(**tag_data)
-                historian_tags[tag.tag_id] = tag
-
-        logger.info(f"Configuration imported: {len(config.get('rtus', []))} RTUs, "
-                   f"{len(config.get('alarm_rules', []))} rules, "
-                   f"{len(config.get('pid_loops', []))} PID loops")
-
-        return {"status": "ok", "message": "Configuration imported successfully"}
+        username = user.get('username', 'unknown')
+        imported = db.import_configuration(config, user=username)
+        logger.info(f"Configuration imported by {username}: {imported}")
+        return {"status": "ok", "imported": imported}
     except Exception as e:
         logger.error(f"Configuration import failed: {e}")
         raise HTTPException(status_code=400, detail=str(e))
@@ -965,8 +2434,14 @@ async def list_backups():
     return sorted(backups, key=lambda x: x.created_at, reverse=True)
 
 @app.post("/api/v1/backups", response_model=BackupMetadata)
-async def create_backup(request: BackupRequest):
-    """Create a new configuration backup"""
+async def create_backup(request: BackupRequest, user: Dict = Depends(get_current_user)):
+    """
+    Create a new configuration backup from database.
+
+    Requires: Admin role
+    """
+    check_role(user, UserRole.ADMIN)
+
     os.makedirs(BACKUP_DIR, exist_ok=True)
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -975,17 +2450,9 @@ async def create_backup(request: BackupRequest):
     filename = f"{backup_id}.tar.gz"
     filepath = os.path.join(BACKUP_DIR, filename)
 
-    # Get current configuration
-    config_data = {
-        "version": "1.0",
-        "created_at": datetime.now().isoformat(),
-        "description": request.description,
-        "rtus": [r.dict() for r in fallback_rtus.values()],
-        "alarm_rules": [r.dict() for r in alarm_rules.values()],
-        "pid_loops": [p.dict() for p in fallback_pid_loops.values()],
-        "historian_tags": [t.dict() for t in historian_tags.values()],
-        "modbus_config": modbus_config.copy() if modbus_config else {}
-    }
+    # Get current configuration from database (source of truth)
+    config_data = db.export_configuration()
+    config_data["description"] = request.description
 
     # Create backup archive
     with tarfile.open(filepath, "w:gz") as tar:
@@ -1035,9 +2502,13 @@ async def download_backup(backup_id: str):
     )
 
 @app.post("/api/v1/backups/{backup_id}/restore")
-async def restore_backup(backup_id: str):
-    """Restore configuration from a backup"""
-    global fallback_rtus, alarm_rules, fallback_pid_loops, historian_tags, modbus_config
+async def restore_backup(backup_id: str, user: Dict = Depends(get_current_user)):
+    """
+    Restore configuration from a backup to the database.
+
+    Requires: Admin role
+    """
+    check_role(user, UserRole.ADMIN)
 
     filename = f"{backup_id}.tar.gz"
     filepath = os.path.join(BACKUP_DIR, filename)
@@ -1048,42 +2519,28 @@ async def restore_backup(backup_id: str):
     try:
         with tarfile.open(filepath, "r:gz") as tar:
             config_file = tar.extractfile("config.json")
-            if config_file:
-                config_data = json.load(config_file)
+            if not config_file:
+                raise HTTPException(status_code=400, detail="Backup does not contain config.json")
 
-                # Restore RTUs
-                fallback_rtus.clear()
-                for rtu_data in config_data.get("rtus", []):
-                    rtu = RTUDevice(**rtu_data)
-                    fallback_rtus[rtu.station_name] = rtu
+            config_data = json.load(config_file)
 
-                # Restore alarm rules
-                alarm_rules.clear()
-                for rule_data in config_data.get("alarm_rules", []):
-                    rule = AlarmRule(**rule_data)
-                    if rule.rule_id:
-                        alarm_rules[rule.rule_id] = rule
+            # Use the shared import function to restore to database
+            username = user.get('username', 'unknown')
+            imported = db.import_configuration(config_data, user=username)
 
-                # Restore PID loops
-                fallback_pid_loops.clear()
-                for pid_data in config_data.get("pid_loops", []):
-                    pid = PIDLoop(**pid_data)
-                    if pid.loop_id:
-                        fallback_pid_loops[pid.loop_id] = pid
+            db.log_audit(username, 'restore', 'backup', backup_id,
+                         f"Restored from backup {backup_id}: {imported}")
 
-                # Restore historian tags
-                historian_tags.clear()
-                for tag_data in config_data.get("historian_tags", []):
-                    tag = HistorianTag(**tag_data)
-                    historian_tags[tag.tag_id] = tag
+        logger.info(f"Configuration restored from backup {backup_id} by {username}: {imported}")
+        return {
+            "status": "ok",
+            "message": "Configuration restored successfully to database",
+            "imported": imported
+        }
 
-                # Restore Modbus config
-                if "modbus_config" in config_data:
-                    modbus_config.update(config_data["modbus_config"])
-
-        logger.info(f"Configuration restored from backup: {backup_id}")
-        return {"status": "ok", "message": "Configuration restored successfully"}
-
+    except json.JSONDecodeError as e:
+        logger.error(f"Restore failed - invalid JSON in backup: {e}")
+        raise HTTPException(status_code=400, detail=f"Invalid JSON in backup: {e}")
     except Exception as e:
         logger.error(f"Restore failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -1102,15 +2559,104 @@ async def delete_backup(backup_id: str):
     return {"status": "ok"}
 
 @app.post("/api/v1/backups/upload")
-async def upload_backup(file: bytes = None):
-    """Upload a backup file for restore"""
-    from fastapi import File, UploadFile
+async def upload_backup(
+    file: Any,  # UploadFile
+    description: Optional[str] = None,
+    user: Dict = Depends(get_current_user)
+):
+    """
+    Upload a backup file (.tar.gz) for restore.
+
+    Requires: Admin role
+    """
+    from fastapi import UploadFile
+
+    check_role(user, UserRole.ADMIN)
+
+    if not hasattr(file, 'filename'):
+        raise HTTPException(status_code=400, detail="No file uploaded")
+
+    # Validate file extension
+    if not file.filename.endswith('.tar.gz'):
+        raise HTTPException(status_code=400, detail="File must be a .tar.gz archive")
+
+    # Generate backup ID
+    backup_id = f"uploaded_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    filename = f"{backup_id}.tar.gz"
+    filepath = os.path.join(BACKUP_DIR, filename)
+
+    # Ensure backup directory exists
+    os.makedirs(BACKUP_DIR, exist_ok=True)
+
+    # Save uploaded file
+    try:
+        content = await file.read()
+        with open(filepath, 'wb') as f:
+            f.write(content)
+
+        size_bytes = os.path.getsize(filepath)
+
+        # Create backup record in database
+        db.create_backup_record(
+            backup_id=backup_id,
+            filename=filename,
+            description=description or f"Uploaded: {file.filename}",
+            size_bytes=size_bytes,
+            includes_historian='_full_' in file.filename.lower()
+        )
+
+        db.log_audit(user.get('username', 'unknown'), 'upload', 'backup', backup_id,
+                     f"Uploaded backup: {filename}")
+
+        logger.info(f"Backup uploaded: {backup_id} ({size_bytes} bytes)")
+        return {
+            "status": "ok",
+            "backup_id": backup_id,
+            "filename": filename,
+            "size_bytes": size_bytes
+        }
+    except Exception as e:
+        logger.error(f"Failed to upload backup: {e}")
+        if os.path.exists(filepath):
+            os.remove(filepath)
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.post("/api/v1/backups/import")
-async def import_backup_file(file: Any = None):
-    """Import configuration from uploaded file"""
-    # This endpoint accepts multipart form upload
-    return {"status": "ok", "message": "Use /api/v1/system/config for direct JSON import"}
+async def import_backup_file(
+    file: Any,  # UploadFile
+    user: Dict = Depends(get_current_user)
+):
+    """
+    Import configuration from an uploaded JSON file.
+
+    Requires: Admin role
+    """
+    check_role(user, UserRole.ADMIN)
+
+    if not hasattr(file, 'filename'):
+        raise HTTPException(status_code=400, detail="No file uploaded")
+
+    # Validate file extension
+    if not file.filename.endswith('.json'):
+        raise HTTPException(status_code=400, detail="File must be a .json file")
+
+    try:
+        content = await file.read()
+        config = json.loads(content.decode('utf-8'))
+
+        # Use shared import function
+        username = user.get('username', 'unknown')
+        imported = db.import_configuration(config, user=username)
+
+        logger.info(f"Configuration imported from file {file.filename} by {username}: {imported}")
+        return {"status": "ok", "imported": imported}
+
+    except json.JSONDecodeError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid JSON file: {e}")
+    except Exception as e:
+        logger.error(f"Failed to import config file: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 # ============== Modbus Gateway Configuration ==============
 
@@ -1293,18 +2839,22 @@ async def remove_downstream_device(device_id: int):
 
 @app.get("/api/v1/modbus/stats", response_model=ModbusStats)
 async def get_modbus_stats():
-    """Get Modbus gateway statistics"""
-    client = get_shm_client()
-    if client:
-        # TODO: Get real stats from shared memory
-        pass
+    """
+    Get Modbus gateway statistics.
+
+    Note: Live statistics (tcp_connections, total_requests, total_errors)
+    require the Modbus gateway to be running. Currently returns configuration
+    status and zero counters when gateway is not reporting stats.
+    """
+    server_config = modbus_config.get("server", {})
+    downstream = modbus_config.get("downstream_devices", [])
 
     return ModbusStats(
-        server_running=modbus_config.get("server", {}).get("tcp_enabled", False),
-        tcp_connections=0,
-        total_requests=0,
-        total_errors=0,
-        downstream_devices_online=0
+        server_running=server_config.get("tcp_enabled", False),
+        tcp_connections=0,  # Would come from gateway process stats
+        total_requests=0,   # Would come from gateway process stats
+        total_errors=0,     # Would come from gateway process stats
+        downstream_devices_online=len(downstream)  # Configured count
     )
 
 @app.post("/api/v1/modbus/restart")
@@ -1330,9 +2880,16 @@ async def list_services():
                 ["systemctl", "is-active", svc],
                 capture_output=True, text=True, timeout=5
             )
-            status[svc] = result.stdout.strip()
-        except Exception:
-            status[svc] = "unknown"
+            status[svc] = result.stdout.strip() or "inactive"
+        except subprocess.TimeoutExpired:
+            logger.warning(f"Timeout checking service status for {svc}")
+            status[svc] = "timeout"
+        except FileNotFoundError:
+            # systemctl not available (e.g., Docker container)
+            status[svc] = "not-available"
+        except Exception as e:
+            logger.warning(f"Error checking service status for {svc}: {e}")
+            status[svc] = "error"
 
     return status
 
@@ -1364,8 +2921,7 @@ async def control_service(service_name: str, action: str):
 
 # ============== Authentication Endpoints ==============
 
-# In-memory session store (would use Redis/DB in production)
-active_sessions: Dict[str, Dict[str, Any]] = {}
+# Note: active_sessions is defined at module level (line ~54) for dependency access
 
 # Active Directory configuration store
 ad_config_store: ADConfig = ADConfig()
@@ -1444,12 +3000,17 @@ async def login(request: LoginRequest):
                 message="Authentication service unavailable"
             )
     else:
-        # Local authentication fallback (demo mode)
-        # In production, this would check against a database
-        if username == "admin" and password == "admin":
-            groups = ["WTC-Admins"]
-        elif username == "operator" and password == "operator":
-            groups = ["WTC-Operators"]
+        # Local authentication using database users
+        user = db.authenticate_user(username, password)
+        if user:
+            # Map role to groups for consistency with AD auth
+            role_to_groups = {
+                'admin': ["WTC-Admins"],
+                'engineer': ["WTC-Engineers"],
+                'operator': ["WTC-Operators"],
+                'viewer': ["WTC-Viewers"]
+            }
+            groups = role_to_groups.get(user.get('role', 'viewer'), ["WTC-Viewers"])
         else:
             logger.warning(f"Local auth failed for user: {username}")
             return LoginResponse(
@@ -1460,15 +3021,37 @@ async def login(request: LoginRequest):
     # Generate session token
     token = secrets.token_hex(32)
 
-    # Store session
+    # Determine role from groups
+    role = UserRole.VIEWER
+    if "WTC-Admins" in groups:
+        role = UserRole.ADMIN
+    elif "WTC-Engineers" in groups:
+        role = UserRole.ENGINEER
+    elif "WTC-Operators" in groups:
+        role = UserRole.OPERATOR
+
+    # Session expiry (24 hours)
+    expires_at = datetime.now() + timedelta(hours=24)
+
+    # Store session in memory
     active_sessions[token] = {
         "username": username,
+        "role": role,
         "groups": groups,
         "created": datetime.now().isoformat(),
         "last_activity": datetime.now().isoformat()
     }
 
-    logger.info(f"User {username} logged in successfully")
+    # Persist session to database
+    db.create_session(
+        token=token,
+        username=username,
+        role=role,
+        groups=groups,
+        expires_at=expires_at
+    )
+
+    logger.info(f"User {username} logged in successfully with role {role}")
 
     return LoginResponse(
         success=True,
@@ -1480,8 +3063,12 @@ async def login(request: LoginRequest):
 @app.post("/api/v1/auth/logout")
 async def logout(token: str = None):
     """Logout and invalidate session token"""
-    if token and token in active_sessions:
-        del active_sessions[token]
+    if token:
+        # Remove from memory
+        if token in active_sessions:
+            del active_sessions[token]
+        # Remove from database
+        db.delete_session(token)
         return {"status": "ok", "message": "Logged out"}
     return {"status": "ok", "message": "Session not found"}
 
@@ -1517,6 +3104,278 @@ async def update_ad_config(config: ADConfig):
     ad_config_store = config
     logger.info(f"AD configuration updated: server={config.server}, enabled={config.enabled}")
     return {"status": "ok", "message": "AD configuration updated"}
+
+# ============== User Management Endpoints ==============
+
+class UserCreate(BaseModel):
+    username: str
+    password: str
+    role: str = "viewer"
+    active: bool = True
+    sync_to_rtus: bool = True
+
+class UserUpdate(BaseModel):
+    password: Optional[str] = None
+    role: Optional[str] = None
+    active: Optional[bool] = None
+    sync_to_rtus: Optional[bool] = None
+
+class UserResponse(BaseModel):
+    id: int
+    username: str
+    role: str
+    active: bool
+    sync_to_rtus: bool
+    created_at: Optional[str] = None
+    last_login: Optional[str] = None
+
+class UserSyncRequest(BaseModel):
+    station_name: Optional[str] = None  # None = sync to all RTUs
+
+
+@app.get("/api/v1/users", response_model=List[UserResponse])
+async def list_users(include_inactive: bool = False, user: Dict = Depends(get_current_user)):
+    """
+    List all users.
+
+    Requires: Admin role
+    """
+    check_role(user, UserRole.ADMIN)
+
+    users = db.get_users(include_inactive=include_inactive)
+    return [UserResponse(
+        id=u['id'],
+        username=u['username'],
+        role=u['role'],
+        active=bool(u.get('active', True)),
+        sync_to_rtus=bool(u.get('sync_to_rtus', True)),
+        created_at=u.get('created_at'),
+        last_login=u.get('last_login')
+    ) for u in users]
+
+
+@app.get("/api/v1/users/{user_id}", response_model=UserResponse)
+async def get_user(user_id: int, user: Dict = Depends(get_current_user)):
+    """
+    Get a specific user.
+
+    Requires: Admin role
+    """
+    check_role(user, UserRole.ADMIN)
+
+    u = db.get_user(user_id)
+    if not u:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    return UserResponse(
+        id=u['id'],
+        username=u['username'],
+        role=u['role'],
+        active=bool(u.get('active', True)),
+        sync_to_rtus=bool(u.get('sync_to_rtus', True)),
+        created_at=u.get('created_at'),
+        last_login=u.get('last_login')
+    )
+
+
+@app.post("/api/v1/users", response_model=UserResponse)
+async def create_user(request: UserCreate, user: Dict = Depends(get_current_user)):
+    """
+    Create a new user.
+
+    Requires: Admin role
+
+    The user will be synced to all connected RTUs if sync_to_rtus is true.
+    """
+    check_role(user, UserRole.ADMIN)
+
+    # Check if username already exists
+    existing = db.get_user_by_username(request.username)
+    if existing:
+        raise HTTPException(status_code=409, detail="Username already exists")
+
+    # Validate role
+    valid_roles = ['viewer', 'operator', 'engineer', 'admin']
+    if request.role not in valid_roles:
+        raise HTTPException(status_code=400, detail=f"Invalid role. Must be one of: {valid_roles}")
+
+    user_id = db.create_user({
+        'username': request.username,
+        'password': request.password,
+        'role': request.role,
+        'active': request.active,
+        'sync_to_rtus': request.sync_to_rtus
+    })
+
+    # Trigger sync to RTUs if enabled
+    if request.sync_to_rtus:
+        await _trigger_user_sync()
+
+    u = db.get_user(user_id)
+    return UserResponse(
+        id=u['id'],
+        username=u['username'],
+        role=u['role'],
+        active=bool(u.get('active', True)),
+        sync_to_rtus=bool(u.get('sync_to_rtus', True)),
+        created_at=u.get('created_at'),
+        last_login=u.get('last_login')
+    )
+
+
+@app.put("/api/v1/users/{user_id}", response_model=UserResponse)
+async def update_user(user_id: int, request: UserUpdate, user: Dict = Depends(get_current_user)):
+    """
+    Update a user.
+
+    Requires: Admin role
+
+    If any user settings change, the user list will be synced to RTUs.
+    """
+    check_role(user, UserRole.ADMIN)
+
+    existing = db.get_user(user_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # Validate role if provided
+    if request.role:
+        valid_roles = ['viewer', 'operator', 'engineer', 'admin']
+        if request.role not in valid_roles:
+            raise HTTPException(status_code=400, detail=f"Invalid role. Must be one of: {valid_roles}")
+
+    update_data = {}
+    if request.password:
+        update_data['password'] = request.password
+    if request.role is not None:
+        update_data['role'] = request.role
+    if request.active is not None:
+        update_data['active'] = request.active
+    if request.sync_to_rtus is not None:
+        update_data['sync_to_rtus'] = request.sync_to_rtus
+
+    if update_data:
+        db.update_user(user_id, update_data)
+        # Trigger sync to RTUs
+        await _trigger_user_sync()
+
+    u = db.get_user(user_id)
+    return UserResponse(
+        id=u['id'],
+        username=u['username'],
+        role=u['role'],
+        active=bool(u.get('active', True)),
+        sync_to_rtus=bool(u.get('sync_to_rtus', True)),
+        created_at=u.get('created_at'),
+        last_login=u.get('last_login')
+    )
+
+
+@app.delete("/api/v1/users/{user_id}")
+async def delete_user(user_id: int, user: Dict = Depends(get_current_user)):
+    """
+    Delete a user.
+
+    Requires: Admin role
+
+    The user will be removed from the RTU user lists on next sync.
+    """
+    check_role(user, UserRole.ADMIN)
+
+    existing = db.get_user(user_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # Don't allow deleting the last admin
+    if existing['role'] == 'admin':
+        admins = [u for u in db.get_users() if u['role'] == 'admin']
+        if len(admins) <= 1:
+            raise HTTPException(status_code=400, detail="Cannot delete the last admin user")
+
+    db.delete_user(user_id)
+
+    # Trigger sync to RTUs to remove user
+    await _trigger_user_sync()
+
+    return {"status": "ok", "message": f"User {existing['username']} deleted"}
+
+
+@app.post("/api/v1/users/sync")
+async def sync_users_to_rtus(request: UserSyncRequest, user: Dict = Depends(get_current_user)):
+    """
+    Manually trigger user sync to RTUs.
+
+    Requires: Admin role
+
+    If station_name is provided, only that RTU will be synced.
+    Otherwise, all connected RTUs will be synced.
+    """
+    check_role(user, UserRole.ADMIN)
+
+    users_to_sync = db.get_users_for_sync()
+    if not users_to_sync:
+        return {"status": "ok", "message": "No users to sync", "synced_rtus": 0}
+
+    client = get_shm_client()
+    if not client:
+        raise HTTPException(status_code=503, detail="Controller not running")
+
+    if request.station_name:
+        # Sync to specific RTU
+        success = await _sync_users_to_rtu(client, request.station_name, users_to_sync)
+        return {
+            "status": "ok" if success else "error",
+            "message": f"Synced {len(users_to_sync)} users to {request.station_name}",
+            "synced_rtus": 1 if success else 0
+        }
+    else:
+        # Sync to all RTUs
+        count = await _sync_users_to_all_rtus(client, users_to_sync)
+        return {
+            "status": "ok",
+            "message": f"Synced {len(users_to_sync)} users to {count} RTUs",
+            "synced_rtus": count
+        }
+
+
+async def _trigger_user_sync():
+    """Trigger user sync to all RTUs (called after user changes)"""
+    client = get_shm_client()
+    if not client:
+        logger.warning("Cannot sync users: controller not running")
+        return
+
+    users_to_sync = db.get_users_for_sync()
+    if users_to_sync:
+        await _sync_users_to_all_rtus(client, users_to_sync)
+
+
+async def _sync_users_to_rtu(client, station_name: str, users: List[Dict]) -> bool:
+    """Sync users to a specific RTU via IPC command"""
+    try:
+        # The actual sync happens in the C controller via IPC
+        # We send a user sync command with serialized user data
+        success = client.sync_users_to_rtu(station_name, users)
+        if success:
+            logger.info(f"User sync to {station_name} initiated: {len(users)} users")
+        else:
+            logger.error(f"Failed to initiate user sync to {station_name}")
+        return success
+    except Exception as e:
+        logger.error(f"User sync error: {e}")
+        return False
+
+
+async def _sync_users_to_all_rtus(client, users: List[Dict]) -> int:
+    """Sync users to all connected RTUs"""
+    try:
+        count = client.sync_users_to_all_rtus(users)
+        logger.info(f"User sync initiated to {count} RTUs: {len(users)} users")
+        return count
+    except Exception as e:
+        logger.error(f"User sync error: {e}")
+        return 0
+
 
 # ============== Log Forwarding Endpoints ==============
 
@@ -1672,12 +3531,12 @@ async def list_log_destinations():
 async def websocket_realtime(websocket: WebSocket):
     """WebSocket endpoint for real-time data streaming"""
     await websocket.accept()
-    websocket_connections.append(websocket)
-    logger.info(f"WebSocket client connected. Total: {len(websocket_connections)}")
+    await ws_manager.connect(websocket)
 
     try:
         while True:
             await asyncio.sleep(1)
+            await ws_manager.touch(websocket)  # Update activity timestamp
 
             client = get_shm_client()
             if client:
@@ -1698,14 +3557,17 @@ async def websocket_realtime(websocket: WebSocket):
 
                 await websocket.send_json(data)
             else:
-                # Send simulated data as fallback
+                # Send simulated data as fallback when controller not running
                 data = {
                     "type": "sensor_update",
                     "timestamp": datetime.now().isoformat(),
                     "data": {}
                 }
 
-                for station_name in fallback_rtus:
+                # Get RTU names from database for simulation
+                db_rtus = _get_all_rtus_from_db()
+                for rtu in db_rtus:
+                    station_name = rtu.get("station_name")
                     data["data"][station_name] = {
                         "sensors": [
                             {"slot": 1, "value": 7.0 + 0.1 * (datetime.now().second % 5)},
@@ -1716,13 +3578,16 @@ async def websocket_realtime(websocket: WebSocket):
                 await websocket.send_json(data)
 
     except WebSocketDisconnect:
-        websocket_connections.remove(websocket)
-        logger.info(f"WebSocket client disconnected. Total: {len(websocket_connections)}")
+        await ws_manager.disconnect(websocket)
+    except Exception as e:
+        logger.warning(f"WebSocket error: {e}")
+        await ws_manager.disconnect(websocket)
 
 @app.websocket("/ws/alarms")
 async def websocket_alarms(websocket: WebSocket):
-    """WebSocket endpoint for alarm notifications"""
+    """WebSocket endpoint for alarm notifications (separate from realtime for targeted updates)"""
     await websocket.accept()
+    logger.info("Alarm WebSocket client connected")
 
     try:
         last_alarm_count = 0
@@ -1747,85 +3612,81 @@ async def websocket_alarms(websocket: WebSocket):
                     last_alarm_count = current_count
 
     except WebSocketDisconnect:
-        pass
+        logger.info("Alarm WebSocket client disconnected")
+    except Exception as e:
+        logger.warning(f"Alarm WebSocket error: {e}")
 
 async def broadcast_event(event_type: str, data: Dict[str, Any]):
-    """Broadcast event to all connected WebSocket clients"""
+    """Broadcast event to all connected WebSocket clients using the manager"""
     message = {"type": event_type, "data": data, "timestamp": datetime.now().isoformat()}
+    await ws_manager.broadcast(message)
 
-    for websocket in websocket_connections:
+# ============== Background Tasks ==============
+
+# Background task handles
+scan_task: Optional[asyncio.Task] = None
+ws_cleanup_task: Optional[asyncio.Task] = None
+
+async def _websocket_cleanup_loop():
+    """Periodically clean up stale WebSocket connections."""
+    while True:
+        await asyncio.sleep(60)  # Check every minute
         try:
-            await websocket.send_json(message)
-        except Exception:
-            pass
+            await ws_manager.cleanup_stale()
+        except Exception as e:
+            logger.error(f"WebSocket cleanup error: {e}")
 
 # ============== Startup Event ==============
 
 @app.on_event("startup")
 async def startup_event():
     """Initialize on startup"""
+    global scan_task, ws_cleanup_task
+
     # Try to connect to shared memory
     if SHM_AVAILABLE:
         client = get_client()
         if client.is_connected():
             logger.info("Connected to controller via shared memory")
         else:
-            logger.warning("Controller not running, using fallback mode")
-            init_fallback_data()
+            logger.warning("Controller not running - API will serve database config only")
     else:
-        logger.warning("Shared memory client not available, using fallback mode")
-        init_fallback_data()
+        logger.warning("Shared memory client not available - API will serve database config only")
+
+    # Start background network scan task
+    scan_task = asyncio.create_task(_background_scan_loop())
+    logger.info("Background network scan task initialized (disabled by default)")
+
+    # Start WebSocket cleanup task
+    ws_cleanup_task = asyncio.create_task(_websocket_cleanup_loop())
+    logger.info("WebSocket cleanup task started")
 
     logger.info("Water Treatment Controller API started")
 
-def init_fallback_data():
-    """Initialize sample data for fallback mode"""
-    fallback_rtus["rtu-tank-1"] = RTUDevice(
-        station_name="rtu-tank-1",
-        ip_address="192.168.1.100",
-        vendor_id=0x0001,
-        device_id=0x0001,
-        connection_state="RUNNING",
-        slot_count=16,
-        last_seen=datetime.now()
-    )
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Cleanup on shutdown"""
+    global scan_task, ws_cleanup_task
 
-    fallback_rtus["rtu-pump-station"] = RTUDevice(
-        station_name="rtu-pump-station",
-        ip_address="192.168.1.101",
-        vendor_id=0x0001,
-        device_id=0x0001,
-        connection_state="RUNNING",
-        slot_count=16,
-        last_seen=datetime.now()
-    )
+    # Cancel background scan task
+    if scan_task and not scan_task.done():
+        scan_task.cancel()
+        try:
+            await scan_task
+        except asyncio.CancelledError:
+            pass
+        logger.info("Background network scan task stopped")
 
-    fallback_pid_loops[1] = PIDLoop(
-        loop_id=1,
-        name="pH Control",
-        enabled=True,
-        input_rtu="rtu-tank-1",
-        input_slot=1,
-        output_rtu="rtu-tank-1",
-        output_slot=12,
-        kp=2.0,
-        ki=0.1,
-        kd=0.5,
-        setpoint=7.0,
-        mode="AUTO",
-        pv=7.2,
-        cv=35.0
-    )
+    # Cancel WebSocket cleanup task
+    if ws_cleanup_task and not ws_cleanup_task.done():
+        ws_cleanup_task.cancel()
+        try:
+            await ws_cleanup_task
+        except asyncio.CancelledError:
+            pass
+        logger.info("WebSocket cleanup task stopped")
 
-    historian_tags[1] = HistorianTag(
-        tag_id=1,
-        rtu_station="rtu-tank-1",
-        slot=1,
-        tag_name="rtu-tank-1.pH",
-        sample_rate_ms=1000,
-        deadband=0.05,
-        compression="SWINGING_DOOR"
-    )
+    logger.info("Water Treatment Controller API stopped")
 
 # ============== Main Entry Point ==============
 

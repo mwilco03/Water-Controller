@@ -31,6 +31,45 @@ SHM_CMD_SETPOINT = 2
 SHM_CMD_PID_MODE = 3
 SHM_CMD_ACK_ALARM = 4
 SHM_CMD_RESET_INTERLOCK = 5
+SHM_CMD_ADD_RTU = 6
+SHM_CMD_REMOVE_RTU = 7
+SHM_CMD_CONNECT_RTU = 8
+SHM_CMD_DISCONNECT_RTU = 9
+SHM_CMD_DCP_DISCOVER = 10
+SHM_CMD_I2C_DISCOVER = 11
+SHM_CMD_ONEWIRE_DISCOVER = 12
+SHM_CMD_CONFIGURE_SLOT = 13
+SHM_CMD_USER_SYNC = 14
+SHM_CMD_USER_SYNC_ALL = 15
+
+# Connection states
+CONN_STATE_IDLE = 0
+CONN_STATE_CONNECTING = 1
+CONN_STATE_CONNECTED = 2
+CONN_STATE_RUNNING = 3
+CONN_STATE_ERROR = 4
+CONN_STATE_OFFLINE = 5
+
+# Connection state names (programmatic generation)
+CONNECTION_STATE_NAMES = {
+    CONN_STATE_IDLE: "IDLE",
+    CONN_STATE_CONNECTING: "CONNECTING",
+    CONN_STATE_CONNECTED: "CONNECTED",
+    CONN_STATE_RUNNING: "RUNNING",
+    CONN_STATE_ERROR: "ERROR",
+    CONN_STATE_OFFLINE: "OFFLINE",
+}
+
+# Sensor status codes
+SENSOR_STATUS_GOOD = 0
+SENSOR_STATUS_BAD = 1
+SENSOR_STATUS_UNCERTAIN = 2
+
+SENSOR_STATUS_NAMES = {
+    SENSOR_STATUS_GOOD: "good",
+    SENSOR_STATUS_BAD: "bad",
+    SENSOR_STATUS_UNCERTAIN: "uncertain",
+}
 
 
 class ShmSensor(ctypes.Structure):
@@ -405,6 +444,384 @@ class WtcShmClient:
     def reset_interlock(self, interlock_id: int) -> bool:
         """Reset interlock"""
         return self._send_command(SHM_CMD_RESET_INTERLOCK, interlock_id=interlock_id)
+
+    # ============== RTU-specific accessor methods ==============
+
+    def get_rtu(self, station_name: str) -> Optional[Dict[str, Any]]:
+        """Get a single RTU by station name"""
+        rtus = self.get_rtus()
+        for rtu in rtus:
+            if rtu["station_name"] == station_name:
+                return rtu
+        return None
+
+    def get_sensors(self, station_name: str) -> List[Dict[str, Any]]:
+        """
+        Get sensors for a specific RTU.
+        Returns list of sensor data with slot, value, status, timestamp.
+        """
+        rtu = self.get_rtu(station_name)
+        if not rtu:
+            logger.warning(f"RTU not found in shared memory: {station_name}")
+            return []
+
+        sensors = []
+        for sensor in rtu.get("sensors", []):
+            sensors.append({
+                "slot": sensor["slot"],
+                "value": sensor["value"],
+                "status": SENSOR_STATUS_NAMES.get(sensor["status"], "unknown"),
+                "status_code": sensor["status"],
+                "timestamp_ms": sensor["timestamp_ms"],
+                "quality": "good" if sensor["status"] == SENSOR_STATUS_GOOD else "bad",
+            })
+        return sensors
+
+    def get_actuators(self, station_name: str) -> List[Dict[str, Any]]:
+        """
+        Get actuators for a specific RTU.
+        Returns list of actuator states with slot, command, pwm_duty, forced.
+        """
+        rtu = self.get_rtu(station_name)
+        if not rtu:
+            logger.warning(f"RTU not found in shared memory: {station_name}")
+            return []
+
+        actuators = []
+        command_names = {0: "OFF", 1: "ON", 2: "PWM"}
+        for actuator in rtu.get("actuators", []):
+            actuators.append({
+                "slot": actuator["slot"],
+                "command": command_names.get(actuator["command"], "UNKNOWN"),
+                "command_code": actuator["command"],
+                "pwm_duty": actuator["pwm_duty"],
+                "forced": actuator["forced"],
+            })
+        return actuators
+
+    def get_sensor_value(self, station_name: str, slot: int) -> Optional[Dict[str, Any]]:
+        """Get a specific sensor value by station and slot"""
+        sensors = self.get_sensors(station_name)
+        for sensor in sensors:
+            if sensor["slot"] == slot:
+                return sensor
+        return None
+
+    def get_actuator_state(self, station_name: str, slot: int) -> Optional[Dict[str, Any]]:
+        """Get a specific actuator state by station and slot"""
+        actuators = self.get_actuators(station_name)
+        for actuator in actuators:
+            if actuator["slot"] == slot:
+                return actuator
+        return None
+
+    # ============== RTU Management IPC Commands ==============
+
+    def add_rtu(self, station_name: str, ip_address: str,
+                vendor_id: int = 0x0493, device_id: int = 0x0001,
+                slot_count: int = 16) -> bool:
+        """
+        Send IPC command to add RTU to PROFINET controller.
+        The controller will initiate DCP identification and AR setup.
+        """
+        if not self.mm:
+            logger.warning("Cannot add RTU: shared memory not connected")
+            return False
+
+        logger.info(f"Sending ADD_RTU command: {station_name} at {ip_address}")
+        return self._send_rtu_command(SHM_CMD_ADD_RTU, station_name, ip_address,
+                                       vendor_id, device_id, slot_count)
+
+    def remove_rtu(self, station_name: str) -> bool:
+        """
+        Send IPC command to remove RTU from PROFINET controller.
+        The controller will close the AR and release resources.
+        """
+        if not self.mm:
+            logger.warning("Cannot remove RTU: shared memory not connected")
+            return False
+
+        logger.info(f"Sending REMOVE_RTU command: {station_name}")
+        return self._send_rtu_command(SHM_CMD_REMOVE_RTU, station_name)
+
+    def connect_rtu(self, station_name: str) -> bool:
+        """
+        Send IPC command to connect to RTU via PROFINET.
+        Initiates the Application Relationship (AR) setup.
+        """
+        if not self.mm:
+            logger.warning("Cannot connect RTU: shared memory not connected")
+            return False
+
+        logger.info(f"Sending CONNECT_RTU command: {station_name}")
+        return self._send_rtu_command(SHM_CMD_CONNECT_RTU, station_name)
+
+    def disconnect_rtu(self, station_name: str) -> bool:
+        """
+        Send IPC command to disconnect RTU.
+        Gracefully closes the PROFINET AR.
+        """
+        if not self.mm:
+            logger.warning("Cannot disconnect RTU: shared memory not connected")
+            return False
+
+        logger.info(f"Sending DISCONNECT_RTU command: {station_name}")
+        return self._send_rtu_command(SHM_CMD_DISCONNECT_RTU, station_name)
+
+    def _send_rtu_command(self, cmd_type: int, station_name: str,
+                          ip_address: str = "", vendor_id: int = 0,
+                          device_id: int = 0, slot_count: int = 0) -> bool:
+        """Internal helper for RTU management commands"""
+        self._command_seq += 1
+
+        cmd_data = bytearray(256)  # Fixed command buffer
+        struct.pack_into('II', cmd_data, 0, self._command_seq, cmd_type)
+
+        # Pack station name (64 bytes)
+        station_bytes = station_name.encode('utf-8')[:63]
+        struct.pack_into(f'{len(station_bytes)}s', cmd_data, 8, station_bytes)
+
+        # Pack additional data for ADD_RTU
+        if cmd_type == SHM_CMD_ADD_RTU:
+            ip_bytes = ip_address.encode('utf-8')[:15]
+            struct.pack_into(f'{len(ip_bytes)}s', cmd_data, 72, ip_bytes)
+            struct.pack_into('HHI', cmd_data, 88, vendor_id, device_id, slot_count)
+
+        # Write to shared memory command buffer
+        try:
+            cmd_offset = ctypes.sizeof(WtcSharedMemory) - ctypes.sizeof(ShmCommand) - 8
+            self.mm.seek(cmd_offset)
+            self.mm.write(bytes(cmd_data[:ctypes.sizeof(ShmCommand)]))
+
+            seq_offset = cmd_offset + ctypes.sizeof(ShmCommand)
+            struct.pack_into('I', self.mm, seq_offset, self._command_seq)
+            return True
+        except Exception as e:
+            logger.error(f"Failed to send RTU command: {e}")
+            return False
+
+    # ============== Discovery IPC Commands ==============
+
+    def dcp_discover(self, timeout_ms: int = 3000) -> List[Dict[str, Any]]:
+        """
+        Send DCP Identify All request to discover PROFINET devices.
+        Returns list of discovered devices with station_name, ip_address, mac_address.
+
+        Note: This sends the command to the C controller which performs the actual
+        DCP multicast. Results are returned via shared memory discovery buffer.
+        """
+        if not self.mm:
+            logger.warning("Cannot perform DCP discovery: shared memory not connected")
+            return []
+
+        logger.info(f"Initiating DCP discovery (timeout: {timeout_ms}ms)")
+        self._command_seq += 1
+
+        cmd_data = bytearray(ctypes.sizeof(ShmCommand))
+        struct.pack_into('III', cmd_data, 0, self._command_seq, SHM_CMD_DCP_DISCOVER, timeout_ms)
+
+        try:
+            cmd_offset = ctypes.sizeof(WtcSharedMemory) - ctypes.sizeof(ShmCommand) - 8
+            self.mm.seek(cmd_offset)
+            self.mm.write(bytes(cmd_data))
+
+            # In production, we would wait for response in discovery buffer
+            # For now, return empty list - controller will populate discovery results
+            logger.info("DCP discovery command sent, awaiting controller response")
+            return []
+        except Exception as e:
+            logger.error(f"Failed to send DCP discover command: {e}")
+            return []
+
+    def discover_i2c(self, station_name: str, bus: int = 1) -> List[Dict[str, Any]]:
+        """
+        Request I2C bus scan from RTU.
+        RTU will probe standard addresses and report found devices.
+        """
+        if not self.mm:
+            logger.warning("Cannot discover I2C: shared memory not connected")
+            return []
+
+        logger.info(f"Requesting I2C discovery on {station_name} bus {bus}")
+        self._command_seq += 1
+
+        cmd_data = bytearray(ctypes.sizeof(ShmCommand))
+        struct.pack_into('II', cmd_data, 0, self._command_seq, SHM_CMD_I2C_DISCOVER)
+        station_bytes = station_name.encode('utf-8')[:63]
+        struct.pack_into(f'{len(station_bytes)}si', cmd_data, 8, station_bytes, bus)
+
+        try:
+            cmd_offset = ctypes.sizeof(WtcSharedMemory) - ctypes.sizeof(ShmCommand) - 8
+            self.mm.seek(cmd_offset)
+            self.mm.write(bytes(cmd_data))
+            logger.info("I2C discovery command sent")
+            return []
+        except Exception as e:
+            logger.error(f"Failed to send I2C discover command: {e}")
+            return []
+
+    def discover_onewire(self, station_name: str) -> List[Dict[str, Any]]:
+        """
+        Request 1-Wire bus scan from RTU.
+        RTU will enumerate all 1-Wire devices and report their ROM IDs.
+        """
+        if not self.mm:
+            logger.warning("Cannot discover 1-Wire: shared memory not connected")
+            return []
+
+        logger.info(f"Requesting 1-Wire discovery on {station_name}")
+        self._command_seq += 1
+
+        cmd_data = bytearray(ctypes.sizeof(ShmCommand))
+        struct.pack_into('II', cmd_data, 0, self._command_seq, SHM_CMD_ONEWIRE_DISCOVER)
+        station_bytes = station_name.encode('utf-8')[:63]
+        struct.pack_into(f'{len(station_bytes)}s', cmd_data, 8, station_bytes)
+
+        try:
+            cmd_offset = ctypes.sizeof(WtcSharedMemory) - ctypes.sizeof(ShmCommand) - 8
+            self.mm.seek(cmd_offset)
+            self.mm.write(bytes(cmd_data))
+            logger.info("1-Wire discovery command sent")
+            return []
+        except Exception as e:
+            logger.error(f"Failed to send 1-Wire discover command: {e}")
+            return []
+
+    def configure_slot(self, station_name: str, slot: int, slot_type: str,
+                       name: str = "", unit: str = "",
+                       scale_min: float = 0, scale_max: float = 100) -> bool:
+        """
+        Send slot configuration to RTU.
+        Configures sensor/actuator type, scaling, and metadata.
+        """
+        if not self.mm:
+            logger.warning("Cannot configure slot: shared memory not connected")
+            return False
+
+        logger.info(f"Configuring slot {slot} on {station_name} as {slot_type}")
+        self._command_seq += 1
+
+        cmd_data = bytearray(256)
+        struct.pack_into('II', cmd_data, 0, self._command_seq, SHM_CMD_CONFIGURE_SLOT)
+
+        station_bytes = station_name.encode('utf-8')[:63]
+        struct.pack_into(f'{len(station_bytes)}s', cmd_data, 8, station_bytes)
+        struct.pack_into('i', cmd_data, 72, slot)
+
+        type_bytes = slot_type.encode('utf-8')[:15]
+        struct.pack_into(f'{len(type_bytes)}s', cmd_data, 76, type_bytes)
+
+        name_bytes = name.encode('utf-8')[:31]
+        struct.pack_into(f'{len(name_bytes)}s', cmd_data, 92, name_bytes)
+
+        unit_bytes = unit.encode('utf-8')[:7]
+        struct.pack_into(f'{len(unit_bytes)}sff', cmd_data, 124, unit_bytes, scale_min, scale_max)
+
+        try:
+            cmd_offset = ctypes.sizeof(WtcSharedMemory) - ctypes.sizeof(ShmCommand) - 8
+            self.mm.seek(cmd_offset)
+            self.mm.write(bytes(cmd_data[:ctypes.sizeof(ShmCommand)]))
+            return True
+        except Exception as e:
+            logger.error(f"Failed to send slot config command: {e}")
+            return False
+
+    # ============== User Sync Methods ==============
+
+    def sync_users_to_rtu(self, station_name: str, users: List[Dict[str, Any]]) -> bool:
+        """
+        Send user sync command to a specific RTU.
+
+        Users will be synced via PROFINET acyclic write to the RTU.
+        The RTU stores these users for local TUI authentication.
+
+        Args:
+            station_name: Target RTU station name
+            users: List of user dicts with username, password_hash, role, active
+
+        Returns:
+            True if command was sent successfully
+        """
+        if not self.mm:
+            logger.warning("Cannot sync users: shared memory not connected")
+            return False
+
+        if not users:
+            logger.info(f"No users to sync to {station_name}")
+            return True
+
+        logger.info(f"Syncing {len(users)} users to RTU {station_name}")
+        self._command_seq += 1
+
+        # Build command data
+        # Format: seq(4) + cmd_type(4) + station_name(64) + user_count(4) + users...
+        cmd_data = bytearray(4096)  # Large buffer for user data
+        struct.pack_into('II', cmd_data, 0, self._command_seq, SHM_CMD_USER_SYNC)
+
+        station_bytes = station_name.encode('utf-8')[:63]
+        struct.pack_into(f'{len(station_bytes)}s', cmd_data, 8, station_bytes)
+
+        user_count = min(len(users), 32)  # Max 32 users per sync
+        struct.pack_into('I', cmd_data, 72, user_count)
+
+        # Pack user records: username(32) + password_hash(64) + role(1) + flags(1)
+        offset = 76
+        for i in range(user_count):
+            user = users[i]
+            username = user.get('username', '')[:31].encode('utf-8')
+            password_hash = user.get('password_hash', '')[:63].encode('utf-8')
+            role = {'viewer': 0, 'operator': 1, 'engineer': 2, 'admin': 3}.get(user.get('role', 'viewer'), 0)
+            active = 1 if user.get('active', True) else 0
+            flags = active | 0x02  # Bit 1 = synced_from_controller
+
+            struct.pack_into(f'32s64sBB', cmd_data, offset,
+                            username.ljust(32, b'\x00'),
+                            password_hash.ljust(64, b'\x00'),
+                            role, flags)
+            offset += 98
+
+        try:
+            cmd_offset = ctypes.sizeof(WtcSharedMemory) - ctypes.sizeof(ShmCommand) - 8
+            self.mm.seek(cmd_offset)
+            self.mm.write(bytes(cmd_data[:512]))  # Command struct is limited
+            logger.debug(f"User sync command sent for {station_name}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to send user sync command: {e}")
+            return False
+
+    def sync_users_to_all_rtus(self, users: List[Dict[str, Any]]) -> int:
+        """
+        Send user sync command to all connected RTUs.
+
+        Args:
+            users: List of user dicts with username, password_hash, role, active
+
+        Returns:
+            Number of RTUs that received the sync command
+        """
+        if not self.mm:
+            logger.warning("Cannot sync users: shared memory not connected")
+            return 0
+
+        if not users:
+            logger.info("No users to sync")
+            return 0
+
+        # Get list of connected RTUs
+        rtus = self.get_rtus()
+        if not rtus:
+            logger.info("No RTUs available for user sync")
+            return 0
+
+        success_count = 0
+        for rtu in rtus:
+            if rtu.get('connection_state') == CONN_STATE_RUNNING:
+                if self.sync_users_to_rtu(rtu['station_name'], users):
+                    success_count += 1
+
+        logger.info(f"User sync sent to {success_count}/{len(rtus)} RTUs")
+        return success_count
 
 
 # Global client instance

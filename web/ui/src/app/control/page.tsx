@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
+import { useWebSocket } from '@/hooks/useWebSocket';
 
 interface PIDLoop {
   loop_id: number;
@@ -34,14 +35,9 @@ export default function ControlPage() {
   const [interlocks, setInterlocks] = useState<Interlock[]>([]);
   const [selectedLoop, setSelectedLoop] = useState<PIDLoop | null>(null);
   const [loading, setLoading] = useState(true);
+  const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
-  useEffect(() => {
-    fetchControlData();
-    const interval = setInterval(fetchControlData, 2000);
-    return () => clearInterval(interval);
-  }, []);
-
-  const fetchControlData = async () => {
+  const fetchControlData = useCallback(async () => {
     try {
       const [pidRes, interlockRes] = await Promise.all([
         fetch('/api/v1/control/pid'),
@@ -62,7 +58,70 @@ export default function ControlPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
+
+  // WebSocket for real-time control updates
+  const { connected, subscribe } = useWebSocket({
+    onConnect: () => {
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+        pollIntervalRef.current = null;
+        console.log('WebSocket connected - control polling disabled');
+      }
+    },
+    onDisconnect: () => {
+      if (!pollIntervalRef.current) {
+        pollIntervalRef.current = setInterval(fetchControlData, 2000);
+        console.log('WebSocket disconnected - control polling enabled');
+      }
+    },
+  });
+
+  // Subscribe to PID and interlock updates
+  useEffect(() => {
+    const unsubPid = subscribe('pid_update', (_, data) => {
+      setPidLoops((prev) =>
+        prev.map((loop) =>
+          loop.loop_id === data.loop_id
+            ? { ...loop, pv: data.pv, cv: data.cv, setpoint: data.setpoint, mode: data.mode }
+            : loop
+        )
+      );
+      // Update selected loop if it matches
+      setSelectedLoop((prev) =>
+        prev && prev.loop_id === data.loop_id
+          ? { ...prev, pv: data.pv, cv: data.cv, setpoint: data.setpoint, mode: data.mode }
+          : prev
+      );
+    });
+
+    const unsubInterlock = subscribe('interlock_update', (_, data) => {
+      setInterlocks((prev) =>
+        prev.map((il) =>
+          il.interlock_id === data.interlock_id
+            ? { ...il, tripped: data.tripped }
+            : il
+        )
+      );
+    });
+
+    return () => {
+      unsubPid();
+      unsubInterlock();
+    };
+  }, [subscribe]);
+
+  // Initial fetch and polling setup
+  useEffect(() => {
+    fetchControlData();
+    pollIntervalRef.current = setInterval(fetchControlData, 2000);
+
+    return () => {
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+      }
+    };
+  }, [fetchControlData]);
 
   const updateSetpoint = async (loopId: number, setpoint: number) => {
     try {

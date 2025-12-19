@@ -471,6 +471,209 @@ curl -X POST http://localhost:8080/api/v1/modbus/mappings \
 4. **Updates**: Keep system and dependencies updated
 5. **Backups**: Regular automated backups to off-site storage
 
+## Cross-Compilation
+
+For deploying to embedded ARM boards, use the provided CMake toolchain files.
+
+### Prerequisites (Build Host)
+
+Install cross-compilation toolchains on your build host (x86_64 Linux):
+
+```bash
+# ARM64 (Raspberry Pi 4, Orange Pi, etc.)
+sudo apt install gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+
+# ARM32 hard float (Raspberry Pi 3, BeagleBone, etc.)
+sudo apt install gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf
+
+# ARM32 soft float (older boards)
+sudo apt install gcc-arm-linux-gnueabi g++-arm-linux-gnueabi
+```
+
+### Building for ARM64
+
+```bash
+mkdir build-arm64 && cd build-arm64
+cmake -DCMAKE_TOOLCHAIN_FILE=../cmake/toolchain-aarch64.cmake \
+      -DCMAKE_BUILD_TYPE=Release ..
+make -j$(nproc)
+```
+
+### Building for ARM32 (ARMv7)
+
+```bash
+mkdir build-arm32 && cd build-arm32
+cmake -DCMAKE_TOOLCHAIN_FILE=../cmake/toolchain-arm.cmake \
+      -DARM_ARCH=armv7hf \
+      -DCMAKE_BUILD_TYPE=Release ..
+make -j$(nproc)
+```
+
+Available ARM_ARCH options:
+- `armv7hf` - ARMv7 with hard float (Raspberry Pi 3, BeagleBone Black)
+- `armv7` - ARMv7 with soft float
+- `armv6` - ARMv6 (Raspberry Pi Zero/1)
+- `aarch64` - ARM64
+
+### Building for Luckfox Lyra
+
+The Luckfox Lyra uses Rockchip RV1103/RV1106 (ARM Cortex-A7):
+
+```bash
+# Option 1: Using standard ARM toolchain
+mkdir build-luckfox && cd build-luckfox
+cmake -DCMAKE_TOOLCHAIN_FILE=../cmake/toolchain-luckfox.cmake \
+      -DCMAKE_BUILD_TYPE=Release ..
+make -j$(nproc)
+
+# Option 2: Using Luckfox SDK (recommended)
+export LUCKFOX_SDK_PATH=/path/to/luckfox-pico
+mkdir build-luckfox && cd build-luckfox
+cmake -DCMAKE_TOOLCHAIN_FILE=../cmake/toolchain-luckfox.cmake \
+      -DCMAKE_BUILD_TYPE=Release ..
+make -j$(nproc)
+```
+
+## Board-Specific Installation
+
+### Raspberry Pi 4 / Raspberry Pi 5 (ARM64)
+
+```bash
+# On the Raspberry Pi
+sudo apt update
+sudo apt install -y build-essential cmake pkg-config \
+    libpq-dev libjson-c-dev python3 python3-pip python3-venv nodejs npm
+
+# Clone and build natively (or copy cross-compiled binary)
+git clone https://github.com/mwilco03/Water-Controller.git
+cd Water-Controller
+sudo ./scripts/install.sh
+
+# Configure network interface
+sudo nano /etc/water-controller/controller.conf
+# Set: interface = eth0  (or wlan0 for WiFi, not recommended for PROFINET)
+
+# Enable real-time kernel (recommended)
+# Install the RT kernel for better PROFINET timing
+sudo apt install linux-image-rt-arm64
+```
+
+### Raspberry Pi 3 / Zero 2 W (ARM32/ARM64)
+
+```bash
+# Same as Pi 4, but use ARMv7 toolchain for Pi 3 in 32-bit mode
+# Note: Pi Zero 2 W supports ARM64, Pi Zero W is ARM32 only
+
+# For Pi Zero W (ARM32, limited RAM)
+# Consider disabling historian or reducing retention
+```
+
+### BeagleBone Black / BeagleBone AI
+
+```bash
+# On the BeagleBone
+sudo apt update
+sudo apt install -y build-essential cmake pkg-config \
+    libpq-dev libjson-c-dev python3 python3-pip python3-venv
+
+# Node.js may need manual installation on BeagleBone
+curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
+sudo apt install -y nodejs
+
+# Clone and build
+git clone https://github.com/mwilco03/Water-Controller.git
+cd Water-Controller
+sudo ./scripts/install.sh
+
+# BeagleBone PRU notes:
+# The PRU could be used for ultra-low-latency I/O if needed
+# This requires additional configuration not covered here
+```
+
+### Luckfox Lyra (RV1103/RV1106)
+
+The Luckfox Lyra has limited resources (64-256MB RAM). Use minimal configuration:
+
+```bash
+# Cross-compile on build host (see above)
+# Then copy binary to device
+
+# On the Luckfox
+scp build-luckfox/water_treat_controller root@luckfox:/opt/water-controller/bin/
+
+# Minimal configuration for low memory
+cat > /etc/water-controller/controller.conf << 'EOF'
+[general]
+log_level = WARN
+cycle_time_ms = 1000
+
+[profinet]
+interface = eth0
+
+[historian]
+enabled = false  # Disable to save memory
+
+[modbus]
+tcp_enabled = false
+EOF
+
+# Run directly (systemd optional on Luckfox)
+/opt/water-controller/bin/water_treat_controller -c /etc/water-controller/controller.conf
+```
+
+### Orange Pi / Banana Pi / Other ARM SBCs
+
+Most ARM single-board computers follow the Raspberry Pi pattern:
+
+```bash
+# Identify your architecture
+uname -m
+# aarch64 = ARM64, armv7l = ARM32
+
+# Install dependencies (Debian/Ubuntu-based)
+sudo apt update
+sudo apt install -y build-essential cmake pkg-config \
+    libpq-dev libjson-c-dev python3 python3-pip python3-venv nodejs npm
+
+# Build and install
+git clone https://github.com/mwilco03/Water-Controller.git
+cd Water-Controller
+sudo ./scripts/install.sh
+```
+
+## Network Interface Selection
+
+PROFINET requires a dedicated Ethernet interface. WiFi is not recommended.
+
+### Finding Available Interfaces
+
+```bash
+# List network interfaces
+ip link show
+
+# Common interface names:
+# eth0    - First built-in Ethernet
+# enp0s3  - PCI Ethernet (systemd naming)
+# end0    - Device-tree Ethernet (some ARM boards)
+# wlan0   - WiFi (NOT recommended for PROFINET)
+```
+
+### Configuration
+
+Edit `/etc/water-controller/controller.conf`:
+
+```ini
+[profinet]
+interface = eth0  # Change to your interface name
+```
+
+### Network Requirements
+
+- Dedicated Ethernet for PROFINET (not shared with management traffic)
+- 100 Mbps minimum (1 Gbps recommended)
+- Switch should support multicast (required for DCP)
+- VLAN isolation recommended for production
+
 ## Support
 
 - GitHub Issues: https://github.com/mwilco03/Water-Controller/issues
