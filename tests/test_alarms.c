@@ -45,6 +45,13 @@ static int tests_passed = 0;
     } \
 } while(0)
 
+#define ASSERT_TRUE(cond) do { \
+    if (!(cond)) { \
+        printf("FAILED at line %d: condition is false\n", __LINE__); \
+        return; \
+    } \
+} while(0)
+
 /* ============== Alarm Manager Creation Tests ============== */
 
 TEST(alarm_manager_init_null)
@@ -130,7 +137,7 @@ TEST(alarm_rule_create_low)
     alarm_manager_cleanup(am);
 }
 
-TEST(alarm_rule_create_critical)
+TEST(alarm_rule_create_high_high)
 {
     alarm_manager_t *am = NULL;
     alarm_manager_config_t config = {0};
@@ -204,7 +211,7 @@ TEST(alarm_severity_levels)
 
 /* ============== Alarm Acknowledgment Tests ============== */
 
-TEST(alarm_acknowledge)
+TEST(alarm_acknowledge_user)
 {
     alarm_manager_t *am = NULL;
     alarm_manager_config_t config = {0};
@@ -234,18 +241,30 @@ TEST(alarm_acknowledge)
     alarm_manager_cleanup(am);
 }
 
-TEST(alarm_acknowledge_user)
+/* ============== Alarm Rule Management Tests ============== */
+
+TEST(alarm_rule_enable_disable)
 {
-    alarm_t alarm = {0};
-    alarm.alarm_id = 1;
-    alarm.state = ALARM_STATE_ACTIVE_UNACK;
+    alarm_manager_t *am = NULL;
+    alarm_manager_config_t config = {0};
+    config.max_active_alarms = 100;
+    alarm_manager_init(&am, &config);
+    ASSERT_NOT_NULL(am);
 
-    /* Simulate acknowledgment */
-    strncpy(alarm.ack_user, "operator1", sizeof(alarm.ack_user));
-    alarm.state = ALARM_STATE_ACTIVE_ACK;
+    /* Create a rule */
+    int rule_id = -1;
+    alarm_manager_create_rule(am, "rtu-tank-1", 1, ALARM_CONDITION_HIGH,
+                               8.5f, ALARM_SEVERITY_MEDIUM, 5000, "pH High", &rule_id);
 
-    ASSERT_STR_EQ("operator1", alarm.ack_user);
-    ASSERT_EQ(ALARM_STATE_ACTIVE_ACK, alarm.state);
+    /* Disable the rule */
+    wtc_result_t result = alarm_manager_enable_rule(am, rule_id, false);
+    ASSERT_EQ(WTC_OK, result);
+
+    /* Re-enable the rule */
+    result = alarm_manager_enable_rule(am, rule_id, true);
+    ASSERT_EQ(WTC_OK, result);
+
+    alarm_manager_cleanup(am);
 }
 
 /* ============== Alarm Message Tests ============== */
@@ -287,7 +306,7 @@ void run_alarm_tests(void)
     printf("\nAlarm Rule Tests:\n");
     RUN_TEST(alarm_rule_create_high);
     RUN_TEST(alarm_rule_create_low);
-    RUN_TEST(alarm_rule_create_critical);
+    RUN_TEST(alarm_rule_create_high_high);
 
     printf("\nState Transition Tests:\n");
     RUN_TEST(alarm_state_transitions);
@@ -297,8 +316,13 @@ void run_alarm_tests(void)
     RUN_TEST(alarm_severity_levels);
 
     printf("\nAcknowledgment Tests:\n");
-    RUN_TEST(alarm_acknowledge);
     RUN_TEST(alarm_acknowledge_user);
+    RUN_TEST(alarm_active_count);
+    RUN_TEST(alarm_unack_count);
+
+    printf("\nRule Management Tests:\n");
+    RUN_TEST(alarm_rule_enable_disable);
+    RUN_TEST(alarm_rule_delete);
 
     printf("\nMessage Tests:\n");
     RUN_TEST(alarm_message);

@@ -48,6 +48,13 @@ static int tests_passed = 0;
     } \
 } while(0)
 
+#define ASSERT_TRUE(cond) do { \
+    if (!(cond)) { \
+        printf("FAILED at line %d: condition is false\n", __LINE__); \
+        return; \
+    } \
+} while(0)
+
 /* ============== CRC Tests ============== */
 
 TEST(crc32_empty)
@@ -66,7 +73,7 @@ TEST(crc32_simple)
     assert(crc != 0);
 }
 
-TEST(crc16_profinet)
+TEST(crc16_ccitt_test)
 {
     /* Test PROFINET CRC calculation (uses CRC-16-CCITT) */
     uint8_t frame[] = {0x00, 0x01, 0x02, 0x03, 0x04, 0x05};
@@ -75,9 +82,20 @@ TEST(crc16_profinet)
     (void)crc;
 }
 
-/* ============== Frame Tests ============== */
+/* ============== Frame Builder Tests ============== */
 
-TEST(frame_build_dcp_identify)
+TEST(frame_builder_init_test)
+{
+    uint8_t buffer[256];
+    uint8_t src_mac[6] = {0x00, 0x11, 0x22, 0x33, 0x44, 0x55};
+    frame_builder_t builder;
+
+    wtc_result_t result = frame_builder_init(&builder, buffer, sizeof(buffer), src_mac);
+    ASSERT_EQ(WTC_OK, result);
+    ASSERT_EQ(0, frame_builder_length(&builder));
+}
+
+TEST(frame_builder_ethernet)
 {
     uint8_t buffer[256];
     uint8_t src_mac[6] = {0x00, 0x11, 0x22, 0x33, 0x44, 0x55};
@@ -100,7 +118,7 @@ TEST(frame_build_dcp_identify)
     assert(len > 14); /* Ethernet header at minimum */
 }
 
-TEST(frame_build_dcp_set)
+TEST(frame_build_dcp_identify_test)
 {
     uint8_t buffer[256];
     uint8_t src_mac[6] = {0x00, 0x11, 0x22, 0x33, 0x44, 0x66};
@@ -123,7 +141,7 @@ TEST(frame_build_dcp_set)
     assert(len > 14);
 }
 
-/* ============== AR Manager Tests ============== */
+/* ============== Frame Parser Tests ============== */
 
 TEST(ar_manager_init_null)
 {
@@ -160,11 +178,16 @@ void run_profinet_tests(void)
     printf("CRC Tests:\n");
     RUN_TEST(crc32_empty);
     RUN_TEST(crc32_simple);
-    RUN_TEST(crc16_profinet);
+    RUN_TEST(crc16_ccitt_test);
 
-    printf("\nFrame Tests:\n");
-    RUN_TEST(frame_build_dcp_identify);
-    RUN_TEST(frame_build_dcp_set);
+    printf("\nFrame Builder Tests:\n");
+    RUN_TEST(frame_builder_init_test);
+    RUN_TEST(frame_builder_ethernet);
+    RUN_TEST(frame_build_dcp_identify_test);
+
+    printf("\nFrame Parser Tests:\n");
+    RUN_TEST(frame_parser_init_test);
+    RUN_TEST(frame_parser_read_bytes);
 
     printf("\nAR Manager Tests:\n");
     RUN_TEST(ar_manager_init_null);

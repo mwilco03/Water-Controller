@@ -1,4 +1,26 @@
-name: CI Build
+# ============================================================================
+# CI Workflow - Continuous Integration
+# ============================================================================
+# Purpose: Build, test, and validate code quality on every push and PR
+#
+# Triggers:
+#   - Push to main, master, develop branches
+#   - Pull requests targeting main or master
+#
+# Jobs:
+#   1. build        - Matrix build for all architectures (x86_64, aarch64, armv7hf, armv6)
+#   2. build-web    - Build and validate web UI (Next.js)
+#   3. static-analysis - Code quality checks with cppcheck
+#   4. format-check - Code style validation with clang-format (advisory)
+#
+# Architecture Naming Convention:
+#   - x86_64  : Intel/AMD 64-bit (PCs, servers, cloud)
+#   - aarch64 : ARM 64-bit (Raspberry Pi 4/5, Orange Pi 5, Le Potato)
+#   - armv7hf : ARM 32-bit with hard-float (Raspberry Pi 3, Orange Pi Zero)
+#   - armv6   : ARM 32-bit legacy (Raspberry Pi Zero W, Luckfox Lyra)
+# ============================================================================
+
+name: CI
 
 on:
   push:
@@ -15,102 +37,143 @@ env:
   BUILD_TYPE: Release
 
 jobs:
-  build-native:
-    name: Build x86_64 (Native)
+  # ============================================================================
+  # Build Job - Multi-architecture builds using matrix strategy
+  # ============================================================================
+  build:
+    name: Build ${{ matrix.name }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Native x86_64 build (runs tests)
+          - name: x86_64
+            arch: x86_64
+            cross: false
+            toolchain: ""
+            packages: "build-essential cmake pkg-config libpq-dev libjson-c-dev libsqlite3-dev libcurl4-openssl-dev"
+            triple: ""
+            run_tests: true
+
+          # ARM64 cross-compilation (Raspberry Pi 4/5, Orange Pi 5, Le Potato)
+          - name: aarch64
+            arch: aarch64
+            cross: true
+            toolchain: cmake/toolchain-aarch64.cmake
+            packages: "cmake pkg-config gcc-aarch64-linux-gnu g++-aarch64-linux-gnu"
+            triple: aarch64-linux-gnu
+            run_tests: false
+
+          # ARMv7 Hard Float cross-compilation (Raspberry Pi 3, Orange Pi Zero/PC)
+          - name: armv7hf
+            arch: armv7hf
+            cross: true
+            toolchain: cmake/toolchain-arm.cmake
+            packages: "cmake pkg-config gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf"
+            triple: arm-linux-gnueabihf
+            run_tests: false
+
+          # ARMv6 cross-compilation (Luckfox Lyra, Raspberry Pi Zero W)
+          - name: armv6
+            arch: armv6
+            cross: true
+            toolchain: cmake/toolchain-arm.cmake
+            packages: "cmake pkg-config gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf"
+            triple: arm-linux-gnueabihf
+            run_tests: false
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Cache apt packages to speed up builds
+      - name: Cache apt packages
+        uses: awalsh128/cache-apt-pkgs-action@latest
+        with:
+          packages: ${{ matrix.packages }}
+          version: 1.0-${{ matrix.arch }}
 
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
-            build-essential cmake pkg-config \
-            libpq-dev libjson-c-dev \
-            libsqlite3-dev libcurl4-openssl-dev
+          sudo apt-get install -y ${{ matrix.packages }}
+
+      # Cache CMake build directory for faster incremental builds
+      - name: Cache CMake build
+        uses: actions/cache@v4
+        with:
+          path: build
+          key: cmake-${{ matrix.arch }}-${{ hashFiles('CMakeLists.txt', 'src/**/*.c', 'src/**/*.h', 'cmake/**') }}
+          restore-keys: |
+            cmake-${{ matrix.arch }}-
 
       - name: Configure CMake
-        run: cmake -B build -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} -DBUILD_TESTS=ON
+        run: |
+          cmake -B build \
+            ${{ matrix.cross && format('-DCMAKE_TOOLCHAIN_FILE={0}', matrix.toolchain) || '' }} \
+            ${{ matrix.arch == 'armv6' && '-DARM_ARCH=armv6' || '' }} \
+            -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+            -DBUILD_TESTS=${{ matrix.run_tests }}
 
       - name: Build
         run: cmake --build build --parallel $(nproc)
 
-      - name: Run Tests
+      - name: Run tests
+        if: ${{ matrix.run_tests }}
         run: cd build && ctest --output-on-failure
 
-      - name: Upload Artifact
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: water-controller-x86_64
+          name: water-controller-${{ matrix.arch }}
           path: build/water_treat_controller
+          retention-days: 7
 
-  build-arm64:
-    name: Build ARM64 (aarch64)
+  # ============================================================================
+  # Web UI Build - Next.js frontend validation
+  # ============================================================================
+  build-web:
+    name: Build Web UI
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - name: Install cross-compilation tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            cmake pkg-config \
-            gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: web/ui/package-lock.json
 
-      - name: Configure CMake
-        run: |
-          cmake -B build \
-            -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain-aarch64.cmake \
-            -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
-            -DBUILD_TESTS=OFF
+      - name: Install dependencies
+        run: cd web/ui && npm ci
 
       - name: Build
-        run: cmake --build build --parallel $(nproc)
+        run: cd web/ui && npm run build
 
-      - name: Upload Artifact
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: water-controller-aarch64
-          path: build/water_treat_controller
+          name: water-controller-web-ui
+          path: |
+            web/ui/.next
+            web/ui/public
+            web/ui/package.json
+          retention-days: 7
 
-  build-armhf:
-    name: Build ARM32 (armhf)
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install cross-compilation tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            cmake pkg-config \
-            gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf
-
-      - name: Configure CMake
-        run: |
-          cmake -B build \
-            -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain-arm.cmake \
-            -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
-            -DBUILD_TESTS=OFF
-
-      - name: Build
-        run: cmake --build build --parallel $(nproc)
-
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: water-controller-armhf
-          path: build/water_treat_controller
-
+  # ============================================================================
+  # Static Analysis - Code quality with cppcheck
+  # ============================================================================
   static-analysis:
-    name: Static Analysis (cppcheck)
+    name: Static Analysis
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
       - name: Install cppcheck
         run: |
@@ -119,7 +182,8 @@ jobs:
 
       - name: Run cppcheck
         run: |
-          cppcheck --enable=all \
+          cppcheck \
+            --enable=warning,style,performance,portability \
             --suppress=missingIncludeSystem \
             --suppress=unusedFunction \
             --error-exitcode=0 \
@@ -127,29 +191,27 @@ jobs:
             --output-file=cppcheck-report.xml \
             src/ 2>&1 | tee cppcheck-output.txt
 
-      - name: Generate HTML report
-        run: |
-          sudo apt-get install -y cppcheck-htmlreport || true
-          if command -v cppcheck-htmlreport &> /dev/null; then
-            cppcheck-htmlreport --file=cppcheck-report.xml --report-dir=cppcheck-html
-          fi
-
       - name: Upload cppcheck report
         uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: cppcheck-report
           path: |
             cppcheck-report.xml
             cppcheck-output.txt
-            cppcheck-html/
+          retention-days: 14
 
+  # ============================================================================
+  # Format Check - Code style with clang-format (advisory, non-blocking)
+  # ============================================================================
   format-check:
-    name: Format Check (clang-format)
+    name: Format Check
     runs-on: ubuntu-latest
-    continue-on-error: true  # Non-blocking
+    continue-on-error: true  # Advisory only - does not block merge
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
       - name: Install clang-format
         run: |
@@ -158,15 +220,21 @@ jobs:
 
       - name: Check formatting
         run: |
-          find src/ -name '*.c' -o -name '*.h' | \
-            xargs clang-format --dry-run --Werror 2>&1 | tee format-check.txt || true
+          # Find all C source and header files
+          FILES=$(find src/ -name '*.c' -o -name '*.h' 2>/dev/null || true)
 
-          # Count formatting issues
-          ISSUES=$(grep -c "error:" format-check.txt || echo "0")
-          echo "Found $ISSUES formatting issues"
+          if [ -n "$FILES" ]; then
+            echo "$FILES" | xargs clang-format --dry-run --Werror 2>&1 | tee format-check.txt || true
 
-          if [ "$ISSUES" -gt 0 ]; then
-            echo "::warning::Found $ISSUES files with formatting issues. Run 'clang-format -i' to fix."
+            # Count and report formatting issues
+            ISSUES=$(grep -c "error:" format-check.txt 2>/dev/null || echo "0")
+            echo "Found $ISSUES formatting issues"
+
+            if [ "$ISSUES" -gt 0 ]; then
+              echo "::warning::Found $ISSUES files with formatting issues. Run 'clang-format -i src/**/*.{c,h}' to fix."
+            fi
+          else
+            echo "No source files found to check"
           fi
 
       - name: Upload format check results
@@ -175,3 +243,4 @@ jobs:
         with:
           name: format-check-results
           path: format-check.txt
+          retention-days: 7
