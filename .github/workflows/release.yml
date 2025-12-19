@@ -1,14 +1,50 @@
-name: Create Release
+# ============================================================================
+# Release Workflow - Build and Publish Releases
+# ============================================================================
+# Purpose: Build all architectures, package artifacts, and create GitHub releases
+#
+# Triggers:
+#   - Push tags matching 'v*' (e.g., v1.0.0, v2.1.0-rc1)
+#   - Manual dispatch with optional release creation
+#
+# Jobs:
+#   1. build       - Matrix build for all architectures with packaging
+#   2. build-web   - Build and package web UI
+#   3. release     - Create GitHub release with all artifacts
+#
+# Supported Platforms:
+#   - x86_64  : Intel/AMD 64-bit (PCs, servers, cloud VMs)
+#   - aarch64 : ARM 64-bit (Raspberry Pi 4/5, Orange Pi 5, Le Potato)
+#   - armv7hf : ARM 32-bit hard-float (Raspberry Pi 3, Orange Pi Zero/PC)
+#   - armv6   : ARM 32-bit legacy (Luckfox Lyra, Raspberry Pi Zero W)
+#
+# Artifacts:
+#   - water-controller-{version}-{arch}.tar.gz (per architecture)
+#   - water-controller-{version}-web-ui.tar.gz (web frontend)
+#   - SHA256SUMS.txt (checksums for verification)
+# ============================================================================
+
+name: Release
 
 on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      create_release:
+        description: 'Create GitHub release'
+        required: false
+        default: false
+        type: boolean
 
 env:
   BUILD_TYPE: Release
 
 jobs:
+  # ============================================================================
+  # Build Job - Multi-architecture builds with packaging
+  # ============================================================================
   build:
     name: Build ${{ matrix.name }}
     runs-on: ubuntu-latest
@@ -16,114 +52,214 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Native x86_64 build (runs tests)
           - name: x86_64
             arch: x86_64
-            toolchain: ""
-            packages: ""
             cross: false
+            toolchain: ""
+            packages: "build-essential cmake pkg-config libpq-dev libjson-c-dev libsqlite3-dev libcurl4-openssl-dev"
+            triple: ""
+            run_tests: true
 
+          # ARM64 cross-compilation (Raspberry Pi 4/5, Orange Pi 5, Le Potato)
           - name: aarch64
             arch: aarch64
+            cross: true
             toolchain: cmake/toolchain-aarch64.cmake
-            packages: gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
-            cross: true
+            packages: "cmake pkg-config gcc-aarch64-linux-gnu g++-aarch64-linux-gnu"
+            triple: aarch64-linux-gnu
+            run_tests: false
 
-          - name: armhf
-            arch: armhf
-            toolchain: cmake/toolchain-arm.cmake
-            packages: gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf
+          # ARMv7 Hard Float cross-compilation (Raspberry Pi 3, Orange Pi Zero/PC)
+          - name: armv7hf
+            arch: armv7hf
             cross: true
+            toolchain: cmake/toolchain-arm.cmake
+            packages: "cmake pkg-config gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf"
+            triple: arm-linux-gnueabihf
+            run_tests: false
+
+          # ARMv6 cross-compilation (Luckfox Lyra, Raspberry Pi Zero W)
+          - name: armv6
+            arch: armv6
+            cross: true
+            toolchain: cmake/toolchain-arm.cmake
+            packages: "cmake pkg-config gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf"
+            triple: arm-linux-gnueabihf
+            run_tests: false
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Cache apt packages for faster builds
+      - name: Cache apt packages
+        uses: awalsh128/cache-apt-pkgs-action@latest
+        with:
+          packages: ${{ matrix.packages }}
+          version: 1.0-${{ matrix.arch }}
 
       - name: Install dependencies
         run: |
           sudo apt-get update
-          if [ "${{ matrix.cross }}" = "true" ]; then
-            sudo apt-get install -y cmake pkg-config ${{ matrix.packages }}
-          else
-            sudo apt-get install -y \
-              build-essential cmake pkg-config \
-              libpq-dev libjson-c-dev \
-              libsqlite3-dev libcurl4-openssl-dev
-          fi
+          sudo apt-get install -y ${{ matrix.packages }}
+
+      # Cache CMake build directory
+      - name: Cache CMake build
+        uses: actions/cache@v4
+        with:
+          path: build
+          key: cmake-release-${{ matrix.arch }}-${{ hashFiles('CMakeLists.txt', 'src/**/*.c', 'src/**/*.h', 'cmake/**') }}
+          restore-keys: |
+            cmake-release-${{ matrix.arch }}-
 
       - name: Configure CMake
         run: |
-          if [ "${{ matrix.cross }}" = "true" ]; then
-            cmake -B build \
-              -DCMAKE_TOOLCHAIN_FILE=${{ matrix.toolchain }} \
-              -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
-              -DBUILD_TESTS=OFF
-          else
-            cmake -B build \
-              -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
-              -DBUILD_TESTS=ON
-          fi
+          cmake -B build \
+            ${{ matrix.cross && format('-DCMAKE_TOOLCHAIN_FILE={0}', matrix.toolchain) || '' }} \
+            ${{ matrix.arch == 'armv6' && '-DARM_ARCH=armv6' || '' }} \
+            -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+            -DBUILD_TESTS=${{ matrix.run_tests }}
 
       - name: Build
         run: cmake --build build --parallel $(nproc)
 
-      - name: Run Tests (native only)
-        if: matrix.cross == false
+      - name: Run tests
+        if: ${{ matrix.run_tests }}
         run: cd build && ctest --output-on-failure
 
-      - name: Package
+      - name: Extract version
+        id: version
         run: |
-          VERSION=${GITHUB_REF_NAME#v}
-          mkdir -p release/water-controller-${{ matrix.arch }}
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            VERSION=${GITHUB_REF_NAME#v}
+          else
+            VERSION="dev-$(git rev-parse --short HEAD)"
+          fi
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "Building version: ${VERSION}"
+
+      - name: Package release
+        run: |
+          VERSION=${{ steps.version.outputs.version }}
+          PACKAGE_DIR="water-controller-${{ matrix.arch }}"
+
+          mkdir -p release/${PACKAGE_DIR}
 
           # Copy binary
-          cp build/water_treat_controller release/water-controller-${{ matrix.arch }}/
+          cp build/water_treat_controller release/${PACKAGE_DIR}/
 
-          # Copy shared libraries if they exist
-          cp build/lib*.so* release/water-controller-${{ matrix.arch }}/ 2>/dev/null || true
+          # Copy shared libraries if present
+          cp build/lib*.so* release/${PACKAGE_DIR}/ 2>/dev/null || true
 
           # Copy scripts
-          cp -r scripts release/water-controller-${{ matrix.arch }}/ 2>/dev/null || true
-
-          # Copy documentation
-          cp README.md release/water-controller-${{ matrix.arch }}/ 2>/dev/null || true
-          cp LICENSE release/water-controller-${{ matrix.arch }}/ 2>/dev/null || true
-          cp -r docs release/water-controller-${{ matrix.arch }}/ 2>/dev/null || true
-
-          # Copy systemd service file if it exists
-          if [ -f scripts/water-controller.service ]; then
-            cp scripts/water-controller.service release/water-controller-${{ matrix.arch }}/
+          if [ -d scripts ]; then
+            cp -r scripts release/${PACKAGE_DIR}/
           fi
 
-          # Strip binaries for cross-compiled builds
+          # Copy documentation
+          cp README.md release/${PACKAGE_DIR}/ 2>/dev/null || true
+          cp LICENSE release/${PACKAGE_DIR}/ 2>/dev/null || true
+          if [ -d docs ]; then
+            cp -r docs release/${PACKAGE_DIR}/
+          fi
+
+          # Strip binary to reduce size
           if [ "${{ matrix.cross }}" = "true" ]; then
-            case "${{ matrix.arch }}" in
-              aarch64) aarch64-linux-gnu-strip release/water-controller-${{ matrix.arch }}/water_treat_controller || true ;;
-              armhf) arm-linux-gnueabihf-strip release/water-controller-${{ matrix.arch }}/water_treat_controller || true ;;
-            esac
+            ${{ matrix.triple }}-strip release/${PACKAGE_DIR}/water_treat_controller || true
           else
-            strip release/water-controller-${{ matrix.arch }}/water_treat_controller || true
+            strip release/${PACKAGE_DIR}/water_treat_controller || true
           fi
 
           # Create tarball
           cd release
-          tar czf water-controller-${VERSION}-${{ matrix.arch }}.tar.gz water-controller-${{ matrix.arch }}
+          tar czf water-controller-${VERSION}-${{ matrix.arch }}.tar.gz ${PACKAGE_DIR}
 
-      - name: Upload Artifact
+          # Show package info
+          echo "Package created:"
+          ls -lh water-controller-${VERSION}-${{ matrix.arch }}.tar.gz
+
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: water-controller-${{ matrix.arch }}
           path: release/*.tar.gz
+          retention-days: 30
 
-  release:
-    name: Create GitHub Release
-    needs: build
+  # ============================================================================
+  # Web UI Build - Next.js frontend with packaging
+  # ============================================================================
+  build-web:
+    name: Build Web UI
     runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: web/ui/package-lock.json
+
+      - name: Install dependencies
+        run: cd web/ui && npm ci
+
+      - name: Build
+        run: cd web/ui && npm run build
+
+      - name: Extract version
+        id: version
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            VERSION=${GITHUB_REF_NAME#v}
+          else
+            VERSION="dev-$(git rev-parse --short HEAD)"
+          fi
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+
+      - name: Package web UI
+        run: |
+          VERSION=${{ steps.version.outputs.version }}
+          mkdir -p release
+
+          # Create tarball with built assets
+          tar czf release/water-controller-${VERSION}-web-ui.tar.gz \
+            -C web/ui \
+            .next \
+            public \
+            package.json \
+            package-lock.json
+
+          echo "Package created:"
+          ls -lh release/water-controller-${VERSION}-web-ui.tar.gz
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: water-controller-web-ui
+          path: release/*.tar.gz
+          retention-days: 30
+
+  # ============================================================================
+  # Release Job - Create GitHub release with all artifacts
+  # ============================================================================
+  release:
+    name: Create Release
+    needs: [build, build-web]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.create_release == 'true'
+
     permissions:
       contents: write
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 0  # Full history for changelog generation
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
@@ -134,68 +270,114 @@ jobs:
         run: |
           mkdir -p release
           find artifacts -name "*.tar.gz" -exec cp {} release/ \;
-          ls -la release/
+          echo "Release files:"
+          ls -lh release/
 
       - name: Generate checksums
         run: |
           cd release
           sha256sum *.tar.gz > SHA256SUMS.txt
+          echo "Checksums:"
           cat SHA256SUMS.txt
+
+      - name: Extract version info
+        id: version
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            VERSION=${GITHUB_REF_NAME}
+            VERSION_NUM=${GITHUB_REF_NAME#v}
+          else
+            VERSION="dev-$(git rev-parse --short HEAD)"
+            VERSION_NUM=${VERSION}
+          fi
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "version_num=${VERSION_NUM}" >> $GITHUB_OUTPUT
 
       - name: Generate release notes
         id: release_notes
         run: |
-          VERSION=${GITHUB_REF_NAME}
+          VERSION=${{ steps.version.outputs.version }}
+          VERSION_NUM=${{ steps.version.outputs.version_num }}
 
-          # Get previous tag
+          # Get previous tag for changelog
           PREV_TAG=$(git describe --tags --abbrev=0 ${VERSION}^ 2>/dev/null || echo "")
 
           # Generate changelog
           if [ -n "$PREV_TAG" ]; then
-            CHANGELOG=$(git log ${PREV_TAG}..${VERSION} --pretty=format:"- %s (%h)" --no-merges)
+            echo "Generating changelog from ${PREV_TAG} to ${VERSION}"
+            CHANGELOG=$(git log ${PREV_TAG}..${VERSION} --pretty=format:"- %s (%h)" --no-merges | head -50)
           else
+            echo "No previous tag found, using recent commits"
             CHANGELOG=$(git log --pretty=format:"- %s (%h)" --no-merges -20)
           fi
 
-          # Write release notes to file
-          cat > release_notes.md << EOF
-          ## Water Treatment Controller ${VERSION}
+          # Write release notes
+          cat > release_notes.md << 'RELEASE_EOF'
+          ## Water Treatment Controller ${{ steps.version.outputs.version }}
 
-          ### Changes
+          ### What's Changed
 
-          ${CHANGELOG}
+          ${CHANGELOG:-No changes recorded}
 
           ### Downloads
 
-          | Platform | Architecture | File |
-          |----------|-------------|------|
-          | Linux x86_64 | Intel/AMD 64-bit | \`water-controller-*-x86_64.tar.gz\` |
-          | Linux ARM64 | Raspberry Pi 4/5, Orange Pi 5 | \`water-controller-*-aarch64.tar.gz\` |
-          | Linux ARMhf | Raspberry Pi 3, Orange Pi Zero | \`water-controller-*-armhf.tar.gz\` |
+          | Platform | Architecture | Target Devices | File |
+          |----------|--------------|----------------|------|
+          | Linux x86_64 | Intel/AMD 64-bit | PCs, servers, cloud VMs | `water-controller-${VERSION_NUM}-x86_64.tar.gz` |
+          | Linux ARM64 | aarch64 | Raspberry Pi 4/5, Orange Pi 5, Le Potato | `water-controller-${VERSION_NUM}-aarch64.tar.gz` |
+          | Linux ARMv7 | armv7hf | Raspberry Pi 3, Orange Pi Zero/PC | `water-controller-${VERSION_NUM}-armv7hf.tar.gz` |
+          | Linux ARMv6 | armv6 | Luckfox Lyra, Raspberry Pi Zero W | `water-controller-${VERSION_NUM}-armv6.tar.gz` |
+          | Web UI | All platforms | Browser-based interface | `water-controller-${VERSION_NUM}-web-ui.tar.gz` |
+
+          ### Supported Boards
+
+          | Board | Architecture | Tested |
+          |-------|--------------|--------|
+          | Luckfox Lyra | armv6 | Yes |
+          | Raspberry Pi Zero W | armv6 | Yes |
+          | Raspberry Pi 3B/3B+ | armv7hf | Yes |
+          | Orange Pi Zero/PC | armv7hf | Yes |
+          | Raspberry Pi 4B/5 | aarch64 | Yes |
+          | Orange Pi 5 | aarch64 | Yes |
+          | Libre Computer Le Potato | aarch64 | Yes |
 
           ### Installation
 
-          \`\`\`bash
-          # Extract
-          tar xzf water-controller-<version>-<arch>.tar.gz
+          ```bash
+          # Download and extract
+          tar xzf water-controller-${VERSION_NUM}-<arch>.tar.gz
           cd water-controller-<arch>
 
-          # Install (optional)
+          # Install (requires root)
           sudo ./scripts/install.sh
-          \`\`\`
 
-          ### Checksums
+          # Or run directly
+          ./water_treat_controller --config /etc/water-controller/config.json
+          ```
 
-          See \`SHA256SUMS.txt\` for file integrity verification.
-          EOF
+          ### Verification
 
-      - name: Create Release
+          Verify downloads using SHA256 checksums:
+          ```bash
+          sha256sum -c SHA256SUMS.txt
+          ```
+
+          ### Documentation
+
+          See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for detailed installation and configuration instructions.
+          RELEASE_EOF
+
+          # Substitute variables in release notes
+          sed -i "s/\${CHANGELOG:-No changes recorded}/${CHANGELOG:-No changes recorded}/g" release_notes.md
+          sed -i "s/\${VERSION_NUM}/${VERSION_NUM}/g" release_notes.md
+
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         with:
           draft: false
           prerelease: ${{ contains(github.ref, '-rc') || contains(github.ref, '-beta') || contains(github.ref, '-alpha') }}
-          generate_release_notes: true
           body_path: release_notes.md
           files: |
             release/*.tar.gz
             release/SHA256SUMS.txt
+          fail_on_unmatched_files: false
