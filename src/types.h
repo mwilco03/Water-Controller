@@ -16,10 +16,10 @@ extern "C" {
 #endif
 
 /* Version information */
-#define WTC_VERSION_MAJOR 1
+#define WTC_VERSION_MAJOR 0
 #define WTC_VERSION_MINOR 0
-#define WTC_VERSION_PATCH 0
-#define WTC_VERSION_STRING "1.0.0"
+#define WTC_VERSION_PATCH 1
+#define WTC_VERSION_STRING "0.0.1"
 
 /* Maximum sizes */
 #define WTC_MAX_STATION_NAME    64

@@ -152,7 +152,11 @@ static wtc_result_t load_config_from_database(void) {
     int rtu_count = 0;
     if (database_list_rtus(g_database, &rtus, &rtu_count, WTC_MAX_RTUS) == WTC_OK) {
         for (int i = 0; i < rtu_count; i++) {
-            rtu_registry_add_device(g_registry, &rtus[i]);
+            rtu_registry_add_device(g_registry,
+                                    rtus[i].station_name,
+                                    rtus[i].ip_address,
+                                    rtus[i].slots,
+                                    rtus[i].slot_count);
             LOG_INFO("  Loaded RTU: %s", rtus[i].station_name);
         }
         free(rtus);
@@ -163,7 +167,16 @@ static wtc_result_t load_config_from_database(void) {
     int rule_count = 0;
     if (database_load_alarm_rules(g_database, &rules, &rule_count, WTC_MAX_ALARM_RULES) == WTC_OK) {
         for (int i = 0; i < rule_count; i++) {
-            alarm_manager_add_rule(g_alarms, &rules[i]);
+            int rule_id;
+            alarm_manager_create_rule(g_alarms,
+                                      rules[i].rtu_station,
+                                      rules[i].slot,
+                                      rules[i].condition,
+                                      rules[i].threshold,
+                                      rules[i].severity,
+                                      rules[i].delay_ms,
+                                      rules[i].message_template,
+                                      &rule_id);
         }
         LOG_INFO("  Loaded %d alarm rules", rule_count);
         free(rules);
@@ -174,7 +187,8 @@ static wtc_result_t load_config_from_database(void) {
     int loop_count = 0;
     if (database_load_pid_loops(g_database, &loops, &loop_count, WTC_MAX_PID_LOOPS) == WTC_OK) {
         for (int i = 0; i < loop_count; i++) {
-            control_engine_add_pid_loop(g_control, &loops[i]);
+            int loop_id;
+            control_engine_add_pid_loop(g_control, &loops[i], &loop_id);
         }
         LOG_INFO("  Loaded %d PID loops", loop_count);
         free(loops);
@@ -185,7 +199,15 @@ static wtc_result_t load_config_from_database(void) {
     int tag_count = 0;
     if (database_load_historian_tags(g_database, &tags, &tag_count, WTC_MAX_HISTORIAN_TAGS) == WTC_OK) {
         for (int i = 0; i < tag_count; i++) {
-            historian_add_tag(g_historian, &tags[i]);
+            int tag_id;
+            historian_add_tag(g_historian,
+                              tags[i].rtu_station,
+                              tags[i].slot,
+                              tags[i].tag_name,
+                              tags[i].sample_rate_ms,
+                              tags[i].deadband,
+                              tags[i].compression,
+                              &tag_id);
         }
         LOG_INFO("  Loaded %d historian tags", tag_count);
         free(tags);
@@ -205,11 +227,13 @@ static wtc_result_t save_config_to_database(void) {
     LOG_INFO("Saving configuration to database...");
 
     /* Save RTUs */
-    rtu_device_t *rtus[WTC_MAX_RTUS];
-    int rtu_count = WTC_MAX_RTUS;
-    rtu_registry_get_all_devices(g_registry, rtus, &rtu_count);
-    for (int i = 0; i < rtu_count; i++) {
-        database_save_rtu(g_database, rtus[i]);
+    rtu_device_t *rtus = NULL;
+    int rtu_count = 0;
+    if (rtu_registry_list_devices(g_registry, &rtus, &rtu_count, WTC_MAX_RTUS) == WTC_OK) {
+        for (int i = 0; i < rtu_count; i++) {
+            database_save_rtu(g_database, &rtus[i]);
+        }
+        free(rtus);
     }
     LOG_INFO("  Saved %d RTUs", rtu_count);
 
