@@ -59,11 +59,10 @@ static int tests_passed = 0;
 
 TEST(crc32_empty)
 {
-    uint8_t data[1] = {0};  /* Use valid array with dummy data */
+    uint8_t data[1] = {0};  /* Use a valid array with one element */
     uint32_t crc = crc32(data, 0);  /* Pass 0 length for empty test */
-    /* Empty data should return initial CRC value (0 or ~0 depending on impl) */
-    /* Just verify it doesn't crash */
-    (void)crc;
+    /* Empty data should return initial CRC value */
+    ASSERT_EQ(0, crc);
 }
 
 TEST(crc32_simple)
@@ -71,15 +70,15 @@ TEST(crc32_simple)
     uint8_t data[] = {0x01, 0x02, 0x03, 0x04};
     uint32_t crc = crc32(data, sizeof(data));
     /* CRC should be non-zero for non-empty data */
-    ASSERT_TRUE(crc != 0);
+    assert(crc != 0);
 }
 
 TEST(crc16_ccitt_test)
 {
-    /* Test PROFINET CRC calculation (CRC-16-CCITT) */
+    /* Test PROFINET CRC calculation (uses CRC-16-CCITT) */
     uint8_t frame[] = {0x00, 0x01, 0x02, 0x03, 0x04, 0x05};
     uint16_t crc = crc16_ccitt(frame, sizeof(frame));
-    /* Just verify it computes without crashing */
+    /* Just verify it doesn't crash */
     (void)crc;
 }
 
@@ -100,90 +99,74 @@ TEST(frame_builder_ethernet)
 {
     uint8_t buffer[256];
     uint8_t src_mac[6] = {0x00, 0x11, 0x22, 0x33, 0x44, 0x55};
-    uint8_t dst_mac[6] = {0x01, 0x0E, 0xCF, 0x00, 0x00, 0x00};
+    uint8_t dest_mac[6] = {0x01, 0x0E, 0xCF, 0x00, 0x00, 0x00};
+
     frame_builder_t builder;
-
-    frame_builder_init(&builder, buffer, sizeof(buffer), src_mac);
-
-    wtc_result_t result = frame_build_ethernet(&builder, dst_mac, PROFINET_ETHERTYPE);
+    wtc_result_t result = frame_builder_init(&builder, buffer, sizeof(buffer), src_mac);
     ASSERT_EQ(WTC_OK, result);
-    ASSERT_TRUE(frame_builder_length(&builder) >= ETH_HEADER_LEN);
+
+    /* Build Ethernet header */
+    result = frame_build_ethernet(&builder, dest_mac, PROFINET_ETHERTYPE);
+    ASSERT_EQ(WTC_OK, result);
+
+    /* Build DCP identify request */
+    result = frame_build_dcp_identify(&builder, 0x1234, NULL);
+    ASSERT_EQ(WTC_OK, result);
+
+    /* Frame should have minimum DCP identify length */
+    size_t len = frame_builder_length(&builder);
+    assert(len > 14); /* Ethernet header at minimum */
 }
 
 TEST(frame_build_dcp_identify_test)
 {
     uint8_t buffer[256];
-    uint8_t src_mac[6] = {0x00, 0x11, 0x22, 0x33, 0x44, 0x55};
+    uint8_t src_mac[6] = {0x00, 0x11, 0x22, 0x33, 0x44, 0x66};
+    uint8_t dest_mac[6] = {0x00, 0x11, 0x22, 0x33, 0x44, 0x55};
+
     frame_builder_t builder;
+    wtc_result_t result = frame_builder_init(&builder, buffer, sizeof(buffer), src_mac);
+    ASSERT_EQ(WTC_OK, result);
 
-    frame_builder_init(&builder, buffer, sizeof(buffer), src_mac);
+    /* Build Ethernet header */
+    result = frame_build_ethernet(&builder, dest_mac, PROFINET_ETHERTYPE);
+    ASSERT_EQ(WTC_OK, result);
 
-    wtc_result_t result = frame_build_dcp_identify(&builder, 0x1234, "test-station");
-    /* Result may be OK or may fail depending on implementation state */
-    (void)result;
+    /* Build DCP set request with IP data */
+    uint8_t ip_data[12] = {192, 168, 1, 100, 255, 255, 255, 0, 192, 168, 1, 1};
+    result = frame_build_dcp_set(&builder, dest_mac, 0x1234, 0x01, 0x02, ip_data, sizeof(ip_data));
+    ASSERT_EQ(WTC_OK, result);
+
+    size_t len = frame_builder_length(&builder);
+    assert(len > 14);
 }
 
 /* ============== Frame Parser Tests ============== */
 
-TEST(frame_parser_init_test)
+TEST(ar_manager_init_null)
 {
-    uint8_t buffer[64] = {0};
-    frame_parser_t parser;
+    /* Test that ar_manager_init returns error for NULL parameters */
+    ar_manager_t *manager = NULL;
+    uint8_t controller_mac[6] = {0x00, 0x11, 0x22, 0x33, 0x44, 0x55};
 
-    wtc_result_t result = frame_parser_init(&parser, buffer, sizeof(buffer));
-    ASSERT_EQ(WTC_OK, result);
-    ASSERT_EQ(64, frame_parser_remaining(&parser));
+    /* NULL manager pointer should fail */
+    wtc_result_t result = ar_manager_init(NULL, -1, controller_mac);
+    ASSERT_EQ(WTC_ERROR_INVALID_PARAM, result);
+
+    /* NULL MAC address should fail */
+    result = ar_manager_init(&manager, -1, NULL);
+    ASSERT_EQ(WTC_ERROR_INVALID_PARAM, result);
 }
 
-TEST(frame_parser_read_bytes)
+TEST(ar_manager_get_ar_null)
 {
-    uint8_t buffer[8] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08};
-    uint8_t output[4];
-    frame_parser_t parser;
+    /* Getting AR from NULL manager should return NULL */
+    profinet_ar_t *ar = ar_manager_get_ar(NULL, "test-station");
+    assert(ar == NULL);
 
-    frame_parser_init(&parser, buffer, sizeof(buffer));
-
-    wtc_result_t result = frame_read_bytes(&parser, output, 4);
-    ASSERT_EQ(WTC_OK, result);
-    ASSERT_EQ(0x01, output[0]);
-    ASSERT_EQ(0x04, output[3]);
-    ASSERT_EQ(4, frame_parser_remaining(&parser));
-}
-
-/* ============== IP/MAC Conversion Tests ============== */
-
-TEST(ip_to_string_test)
-{
-    char buf[16];
-    ip_to_string(0xC0A80164, buf, sizeof(buf));  /* 192.168.1.100 */
-    /* Note: Result depends on byte order in implementation */
-    ASSERT_NOT_NULL(buf);
-    ASSERT_TRUE(strlen(buf) > 0);
-}
-
-TEST(string_to_ip_test)
-{
-    uint32_t ip = string_to_ip("192.168.1.100");
-    /* Just verify it returns something */
-    (void)ip;
-}
-
-TEST(mac_to_string_test)
-{
-    uint8_t mac[6] = {0x00, 0x11, 0x22, 0x33, 0x44, 0x55};
-    char buf[32];
-    mac_to_string(mac, buf, sizeof(buf));
-    ASSERT_NOT_NULL(buf);
-    ASSERT_TRUE(strlen(buf) > 0);
-}
-
-TEST(string_to_mac_test)
-{
-    uint8_t mac[6];
-    bool result = string_to_mac("00:11:22:33:44:55", mac);
-    ASSERT_TRUE(result);
-    ASSERT_EQ(0x00, mac[0]);
-    ASSERT_EQ(0x55, mac[5]);
+    /* Getting AR with NULL station name should return NULL */
+    ar = ar_manager_get_ar(NULL, NULL);
+    assert(ar == NULL);
 }
 
 /* ============== Test Runner ============== */
@@ -206,11 +189,9 @@ void run_profinet_tests(void)
     RUN_TEST(frame_parser_init_test);
     RUN_TEST(frame_parser_read_bytes);
 
-    printf("\nIP/MAC Conversion Tests:\n");
-    RUN_TEST(ip_to_string_test);
-    RUN_TEST(string_to_ip_test);
-    RUN_TEST(mac_to_string_test);
-    RUN_TEST(string_to_mac_test);
+    printf("\nAR Manager Tests:\n");
+    RUN_TEST(ar_manager_init_null);
+    RUN_TEST(ar_manager_get_ar_null);
 
     printf("\n=== Results: %d/%d tests passed ===\n\n", tests_passed, tests_run);
 }

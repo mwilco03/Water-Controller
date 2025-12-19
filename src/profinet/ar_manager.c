@@ -5,6 +5,7 @@
  */
 
 #include "ar_manager.h"
+#include "cyclic_exchange.h"
 #include "profinet_frame.h"
 #include "utils/logger.h"
 #include "utils/time_utils.h"
@@ -18,10 +19,6 @@
 
 /* Maximum ARs */
 #define MAX_ARS 64
-
-/* External functions from cyclic_exchange.c */
-extern wtc_result_t allocate_iocr_buffers(profinet_ar_t *ar, int input_slots, int output_slots);
-extern void free_iocr_buffers(profinet_ar_t *ar);
 
 /* AR manager structure */
 struct ar_manager {

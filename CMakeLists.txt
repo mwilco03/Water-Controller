@@ -117,6 +117,11 @@ set(IPC_SOURCES
     src/ipc/ipc_server.c
 )
 
+# User module sources
+set(USER_SOURCES
+    src/user/user_sync.c
+)
+
 # Modbus module sources
 set(MODBUS_SOURCES
     src/modbus/modbus_common.c
@@ -162,9 +167,13 @@ target_link_libraries(wtc_historian wtc_core wtc_registry)
 add_library(wtc_coordination ${COORDINATION_SOURCES})
 target_link_libraries(wtc_coordination wtc_core wtc_registry wtc_control)
 
+# Create user library
+add_library(wtc_user ${USER_SOURCES})
+target_link_libraries(wtc_user wtc_core)
+
 # Create IPC library
 add_library(wtc_ipc ${IPC_SOURCES})
-target_link_libraries(wtc_ipc wtc_core wtc_registry wtc_alarms wtc_control rt)
+target_link_libraries(wtc_ipc wtc_core wtc_registry wtc_alarms wtc_control wtc_user rt)
 
 # Create Modbus library
 add_library(wtc_modbus ${MODBUS_SOURCES})
