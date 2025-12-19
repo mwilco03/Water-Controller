@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useRef, useCallback } from 'react';
+import { Suspense, useEffect, useState, useRef, useCallback } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useWebSocket } from '@/hooks/useWebSocket';
 
@@ -25,7 +25,33 @@ interface TrendData {
   samples: TrendSample[];
 }
 
+// Loading fallback for Suspense
+function TrendsLoading() {
+  return (
+    <div className="p-6">
+      <div className="animate-pulse">
+        <div className="h-8 bg-slate-700 rounded w-48 mb-6"></div>
+        <div className="h-64 bg-slate-800 rounded mb-4"></div>
+        <div className="grid grid-cols-3 gap-4">
+          <div className="h-20 bg-slate-800 rounded"></div>
+          <div className="h-20 bg-slate-800 rounded"></div>
+          <div className="h-20 bg-slate-800 rounded"></div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Wrapper component with Suspense boundary
 export default function TrendsPage() {
+  return (
+    <Suspense fallback={<TrendsLoading />}>
+      <TrendsContent />
+    </Suspense>
+  );
+}
+
+function TrendsContent() {
   const searchParams = useSearchParams();
   const rtuFilter = searchParams.get('rtu');
 

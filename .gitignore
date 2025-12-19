@@ -37,6 +37,11 @@ __pycache__/
 .env
 venv/
 
+# Node.js / Next.js
+node_modules/
+.next/
+next-env.d.ts
+
 # OS files
 .DS_Store
 Thumbs.db

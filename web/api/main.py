@@ -2894,11 +2894,13 @@ async def list_services():
     return status
 
 @app.post("/api/v1/services/{service_name}/{action}")
-async def control_service(service_name: str, action: str):
-    """Control a service (start/stop/restart)"""
+async def control_service(service_name: str, action: str, user: Dict = Depends(get_current_user)):
+    """Control a service (start/stop/restart) - requires admin role"""
     import subprocess
 
-    allowed_services = ["water-controller", "water-controller-api", "water-controller-modbus"]
+    check_role(user, UserRole.ADMIN)
+
+    allowed_services = ["water-controller", "water-controller-api", "water-controller-ui", "water-controller-modbus"]
     allowed_actions = ["start", "stop", "restart"]
 
     if service_name not in allowed_services:
@@ -2908,13 +2910,13 @@ async def control_service(service_name: str, action: str):
 
     try:
         result = subprocess.run(
-            ["systemctl", action, service_name],
+            ["sudo", "systemctl", action, service_name],
             capture_output=True, text=True, timeout=30
         )
         if result.returncode != 0:
-            raise HTTPException(status_code=500, detail=result.stderr)
+            raise HTTPException(status_code=500, detail=result.stderr or "Service control failed")
 
-        logger.info(f"Service {service_name} {action}ed")
+        logger.info(f"Service {service_name} {action}ed by {user.get('username')}")
         return {"status": "ok", "action": action, "service": service_name}
     except subprocess.TimeoutExpired:
         raise HTTPException(status_code=504, detail="Operation timed out")
@@ -3623,73 +3625,21 @@ async def get_network_interfaces():
 
     return interfaces
 
-# ============== System Health Endpoints ==============
-
-@app.get("/api/v1/system/health")
-async def get_system_health():
-    """Get detailed system health information"""
-    import psutil
-    import os
-
-    # Get RTU counts
-    rtus = _get_all_rtus_from_db()
-    connected = sum(1 for r in rtus if _get_runtime_state(r.get('station_name', '')) == 'RUNNING')
-
-    # Get database sizes
-    db_size = 0
-    historian_size = 0
-    try:
-        db_path = os.environ.get('WTC_DB_PATH', '/var/lib/water-controller/wtc.db')
-        if os.path.exists(db_path):
-            db_size = os.path.getsize(db_path) / (1024 * 1024)
-        hist_path = os.environ.get('WTC_HISTORIAN_DB', '/var/lib/water-controller/historian.db')
-        if os.path.exists(hist_path):
-            historian_size = os.path.getsize(hist_path) / (1024 * 1024)
-    except Exception:
-        pass
-
-    # Get process uptime
-    uptime = 0
-    try:
-        proc = psutil.Process()
-        uptime = int(datetime.now().timestamp() - proc.create_time())
-    except Exception:
-        pass
-
-    # Get active alarms count
-    active_alarms = 0
-    client = get_shm_client()
-    if client:
-        try:
-            status = client.get_status()
-            active_alarms = status.get('active_alarms', 0)
-        except Exception:
-            pass
-
-    return {
-        "status": "healthy" if connected == len(rtus) or len(rtus) == 0 else "degraded",
-        "uptime_seconds": uptime,
-        "connected_rtus": connected,
-        "total_rtus": len(rtus),
-        "active_alarms": active_alarms,
-        "cpu_percent": psutil.cpu_percent(interval=0.1),
-        "memory_percent": psutil.virtual_memory().percent,
-        "disk_percent": psutil.disk_usage('/').percent,
-        "database_size_mb": round(db_size, 2),
-        "historian_size_mb": round(historian_size, 2)
-    }
+# ============== System Log Endpoints ==============
 
 @app.get("/api/v1/system/logs")
 async def get_system_logs(limit: int = 100, level: str = "all"):
-    """Get system log entries"""
-    # Return recent log entries from memory or file
-    # In production, this would read from a log file or log aggregator
-    logs = []
+    """Get system log entries from log file or journalctl"""
+    import os
+    import subprocess
 
-    try:
-        import os
-        log_path = os.environ.get('WTC_LOG_PATH', '/var/log/water-controller/wtc.log')
-        if os.path.exists(log_path):
+    logs = []
+    parse_errors = 0
+
+    # Try reading from log file first
+    log_path = os.environ.get('WTC_LOG_PATH', '/var/log/water-controller/wtc.log')
+    if os.path.exists(log_path):
+        try:
             with open(log_path, 'r') as f:
                 lines = f.readlines()[-limit:]
                 for line in lines:
@@ -3706,17 +3656,54 @@ async def get_system_logs(limit: int = 100, level: str = "all"):
                                 "level": log_level,
                                 "message": parts[3]
                             })
-                    except Exception:
-                        pass
-    except Exception as e:
-        logger.warning(f"Failed to read logs: {e}")
+                        elif line.strip():
+                            # Unparsed line - include as raw message
+                            logs.append({
+                                "timestamp": "",
+                                "source": "unknown",
+                                "level": "INFO",
+                                "message": line.strip()
+                            })
+                    except Exception as e:
+                        parse_errors += 1
+                        if parse_errors <= 3:
+                            logger.debug(f"Failed to parse log line: {e}")
+        except Exception as e:
+            logger.warning(f"Failed to read log file {log_path}: {e}")
 
-    # If no logs found, return sample data
+    # If no logs from file, try journalctl
     if not logs:
-        logs = [
-            {"timestamp": datetime.now().isoformat(), "source": "water-controller", "level": "INFO", "message": "System running normally"},
-            {"timestamp": datetime.now().isoformat(), "source": "profinet", "level": "INFO", "message": "PROFINET stack initialized"},
-        ]
+        try:
+            result = subprocess.run(
+                ['journalctl', '-u', 'water-controller*', '-n', str(limit), '--no-pager', '-o', 'short-iso'],
+                capture_output=True, text=True, timeout=10
+            )
+            if result.returncode == 0:
+                for line in result.stdout.strip().split('\n'):
+                    if line and not line.startswith('--'):
+                        parts = line.split(' ', 4)
+                        if len(parts) >= 5:
+                            log_level = "INFO"
+                            message = parts[4] if len(parts) > 4 else ""
+                            if "error" in message.lower():
+                                log_level = "ERROR"
+                            elif "warn" in message.lower():
+                                log_level = "WARNING"
+                            if level != "all" and log_level != level.upper():
+                                continue
+                            logs.append({
+                                "timestamp": parts[0],
+                                "source": parts[3] if len(parts) > 3 else "system",
+                                "level": log_level,
+                                "message": message
+                            })
+        except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+            logger.debug(f"journalctl not available: {e}")
+        except Exception as e:
+            logger.warning(f"Failed to read journalctl: {e}")
+
+    if parse_errors > 0:
+        logger.warning(f"Skipped {parse_errors} unparseable log lines")
 
     return logs
 
@@ -3755,77 +3742,12 @@ async def terminate_session(token_prefix: str, user: Dict = Depends(get_current_
     """Terminate a session by token prefix (requires admin role)"""
     check_role(user, UserRole.ADMIN)
 
-    # Find the full token matching the prefix
-    sessions = db.get_active_sessions()
-    full_token = None
-    for session in sessions:
-        if session.get('token', '').startswith(token_prefix):
-            # Need to get actual token from database
-            # The get_active_sessions masks tokens, so we need a different approach
-            pass
-
-    # For now, delete by prefix (would need to enhance db function)
-    logger.info(f"Session terminated: {token_prefix}...")
-    return {"status": "ok", "message": "Session terminated"}
-
-# ============== Service Control Endpoints ==============
-
-@app.get("/api/v1/services")
-async def get_services():
-    """Get status of system services"""
-    services = {}
-
-    service_names = [
-        "water-controller",
-        "water-controller-api",
-        "water-controller-ui"
-    ]
-
-    try:
-        import subprocess
-        for name in service_names:
-            try:
-                result = subprocess.run(
-                    ['systemctl', 'is-active', name],
-                    capture_output=True, text=True, timeout=5
-                )
-                services[name] = result.stdout.strip() or "unknown"
-            except Exception:
-                services[name] = "unknown"
-    except Exception as e:
-        logger.warning(f"Failed to get service status: {e}")
-        # Return default status
-        for name in service_names:
-            services[name] = "unknown"
-
-    return services
-
-@app.post("/api/v1/services/{service_name}/{action}")
-async def control_service(service_name: str, action: str, user: Dict = Depends(get_current_user)):
-    """Control a system service (requires admin role)"""
-    check_role(user, UserRole.ADMIN)
-
-    if action not in ['start', 'stop', 'restart']:
-        raise HTTPException(status_code=400, detail="Invalid action. Use start, stop, or restart")
-
-    allowed_services = ['water-controller', 'water-controller-api', 'water-controller-ui']
-    if service_name not in allowed_services:
-        raise HTTPException(status_code=403, detail="Cannot control this service")
-
-    try:
-        import subprocess
-        result = subprocess.run(
-            ['sudo', 'systemctl', action, service_name],
-            capture_output=True, text=True, timeout=30
-        )
-
-        if result.returncode == 0:
-            logger.info(f"Service {service_name} {action}ed by {user.get('username')}")
-            return {"status": "ok", "message": f"Service {action}ed"}
-        else:
-            raise HTTPException(status_code=500, detail=result.stderr or "Service control failed")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    # Delete session using prefix lookup
+    if db.delete_session_by_prefix(token_prefix, user.get('username')):
+        logger.info(f"Session terminated by {user.get('username')}: {token_prefix}...")
+        return {"status": "ok", "message": "Session terminated"}
+    else:
+        raise HTTPException(status_code=404, detail="Session not found")
 
 # ============== WebSocket Endpoints ==============
 

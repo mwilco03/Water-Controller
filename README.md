@@ -184,7 +184,8 @@ For detailed deployment instructions, see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.m
 - GCC or Clang with C11 support
 - libpq (PostgreSQL client library)
 - libjson-c
-- Python 3.11+ (for web backend)
+- Python 3.9+ (for web backend)
+- Node.js 18+ (for web UI)
 
 ### Build Commands
 
@@ -222,8 +223,18 @@ docker-compose --profile profinet up -d
 | `WT_INTERFACE` | Network interface for PROFINET | `eth0` |
 | `WT_CYCLE_TIME` | Cycle time in milliseconds | `1000` |
 | `WT_LOG_LEVEL` | Logging level (DEBUG, INFO, WARN, ERROR) | `INFO` |
-| `DATABASE_URL` | PostgreSQL connection string | - |
-| `REDIS_URL` | Redis connection string | - |
+| `DATABASE_URL` | PostgreSQL connection string | SQLite default |
+| `WEB_PORT` | API server port | `8080` |
+| `UI_PORT` | Web UI server port | `3000` |
+
+### Network Ports
+
+| Port | Service | Description |
+|------|---------|-------------|
+| 3000 | Web UI | Next.js frontend application |
+| 8080 | API | FastAPI backend REST/WebSocket |
+| 502 | Modbus | Modbus TCP gateway |
+| 34962-34964 | PROFINET | PROFINET RT communication |
 
 ### Command Line Options
 
@@ -299,6 +310,35 @@ Options:
 - `GET /api/v1/auth/session` - Validate session token
 - `GET /api/v1/auth/ad-config` - Get AD configuration
 - `PUT /api/v1/auth/ad-config` - Update AD configuration
+- `GET /api/v1/auth/sessions` - List active sessions (admin)
+- `DELETE /api/v1/auth/sessions/{token}` - Terminate session (admin)
+
+### User Management
+
+- `GET /api/v1/users` - List all users
+- `POST /api/v1/users` - Create new user
+- `GET /api/v1/users/{id}` - Get user details
+- `PUT /api/v1/users/{id}` - Update user
+- `DELETE /api/v1/users/{id}` - Delete user
+- `POST /api/v1/users/sync` - Sync users to RTUs
+
+### System Health
+
+- `GET /api/v1/system/health` - Get system health metrics
+- `GET /api/v1/system/logs` - Get system log entries
+- `DELETE /api/v1/system/logs` - Clear system logs (admin)
+- `GET /api/v1/system/audit` - Get audit log entries
+- `GET /api/v1/system/network` - Get network configuration
+- `PUT /api/v1/system/network` - Update network configuration
+- `GET /api/v1/system/interfaces` - List network interfaces
+
+### Network Scanning
+
+- `POST /api/v1/network/scan` - Scan network for devices
+- `GET /api/v1/network/scan/last` - Get last scan results
+- `GET /api/v1/network/scan/status` - Get scan status
+- `GET /api/v1/network/scan/config` - Get scan configuration
+- `PUT /api/v1/network/scan/config` - Update scan configuration
 
 ### Log Forwarding
 
@@ -363,14 +403,23 @@ Water-Controller/
 │           ├── rtus/             # RTU management
 │           ├── trends/           # Historical trends
 │           ├── login/            # Authentication
-│           └── settings/         # Configuration, backup, log forwarding
+│           ├── settings/         # Configuration, backup, log forwarding
+│           ├── users/            # User management
+│           ├── io-tags/          # I/O tag configuration
+│           ├── network/          # Network configuration
+│           ├── system/           # System status and logs
+│           ├── modbus/           # Modbus gateway configuration
+│           └── wizard/           # Setup wizard
 ├── systemd/
 │   ├── water-controller.service
 │   ├── water-controller-api.service
 │   ├── water-controller-ui.service
-│   └── water-controller-modbus.service
+│   ├── water-controller-modbus.service
+│   └── water-controller-hmi.service  # Standalone HMI mode
 ├── scripts/
-│   └── install.sh                # Installation script
+│   ├── install.sh                # Full installation script
+│   ├── install-hmi.sh            # HMI-only installation
+│   └── water-controller          # Service wrapper script
 ├── docs/
 │   └── DEPLOYMENT.md             # Deployment guide
 ├── docker/
@@ -390,7 +439,7 @@ Water-Controller/
 
 ## License
 
-Copyright (C) 2024
+Copyright (C) 2024-2025
 
 This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
 

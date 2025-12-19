@@ -768,6 +768,33 @@ def delete_session(token: str) -> bool:
         return False
 
 
+def delete_session_by_prefix(token_prefix: str, admin_user: str = None) -> bool:
+    """Delete a session by token prefix (for admin session termination)"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        # Find the session matching the prefix
+        cursor.execute('''
+            SELECT token, username FROM user_sessions
+            WHERE token LIKE ? AND expires_at > datetime('now')
+        ''', (token_prefix + '%',))
+        row = cursor.fetchone()
+
+        if not row:
+            return False
+
+        full_token = row['token']
+        username = row['username']
+
+        cursor.execute('DELETE FROM user_sessions WHERE token = ?', (full_token,))
+        conn.commit()
+
+        if cursor.rowcount > 0:
+            log_audit(admin_user or 'admin', 'terminate_session', 'session',
+                     full_token[:8], f"Admin terminated session for {username}")
+            return True
+        return False
+
+
 def cleanup_expired_sessions() -> int:
     """Remove expired sessions"""
     with get_db() as conn:
