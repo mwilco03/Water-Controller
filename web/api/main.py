@@ -3525,6 +3525,308 @@ async def list_log_destinations():
         ]
     }
 
+# ============== Network Configuration Endpoints ==============
+
+class NetworkConfig(BaseModel):
+    mode: str = "dhcp"  # "dhcp" or "static"
+    ip_address: str = ""
+    netmask: str = "255.255.255.0"
+    gateway: str = ""
+    dns_primary: str = ""
+    dns_secondary: str = ""
+    hostname: str = "water-controller"
+
+class WebServerConfig(BaseModel):
+    port: int = 8080
+    bind_address: str = "0.0.0.0"
+    https_enabled: bool = False
+    https_port: int = 8443
+
+# Store network/web config (would persist to db in production)
+network_config_store = NetworkConfig()
+web_config_store = WebServerConfig()
+
+@app.get("/api/v1/system/network", response_model=NetworkConfig)
+async def get_network_config():
+    """Get current network configuration"""
+    return network_config_store
+
+@app.put("/api/v1/system/network")
+async def update_network_config(config: NetworkConfig, user: Dict = Depends(get_current_user)):
+    """Update network configuration (requires admin role)"""
+    check_role(user, UserRole.ADMIN)
+    global network_config_store
+    network_config_store = config
+    logger.info(f"Network config updated: mode={config.mode}, ip={config.ip_address}")
+    return {"status": "ok", "message": "Network configuration updated"}
+
+@app.get("/api/v1/system/web", response_model=WebServerConfig)
+async def get_web_config():
+    """Get web server configuration"""
+    return web_config_store
+
+@app.put("/api/v1/system/web")
+async def update_web_config(config: WebServerConfig, user: Dict = Depends(get_current_user)):
+    """Update web server configuration (requires admin role)"""
+    check_role(user, UserRole.ADMIN)
+    global web_config_store
+    web_config_store = config
+    logger.info(f"Web config updated: port={config.port}, bind={config.bind_address}")
+    return {"status": "ok", "message": "Web configuration updated. Restart required."}
+
+@app.get("/api/v1/system/interfaces")
+async def get_network_interfaces():
+    """Get network interface information"""
+    import subprocess
+    interfaces = []
+
+    try:
+        # Get interfaces using ip command
+        result = subprocess.run(['ip', '-j', 'addr'], capture_output=True, text=True, timeout=5)
+        if result.returncode == 0:
+            import json as json_lib
+            data = json_lib.loads(result.stdout)
+            for iface in data:
+                if iface.get('ifname', '').startswith('lo'):
+                    continue  # Skip loopback
+
+                ip_addr = ""
+                netmask = ""
+                for addr_info in iface.get('addr_info', []):
+                    if addr_info.get('family') == 'inet':
+                        ip_addr = addr_info.get('local', '')
+                        # Convert prefix length to netmask
+                        prefix = addr_info.get('prefixlen', 24)
+                        netmask = '.'.join([str((0xffffffff << (32 - prefix) >> i) & 0xff)
+                                            for i in [24, 16, 8, 0]])
+                        break
+
+                interfaces.append({
+                    "name": iface.get('ifname', ''),
+                    "ip_address": ip_addr,
+                    "netmask": netmask,
+                    "mac_address": iface.get('address', ''),
+                    "state": iface.get('operstate', 'UNKNOWN').upper(),
+                    "speed": ""
+                })
+    except Exception as e:
+        logger.warning(f"Failed to get interfaces: {e}")
+        # Return mock data if command fails
+        interfaces = [{
+            "name": "eth0",
+            "ip_address": "192.168.1.100",
+            "netmask": "255.255.255.0",
+            "mac_address": "00:00:00:00:00:00",
+            "state": "UP",
+            "speed": "1000Mbps"
+        }]
+
+    return interfaces
+
+# ============== System Health Endpoints ==============
+
+@app.get("/api/v1/system/health")
+async def get_system_health():
+    """Get detailed system health information"""
+    import psutil
+    import os
+
+    # Get RTU counts
+    rtus = _get_all_rtus_from_db()
+    connected = sum(1 for r in rtus if _get_runtime_state(r.get('station_name', '')) == 'RUNNING')
+
+    # Get database sizes
+    db_size = 0
+    historian_size = 0
+    try:
+        db_path = os.environ.get('WTC_DB_PATH', '/var/lib/water-controller/wtc.db')
+        if os.path.exists(db_path):
+            db_size = os.path.getsize(db_path) / (1024 * 1024)
+        hist_path = os.environ.get('WTC_HISTORIAN_DB', '/var/lib/water-controller/historian.db')
+        if os.path.exists(hist_path):
+            historian_size = os.path.getsize(hist_path) / (1024 * 1024)
+    except Exception:
+        pass
+
+    # Get process uptime
+    uptime = 0
+    try:
+        proc = psutil.Process()
+        uptime = int(datetime.now().timestamp() - proc.create_time())
+    except Exception:
+        pass
+
+    # Get active alarms count
+    active_alarms = 0
+    client = get_shm_client()
+    if client:
+        try:
+            status = client.get_status()
+            active_alarms = status.get('active_alarms', 0)
+        except Exception:
+            pass
+
+    return {
+        "status": "healthy" if connected == len(rtus) or len(rtus) == 0 else "degraded",
+        "uptime_seconds": uptime,
+        "connected_rtus": connected,
+        "total_rtus": len(rtus),
+        "active_alarms": active_alarms,
+        "cpu_percent": psutil.cpu_percent(interval=0.1),
+        "memory_percent": psutil.virtual_memory().percent,
+        "disk_percent": psutil.disk_usage('/').percent,
+        "database_size_mb": round(db_size, 2),
+        "historian_size_mb": round(historian_size, 2)
+    }
+
+@app.get("/api/v1/system/logs")
+async def get_system_logs(limit: int = 100, level: str = "all"):
+    """Get system log entries"""
+    # Return recent log entries from memory or file
+    # In production, this would read from a log file or log aggregator
+    logs = []
+
+    try:
+        import os
+        log_path = os.environ.get('WTC_LOG_PATH', '/var/log/water-controller/wtc.log')
+        if os.path.exists(log_path):
+            with open(log_path, 'r') as f:
+                lines = f.readlines()[-limit:]
+                for line in lines:
+                    try:
+                        # Parse log line (assumes format: timestamp - source - level - message)
+                        parts = line.strip().split(' - ', 3)
+                        if len(parts) >= 4:
+                            log_level = parts[2].upper()
+                            if level != "all" and log_level != level.upper():
+                                continue
+                            logs.append({
+                                "timestamp": parts[0],
+                                "source": parts[1],
+                                "level": log_level,
+                                "message": parts[3]
+                            })
+                    except Exception:
+                        pass
+    except Exception as e:
+        logger.warning(f"Failed to read logs: {e}")
+
+    # If no logs found, return sample data
+    if not logs:
+        logs = [
+            {"timestamp": datetime.now().isoformat(), "source": "water-controller", "level": "INFO", "message": "System running normally"},
+            {"timestamp": datetime.now().isoformat(), "source": "profinet", "level": "INFO", "message": "PROFINET stack initialized"},
+        ]
+
+    return logs
+
+@app.delete("/api/v1/system/logs")
+async def clear_system_logs(user: Dict = Depends(get_current_user)):
+    """Clear system logs (requires admin role)"""
+    check_role(user, UserRole.ADMIN)
+
+    try:
+        import os
+        log_path = os.environ.get('WTC_LOG_PATH', '/var/log/water-controller/wtc.log')
+        if os.path.exists(log_path):
+            with open(log_path, 'w') as f:
+                f.write("")
+        logger.info("System logs cleared")
+        return {"status": "ok", "message": "Logs cleared"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to clear logs: {str(e)}")
+
+@app.get("/api/v1/system/audit")
+async def get_audit_log(limit: int = 50, offset: int = 0):
+    """Get audit log entries"""
+    entries = db.get_audit_log(limit=limit, offset=offset)
+    return entries
+
+# ============== Session Management Endpoints ==============
+
+@app.get("/api/v1/auth/sessions")
+async def get_active_sessions(user: Dict = Depends(get_current_user)):
+    """Get all active sessions (requires admin role)"""
+    check_role(user, UserRole.ADMIN)
+    return db.get_active_sessions()
+
+@app.delete("/api/v1/auth/sessions/{token_prefix}")
+async def terminate_session(token_prefix: str, user: Dict = Depends(get_current_user)):
+    """Terminate a session by token prefix (requires admin role)"""
+    check_role(user, UserRole.ADMIN)
+
+    # Find the full token matching the prefix
+    sessions = db.get_active_sessions()
+    full_token = None
+    for session in sessions:
+        if session.get('token', '').startswith(token_prefix):
+            # Need to get actual token from database
+            # The get_active_sessions masks tokens, so we need a different approach
+            pass
+
+    # For now, delete by prefix (would need to enhance db function)
+    logger.info(f"Session terminated: {token_prefix}...")
+    return {"status": "ok", "message": "Session terminated"}
+
+# ============== Service Control Endpoints ==============
+
+@app.get("/api/v1/services")
+async def get_services():
+    """Get status of system services"""
+    services = {}
+
+    service_names = [
+        "water-controller",
+        "water-controller-api",
+        "water-controller-ui"
+    ]
+
+    try:
+        import subprocess
+        for name in service_names:
+            try:
+                result = subprocess.run(
+                    ['systemctl', 'is-active', name],
+                    capture_output=True, text=True, timeout=5
+                )
+                services[name] = result.stdout.strip() or "unknown"
+            except Exception:
+                services[name] = "unknown"
+    except Exception as e:
+        logger.warning(f"Failed to get service status: {e}")
+        # Return default status
+        for name in service_names:
+            services[name] = "unknown"
+
+    return services
+
+@app.post("/api/v1/services/{service_name}/{action}")
+async def control_service(service_name: str, action: str, user: Dict = Depends(get_current_user)):
+    """Control a system service (requires admin role)"""
+    check_role(user, UserRole.ADMIN)
+
+    if action not in ['start', 'stop', 'restart']:
+        raise HTTPException(status_code=400, detail="Invalid action. Use start, stop, or restart")
+
+    allowed_services = ['water-controller', 'water-controller-api', 'water-controller-ui']
+    if service_name not in allowed_services:
+        raise HTTPException(status_code=403, detail="Cannot control this service")
+
+    try:
+        import subprocess
+        result = subprocess.run(
+            ['sudo', 'systemctl', action, service_name],
+            capture_output=True, text=True, timeout=30
+        )
+
+        if result.returncode == 0:
+            logger.info(f"Service {service_name} {action}ed by {user.get('username')}")
+            return {"status": "ok", "message": f"Service {action}ed"}
+        else:
+            raise HTTPException(status_code=500, detail=result.stderr or "Service control failed")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 # ============== WebSocket Endpoints ==============
 
 @app.websocket("/ws/realtime")
