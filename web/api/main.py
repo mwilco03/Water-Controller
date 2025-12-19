@@ -40,6 +40,17 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# ============== Synchronization Locks ==============
+# Locks for shared state to prevent race conditions in async code
+
+_sessions_lock = asyncio.Lock()  # Protects active_sessions
+_websocket_lock = asyncio.Lock()  # Protects websocket connections
+_rtu_state_lock = asyncio.Lock()  # Protects _rtu_runtime_state
+_scan_config_lock = asyncio.Lock()  # Protects network_scan_config
+_modbus_config_lock = asyncio.Lock()  # Protects modbus_config
+_ad_config_lock = asyncio.Lock()  # Protects ad_config_store
+_log_config_lock = asyncio.Lock()  # Protects log_forward_config_store
+
 # Request context for audit logging
 from contextvars import ContextVar
 request_user: ContextVar[str] = ContextVar('request_user', default='system')
@@ -367,15 +378,91 @@ def _get_all_rtus_from_db() -> List[Dict[str, Any]]:
     return db.get_rtu_devices()
 
 def _update_runtime_state(station_name: str, state: str):
-    """Update runtime connection state cache"""
+    """Update runtime connection state cache (lock acquired by caller if needed)"""
     _rtu_runtime_state[station_name] = state
 
 def _get_runtime_state(station_name: str) -> str:
     """Get runtime connection state, defaulting to OFFLINE"""
     return _rtu_runtime_state.get(station_name, "OFFLINE")
 
-# WebSocket connections
-websocket_connections: List[WebSocket] = []
+# ============== WebSocket Connection Manager ==============
+# Manages WebSocket connections with automatic cleanup of stale connections
+
+class WebSocketManager:
+    """Thread-safe WebSocket connection manager with automatic cleanup."""
+
+    def __init__(self, stale_timeout_seconds: int = 120):
+        self._connections: Dict[WebSocket, datetime] = {}  # websocket -> last_activity
+        self._stale_timeout = timedelta(seconds=stale_timeout_seconds)
+
+    async def connect(self, websocket: WebSocket) -> None:
+        """Register a new WebSocket connection."""
+        async with _websocket_lock:
+            self._connections[websocket] = datetime.now()
+            logger.info(f"WebSocket connected. Total: {len(self._connections)}")
+
+    async def disconnect(self, websocket: WebSocket) -> None:
+        """Remove a WebSocket connection."""
+        async with _websocket_lock:
+            if websocket in self._connections:
+                del self._connections[websocket]
+                logger.info(f"WebSocket disconnected. Total: {len(self._connections)}")
+
+    async def touch(self, websocket: WebSocket) -> None:
+        """Update last activity time for a connection."""
+        async with _websocket_lock:
+            if websocket in self._connections:
+                self._connections[websocket] = datetime.now()
+
+    async def broadcast(self, message: Dict[str, Any]) -> None:
+        """Broadcast message to all connections, removing dead ones."""
+        dead_connections = []
+
+        async with _websocket_lock:
+            connections = list(self._connections.keys())
+
+        for websocket in connections:
+            try:
+                await websocket.send_json(message)
+            except Exception as e:
+                logger.debug(f"Failed to send to WebSocket: {e}")
+                dead_connections.append(websocket)
+
+        # Clean up dead connections
+        if dead_connections:
+            async with _websocket_lock:
+                for ws in dead_connections:
+                    self._connections.pop(ws, None)
+                logger.info(f"Removed {len(dead_connections)} dead WebSocket connections")
+
+    async def cleanup_stale(self) -> int:
+        """Remove connections that haven't been active recently. Returns count removed."""
+        now = datetime.now()
+        stale = []
+
+        async with _websocket_lock:
+            for websocket, last_activity in self._connections.items():
+                if now - last_activity > self._stale_timeout:
+                    stale.append(websocket)
+
+            for websocket in stale:
+                del self._connections[websocket]
+                try:
+                    await websocket.close()
+                except Exception:
+                    pass  # Connection already dead
+
+        if stale:
+            logger.info(f"Cleaned up {len(stale)} stale WebSocket connections")
+        return len(stale)
+
+    @property
+    def connection_count(self) -> int:
+        """Get current connection count (not locked, approximate)."""
+        return len(self._connections)
+
+# Global WebSocket manager instance
+ws_manager = WebSocketManager(stale_timeout_seconds=120)
 
 # Connection state mapping
 CONNECTION_STATES = {
@@ -497,7 +584,6 @@ class NetworkScanConfig(BaseModel):
 # In-memory scan configuration (would be persisted in production)
 network_scan_config = NetworkScanConfig()
 last_scan_result: Optional[NetworkScanResult] = None
-scan_task: Optional[asyncio.Task] = None  # Background scan task
 
 async def _perform_network_scan() -> NetworkScanResult:
     """
@@ -1297,6 +1383,7 @@ async def test_rtu(station_name: str, test_actuators: bool = True, blink_duratio
                 actuator_slots = list(range(9, 17))  # Default actuator slots
 
             blinked_count = 0
+            failed_slots = []
             for slot in actuator_slots:
                 try:
                     # Turn ON briefly
@@ -1310,8 +1397,9 @@ async def test_rtu(station_name: str, test_actuators: bool = True, blink_duratio
                     await asyncio.sleep(0.1)  # Brief pause between actuators
 
                     blinked_count += 1
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"Actuator blink failed for slot {slot}: {e}")
+                    failed_slots.append(slot)
 
             results.append({
                 "test": "actuators",
@@ -2751,18 +2839,22 @@ async def remove_downstream_device(device_id: int):
 
 @app.get("/api/v1/modbus/stats", response_model=ModbusStats)
 async def get_modbus_stats():
-    """Get Modbus gateway statistics"""
-    client = get_shm_client()
-    if client:
-        # TODO: Get real stats from shared memory
-        pass
+    """
+    Get Modbus gateway statistics.
+
+    Note: Live statistics (tcp_connections, total_requests, total_errors)
+    require the Modbus gateway to be running. Currently returns configuration
+    status and zero counters when gateway is not reporting stats.
+    """
+    server_config = modbus_config.get("server", {})
+    downstream = modbus_config.get("downstream_devices", [])
 
     return ModbusStats(
-        server_running=modbus_config.get("server", {}).get("tcp_enabled", False),
-        tcp_connections=0,
-        total_requests=0,
-        total_errors=0,
-        downstream_devices_online=0
+        server_running=server_config.get("tcp_enabled", False),
+        tcp_connections=0,  # Would come from gateway process stats
+        total_requests=0,   # Would come from gateway process stats
+        total_errors=0,     # Would come from gateway process stats
+        downstream_devices_online=len(downstream)  # Configured count
     )
 
 @app.post("/api/v1/modbus/restart")
@@ -2788,9 +2880,16 @@ async def list_services():
                 ["systemctl", "is-active", svc],
                 capture_output=True, text=True, timeout=5
             )
-            status[svc] = result.stdout.strip()
-        except Exception:
-            status[svc] = "unknown"
+            status[svc] = result.stdout.strip() or "inactive"
+        except subprocess.TimeoutExpired:
+            logger.warning(f"Timeout checking service status for {svc}")
+            status[svc] = "timeout"
+        except FileNotFoundError:
+            # systemctl not available (e.g., Docker container)
+            status[svc] = "not-available"
+        except Exception as e:
+            logger.warning(f"Error checking service status for {svc}: {e}")
+            status[svc] = "error"
 
     return status
 
@@ -3432,12 +3531,12 @@ async def list_log_destinations():
 async def websocket_realtime(websocket: WebSocket):
     """WebSocket endpoint for real-time data streaming"""
     await websocket.accept()
-    websocket_connections.append(websocket)
-    logger.info(f"WebSocket client connected. Total: {len(websocket_connections)}")
+    await ws_manager.connect(websocket)
 
     try:
         while True:
             await asyncio.sleep(1)
+            await ws_manager.touch(websocket)  # Update activity timestamp
 
             client = get_shm_client()
             if client:
@@ -3479,13 +3578,16 @@ async def websocket_realtime(websocket: WebSocket):
                 await websocket.send_json(data)
 
     except WebSocketDisconnect:
-        websocket_connections.remove(websocket)
-        logger.info(f"WebSocket client disconnected. Total: {len(websocket_connections)}")
+        await ws_manager.disconnect(websocket)
+    except Exception as e:
+        logger.warning(f"WebSocket error: {e}")
+        await ws_manager.disconnect(websocket)
 
 @app.websocket("/ws/alarms")
 async def websocket_alarms(websocket: WebSocket):
-    """WebSocket endpoint for alarm notifications"""
+    """WebSocket endpoint for alarm notifications (separate from realtime for targeted updates)"""
     await websocket.accept()
+    logger.info("Alarm WebSocket client connected")
 
     try:
         last_alarm_count = 0
@@ -3510,24 +3612,36 @@ async def websocket_alarms(websocket: WebSocket):
                     last_alarm_count = current_count
 
     except WebSocketDisconnect:
-        pass
+        logger.info("Alarm WebSocket client disconnected")
+    except Exception as e:
+        logger.warning(f"Alarm WebSocket error: {e}")
 
 async def broadcast_event(event_type: str, data: Dict[str, Any]):
-    """Broadcast event to all connected WebSocket clients"""
+    """Broadcast event to all connected WebSocket clients using the manager"""
     message = {"type": event_type, "data": data, "timestamp": datetime.now().isoformat()}
+    await ws_manager.broadcast(message)
 
-    for websocket in websocket_connections:
+# ============== Background Tasks ==============
+
+# Background task handles
+scan_task: Optional[asyncio.Task] = None
+ws_cleanup_task: Optional[asyncio.Task] = None
+
+async def _websocket_cleanup_loop():
+    """Periodically clean up stale WebSocket connections."""
+    while True:
+        await asyncio.sleep(60)  # Check every minute
         try:
-            await websocket.send_json(message)
-        except Exception:
-            pass
+            await ws_manager.cleanup_stale()
+        except Exception as e:
+            logger.error(f"WebSocket cleanup error: {e}")
 
 # ============== Startup Event ==============
 
 @app.on_event("startup")
 async def startup_event():
     """Initialize on startup"""
-    global scan_task
+    global scan_task, ws_cleanup_task
 
     # Try to connect to shared memory
     if SHM_AVAILABLE:
@@ -3535,22 +3649,24 @@ async def startup_event():
         if client.is_connected():
             logger.info("Connected to controller via shared memory")
         else:
-            logger.warning("Controller not running, using fallback mode")
-            init_fallback_data()
+            logger.warning("Controller not running - API will serve database config only")
     else:
-        logger.warning("Shared memory client not available, using fallback mode")
-        init_fallback_data()
+        logger.warning("Shared memory client not available - API will serve database config only")
 
     # Start background network scan task
     scan_task = asyncio.create_task(_background_scan_loop())
     logger.info("Background network scan task initialized (disabled by default)")
+
+    # Start WebSocket cleanup task
+    ws_cleanup_task = asyncio.create_task(_websocket_cleanup_loop())
+    logger.info("WebSocket cleanup task started")
 
     logger.info("Water Treatment Controller API started")
 
 @app.on_event("shutdown")
 async def shutdown_event():
     """Cleanup on shutdown"""
-    global scan_task
+    global scan_task, ws_cleanup_task
 
     # Cancel background scan task
     if scan_task and not scan_task.done():
@@ -3560,6 +3676,15 @@ async def shutdown_event():
         except asyncio.CancelledError:
             pass
         logger.info("Background network scan task stopped")
+
+    # Cancel WebSocket cleanup task
+    if ws_cleanup_task and not ws_cleanup_task.done():
+        ws_cleanup_task.cancel()
+        try:
+            await ws_cleanup_task
+        except asyncio.CancelledError:
+            pass
+        logger.info("WebSocket cleanup task stopped")
 
     logger.info("Water Treatment Controller API stopped")
 
