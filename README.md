@@ -259,6 +259,18 @@ Options:
 - `GET /api/v1/rtus/{station_name}/actuators` - Get actuator states
 - `POST /api/v1/rtus/{station_name}/actuators/{slot}` - Command actuator
 
+### RTU Inventory
+
+- `GET /api/v1/rtus/{station_name}/inventory` - Get complete sensor/control inventory
+- `POST /api/v1/rtus/{station_name}/inventory/refresh` - Query RTU and refresh inventory
+- `POST /api/v1/rtus/{station_name}/control/{control_id}` - Send command to control
+
+### Network Discovery (DCP)
+
+- `POST /api/v1/discover/rtu` - Trigger PROFINET network scan
+- `GET /api/v1/discover/cached` - Get cached discovery results
+- `DELETE /api/v1/discover/cache` - Clear discovery cache
+
 ### Alarm Management
 
 - `GET /api/v1/alarms` - Get active alarms

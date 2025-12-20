@@ -7,15 +7,23 @@ import SystemStatus from '@/components/SystemStatus';
 import ProcessDiagram from '@/components/ProcessDiagram';
 import CircularGauge from '@/components/CircularGauge';
 import TankLevel from '@/components/TankLevel';
+import { RTUCard } from '@/components/rtu';
 import { useWebSocket } from '@/hooks/useWebSocket';
+import { getRTUInventory } from '@/lib/api';
+import type { RTUDevice as ApiRTUDevice, RTUSensor, RTUControl } from '@/lib/api';
 
-interface RTUDevice {
+// Extended RTU type for dashboard display
+interface RTUDeviceWithData {
   station_name: string;
   ip_address: string;
+  vendor_id: number;
+  device_id: number;
   state: string;
   slot_count: number;
   sensors: SensorData[];
   actuators?: ActuatorData[];
+  inventorySensors?: RTUSensor[];
+  inventoryControls?: RTUControl[];
 }
 
 interface SensorData {
@@ -52,10 +60,10 @@ interface SystemMetrics {
 }
 
 export default function Dashboard() {
-  const [rtus, setRtus] = useState<RTUDevice[]>([]);
+  const [rtus, setRtus] = useState<RTUDeviceWithData[]>([]);
   const [alarms, setAlarms] = useState<Alarm[]>([]);
   const [loading, setLoading] = useState(true);
-  const [activeView, setActiveView] = useState<'overview' | 'process' | 'sensors'>('overview');
+  const [activeView, setActiveView] = useState<'overview' | 'rtus' | 'process' | 'sensors'>('overview');
   const [metrics, setMetrics] = useState<SystemMetrics>({
     cycleTime: 32,
     packetLoss: 0.1,
@@ -74,7 +82,25 @@ export default function Dashboard() {
 
       if (rtusRes.ok) {
         const rtusData = await rtusRes.json();
-        setRtus(Array.isArray(rtusData) ? rtusData : rtusData.rtus || []);
+        const rtuList = Array.isArray(rtusData) ? rtusData : rtusData.rtus || [];
+
+        // Fetch inventory for each RTU
+        const rtusWithInventory = await Promise.all(
+          rtuList.map(async (rtu: RTUDeviceWithData) => {
+            try {
+              const inventory = await getRTUInventory(rtu.station_name);
+              return {
+                ...rtu,
+                inventorySensors: inventory.sensors,
+                inventoryControls: inventory.controls,
+              };
+            } catch {
+              return rtu;
+            }
+          })
+        );
+
+        setRtus(rtusWithInventory);
       }
 
       if (alarmsRes.ok) {
@@ -218,6 +244,7 @@ export default function Dashboard() {
       <div className="flex gap-2 bg-slate-800/50 p-1 rounded-lg w-fit">
         {[
           { id: 'overview', label: 'Overview' },
+          { id: 'rtus', label: 'RTU Grid' },
           { id: 'process', label: 'Process Diagram' },
           { id: 'sensors', label: 'Sensor Grid' },
         ].map((view) => (
@@ -345,6 +372,53 @@ export default function Dashboard() {
             </div>
           </div>
         </>
+      )}
+
+      {activeView === 'rtus' && (
+        <div className="space-y-6">
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-sky-500 animate-pulse" />
+              RTU Network
+            </h2>
+            <a
+              href="/rtus"
+              className="text-sm text-sky-400 hover:text-sky-300 transition-colors"
+            >
+              Manage RTUs
+            </a>
+          </div>
+
+          {rtus.length > 0 ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {rtus.map((rtu) => (
+                <RTUCard
+                  key={rtu.station_name}
+                  rtu={rtu}
+                  sensors={rtu.inventorySensors}
+                  controls={rtu.inventoryControls}
+                />
+              ))}
+            </div>
+          ) : (
+            <div className="scada-panel p-12 text-center">
+              <svg className="w-16 h-16 mx-auto mb-4 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z" />
+              </svg>
+              <h3 className="text-lg font-medium text-white mb-2">No RTUs Configured</h3>
+              <p className="text-slate-400 mb-4">Add RTU devices to start monitoring your water treatment system</p>
+              <a
+                href="/rtus"
+                className="inline-flex items-center gap-2 px-4 py-2 bg-sky-600 hover:bg-sky-500 rounded-lg text-white transition-colors"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                </svg>
+                Add RTU
+              </a>
+            </div>
+          )}
+        </div>
       )}
 
       {activeView === 'process' && (

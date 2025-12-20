@@ -83,6 +83,62 @@ export interface SystemHealth {
   active_alarms: number;
 }
 
+// RTU Inventory types (discovered from RTU)
+export interface RTUSensor {
+  id: number;
+  rtu_station: string;
+  sensor_id: string;
+  sensor_type: string;
+  name: string;
+  unit: string;
+  register_address: number;
+  data_type: string;
+  scale_min: number;
+  scale_max: number;
+  last_value: number | null;
+  last_quality: number;
+  last_update: string | null;
+  created_at: string;
+}
+
+export interface RTUControl {
+  id: number;
+  rtu_station: string;
+  control_id: string;
+  control_type: string;
+  name: string;
+  command_type: string;
+  register_address: number;
+  feedback_register: number | null;
+  range_min: number | null;
+  range_max: number | null;
+  current_state: string;
+  current_value: number | null;
+  last_command: string | null;
+  last_update: string | null;
+  created_at: string;
+}
+
+export interface RTUInventory {
+  rtu_station: string;
+  sensors: RTUSensor[];
+  controls: RTUControl[];
+  last_refresh: string | null;
+}
+
+export interface DiscoveredDevice {
+  id: number;
+  mac_address: string;
+  ip_address: string | null;
+  device_name: string | null;
+  vendor_name: string | null;
+  device_type: string | null;
+  vendor_id: number | null;
+  device_id: number | null;
+  discovered_at: string;
+  added_to_registry: boolean;
+}
+
 // Generic fetch wrapper with error handling
 async function apiFetch<T>(
   endpoint: string,
@@ -262,4 +318,48 @@ export async function downloadBackup(backupId: string): Promise<Blob> {
 
 export async function restoreBackup(backupId: string): Promise<void> {
   await apiFetch(`/api/v1/backups/${backupId}/restore`, { method: 'POST' });
+}
+
+// RTU Inventory API
+export async function getRTUInventory(stationName: string): Promise<RTUInventory> {
+  return apiFetch<RTUInventory>(`/api/v1/rtus/${encodeURIComponent(stationName)}/inventory`);
+}
+
+export async function refreshRTUInventory(stationName: string): Promise<RTUInventory> {
+  return apiFetch<RTUInventory>(`/api/v1/rtus/${encodeURIComponent(stationName)}/inventory/refresh`, {
+    method: 'POST',
+  });
+}
+
+export async function sendControlCommand(
+  stationName: string,
+  controlId: string,
+  command: string,
+  value?: number
+): Promise<void> {
+  await apiFetch(`/api/v1/rtus/${encodeURIComponent(stationName)}/control/${encodeURIComponent(controlId)}`, {
+    method: 'POST',
+    body: JSON.stringify({ command, value }),
+  });
+}
+
+// DCP Discovery API
+export async function discoverRTUs(timeoutMs = 5000): Promise<DiscoveredDevice[]> {
+  const data = await apiFetch<{ devices: DiscoveredDevice[]; scan_duration_ms: number }>(
+    '/api/v1/discover/rtu',
+    {
+      method: 'POST',
+      body: JSON.stringify({ timeout_ms: timeoutMs }),
+    }
+  );
+  return data.devices || [];
+}
+
+export async function getCachedDiscovery(): Promise<DiscoveredDevice[]> {
+  const data = await apiFetch<{ devices: DiscoveredDevice[] }>('/api/v1/discover/cached');
+  return data.devices || [];
+}
+
+export async function clearDiscoveryCache(): Promise<void> {
+  await apiFetch('/api/v1/discover/cache', { method: 'DELETE' });
 }

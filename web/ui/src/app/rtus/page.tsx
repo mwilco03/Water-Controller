@@ -2,6 +2,8 @@
 
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useWebSocket } from '@/hooks/useWebSocket';
+import { DiscoveryPanel } from '@/components/rtu';
+import type { DiscoveredDevice } from '@/lib/api';
 
 interface RTUDevice {
   station_name: string;
@@ -29,6 +31,7 @@ export default function RTUsPage() {
   const [rtuHealth, setRtuHealth] = useState<{ [key: string]: RTUHealth }>({});
   const [showAddModal, setShowAddModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState<string | null>(null);
+  const [showDiscovery, setShowDiscovery] = useState(false);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -238,16 +241,41 @@ export default function RTUsPage() {
     return colors[state] || 'bg-gray-700 text-gray-300';
   };
 
+  // Handle device selection from discovery panel
+  const handleDiscoveredDeviceSelect = (device: DiscoveredDevice) => {
+    // Pre-fill the add RTU form with discovered device info
+    setNewRtu({
+      station_name: device.device_name || `rtu-${device.mac_address.replace(/:/g, '').slice(-6)}`,
+      ip_address: device.ip_address || '',
+      vendor_id: device.vendor_id || 0x0493,
+      device_id: device.device_id || 0x0001,
+      slot_count: 16,
+    });
+    setShowAddModal(true);
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
         <h1 className="text-2xl font-bold text-white">RTU Management</h1>
-        <button
-          onClick={() => setShowAddModal(true)}
-          className="px-4 py-2 bg-green-600 hover:bg-green-700 rounded text-white"
-        >
-          + Add RTU
-        </button>
+        <div className="flex gap-3">
+          <button
+            onClick={() => setShowDiscovery(!showDiscovery)}
+            className={`px-4 py-2 rounded text-white transition-colors ${
+              showDiscovery
+                ? 'bg-blue-600 hover:bg-blue-700'
+                : 'bg-gray-600 hover:bg-gray-500'
+            }`}
+          >
+            {showDiscovery ? 'Hide Discovery' : 'Scan Network'}
+          </button>
+          <button
+            onClick={() => setShowAddModal(true)}
+            className="px-4 py-2 bg-green-600 hover:bg-green-700 rounded text-white"
+          >
+            + Add RTU
+          </button>
+        </div>
       </div>
 
       {/* Message Banner */}
@@ -258,6 +286,13 @@ export default function RTUsPage() {
           }`}
         >
           {message.text}
+        </div>
+      )}
+
+      {/* Discovery Panel */}
+      {showDiscovery && (
+        <div className="scada-panel p-4">
+          <DiscoveryPanel onDeviceSelect={handleDiscoveredDeviceSelect} />
         </div>
       )}
 

@@ -1662,6 +1662,285 @@ async def provision_discovered_sensors(
         "alarm_rules_created": create_alarm_rules
     }
 
+
+# ============== RTU Inventory Endpoints ==============
+
+@app.get("/api/v1/rtus/{station_name}/inventory")
+async def get_rtu_inventory(station_name: str):
+    """
+    Get complete sensor/control inventory for an RTU.
+
+    Returns all sensors and controls that have been discovered and
+    registered for this RTU, along with their current values/states.
+    """
+    inventory = db.get_rtu_inventory(station_name)
+    if not inventory:
+        raise HTTPException(status_code=404, detail="RTU not found")
+
+    # Enrich with current values from runtime if controller is running
+    client = get_shm_client()
+    if client:
+        rtu_data = client.get_rtu(station_name)
+        if rtu_data:
+            # Update sensor values from runtime
+            for sensor in inventory["sensors"]:
+                for live_sensor in rtu_data.get("sensors", []):
+                    if str(live_sensor.get("slot")) == str(sensor.get("register_address")):
+                        sensor["last_value"] = live_sensor.get("value")
+                        sensor["last_quality"] = live_sensor.get("quality", 0)
+                        sensor["last_update"] = datetime.now().isoformat()
+
+            # Update control states from runtime
+            for control in inventory["controls"]:
+                for live_actuator in rtu_data.get("actuators", []):
+                    if str(live_actuator.get("slot")) == str(control.get("register_address")):
+                        control["last_state"] = live_actuator.get("command")
+                        control["last_update"] = datetime.now().isoformat()
+
+    return inventory
+
+
+@app.post("/api/v1/rtus/{station_name}/inventory/refresh")
+async def refresh_rtu_inventory(station_name: str):
+    """
+    Query RTU and refresh its sensor/control inventory.
+
+    Asks the RTU to report what sensors and controls it has,
+    then updates the database with the results.
+    """
+    rtu = _get_rtu_from_db(station_name)
+    if not rtu:
+        raise HTTPException(status_code=404, detail="RTU not found")
+
+    client = get_shm_client()
+    if not client:
+        raise HTTPException(status_code=503, detail="Controller not running - cannot query RTU")
+
+    # Query the RTU for its capabilities
+    # The RTU responds with its sensor/control configuration
+    rtu_data = client.get_rtu(station_name)
+    if not rtu_data:
+        raise HTTPException(status_code=503, detail="Cannot communicate with RTU")
+
+    # Clear existing inventory
+    db.clear_rtu_sensors(station_name)
+    db.clear_rtu_controls(station_name)
+
+    sensors_added = 0
+    controls_added = 0
+
+    # Register sensors from RTU data
+    for sensor_data in rtu_data.get("sensors", []):
+        slot = sensor_data.get("slot", 0)
+        sensor_type = _infer_sensor_type(sensor_data.get("name", ""), sensor_data.get("unit", ""))
+        db.upsert_rtu_sensor({
+            "rtu_station": station_name,
+            "sensor_id": f"slot_{slot}",
+            "sensor_type": sensor_type,
+            "name": sensor_data.get("name", f"Sensor {slot}"),
+            "unit": sensor_data.get("unit", ""),
+            "register_address": slot,
+            "data_type": "FLOAT32",
+            "scale_min": 0,
+            "scale_max": 100
+        })
+        sensors_added += 1
+
+    # Register actuators as controls
+    for actuator_data in rtu_data.get("actuators", []):
+        slot = actuator_data.get("slot", 0)
+        control_type, command_type = _infer_control_type(actuator_data.get("name", ""))
+        db.upsert_rtu_control({
+            "rtu_station": station_name,
+            "control_id": f"slot_{slot}",
+            "control_type": control_type,
+            "name": actuator_data.get("name", f"Control {slot}"),
+            "command_type": command_type,
+            "register_address": slot
+        })
+        controls_added += 1
+
+    logger.info(f"Refreshed inventory for {station_name}: {sensors_added} sensors, {controls_added} controls")
+
+    return {
+        "status": "ok",
+        "rtu_station": station_name,
+        "sensors_added": sensors_added,
+        "controls_added": controls_added
+    }
+
+
+def _infer_sensor_type(name: str, unit: str) -> str:
+    """Infer sensor type from name and unit"""
+    name_lower = name.lower()
+    unit_lower = unit.lower()
+
+    if "temp" in name_lower or "°" in unit or "degf" in unit_lower or "degc" in unit_lower:
+        return "temperature"
+    elif "level" in name_lower or "gal" in unit_lower or "liter" in unit_lower:
+        return "level"
+    elif "press" in name_lower or "psi" in unit_lower or "bar" in unit_lower:
+        return "pressure"
+    elif "flow" in name_lower or "gpm" in unit_lower or "lpm" in unit_lower:
+        return "flow"
+    elif "ph" in name_lower:
+        return "ph"
+    elif "turb" in name_lower or "ntu" in unit_lower:
+        return "turbidity"
+    elif "chlor" in name_lower or "ppm" in unit_lower:
+        return "chlorine"
+    elif "tds" in name_lower:
+        return "tds"
+    else:
+        return "analog"
+
+
+def _infer_control_type(name: str) -> tuple:
+    """Infer control type and command type from name. Returns (control_type, command_type)"""
+    name_lower = name.lower()
+
+    if "pump" in name_lower:
+        return ("pump", "on_off")
+    elif "valve" in name_lower:
+        if "modulating" in name_lower or "control" in name_lower:
+            return ("valve", "modulating")
+        return ("valve", "on_off")
+    elif "motor" in name_lower or "mixer" in name_lower or "agitator" in name_lower:
+        return ("motor", "on_off")
+    elif "heater" in name_lower:
+        return ("heater", "on_off")
+    elif "relay" in name_lower:
+        return ("relay", "on_off")
+    elif "vfd" in name_lower or "drive" in name_lower:
+        return ("vfd", "modulating")
+    else:
+        return ("actuator", "on_off")
+
+
+@app.post("/api/v1/rtus/{station_name}/control/{control_id}")
+async def send_control_command(
+    station_name: str,
+    control_id: str,
+    command: dict,
+    user: dict = Depends(get_current_user)
+):
+    """
+    Send a command to an RTU control.
+
+    Command format depends on control type:
+    - on_off: {"action": "ON" | "OFF"}
+    - modulating: {"value": 0-100}
+    - setpoint: {"setpoint": <float>}
+    """
+    check_role(user, UserRole.OPERATOR)
+
+    rtu = _get_rtu_from_db(station_name)
+    if not rtu:
+        raise HTTPException(status_code=404, detail="RTU not found")
+
+    # Get control configuration
+    controls = db.get_rtu_controls(station_name)
+    control = next((c for c in controls if c["control_id"] == control_id), None)
+    if not control:
+        raise HTTPException(status_code=404, detail="Control not found")
+
+    client = get_shm_client()
+    if not client:
+        raise HTTPException(status_code=503, detail="Controller not running")
+
+    slot = control.get("register_address", 0)
+    command_type = control.get("command_type", "on_off")
+
+    # Send appropriate command based on control type
+    success = False
+    if command_type == "on_off":
+        action = command.get("action", "OFF").upper()
+        if action not in ["ON", "OFF"]:
+            raise HTTPException(status_code=400, detail="Invalid action. Use ON or OFF")
+        success = client.send_actuator_command(station_name, slot, action)
+    elif command_type == "modulating":
+        value = command.get("value", 0)
+        if not isinstance(value, (int, float)) or value < 0 or value > 100:
+            raise HTTPException(status_code=400, detail="Value must be 0-100")
+        success = client.send_actuator_command(station_name, slot, "PWM", int(value))
+    else:
+        raise HTTPException(status_code=400, detail=f"Unsupported command type: {command_type}")
+
+    if success:
+        # Update control state in database
+        state = command.get("action") or str(command.get("value", 0))
+        db.update_control_state(station_name, control_id, state)
+        db.log_audit(user.get("username"), "control_command", "rtu_control",
+                    f"{station_name}/{control_id}", f"Sent command: {command}")
+        logger.info(f"Control command sent: {station_name}/{control_id} = {command}")
+        return {"status": "ok", "control_id": control_id, "command": command}
+    else:
+        raise HTTPException(status_code=500, detail="Failed to send command to RTU")
+
+
+# ============== DCP Discovery Endpoints ==============
+
+@app.post("/api/v1/discover/rtu")
+async def discover_rtus(timeout_seconds: float = 5.0):
+    """
+    Scan the PROFINET network for RTU devices using DCP discovery.
+
+    Returns a list of discovered devices that can be added to the configuration.
+    """
+    client = get_shm_client()
+    if not client:
+        # Return cached results when controller not running
+        cached = db.get_discovered_devices()
+        return {
+            "status": "cached",
+            "message": "Controller not running - returning cached discovery results",
+            "count": len(cached),
+            "devices": cached
+        }
+
+    # Perform DCP discovery via controller
+    timeout_ms = int(timeout_seconds * 1000)
+    devices = client.dcp_discover(timeout_ms)
+
+    # Cache results in database
+    for device in devices:
+        db.upsert_discovered_device(device)
+
+    # Check which devices are already added as RTUs
+    existing_rtus = {r["station_name"]: r for r in db.get_rtu_devices()}
+    for device in devices:
+        device["already_added"] = device.get("device_name") in existing_rtus
+
+    return {
+        "status": "complete",
+        "count": len(devices),
+        "devices": devices
+    }
+
+
+@app.get("/api/v1/discover/cached")
+async def get_cached_discoveries():
+    """Get cached discovery results from previous scans"""
+    devices = db.get_discovered_devices()
+    existing_rtus = {r["station_name"]: r for r in db.get_rtu_devices()}
+
+    for device in devices:
+        device["already_added"] = device.get("device_name") in existing_rtus
+
+    return {
+        "count": len(devices),
+        "devices": devices
+    }
+
+
+@app.delete("/api/v1/discover/cache")
+async def clear_discovery_cache(user: dict = Depends(get_current_user)):
+    """Clear the discovery cache"""
+    check_role(user, UserRole.ADMIN)
+    count = db.clear_discovery_cache()
+    return {"status": "ok", "cleared": count}
+
+
 # ============== Alarm Endpoints ==============
 
 @app.get("/api/v1/alarms", response_model=List[Alarm])

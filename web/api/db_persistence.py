@@ -296,6 +296,67 @@ def init_database():
             )
         ''')
 
+        # RTU Sensors inventory table (discovered from RTU)
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS rtu_sensors (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                rtu_station TEXT NOT NULL,
+                sensor_id TEXT NOT NULL,
+                sensor_type TEXT NOT NULL,
+                name TEXT NOT NULL,
+                unit TEXT,
+                register_address INTEGER,
+                data_type TEXT DEFAULT 'FLOAT32',
+                scale_min REAL DEFAULT 0,
+                scale_max REAL DEFAULT 100,
+                last_value REAL,
+                last_quality INTEGER DEFAULT 0,
+                last_update TIMESTAMP,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(rtu_station, sensor_id),
+                FOREIGN KEY (rtu_station) REFERENCES rtu_devices(station_name) ON DELETE CASCADE
+            )
+        ''')
+
+        # RTU Controls inventory table (discovered from RTU)
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS rtu_controls (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                rtu_station TEXT NOT NULL,
+                control_id TEXT NOT NULL,
+                control_type TEXT NOT NULL,
+                name TEXT NOT NULL,
+                command_type TEXT DEFAULT 'on_off',
+                register_address INTEGER,
+                feedback_register INTEGER,
+                range_min REAL,
+                range_max REAL,
+                unit TEXT,
+                last_state TEXT,
+                last_update TIMESTAMP,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(rtu_station, control_id),
+                FOREIGN KEY (rtu_station) REFERENCES rtu_devices(station_name) ON DELETE CASCADE
+            )
+        ''')
+
+        # DCP Discovery results cache
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS dcp_discovery_cache (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                mac_address TEXT UNIQUE NOT NULL,
+                ip_address TEXT,
+                device_name TEXT,
+                vendor_name TEXT,
+                device_type TEXT,
+                profinet_device_id INTEGER,
+                profinet_vendor_id INTEGER,
+                first_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                added_as_rtu INTEGER DEFAULT 0
+            )
+        ''')
+
         # Initialize default modbus server config
         cursor.execute('''
             INSERT OR IGNORE INTO modbus_server_config (id) VALUES (1)
@@ -371,6 +432,8 @@ def delete_rtu_device(station_name: str) -> bool:
         cursor.execute('DELETE FROM alarm_rules WHERE rtu_station = ?', (station_name,))
         cursor.execute('DELETE FROM historian_tags WHERE rtu_station = ?', (station_name,))
         cursor.execute('DELETE FROM modbus_register_mappings WHERE rtu_station = ?', (station_name,))
+        cursor.execute('DELETE FROM rtu_sensors WHERE rtu_station = ?', (station_name,))
+        cursor.execute('DELETE FROM rtu_controls WHERE rtu_station = ?', (station_name,))
         # Delete the RTU
         cursor.execute('DELETE FROM rtu_devices WHERE station_name = ?', (station_name,))
         conn.commit()
@@ -1464,6 +1527,208 @@ def export_configuration() -> Dict[str, Any]:
         "log_forwarding": get_log_forwarding_config(),
         "ad_config": get_ad_config(),
         "users": users_export
+    }
+
+
+# ============== RTU Sensors Operations ==============
+
+def get_rtu_sensors(rtu_station: str) -> List[Dict[str, Any]]:
+    """Get all sensors for an RTU"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT * FROM rtu_sensors WHERE rtu_station = ? ORDER BY sensor_id
+        ''', (rtu_station,))
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def upsert_rtu_sensor(sensor: Dict[str, Any]) -> int:
+    """Insert or update an RTU sensor"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO rtu_sensors (rtu_station, sensor_id, sensor_type, name, unit,
+                register_address, data_type, scale_min, scale_max)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(rtu_station, sensor_id) DO UPDATE SET
+                sensor_type = excluded.sensor_type,
+                name = excluded.name,
+                unit = excluded.unit,
+                register_address = excluded.register_address,
+                data_type = excluded.data_type,
+                scale_min = excluded.scale_min,
+                scale_max = excluded.scale_max
+        ''', (sensor['rtu_station'], sensor['sensor_id'], sensor['sensor_type'],
+              sensor['name'], sensor.get('unit'), sensor.get('register_address'),
+              sensor.get('data_type', 'FLOAT32'), sensor.get('scale_min', 0),
+              sensor.get('scale_max', 100)))
+        conn.commit()
+        return cursor.lastrowid
+
+
+def update_sensor_value(rtu_station: str, sensor_id: str, value: float, quality: int = 0) -> bool:
+    """Update the last value for a sensor"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            UPDATE rtu_sensors SET last_value = ?, last_quality = ?, last_update = CURRENT_TIMESTAMP
+            WHERE rtu_station = ? AND sensor_id = ?
+        ''', (value, quality, rtu_station, sensor_id))
+        conn.commit()
+        return cursor.rowcount > 0
+
+
+def delete_rtu_sensor(rtu_station: str, sensor_id: str) -> bool:
+    """Delete an RTU sensor"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute('DELETE FROM rtu_sensors WHERE rtu_station = ? AND sensor_id = ?',
+                       (rtu_station, sensor_id))
+        conn.commit()
+        return cursor.rowcount > 0
+
+
+def clear_rtu_sensors(rtu_station: str) -> int:
+    """Clear all sensors for an RTU (before inventory refresh)"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute('DELETE FROM rtu_sensors WHERE rtu_station = ?', (rtu_station,))
+        conn.commit()
+        return cursor.rowcount
+
+
+# ============== RTU Controls Operations ==============
+
+def get_rtu_controls(rtu_station: str) -> List[Dict[str, Any]]:
+    """Get all controls for an RTU"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT * FROM rtu_controls WHERE rtu_station = ? ORDER BY control_id
+        ''', (rtu_station,))
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def upsert_rtu_control(control: Dict[str, Any]) -> int:
+    """Insert or update an RTU control"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO rtu_controls (rtu_station, control_id, control_type, name, command_type,
+                register_address, feedback_register, range_min, range_max, unit)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(rtu_station, control_id) DO UPDATE SET
+                control_type = excluded.control_type,
+                name = excluded.name,
+                command_type = excluded.command_type,
+                register_address = excluded.register_address,
+                feedback_register = excluded.feedback_register,
+                range_min = excluded.range_min,
+                range_max = excluded.range_max,
+                unit = excluded.unit
+        ''', (control['rtu_station'], control['control_id'], control['control_type'],
+              control['name'], control.get('command_type', 'on_off'),
+              control.get('register_address'), control.get('feedback_register'),
+              control.get('range_min'), control.get('range_max'), control.get('unit')))
+        conn.commit()
+        return cursor.lastrowid
+
+
+def update_control_state(rtu_station: str, control_id: str, state: str) -> bool:
+    """Update the last state for a control"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            UPDATE rtu_controls SET last_state = ?, last_update = CURRENT_TIMESTAMP
+            WHERE rtu_station = ? AND control_id = ?
+        ''', (state, rtu_station, control_id))
+        conn.commit()
+        return cursor.rowcount > 0
+
+
+def delete_rtu_control(rtu_station: str, control_id: str) -> bool:
+    """Delete an RTU control"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute('DELETE FROM rtu_controls WHERE rtu_station = ? AND control_id = ?',
+                       (rtu_station, control_id))
+        conn.commit()
+        return cursor.rowcount > 0
+
+
+def clear_rtu_controls(rtu_station: str) -> int:
+    """Clear all controls for an RTU (before inventory refresh)"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute('DELETE FROM rtu_controls WHERE rtu_station = ?', (rtu_station,))
+        conn.commit()
+        return cursor.rowcount
+
+
+# ============== DCP Discovery Cache Operations ==============
+
+def get_discovered_devices() -> List[Dict[str, Any]]:
+    """Get all devices in the discovery cache"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM dcp_discovery_cache ORDER BY last_seen DESC')
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def upsert_discovered_device(device: Dict[str, Any]) -> int:
+    """Insert or update a discovered device"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO dcp_discovery_cache (mac_address, ip_address, device_name, vendor_name,
+                device_type, profinet_device_id, profinet_vendor_id, last_seen)
+            VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(mac_address) DO UPDATE SET
+                ip_address = excluded.ip_address,
+                device_name = excluded.device_name,
+                vendor_name = excluded.vendor_name,
+                device_type = excluded.device_type,
+                profinet_device_id = excluded.profinet_device_id,
+                profinet_vendor_id = excluded.profinet_vendor_id,
+                last_seen = CURRENT_TIMESTAMP
+        ''', (device['mac_address'], device.get('ip_address'), device.get('device_name'),
+              device.get('vendor_name'), device.get('device_type'),
+              device.get('profinet_device_id'), device.get('profinet_vendor_id')))
+        conn.commit()
+        return cursor.lastrowid
+
+
+def mark_device_as_added(mac_address: str) -> bool:
+    """Mark a discovered device as added to RTU configuration"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            UPDATE dcp_discovery_cache SET added_as_rtu = 1 WHERE mac_address = ?
+        ''', (mac_address,))
+        conn.commit()
+        return cursor.rowcount > 0
+
+
+def clear_discovery_cache() -> int:
+    """Clear the discovery cache"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute('DELETE FROM dcp_discovery_cache')
+        conn.commit()
+        return cursor.rowcount
+
+
+def get_rtu_inventory(rtu_station: str) -> Dict[str, Any]:
+    """Get complete inventory for an RTU (sensors + controls)"""
+    device = get_rtu_device(rtu_station)
+    if not device:
+        return None
+
+    return {
+        "rtu_station": rtu_station,
+        "device": device,
+        "sensors": get_rtu_sensors(rtu_station),
+        "controls": get_rtu_controls(rtu_station)
     }
 
 
