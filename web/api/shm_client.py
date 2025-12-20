@@ -602,16 +602,31 @@ class WtcShmClient:
 
     # ============== Discovery IPC Commands ==============
 
-    def dcp_discover(self, timeout_ms: int = 3000) -> List[Dict[str, Any]]:
+    def dcp_discover(self, timeout_ms: int = 5000) -> List[Dict[str, Any]]:
         """
-        Send DCP Identify All request to discover PROFINET devices.
-        Returns list of discovered devices with station_name, ip_address, mac_address.
+        Discover PROFINET devices on the network using DCP Identify All.
 
-        Note: This sends the command to the C controller which performs the actual
-        DCP multicast. Results are returned via shared memory discovery buffer.
+        When the C controller is running, this sends a command via shared memory
+        and the controller performs the actual DCP multicast discovery.
+
+        Returns list of discovered devices:
+        [
+            {
+                "mac_address": "00:1A:2B:3C:4D:5E",
+                "ip_address": "192.168.1.50",
+                "device_name": "water-treat-rtu-01",
+                "vendor_name": "Water-Treat",
+                "device_type": "RTU",
+                "profinet_vendor_id": 0x1171,
+                "profinet_device_id": 0x0001
+            },
+            ...
+        ]
         """
+        import time
+
         if not self.mm:
-            logger.warning("Cannot perform DCP discovery: shared memory not connected")
+            logger.warning("Shared memory not connected - cannot perform DCP discovery via controller")
             return []
 
         logger.info(f"Initiating DCP discovery (timeout: {timeout_ms}ms)")
@@ -624,68 +639,82 @@ class WtcShmClient:
             cmd_offset = ctypes.sizeof(WtcSharedMemory) - ctypes.sizeof(ShmCommand) - 8
             self.mm.seek(cmd_offset)
             self.mm.write(bytes(cmd_data))
+            logger.info("DCP discovery command sent to controller")
 
-            # In production, we would wait for response in discovery buffer
-            # For now, return empty list - controller will populate discovery results
-            logger.info("DCP discovery command sent, awaiting controller response")
-            return []
+            # Poll for discovery results in shared memory
+            # The controller writes discovered devices to a discovery buffer
+            # For now, we wait the full timeout and then read results
+            time.sleep(timeout_ms / 1000.0)
+
+            # Read discovery results from shared memory
+            # Discovery buffer is located after the main status/RTU data
+            devices = self._read_discovery_results()
+            logger.info(f"DCP discovery complete, found {len(devices)} devices")
+            return devices
+
         except Exception as e:
-            logger.error(f"Failed to send DCP discover command: {e}")
+            logger.error(f"DCP discovery failed: {e}")
             return []
 
-    def discover_i2c(self, station_name: str, bus: int = 1) -> List[Dict[str, Any]]:
+    def _read_discovery_results(self) -> List[Dict[str, Any]]:
         """
-        Request I2C bus scan from RTU.
-        RTU will probe standard addresses and report found devices.
+        Read discovered devices from the shared memory discovery buffer.
+        The C controller populates this buffer after DCP discovery.
         """
         if not self.mm:
-            logger.warning("Cannot discover I2C: shared memory not connected")
             return []
 
-        logger.info(f"Requesting I2C discovery on {station_name} bus {bus}")
-        self._command_seq += 1
-
-        cmd_data = bytearray(ctypes.sizeof(ShmCommand))
-        struct.pack_into('II', cmd_data, 0, self._command_seq, SHM_CMD_I2C_DISCOVER)
-        station_bytes = station_name.encode('utf-8')[:63]
-        struct.pack_into(f'{len(station_bytes)}si', cmd_data, 8, station_bytes, bus)
-
+        devices = []
         try:
-            cmd_offset = ctypes.sizeof(WtcSharedMemory) - ctypes.sizeof(ShmCommand) - 8
-            self.mm.seek(cmd_offset)
-            self.mm.write(bytes(cmd_data))
-            logger.info("I2C discovery command sent")
-            return []
+            # Discovery results are stored after RTU array in shared memory
+            # Format: count (uint32), then array of discovery_entry structs
+            # Each entry: mac[6], ip[4], name[64], vendor[32], device_type[16], vendor_id, device_id
+            discovery_offset = 0x8000  # Discovery buffer offset (32KB into SHM)
+
+            self.mm.seek(discovery_offset)
+            count_data = self.mm.read(4)
+            if not count_data or len(count_data) < 4:
+                return []
+
+            count = struct.unpack('I', count_data)[0]
+            if count == 0 or count > 256:  # Sanity check
+                return []
+
+            # Read each discovered device
+            for i in range(count):
+                entry_data = self.mm.read(128)  # Each entry is 128 bytes
+                if len(entry_data) < 128:
+                    break
+
+                mac_bytes = entry_data[0:6]
+                ip_bytes = entry_data[6:10]
+                name = entry_data[10:74].rstrip(b'\x00').decode('utf-8', errors='ignore')
+                vendor = entry_data[74:106].rstrip(b'\x00').decode('utf-8', errors='ignore')
+                dev_type = entry_data[106:122].rstrip(b'\x00').decode('utf-8', errors='ignore')
+                vendor_id, device_id = struct.unpack('HH', entry_data[122:126])
+
+                mac_str = ':'.join(f'{b:02X}' for b in mac_bytes)
+                ip_str = '.'.join(str(b) for b in ip_bytes)
+
+                if mac_str != '00:00:00:00:00:00':
+                    devices.append({
+                        "mac_address": mac_str,
+                        "ip_address": ip_str if ip_str != '0.0.0.0' else None,
+                        "device_name": name or f"profinet-{mac_str[-8:].replace(':', '')}",
+                        "vendor_name": vendor or "Unknown",
+                        "device_type": dev_type or "PROFINET Device",
+                        "profinet_vendor_id": vendor_id,
+                        "profinet_device_id": device_id
+                    })
+
         except Exception as e:
-            logger.error(f"Failed to send I2C discover command: {e}")
-            return []
+            logger.error(f"Failed to read discovery results: {e}")
 
-    def discover_onewire(self, station_name: str) -> List[Dict[str, Any]]:
-        """
-        Request 1-Wire bus scan from RTU.
-        RTU will enumerate all 1-Wire devices and report their ROM IDs.
-        """
-        if not self.mm:
-            logger.warning("Cannot discover 1-Wire: shared memory not connected")
-            return []
+        return devices
 
-        logger.info(f"Requesting 1-Wire discovery on {station_name}")
-        self._command_seq += 1
-
-        cmd_data = bytearray(ctypes.sizeof(ShmCommand))
-        struct.pack_into('II', cmd_data, 0, self._command_seq, SHM_CMD_ONEWIRE_DISCOVER)
-        station_bytes = station_name.encode('utf-8')[:63]
-        struct.pack_into(f'{len(station_bytes)}s', cmd_data, 8, station_bytes)
-
-        try:
-            cmd_offset = ctypes.sizeof(WtcSharedMemory) - ctypes.sizeof(ShmCommand) - 8
-            self.mm.seek(cmd_offset)
-            self.mm.write(bytes(cmd_data))
-            logger.info("1-Wire discovery command sent")
-            return []
-        except Exception as e:
-            logger.error(f"Failed to send 1-Wire discover command: {e}")
-            return []
+    # NOTE: I2C and 1-Wire discovery belong in the Water-Treat RTU codebase.
+    # The controller discovers RTUs; RTUs discover their own hardware.
+    # See: https://github.com/mwilco03/Water-Treat
 
     def configure_slot(self, station_name: str, slot: int, slot_type: str,
                        name: str = "", unit: str = "",

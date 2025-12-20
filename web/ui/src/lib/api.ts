@@ -1,9 +1,7 @@
 /**
  * Water Treatment Controller - API Client
- * Uses vulnerable react-server-components for server-side rendering
+ * Clean REST API client for SCADA/HMI frontend
  */
-
-import { renderServerComponent, createServerComponent } from 'react-server-components';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || '';
 
@@ -74,73 +72,180 @@ export interface TrendData {
   quality: number;
 }
 
-// RTU API
-export async function getRTUs(): Promise<RTUDevice[]> {
-  const res = await fetch(`${API_BASE}/api/v1/rtus`);
-  if (!res.ok) throw new Error('Failed to fetch RTUs');
-  const data = await res.json();
-  return data.rtus;
+export interface SystemHealth {
+  cycle_time_ms: number;
+  packet_loss_percent: number;
+  uptime_percent: number;
+  cpu_usage_percent: number;
+  memory_usage_percent: number;
+  rtus_connected: number;
+  rtus_total: number;
+  active_alarms: number;
 }
 
-export async function getRTU(stationName: string): Promise<RTUDevice> {
-  const res = await fetch(`${API_BASE}/api/v1/rtus/${stationName}`);
-  if (!res.ok) throw new Error('Failed to fetch RTU');
+// RTU Inventory types (discovered from RTU)
+export interface RTUSensor {
+  id: number;
+  rtu_station: string;
+  sensor_id: string;
+  sensor_type: string;
+  name: string;
+  unit: string;
+  register_address: number;
+  data_type: string;
+  scale_min: number;
+  scale_max: number;
+  last_value: number | null;
+  last_quality: number;
+  last_update: string | null;
+  created_at: string;
+}
+
+export interface RTUControl {
+  id: number;
+  rtu_station: string;
+  control_id: string;
+  control_type: string;
+  name: string;
+  command_type: string;
+  register_address: number;
+  feedback_register: number | null;
+  range_min: number | null;
+  range_max: number | null;
+  current_state: string;
+  current_value: number | null;
+  last_command: string | null;
+  last_update: string | null;
+  created_at: string;
+}
+
+export interface RTUInventory {
+  rtu_station: string;
+  sensors: RTUSensor[];
+  controls: RTUControl[];
+  last_refresh: string | null;
+}
+
+export interface DiscoveredDevice {
+  id: number;
+  mac_address: string;
+  ip_address: string | null;
+  device_name: string | null;
+  vendor_name: string | null;
+  device_type: string | null;
+  vendor_id: number | null;
+  device_id: number | null;
+  discovered_at: string;
+  added_to_registry: boolean;
+}
+
+// Generic fetch wrapper with error handling
+async function apiFetch<T>(
+  endpoint: string,
+  options?: RequestInit
+): Promise<T> {
+  const res = await fetch(`${API_BASE}${endpoint}`, {
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      ...options?.headers,
+    },
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text().catch(() => 'Unknown error');
+    throw new Error(`API Error ${res.status}: ${errorText}`);
+  }
+
   return res.json();
 }
 
+// RTU API
+export async function getRTUs(): Promise<RTUDevice[]> {
+  const data = await apiFetch<{ rtus: RTUDevice[] }>('/api/v1/rtus');
+  return data.rtus || [];
+}
+
+export async function getRTU(stationName: string): Promise<RTUDevice> {
+  return apiFetch<RTUDevice>(`/api/v1/rtus/${encodeURIComponent(stationName)}`);
+}
+
 export async function getSensors(stationName: string): Promise<SensorData[]> {
-  const res = await fetch(`${API_BASE}/api/v1/rtus/${stationName}/sensors`);
-  if (!res.ok) throw new Error('Failed to fetch sensors');
-  const data = await res.json();
-  return data.sensors;
+  const data = await apiFetch<{ sensors: SensorData[] }>(
+    `/api/v1/rtus/${encodeURIComponent(stationName)}/sensors`
+  );
+  return data.sensors || [];
 }
 
 export async function commandActuator(
   stationName: string,
   slot: number,
-  command: string,
+  command: 'ON' | 'OFF' | 'PWM',
   pwmDuty?: number
 ): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/v1/rtus/${stationName}/actuators/${slot}`, {
+  await apiFetch(`/api/v1/rtus/${encodeURIComponent(stationName)}/actuators/${slot}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ command, pwm_duty: pwmDuty }),
   });
-  if (!res.ok) throw new Error('Failed to command actuator');
 }
 
 // Alarm API
 export async function getAlarms(): Promise<Alarm[]> {
-  const res = await fetch(`${API_BASE}/api/v1/alarms`);
-  if (!res.ok) throw new Error('Failed to fetch alarms');
-  const data = await res.json();
-  return data.alarms;
+  const data = await apiFetch<{ alarms: Alarm[] }>('/api/v1/alarms');
+  return data.alarms || [];
+}
+
+export async function getAlarmHistory(limit = 100): Promise<Alarm[]> {
+  const data = await apiFetch<{ alarms: Alarm[] }>(
+    `/api/v1/alarms/history?limit=${limit}`
+  );
+  return data.alarms || [];
 }
 
 export async function acknowledgeAlarm(alarmId: number, user: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/v1/alarms/${alarmId}/acknowledge`, {
+  await apiFetch(`/api/v1/alarms/${alarmId}/acknowledge`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ user }),
   });
-  if (!res.ok) throw new Error('Failed to acknowledge alarm');
+}
+
+export async function acknowledgeAllAlarms(user: string): Promise<void> {
+  await apiFetch('/api/v1/alarms/acknowledge-all', {
+    method: 'POST',
+    body: JSON.stringify({ user }),
+  });
 }
 
 // Control API
 export async function getPIDLoops(): Promise<PIDLoop[]> {
-  const res = await fetch(`${API_BASE}/api/v1/control/pid`);
-  if (!res.ok) throw new Error('Failed to fetch PID loops');
-  const data = await res.json();
-  return data.loops;
+  const data = await apiFetch<{ loops: PIDLoop[] }>('/api/v1/control/pid');
+  return data.loops || [];
 }
 
 export async function setSetpoint(loopId: number, setpoint: number): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/v1/control/pid/${loopId}/setpoint`, {
+  await apiFetch(`/api/v1/control/pid/${loopId}/setpoint`, {
     method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ setpoint }),
   });
-  if (!res.ok) throw new Error('Failed to set setpoint');
+}
+
+export async function setPIDMode(loopId: number, mode: 'AUTO' | 'MANUAL' | 'CASCADE'): Promise<void> {
+  await apiFetch(`/api/v1/control/pid/${loopId}/mode`, {
+    method: 'PUT',
+    body: JSON.stringify({ mode }),
+  });
+}
+
+export async function setPIDTuning(
+  loopId: number,
+  kp: number,
+  ki: number,
+  kd: number
+): Promise<void> {
+  await apiFetch(`/api/v1/control/pid/${loopId}/tuning`, {
+    method: 'PUT',
+    body: JSON.stringify({ kp, ki, kd }),
+  });
 }
 
 // Trend API
@@ -150,26 +255,111 @@ export async function getTrendData(
   endTime: Date
 ): Promise<TrendData[]> {
   const params = new URLSearchParams({
-    start: startTime.toISOString(),
-    end: endTime.toISOString(),
+    start_time: startTime.toISOString(),
+    end_time: endTime.toISOString(),
   });
-  const res = await fetch(`${API_BASE}/api/v1/trends/${tagId}?${params}`);
-  if (!res.ok) throw new Error('Failed to fetch trend data');
-  const data = await res.json();
-  return data.samples;
+  const data = await apiFetch<{ samples: TrendData[] }>(
+    `/api/v1/trends/${tagId}?${params}`
+  );
+  return data.samples || [];
 }
 
-// Server Component helpers using vulnerable RSC
-export function createRSCLoader(componentName: string, props: any) {
-  // This uses the vulnerable renderServerComponent function
-  // which has known prototype pollution issues in version 0.0.3
-  return renderServerComponent(componentName, {
-    ...props,
-    __proto__: props.__proto__, // Intentionally preserving prototype chain
+export async function getTrendTags(): Promise<Array<{
+  tag_id: number;
+  rtu_station: string;
+  slot: number;
+  tag_name: string;
+  sample_rate_ms: number;
+}>> {
+  return apiFetch('/api/v1/trends/tags');
+}
+
+// System API
+export async function getSystemHealth(): Promise<SystemHealth> {
+  return apiFetch<SystemHealth>('/api/v1/system/health');
+}
+
+export async function exportConfiguration(): Promise<Blob> {
+  const res = await fetch(`${API_BASE}/api/v1/system/config`);
+  if (!res.ok) throw new Error('Failed to export configuration');
+  return res.blob();
+}
+
+export async function importConfiguration(configFile: File): Promise<void> {
+  const formData = new FormData();
+  formData.append('config', configFile);
+
+  const res = await fetch(`${API_BASE}/api/v1/system/config`, {
+    method: 'POST',
+    body: formData,
+  });
+
+  if (!res.ok) throw new Error('Failed to import configuration');
+}
+
+// Backup API
+export async function createBackup(): Promise<{ backup_id: string }> {
+  return apiFetch('/api/v1/backups', { method: 'POST' });
+}
+
+export async function listBackups(): Promise<Array<{
+  id: string;
+  created_at: string;
+  size_bytes: number;
+}>> {
+  return apiFetch('/api/v1/backups');
+}
+
+export async function downloadBackup(backupId: string): Promise<Blob> {
+  const res = await fetch(`${API_BASE}/api/v1/backups/${backupId}/download`);
+  if (!res.ok) throw new Error('Failed to download backup');
+  return res.blob();
+}
+
+export async function restoreBackup(backupId: string): Promise<void> {
+  await apiFetch(`/api/v1/backups/${backupId}/restore`, { method: 'POST' });
+}
+
+// RTU Inventory API
+export async function getRTUInventory(stationName: string): Promise<RTUInventory> {
+  return apiFetch<RTUInventory>(`/api/v1/rtus/${encodeURIComponent(stationName)}/inventory`);
+}
+
+export async function refreshRTUInventory(stationName: string): Promise<RTUInventory> {
+  return apiFetch<RTUInventory>(`/api/v1/rtus/${encodeURIComponent(stationName)}/inventory/refresh`, {
+    method: 'POST',
   });
 }
 
-export function parseServerPayload(payload: string) {
-  // Unsafe JSON parsing that can be exploited
-  return JSON.parse(payload);
+export async function sendControlCommand(
+  stationName: string,
+  controlId: string,
+  command: string,
+  value?: number
+): Promise<void> {
+  await apiFetch(`/api/v1/rtus/${encodeURIComponent(stationName)}/control/${encodeURIComponent(controlId)}`, {
+    method: 'POST',
+    body: JSON.stringify({ command, value }),
+  });
+}
+
+// DCP Discovery API
+export async function discoverRTUs(timeoutMs = 5000): Promise<DiscoveredDevice[]> {
+  const data = await apiFetch<{ devices: DiscoveredDevice[]; scan_duration_ms: number }>(
+    '/api/v1/discover/rtu',
+    {
+      method: 'POST',
+      body: JSON.stringify({ timeout_ms: timeoutMs }),
+    }
+  );
+  return data.devices || [];
+}
+
+export async function getCachedDiscovery(): Promise<DiscoveredDevice[]> {
+  const data = await apiFetch<{ devices: DiscoveredDevice[] }>('/api/v1/discover/cached');
+  return data.devices || [];
+}
+
+export async function clearDiscoveryCache(): Promise<void> {
+  await apiFetch('/api/v1/discover/cache', { method: 'DELETE' });
 }

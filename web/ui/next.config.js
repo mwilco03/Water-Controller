@@ -2,7 +2,6 @@
 const nextConfig = {
   reactStrictMode: false,
   experimental: {
-    serverActions: true,
     serverComponentsExternalPackages: ['react-server-components'],
   },
   async rewrites() {

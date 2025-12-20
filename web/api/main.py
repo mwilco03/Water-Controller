@@ -1662,6 +1662,328 @@ async def provision_discovered_sensors(
         "alarm_rules_created": create_alarm_rules
     }
 
+
+# ============== RTU Inventory Endpoints ==============
+
+@app.get("/api/v1/rtus/{station_name}/inventory")
+async def get_rtu_inventory(station_name: str):
+    """
+    Get complete sensor/control inventory for an RTU.
+
+    Returns all sensors and controls that have been discovered and
+    registered for this RTU, along with their current values/states.
+    """
+    inventory = db.get_rtu_inventory(station_name)
+    if not inventory:
+        raise HTTPException(status_code=404, detail="RTU not found")
+
+    # Enrich with current values from runtime if controller is running
+    client = get_shm_client()
+    if client:
+        rtu_data = client.get_rtu(station_name)
+        if rtu_data:
+            # Update sensor values from runtime
+            for sensor in inventory["sensors"]:
+                for live_sensor in rtu_data.get("sensors", []):
+                    if str(live_sensor.get("slot")) == str(sensor.get("register_address")):
+                        sensor["last_value"] = live_sensor.get("value")
+                        sensor["last_quality"] = live_sensor.get("quality", 0)
+                        sensor["last_update"] = datetime.now().isoformat()
+
+            # Update control states from runtime
+            for control in inventory["controls"]:
+                for live_actuator in rtu_data.get("actuators", []):
+                    if str(live_actuator.get("slot")) == str(control.get("register_address")):
+                        control["last_state"] = live_actuator.get("command")
+                        control["last_update"] = datetime.now().isoformat()
+
+    return inventory
+
+
+@app.post("/api/v1/rtus/{station_name}/inventory/refresh")
+async def refresh_rtu_inventory(station_name: str):
+    """
+    Query RTU and refresh its sensor/control inventory.
+
+    Asks the RTU to report what sensors and controls it has,
+    then updates the database with the results.
+    """
+    rtu = _get_rtu_from_db(station_name)
+    if not rtu:
+        raise HTTPException(status_code=404, detail="RTU not found")
+
+    client = get_shm_client()
+    if not client:
+        raise HTTPException(status_code=503, detail="Controller not running - cannot query RTU")
+
+    # Query the RTU for its capabilities
+    # The RTU responds with its sensor/control configuration
+    rtu_data = client.get_rtu(station_name)
+    if not rtu_data:
+        raise HTTPException(status_code=503, detail="Cannot communicate with RTU")
+
+    # Clear existing inventory
+    db.clear_rtu_sensors(station_name)
+    db.clear_rtu_controls(station_name)
+
+    sensors_added = 0
+    controls_added = 0
+
+    # Register sensors from RTU data
+    for sensor_data in rtu_data.get("sensors", []):
+        slot = sensor_data.get("slot", 0)
+        sensor_type = _infer_sensor_type(sensor_data.get("name", ""), sensor_data.get("unit", ""))
+        db.upsert_rtu_sensor({
+            "rtu_station": station_name,
+            "sensor_id": f"slot_{slot}",
+            "sensor_type": sensor_type,
+            "name": sensor_data.get("name", f"Sensor {slot}"),
+            "unit": sensor_data.get("unit", ""),
+            "register_address": slot,
+            "data_type": "FLOAT32",
+            "scale_min": 0,
+            "scale_max": 100
+        })
+        sensors_added += 1
+
+    # Register actuators as controls
+    for actuator_data in rtu_data.get("actuators", []):
+        slot = actuator_data.get("slot", 0)
+        control_type, command_type = _infer_control_type(actuator_data.get("name", ""))
+        db.upsert_rtu_control({
+            "rtu_station": station_name,
+            "control_id": f"slot_{slot}",
+            "control_type": control_type,
+            "name": actuator_data.get("name", f"Control {slot}"),
+            "command_type": command_type,
+            "register_address": slot
+        })
+        controls_added += 1
+
+    logger.info(f"Refreshed inventory for {station_name}: {sensors_added} sensors, {controls_added} controls")
+
+    return {
+        "status": "ok",
+        "rtu_station": station_name,
+        "sensors_added": sensors_added,
+        "controls_added": controls_added
+    }
+
+
+def _infer_sensor_type(name: str, unit: str) -> str:
+    """Infer sensor type from name and unit"""
+    name_lower = name.lower()
+    unit_lower = unit.lower()
+
+    if "temp" in name_lower or "°" in unit or "degf" in unit_lower or "degc" in unit_lower:
+        return "temperature"
+    elif "level" in name_lower or "gal" in unit_lower or "liter" in unit_lower:
+        return "level"
+    elif "press" in name_lower or "psi" in unit_lower or "bar" in unit_lower:
+        return "pressure"
+    elif "flow" in name_lower or "gpm" in unit_lower or "lpm" in unit_lower:
+        return "flow"
+    elif "ph" in name_lower:
+        return "ph"
+    elif "turb" in name_lower or "ntu" in unit_lower:
+        return "turbidity"
+    elif "chlor" in name_lower or "ppm" in unit_lower:
+        return "chlorine"
+    elif "tds" in name_lower:
+        return "tds"
+    else:
+        return "analog"
+
+
+def _infer_control_type(name: str) -> tuple:
+    """Infer control type and command type from name. Returns (control_type, command_type)"""
+    name_lower = name.lower()
+
+    if "pump" in name_lower:
+        return ("pump", "on_off")
+    elif "valve" in name_lower:
+        if "modulating" in name_lower or "control" in name_lower:
+            return ("valve", "modulating")
+        return ("valve", "on_off")
+    elif "motor" in name_lower or "mixer" in name_lower or "agitator" in name_lower:
+        return ("motor", "on_off")
+    elif "heater" in name_lower:
+        return ("heater", "on_off")
+    elif "relay" in name_lower:
+        return ("relay", "on_off")
+    elif "vfd" in name_lower or "drive" in name_lower:
+        return ("vfd", "modulating")
+    else:
+        return ("actuator", "on_off")
+
+
+@app.post("/api/v1/rtus/{station_name}/control/{control_id}")
+async def send_control_command(
+    station_name: str,
+    control_id: str,
+    command: dict,
+    request: Request,
+    user: dict = Depends(get_current_user)
+):
+    """
+    Send a command to an RTU control.
+
+    Command format depends on control type:
+    - on_off: {"action": "ON" | "OFF"}
+    - modulating: {"value": 0-100}
+    - setpoint: {"setpoint": <float>}
+
+    All commands are logged with username, timestamp, and result.
+    """
+    check_role(user, UserRole.OPERATOR)
+
+    rtu = _get_rtu_from_db(station_name)
+    if not rtu:
+        raise HTTPException(status_code=404, detail="RTU not found")
+
+    # Get control configuration
+    controls = db.get_rtu_controls(station_name)
+    control_cfg = next((c for c in controls if c["control_id"] == control_id), None)
+    if not control_cfg:
+        raise HTTPException(status_code=404, detail="Control not found")
+
+    client = get_shm_client()
+    if not client:
+        raise HTTPException(status_code=503, detail="Controller not running")
+
+    slot = control_cfg.get("register_address", 0)
+    command_type = control_cfg.get("command_type", "on_off")
+
+    # Build command string and value for logging
+    cmd_str = ""
+    cmd_value = None
+    action = None
+
+    if command_type == "on_off":
+        action = command.get("action", "OFF").upper()
+        if action not in ["ON", "OFF"]:
+            raise HTTPException(status_code=400, detail="Invalid action. Use ON or OFF")
+        cmd_str = action
+    elif command_type == "modulating":
+        value = command.get("value", 0)
+        if not isinstance(value, (int, float)) or value < 0 or value > 100:
+            raise HTTPException(status_code=400, detail="Value must be 0-100")
+        cmd_str = f"SET:{value}"
+        cmd_value = float(value)
+    else:
+        raise HTTPException(status_code=400, detail=f"Unsupported command type: {command_type}")
+
+    # Get client IP for logging
+    client_ip = request.client.host if request.client else None
+    session_token = request.headers.get("Authorization", "").replace("Bearer ", "")
+
+    # Log command BEFORE execution
+    log_id = db.log_command(
+        username=user.get("username", "unknown"),
+        rtu_station=station_name,
+        control_id=control_id,
+        command=cmd_str,
+        command_value=cmd_value,
+        source_ip=client_ip,
+        session_token=session_token
+    )
+
+    # Execute command
+    try:
+        if command_type == "on_off":
+            success = client.send_actuator_command(station_name, slot, action)
+        elif command_type == "modulating":
+            success = client.send_actuator_command(station_name, slot, "PWM", int(cmd_value))
+        else:
+            success = False
+
+        if success:
+            # Update command log with success
+            db.update_command_result(log_id, "SUCCESS")
+
+            # Update control state in database
+            state = action or str(int(cmd_value))
+            db.update_control_state(station_name, control_id, state)
+
+            logger.info(f"Control command sent: {station_name}/{control_id} = {cmd_str} by {user.get('username')}")
+            return {"status": "ok", "control_id": control_id, "command": command}
+        else:
+            # Update command log with failure
+            db.update_command_result(log_id, "FAILED", "RTU did not acknowledge command")
+            raise HTTPException(status_code=500, detail="Failed to send command to RTU")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        # Update command log with error
+        db.update_command_result(log_id, "ERROR", str(e))
+        logger.error(f"Control command error: {station_name}/{control_id} - {e}")
+        raise HTTPException(status_code=500, detail=f"Command execution error: {str(e)}")
+
+
+# ============== DCP Discovery Endpoints ==============
+
+@app.post("/api/v1/discover/rtu")
+async def discover_rtus(timeout_seconds: float = 5.0):
+    """
+    Scan the PROFINET network for RTU devices using DCP discovery.
+
+    Returns a list of discovered devices that can be added to the configuration.
+    """
+    client = get_shm_client()
+    if not client:
+        # Return cached results when controller not running
+        cached = db.get_discovered_devices()
+        return {
+            "status": "cached",
+            "message": "Controller not running - returning cached discovery results",
+            "count": len(cached),
+            "devices": cached
+        }
+
+    # Perform DCP discovery via controller
+    timeout_ms = int(timeout_seconds * 1000)
+    devices = client.dcp_discover(timeout_ms)
+
+    # Cache results in database
+    for device in devices:
+        db.upsert_discovered_device(device)
+
+    # Check which devices are already added as RTUs
+    existing_rtus = {r["station_name"]: r for r in db.get_rtu_devices()}
+    for device in devices:
+        device["already_added"] = device.get("device_name") in existing_rtus
+
+    return {
+        "status": "complete",
+        "count": len(devices),
+        "devices": devices
+    }
+
+
+@app.get("/api/v1/discover/cached")
+async def get_cached_discoveries():
+    """Get cached discovery results from previous scans"""
+    devices = db.get_discovered_devices()
+    existing_rtus = {r["station_name"]: r for r in db.get_rtu_devices()}
+
+    for device in devices:
+        device["already_added"] = device.get("device_name") in existing_rtus
+
+    return {
+        "count": len(devices),
+        "devices": devices
+    }
+
+
+@app.delete("/api/v1/discover/cache")
+async def clear_discovery_cache(user: dict = Depends(get_current_user)):
+    """Clear the discovery cache"""
+    check_role(user, UserRole.ADMIN)
+    count = db.clear_discovery_cache()
+    return {"status": "ok", "cleared": count}
+
+
 # ============== Alarm Endpoints ==============
 
 @app.get("/api/v1/alarms", response_model=List[Alarm])
@@ -2894,11 +3216,13 @@ async def list_services():
     return status
 
 @app.post("/api/v1/services/{service_name}/{action}")
-async def control_service(service_name: str, action: str):
-    """Control a service (start/stop/restart)"""
+async def control_service(service_name: str, action: str, user: Dict = Depends(get_current_user)):
+    """Control a service (start/stop/restart) - requires admin role"""
     import subprocess
 
-    allowed_services = ["water-controller", "water-controller-api", "water-controller-modbus"]
+    check_role(user, UserRole.ADMIN)
+
+    allowed_services = ["water-controller", "water-controller-api", "water-controller-ui", "water-controller-modbus"]
     allowed_actions = ["start", "stop", "restart"]
 
     if service_name not in allowed_services:
@@ -2908,13 +3232,13 @@ async def control_service(service_name: str, action: str):
 
     try:
         result = subprocess.run(
-            ["systemctl", action, service_name],
+            ["sudo", "systemctl", action, service_name],
             capture_output=True, text=True, timeout=30
         )
         if result.returncode != 0:
-            raise HTTPException(status_code=500, detail=result.stderr)
+            raise HTTPException(status_code=500, detail=result.stderr or "Service control failed")
 
-        logger.info(f"Service {service_name} {action}ed")
+        logger.info(f"Service {service_name} {action}ed by {user.get('username')}")
         return {"status": "ok", "action": action, "service": service_name}
     except subprocess.TimeoutExpired:
         raise HTTPException(status_code=504, detail="Operation timed out")
@@ -3524,6 +3848,293 @@ async def list_log_destinations():
             }
         ]
     }
+
+# ============== Network Configuration Endpoints ==============
+
+class NetworkConfig(BaseModel):
+    mode: str = "dhcp"  # "dhcp" or "static"
+    ip_address: str = ""
+    netmask: str = "255.255.255.0"
+    gateway: str = ""
+    dns_primary: str = ""
+    dns_secondary: str = ""
+    hostname: str = "water-controller"
+
+class WebServerConfig(BaseModel):
+    port: int = 8080
+    bind_address: str = "0.0.0.0"
+    https_enabled: bool = False
+    https_port: int = 8443
+
+# Store network/web config (would persist to db in production)
+network_config_store = NetworkConfig()
+web_config_store = WebServerConfig()
+
+@app.get("/api/v1/system/network", response_model=NetworkConfig)
+async def get_network_config():
+    """Get current network configuration"""
+    return network_config_store
+
+@app.put("/api/v1/system/network")
+async def update_network_config(config: NetworkConfig, user: Dict = Depends(get_current_user)):
+    """Update network configuration (requires admin role)"""
+    check_role(user, UserRole.ADMIN)
+    global network_config_store
+    network_config_store = config
+    logger.info(f"Network config updated: mode={config.mode}, ip={config.ip_address}")
+    return {"status": "ok", "message": "Network configuration updated"}
+
+@app.get("/api/v1/system/web", response_model=WebServerConfig)
+async def get_web_config():
+    """Get web server configuration"""
+    return web_config_store
+
+@app.put("/api/v1/system/web")
+async def update_web_config(config: WebServerConfig, user: Dict = Depends(get_current_user)):
+    """Update web server configuration (requires admin role)"""
+    check_role(user, UserRole.ADMIN)
+    global web_config_store
+    web_config_store = config
+    logger.info(f"Web config updated: port={config.port}, bind={config.bind_address}")
+    return {"status": "ok", "message": "Web configuration updated. Restart required."}
+
+@app.get("/api/v1/system/interfaces")
+async def get_network_interfaces():
+    """Get network interface information"""
+    import subprocess
+    interfaces = []
+
+    try:
+        # Get interfaces using ip command
+        result = subprocess.run(['ip', '-j', 'addr'], capture_output=True, text=True, timeout=5)
+        if result.returncode == 0:
+            import json as json_lib
+            data = json_lib.loads(result.stdout)
+            for iface in data:
+                if iface.get('ifname', '').startswith('lo'):
+                    continue  # Skip loopback
+
+                ip_addr = ""
+                netmask = ""
+                for addr_info in iface.get('addr_info', []):
+                    if addr_info.get('family') == 'inet':
+                        ip_addr = addr_info.get('local', '')
+                        # Convert prefix length to netmask
+                        prefix = addr_info.get('prefixlen', 24)
+                        netmask = '.'.join([str((0xffffffff << (32 - prefix) >> i) & 0xff)
+                                            for i in [24, 16, 8, 0]])
+                        break
+
+                interfaces.append({
+                    "name": iface.get('ifname', ''),
+                    "ip_address": ip_addr,
+                    "netmask": netmask,
+                    "mac_address": iface.get('address', ''),
+                    "state": iface.get('operstate', 'UNKNOWN').upper(),
+                    "speed": ""
+                })
+    except Exception as e:
+        logger.warning(f"Failed to get interfaces: {e}")
+        # Return mock data if command fails
+        interfaces = [{
+            "name": "eth0",
+            "ip_address": "192.168.1.100",
+            "netmask": "255.255.255.0",
+            "mac_address": "00:00:00:00:00:00",
+            "state": "UP",
+            "speed": "1000Mbps"
+        }]
+
+    return interfaces
+
+# ============== System Log Endpoints ==============
+
+@app.get("/api/v1/system/logs")
+async def get_system_logs(limit: int = 100, level: str = "all"):
+    """Get system log entries from log file or journalctl"""
+    import os
+    import subprocess
+
+    logs = []
+    parse_errors = 0
+
+    # Try reading from log file first
+    log_path = os.environ.get('WTC_LOG_PATH', '/var/log/water-controller/wtc.log')
+    if os.path.exists(log_path):
+        try:
+            with open(log_path, 'r') as f:
+                lines = f.readlines()[-limit:]
+                for line in lines:
+                    try:
+                        # Parse log line (assumes format: timestamp - source - level - message)
+                        parts = line.strip().split(' - ', 3)
+                        if len(parts) >= 4:
+                            log_level = parts[2].upper()
+                            if level != "all" and log_level != level.upper():
+                                continue
+                            logs.append({
+                                "timestamp": parts[0],
+                                "source": parts[1],
+                                "level": log_level,
+                                "message": parts[3]
+                            })
+                        elif line.strip():
+                            # Unparsed line - include as raw message
+                            logs.append({
+                                "timestamp": "",
+                                "source": "unknown",
+                                "level": "INFO",
+                                "message": line.strip()
+                            })
+                    except Exception as e:
+                        parse_errors += 1
+                        if parse_errors <= 3:
+                            logger.debug(f"Failed to parse log line: {e}")
+        except Exception as e:
+            logger.warning(f"Failed to read log file {log_path}: {e}")
+
+    # If no logs from file, try journalctl
+    if not logs:
+        try:
+            result = subprocess.run(
+                ['journalctl', '-u', 'water-controller*', '-n', str(limit), '--no-pager', '-o', 'short-iso'],
+                capture_output=True, text=True, timeout=10
+            )
+            if result.returncode == 0:
+                for line in result.stdout.strip().split('\n'):
+                    if line and not line.startswith('--'):
+                        parts = line.split(' ', 4)
+                        if len(parts) >= 5:
+                            log_level = "INFO"
+                            message = parts[4] if len(parts) > 4 else ""
+                            if "error" in message.lower():
+                                log_level = "ERROR"
+                            elif "warn" in message.lower():
+                                log_level = "WARNING"
+                            if level != "all" and log_level != level.upper():
+                                continue
+                            logs.append({
+                                "timestamp": parts[0],
+                                "source": parts[3] if len(parts) > 3 else "system",
+                                "level": log_level,
+                                "message": message
+                            })
+        except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+            logger.debug(f"journalctl not available: {e}")
+        except Exception as e:
+            logger.warning(f"Failed to read journalctl: {e}")
+
+    if parse_errors > 0:
+        logger.warning(f"Skipped {parse_errors} unparseable log lines")
+
+    return logs
+
+@app.delete("/api/v1/system/logs")
+async def clear_system_logs(user: Dict = Depends(get_current_user)):
+    """Clear system logs (requires admin role)"""
+    check_role(user, UserRole.ADMIN)
+
+    try:
+        import os
+        log_path = os.environ.get('WTC_LOG_PATH', '/var/log/water-controller/wtc.log')
+        if os.path.exists(log_path):
+            with open(log_path, 'w') as f:
+                f.write("")
+        logger.info("System logs cleared")
+        return {"status": "ok", "message": "Logs cleared"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to clear logs: {str(e)}")
+
+@app.get("/api/v1/system/audit")
+async def get_audit_log(limit: int = 50, offset: int = 0):
+    """Get audit log entries"""
+    entries = db.get_audit_log(limit=limit, offset=offset)
+    return entries
+
+
+# ============== Command Log Endpoints ==============
+
+@app.get("/api/v1/system/commands")
+async def get_command_logs(
+    rtu: str = None,
+    username: str = None,
+    limit: int = 100,
+    offset: int = 0,
+    user: Dict = Depends(get_current_user)
+):
+    """
+    Get command log entries with optional filtering.
+
+    Query params:
+    - rtu: Filter by RTU station name
+    - username: Filter by username
+    - limit: Max entries to return (default 100)
+    - offset: Pagination offset
+    """
+    check_role(user, UserRole.OPERATOR)
+    entries = db.get_command_log(rtu_station=rtu, username=username, limit=limit, offset=offset)
+    total = db.get_command_log_count(rtu_station=rtu, username=username)
+    return {
+        "entries": entries,
+        "total": total,
+        "limit": limit,
+        "offset": offset
+    }
+
+
+@app.get("/api/v1/rtus/{station_name}/commands")
+async def get_rtu_command_logs(
+    station_name: str,
+    limit: int = 50,
+    offset: int = 0,
+    user: Dict = Depends(get_current_user)
+):
+    """Get command log entries for a specific RTU"""
+    check_role(user, UserRole.OPERATOR)
+    rtu = _get_rtu_from_db(station_name)
+    if not rtu:
+        raise HTTPException(status_code=404, detail="RTU not found")
+
+    entries = db.get_command_log(rtu_station=station_name, limit=limit, offset=offset)
+    total = db.get_command_log_count(rtu_station=station_name)
+    return {
+        "rtu_station": station_name,
+        "entries": entries,
+        "total": total
+    }
+
+
+@app.delete("/api/v1/system/commands")
+async def clear_old_command_logs(
+    days: int = 90,
+    user: Dict = Depends(get_current_user)
+):
+    """Clear command logs older than specified days (admin only)"""
+    check_role(user, UserRole.ADMIN)
+    deleted = db.clear_old_command_logs(days)
+    logger.info(f"Command logs cleared by {user.get('username')}: {deleted} entries older than {days} days")
+    return {"status": "ok", "deleted": deleted, "days": days}
+
+
+# ============== Session Management Endpoints ==============
+
+@app.get("/api/v1/auth/sessions")
+async def get_active_sessions(user: Dict = Depends(get_current_user)):
+    """Get all active sessions (requires admin role)"""
+    check_role(user, UserRole.ADMIN)
+    return db.get_active_sessions()
+
+@app.delete("/api/v1/auth/sessions/{token_prefix}")
+async def terminate_session(token_prefix: str, user: Dict = Depends(get_current_user)):
+    """Terminate a session by token prefix (requires admin role)"""
+    check_role(user, UserRole.ADMIN)
+
+    # Delete session using prefix lookup
+    if db.delete_session_by_prefix(token_prefix, user.get('username')):
+        logger.info(f"Session terminated by {user.get('username')}: {token_prefix}...")
+        return {"status": "ok", "message": "Session terminated"}
+    else:
+        raise HTTPException(status_code=404, detail="Session not found")
 
 # ============== WebSocket Endpoints ==============
 

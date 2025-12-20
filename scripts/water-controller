@@ -1,0 +1,189 @@
+#!/bin/bash
+#
+# Water Treatment Controller HMI Startup Script
+#
+# Usage:
+#   water-controller [OPTIONS]
+#
+# Options:
+#   --web-only    Run only the web interface (no PROFINET controller)
+#   --api-only    Run only the API server
+#   --help        Show this help message
+#
+# Environment Variables:
+#   DATA_DIR      Data directory (default: /var/lib/water-controller)
+#   WEB_PORT      API server port (default: 8080)
+#   UI_PORT       UI server port (default: 3000)
+#   LOG_LEVEL     Logging level (default: INFO)
+#
+
+set -e
+
+# Default values
+DATA_DIR="${DATA_DIR:-/var/lib/water-controller}"
+WEB_PORT="${WEB_PORT:-8080}"
+UI_PORT="${UI_PORT:-3000}"
+LOG_LEVEL="${LOG_LEVEL:-INFO}"
+INSTALL_DIR="${INSTALL_DIR:-/opt/water-controller}"
+VENV_DIR="${VENV_DIR:-$INSTALL_DIR/venv}"
+
+# Parse arguments
+WEB_ONLY=false
+API_ONLY=false
+
+for arg in "$@"; do
+    case $arg in
+        --web-only)
+            WEB_ONLY=true
+            ;;
+        --api-only)
+            API_ONLY=true
+            ;;
+        --help)
+            echo "Water Treatment Controller HMI"
+            echo ""
+            echo "Usage: water-controller [OPTIONS]"
+            echo ""
+            echo "Options:"
+            echo "  --web-only    Run only the web interface (no PROFINET controller)"
+            echo "  --api-only    Run only the API server"
+            echo "  --help        Show this help message"
+            echo ""
+            echo "Environment Variables:"
+            echo "  DATA_DIR      Data directory (default: /var/lib/water-controller)"
+            echo "  WEB_PORT      API server port (default: 8080)"
+            echo "  UI_PORT       UI server port (default: 3000)"
+            echo "  LOG_LEVEL     Logging level (default: INFO)"
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $arg"
+            echo "Use --help for usage information"
+            exit 1
+            ;;
+    esac
+done
+
+# Ensure data directory exists
+mkdir -p "$DATA_DIR"
+mkdir -p "$DATA_DIR/historian"
+mkdir -p "$DATA_DIR/backups"
+
+# Export environment for child processes
+export DATA_DIR
+export WEB_PORT
+export UI_PORT
+export LOG_LEVEL
+export DATABASE_PATH="$DATA_DIR/water-controller.db"
+export HISTORIAN_PATH="$DATA_DIR/historian"
+export BACKUP_PATH="$DATA_DIR/backups"
+
+# Function to cleanup on exit
+cleanup() {
+    echo "Shutting down Water Treatment Controller HMI..."
+    # Kill all child processes
+    pkill -P $$ 2>/dev/null || true
+    wait
+    echo "Shutdown complete"
+}
+
+trap cleanup EXIT INT TERM
+
+echo "=========================================="
+echo "  Water Treatment Controller HMI"
+echo "=========================================="
+echo ""
+echo "Data Directory: $DATA_DIR"
+echo "API Port: $WEB_PORT"
+echo "UI Port: $UI_PORT"
+echo ""
+
+# Check if running in development mode (source available)
+if [ -d "$INSTALL_DIR/web/api" ]; then
+    API_DIR="$INSTALL_DIR/web/api"
+else
+    API_DIR="$(dirname "$0")/../web/api"
+fi
+
+if [ -d "$INSTALL_DIR/web/ui" ]; then
+    UI_DIR="$INSTALL_DIR/web/ui"
+else
+    UI_DIR="$(dirname "$0")/../web/ui"
+fi
+
+# Determine Python executable
+if [ -f "$VENV_DIR/bin/python" ]; then
+    PYTHON="$VENV_DIR/bin/python"
+    UVICORN="$VENV_DIR/bin/uvicorn"
+elif command -v python3 &> /dev/null; then
+    PYTHON="python3"
+    UVICORN="uvicorn"
+else
+    echo "ERROR: Python 3 not found"
+    exit 1
+fi
+
+# Start API server
+echo "Starting API server on port $WEB_PORT..."
+cd "$API_DIR"
+
+if [ -f "$UVICORN" ]; then
+    "$UVICORN" main:app \
+        --host 0.0.0.0 \
+        --port "$WEB_PORT" \
+        --workers 2 \
+        --log-level "${LOG_LEVEL,,}" &
+else
+    "$PYTHON" -m uvicorn main:app \
+        --host 0.0.0.0 \
+        --port "$WEB_PORT" \
+        --workers 2 \
+        --log-level "${LOG_LEVEL,,}" &
+fi
+
+API_PID=$!
+echo "API server started (PID: $API_PID)"
+
+# Start UI server (unless API only)
+if [ "$API_ONLY" = false ]; then
+    if [ -d "$UI_DIR" ] && [ -f "$UI_DIR/package.json" ]; then
+        echo "Starting UI server on port $UI_PORT..."
+        cd "$UI_DIR"
+
+        # Check if built
+        if [ -d ".next" ]; then
+            PORT=$UI_PORT npm start &
+        else
+            echo "WARNING: UI not built. Run 'npm run build' in $UI_DIR first."
+            echo "Starting in development mode..."
+            PORT=$UI_PORT npm run dev &
+        fi
+
+        UI_PID=$!
+        echo "UI server started (PID: $UI_PID)"
+    else
+        echo "WARNING: UI directory not found at $UI_DIR"
+        echo "Running in API-only mode"
+    fi
+fi
+
+echo ""
+echo "=========================================="
+echo "  HMI Ready"
+echo "=========================================="
+echo ""
+echo "Access the HMI at:"
+echo "  API:    http://localhost:$WEB_PORT"
+if [ "$API_ONLY" = false ]; then
+    echo "  UI:     http://localhost:$UI_PORT"
+fi
+echo ""
+echo "Default login:"
+echo "  Username: admin"
+echo "  Password: H2OhYeah!"
+echo ""
+echo "Press Ctrl+C to stop"
+echo ""
+
+# Wait for processes
+wait
