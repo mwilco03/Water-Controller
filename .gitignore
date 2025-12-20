@@ -41,6 +41,7 @@ venv/
 node_modules/
 .next/
 next-env.d.ts
+tsconfig.tsbuildinfo
 
 # OS files
 .DS_Store
