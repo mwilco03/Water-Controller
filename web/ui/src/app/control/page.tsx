@@ -2,6 +2,8 @@
 
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useWebSocket } from '@/hooks/useWebSocket';
+import { useCommandMode } from '@/contexts/CommandModeContext';
+import CommandModeLogin from '@/components/CommandModeLogin';
 
 interface PIDLoop {
   loop_id: number;
@@ -31,6 +33,7 @@ interface Interlock {
 }
 
 export default function ControlPage() {
+  const { canCommand, mode } = useCommandMode();
   const [pidLoops, setPidLoops] = useState<PIDLoop[]>([]);
   const [interlocks, setInterlocks] = useState<Interlock[]>([]);
   const [selectedLoop, setSelectedLoop] = useState<PIDLoop | null>(null);
@@ -124,6 +127,7 @@ export default function ControlPage() {
   }, [fetchControlData]);
 
   const updateSetpoint = async (loopId: number, setpoint: number) => {
+    if (!canCommand) return;
     try {
       await fetch(`/api/v1/control/pid/${loopId}/setpoint`, {
         method: 'PUT',
@@ -136,12 +140,13 @@ export default function ControlPage() {
     }
   };
 
-  const toggleMode = async (loopId: number, mode: string) => {
+  const toggleMode = async (loopId: number, pidMode: string) => {
+    if (!canCommand) return;
     try {
       await fetch(`/api/v1/control/pid/${loopId}/mode`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mode }),
+        body: JSON.stringify({ mode: pidMode }),
       });
       fetchControlData();
     } catch (error) {
@@ -150,6 +155,7 @@ export default function ControlPage() {
   };
 
   const resetInterlock = async (interlockId: number) => {
+    if (!canCommand) return;
     try {
       await fetch(`/api/v1/control/interlocks/${interlockId}/reset`, {
         method: 'POST',
@@ -162,7 +168,23 @@ export default function ControlPage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold text-white">Control System</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold text-white">Control System</h1>
+        {mode === 'view' && <CommandModeLogin showButton />}
+      </div>
+
+      {/* Command Mode Notice */}
+      {mode === 'view' && (
+        <div className="flex items-center gap-3 p-4 bg-orange-900/20 border border-orange-700/50 rounded-lg">
+          <svg className="w-5 h-5 text-orange-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          <div>
+            <p className="text-orange-200 font-medium">View Mode Active</p>
+            <p className="text-sm text-orange-300/70">Enter Command Mode to modify PID settings and reset interlocks</p>
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* PID Loops */}
@@ -260,7 +282,7 @@ export default function ControlPage() {
                     >
                       {interlock.tripped ? 'TRIPPED' : 'OK'}
                     </span>
-                    {interlock.tripped && (
+                    {interlock.tripped && canCommand && (
                       <button
                         onClick={() => resetInterlock(interlock.interlock_id)}
                         className="text-xs bg-scada-highlight hover:bg-red-600 px-3 py-1 rounded transition-colors"
@@ -294,8 +316,9 @@ export default function ControlPage() {
                 onChange={(e) =>
                   updateSetpoint(selectedLoop.loop_id, parseFloat(e.target.value))
                 }
-                className="w-full bg-scada-accent text-white rounded px-3 py-2"
+                className="w-full bg-scada-accent text-white rounded px-3 py-2 disabled:opacity-50 disabled:cursor-not-allowed"
                 step="0.1"
+                disabled={!canCommand}
               />
             </div>
             <div>
@@ -320,16 +343,18 @@ export default function ControlPage() {
           <div className="mt-4 flex gap-2">
             <button
               onClick={() => toggleMode(selectedLoop.loop_id, 'AUTO')}
-              className={`px-4 py-2 rounded ${
-                selectedLoop.mode === 'AUTO' ? 'bg-green-600' : 'bg-scada-accent'
+              disabled={!canCommand}
+              className={`px-4 py-2 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                selectedLoop.mode === 'AUTO' ? 'bg-green-600' : 'bg-scada-accent hover:bg-scada-accent/80'
               }`}
             >
               AUTO
             </button>
             <button
               onClick={() => toggleMode(selectedLoop.loop_id, 'MANUAL')}
-              className={`px-4 py-2 rounded ${
-                selectedLoop.mode === 'MANUAL' ? 'bg-yellow-600' : 'bg-scada-accent'
+              disabled={!canCommand}
+              className={`px-4 py-2 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                selectedLoop.mode === 'MANUAL' ? 'bg-yellow-600' : 'bg-scada-accent hover:bg-scada-accent/80'
               }`}
             >
               MANUAL

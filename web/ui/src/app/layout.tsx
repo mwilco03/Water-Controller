@@ -3,6 +3,8 @@
 import './globals.css';
 import { useState, useEffect } from 'react';
 import { usePathname } from 'next/navigation';
+import { CommandModeProvider } from '@/contexts/CommandModeContext';
+import CommandModeBanner from '@/components/CommandModeBanner';
 
 export default function RootLayout({
   children,
@@ -53,7 +55,10 @@ export default function RootLayout({
         />
       </head>
       <body>
+        <CommandModeProvider>
         <div className="min-h-screen flex flex-col">
+          {/* Command Mode Banner - shows when authenticated in command mode */}
+          <CommandModeBanner />
           <header className="sticky top-0 z-50 bg-slate-900/95 backdrop-blur-lg border-b border-sky-500/20 px-6 py-3">
             <div className="flex items-center justify-between max-w-[1800px] mx-auto">
               <div className="flex items-center gap-4">
@@ -204,6 +209,7 @@ export default function RootLayout({
             </div>
           </footer>
         </div>
+        </CommandModeProvider>
       </body>
     </html>
   );

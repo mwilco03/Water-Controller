@@ -7,12 +7,15 @@ import { getRTU, getRTUInventory, refreshRTUInventory } from '@/lib/api';
 import type { RTUDevice, RTUInventory } from '@/lib/api';
 import { SensorList, ControlList, InventoryRefresh } from '@/components/rtu';
 import { useWebSocket } from '@/hooks/useWebSocket';
+import { useCommandMode } from '@/contexts/CommandModeContext';
+import CommandModeLogin from '@/components/CommandModeLogin';
 
 type Tab = 'overview' | 'sensors' | 'controls';
 
 export default function RTUDetailPage() {
   const params = useParams();
   const stationName = params.station_name as string;
+  const { canCommand, mode } = useCommandMode();
 
   const [rtu, setRtu] = useState<RTUDevice | null>(null);
   const [inventory, setInventory] = useState<RTUInventory | null>(null);
@@ -286,6 +289,7 @@ export default function RTUDetailPage() {
                   rtuStation={stationName}
                   groupByType={false}
                   disabled={!isOnline}
+                  interactive={canCommand}
                   onCommandSent={fetchData}
                 />
               </div>
@@ -331,13 +335,31 @@ export default function RTUDetailPage() {
         )}
 
         {activeTab === 'controls' && (
-          <ControlList
-            controls={controls}
-            rtuStation={stationName}
-            groupByType
-            disabled={!isOnline}
-            onCommandSent={fetchData}
-          />
+          <div className="space-y-4">
+            {/* Command Mode Notice */}
+            {mode === 'view' && controls.length > 0 && (
+              <div className="flex items-center justify-between p-4 bg-orange-900/20 border border-orange-700/50 rounded-lg">
+                <div className="flex items-center gap-3">
+                  <svg className="w-5 h-5 text-orange-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <div>
+                    <p className="text-orange-200 font-medium">View Mode Active</p>
+                    <p className="text-sm text-orange-300/70">Enter Command Mode to control equipment</p>
+                  </div>
+                </div>
+                <CommandModeLogin showButton />
+              </div>
+            )}
+            <ControlList
+              controls={controls}
+              rtuStation={stationName}
+              groupByType
+              disabled={!isOnline}
+              interactive={canCommand}
+              onCommandSent={fetchData}
+            />
+          </div>
         )}
       </div>
     </div>

@@ -357,6 +357,38 @@ def init_database():
             )
         ''')
 
+        # Command Log table (audit trail for all control commands)
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS command_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                username TEXT NOT NULL,
+                rtu_station TEXT NOT NULL,
+                control_id TEXT NOT NULL,
+                command TEXT NOT NULL,
+                command_value REAL,
+                result TEXT,
+                error_message TEXT,
+                source_ip TEXT,
+                session_token TEXT,
+                FOREIGN KEY (rtu_station) REFERENCES rtu_devices(station_name) ON DELETE CASCADE
+            )
+        ''')
+
+        # Create index for command log queries
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_command_log_timestamp
+            ON command_log(timestamp DESC)
+        ''')
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_command_log_username
+            ON command_log(username)
+        ''')
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_command_log_rtu
+            ON command_log(rtu_station)
+        ''')
+
         # Initialize default modbus server config
         cursor.execute('''
             INSERT OR IGNORE INTO modbus_server_config (id) VALUES (1)
@@ -1730,6 +1762,121 @@ def get_rtu_inventory(rtu_station: str) -> Dict[str, Any]:
         "sensors": get_rtu_sensors(rtu_station),
         "controls": get_rtu_controls(rtu_station)
     }
+
+
+# ============== Command Log Operations ==============
+
+def log_command(
+    username: str,
+    rtu_station: str,
+    control_id: str,
+    command: str,
+    command_value: float = None,
+    source_ip: str = None,
+    session_token: str = None
+) -> int:
+    """
+    Log a control command attempt before execution.
+    Returns the log entry ID for updating with result.
+    """
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO command_log (username, rtu_station, control_id, command,
+                command_value, source_ip, session_token)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        ''', (username, rtu_station, control_id, command, command_value,
+              source_ip, session_token[:20] if session_token else None))
+        conn.commit()
+        return cursor.lastrowid
+
+
+def update_command_result(log_id: int, result: str, error_message: str = None) -> bool:
+    """Update a command log entry with execution result"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            UPDATE command_log SET result = ?, error_message = ?
+            WHERE id = ?
+        ''', (result, error_message, log_id))
+        conn.commit()
+        return cursor.rowcount > 0
+
+
+def get_command_log(
+    rtu_station: str = None,
+    username: str = None,
+    limit: int = 100,
+    offset: int = 0
+) -> List[Dict[str, Any]]:
+    """
+    Get command log entries with optional filtering.
+    Returns most recent first.
+    """
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        where_clauses = []
+        params = []
+
+        if rtu_station:
+            where_clauses.append("rtu_station = ?")
+            params.append(rtu_station)
+        if username:
+            where_clauses.append("username = ?")
+            params.append(username)
+
+        where_sql = ""
+        if where_clauses:
+            where_sql = "WHERE " + " AND ".join(where_clauses)
+
+        params.extend([limit, offset])
+
+        cursor.execute(f'''
+            SELECT * FROM command_log
+            {where_sql}
+            ORDER BY timestamp DESC
+            LIMIT ? OFFSET ?
+        ''', tuple(params))
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def get_command_log_count(rtu_station: str = None, username: str = None) -> int:
+    """Get total count of command log entries with optional filtering"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        where_clauses = []
+        params = []
+
+        if rtu_station:
+            where_clauses.append("rtu_station = ?")
+            params.append(rtu_station)
+        if username:
+            where_clauses.append("username = ?")
+            params.append(username)
+
+        where_sql = ""
+        if where_clauses:
+            where_sql = "WHERE " + " AND ".join(where_clauses)
+
+        cursor.execute(f'SELECT COUNT(*) FROM command_log {where_sql}', tuple(params))
+        return cursor.fetchone()[0]
+
+
+def clear_old_command_logs(days: int = 90) -> int:
+    """Delete command logs older than specified days"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            DELETE FROM command_log
+            WHERE timestamp < datetime('now', ? || ' days')
+        ''', (f'-{days}',))
+        conn.commit()
+        deleted = cursor.rowcount
+        if deleted > 0:
+            logger.info(f"Cleaned up {deleted} old command log entries")
+        return deleted
 
 
 # Flag to track initialization state

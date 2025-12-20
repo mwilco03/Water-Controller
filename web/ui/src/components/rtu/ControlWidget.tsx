@@ -8,15 +8,22 @@ interface Props {
   control: RTUControl;
   rtuStation: string;
   disabled?: boolean;
+  interactive?: boolean; // If false, shows status only (view mode)
   onCommandSent?: () => void;
 }
 
-export default function ControlWidget({ control, rtuStation, disabled = false, onCommandSent }: Props) {
+export default function ControlWidget({
+  control,
+  rtuStation,
+  disabled = false,
+  interactive = true,
+  onCommandSent
+}: Props) {
   const [loading, setLoading] = useState(false);
   const [sliderValue, setSliderValue] = useState(control.current_value ?? control.range_min ?? 0);
 
   const handleCommand = useCallback(async (command: string, value?: number) => {
-    if (loading || disabled) return;
+    if (loading || disabled || !interactive) return;
     setLoading(true);
     try {
       await sendControlCommand(rtuStation, control.control_id, command, value);
@@ -26,7 +33,7 @@ export default function ControlWidget({ control, rtuStation, disabled = false, o
     } finally {
       setLoading(false);
     }
-  }, [loading, disabled, rtuStation, control.control_id, onCommandSent]);
+  }, [loading, disabled, interactive, rtuStation, control.control_id, onCommandSent]);
 
   // Get color based on control state
   const getStateColor = () => {
@@ -102,6 +109,18 @@ export default function ControlWidget({ control, rtuStation, disabled = false, o
 
   // Render control based on command_type
   const renderControl = () => {
+    // In view mode, show status indicator instead of controls
+    if (!interactive) {
+      return (
+        <div className="flex items-center justify-between text-sm">
+          <span className="text-gray-400">View Mode</span>
+          <span className="text-xs text-gray-500 bg-gray-800 px-2 py-1 rounded">
+            {control.current_value !== undefined ? `Value: ${control.current_value}` : control.current_state || 'N/A'}
+          </span>
+        </div>
+      );
+    }
+
     switch (control.command_type) {
       case 'on_off':
         return (

@@ -9,6 +9,7 @@ interface Props {
   rtuStation: string;
   groupByType?: boolean;
   disabled?: boolean;
+  interactive?: boolean; // If false, shows status only (view mode)
   onCommandSent?: () => void;
 }
 
@@ -17,6 +18,7 @@ export default function ControlList({
   rtuStation,
   groupByType = true,
   disabled = false,
+  interactive = true,
   onCommandSent,
 }: Props) {
   const groupedControls = useMemo(() => {
@@ -83,6 +85,7 @@ export default function ControlList({
                 control={control}
                 rtuStation={rtuStation}
                 disabled={disabled}
+                interactive={interactive}
                 onCommandSent={onCommandSent}
               />
             ))}

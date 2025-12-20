@@ -1822,6 +1822,7 @@ async def send_control_command(
     station_name: str,
     control_id: str,
     command: dict,
+    request: Request,
     user: dict = Depends(get_current_user)
 ):
     """
@@ -1831,6 +1832,8 @@ async def send_control_command(
     - on_off: {"action": "ON" | "OFF"}
     - modulating: {"value": 0-100}
     - setpoint: {"setpoint": <float>}
+
+    All commands are logged with username, timestamp, and result.
     """
     check_role(user, UserRole.OPERATOR)
 
@@ -1840,42 +1843,82 @@ async def send_control_command(
 
     # Get control configuration
     controls = db.get_rtu_controls(station_name)
-    control = next((c for c in controls if c["control_id"] == control_id), None)
-    if not control:
+    control_cfg = next((c for c in controls if c["control_id"] == control_id), None)
+    if not control_cfg:
         raise HTTPException(status_code=404, detail="Control not found")
 
     client = get_shm_client()
     if not client:
         raise HTTPException(status_code=503, detail="Controller not running")
 
-    slot = control.get("register_address", 0)
-    command_type = control.get("command_type", "on_off")
+    slot = control_cfg.get("register_address", 0)
+    command_type = control_cfg.get("command_type", "on_off")
 
-    # Send appropriate command based on control type
-    success = False
+    # Build command string and value for logging
+    cmd_str = ""
+    cmd_value = None
+    action = None
+
     if command_type == "on_off":
         action = command.get("action", "OFF").upper()
         if action not in ["ON", "OFF"]:
             raise HTTPException(status_code=400, detail="Invalid action. Use ON or OFF")
-        success = client.send_actuator_command(station_name, slot, action)
+        cmd_str = action
     elif command_type == "modulating":
         value = command.get("value", 0)
         if not isinstance(value, (int, float)) or value < 0 or value > 100:
             raise HTTPException(status_code=400, detail="Value must be 0-100")
-        success = client.send_actuator_command(station_name, slot, "PWM", int(value))
+        cmd_str = f"SET:{value}"
+        cmd_value = float(value)
     else:
         raise HTTPException(status_code=400, detail=f"Unsupported command type: {command_type}")
 
-    if success:
-        # Update control state in database
-        state = command.get("action") or str(command.get("value", 0))
-        db.update_control_state(station_name, control_id, state)
-        db.log_audit(user.get("username"), "control_command", "rtu_control",
-                    f"{station_name}/{control_id}", f"Sent command: {command}")
-        logger.info(f"Control command sent: {station_name}/{control_id} = {command}")
-        return {"status": "ok", "control_id": control_id, "command": command}
-    else:
-        raise HTTPException(status_code=500, detail="Failed to send command to RTU")
+    # Get client IP for logging
+    client_ip = request.client.host if request.client else None
+    session_token = request.headers.get("Authorization", "").replace("Bearer ", "")
+
+    # Log command BEFORE execution
+    log_id = db.log_command(
+        username=user.get("username", "unknown"),
+        rtu_station=station_name,
+        control_id=control_id,
+        command=cmd_str,
+        command_value=cmd_value,
+        source_ip=client_ip,
+        session_token=session_token
+    )
+
+    # Execute command
+    try:
+        if command_type == "on_off":
+            success = client.send_actuator_command(station_name, slot, action)
+        elif command_type == "modulating":
+            success = client.send_actuator_command(station_name, slot, "PWM", int(cmd_value))
+        else:
+            success = False
+
+        if success:
+            # Update command log with success
+            db.update_command_result(log_id, "SUCCESS")
+
+            # Update control state in database
+            state = action or str(int(cmd_value))
+            db.update_control_state(station_name, control_id, state)
+
+            logger.info(f"Control command sent: {station_name}/{control_id} = {cmd_str} by {user.get('username')}")
+            return {"status": "ok", "control_id": control_id, "command": command}
+        else:
+            # Update command log with failure
+            db.update_command_result(log_id, "FAILED", "RTU did not acknowledge command")
+            raise HTTPException(status_code=500, detail="Failed to send command to RTU")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        # Update command log with error
+        db.update_command_result(log_id, "ERROR", str(e))
+        logger.error(f"Control command error: {station_name}/{control_id} - {e}")
+        raise HTTPException(status_code=500, detail=f"Command execution error: {str(e)}")
 
 
 # ============== DCP Discovery Endpoints ==============
@@ -4007,6 +4050,71 @@ async def get_audit_log(limit: int = 50, offset: int = 0):
     """Get audit log entries"""
     entries = db.get_audit_log(limit=limit, offset=offset)
     return entries
+
+
+# ============== Command Log Endpoints ==============
+
+@app.get("/api/v1/system/commands")
+async def get_command_logs(
+    rtu: str = None,
+    username: str = None,
+    limit: int = 100,
+    offset: int = 0,
+    user: Dict = Depends(get_current_user)
+):
+    """
+    Get command log entries with optional filtering.
+
+    Query params:
+    - rtu: Filter by RTU station name
+    - username: Filter by username
+    - limit: Max entries to return (default 100)
+    - offset: Pagination offset
+    """
+    check_role(user, UserRole.OPERATOR)
+    entries = db.get_command_log(rtu_station=rtu, username=username, limit=limit, offset=offset)
+    total = db.get_command_log_count(rtu_station=rtu, username=username)
+    return {
+        "entries": entries,
+        "total": total,
+        "limit": limit,
+        "offset": offset
+    }
+
+
+@app.get("/api/v1/rtus/{station_name}/commands")
+async def get_rtu_command_logs(
+    station_name: str,
+    limit: int = 50,
+    offset: int = 0,
+    user: Dict = Depends(get_current_user)
+):
+    """Get command log entries for a specific RTU"""
+    check_role(user, UserRole.OPERATOR)
+    rtu = _get_rtu_from_db(station_name)
+    if not rtu:
+        raise HTTPException(status_code=404, detail="RTU not found")
+
+    entries = db.get_command_log(rtu_station=station_name, limit=limit, offset=offset)
+    total = db.get_command_log_count(rtu_station=station_name)
+    return {
+        "rtu_station": station_name,
+        "entries": entries,
+        "total": total
+    }
+
+
+@app.delete("/api/v1/system/commands")
+async def clear_old_command_logs(
+    days: int = 90,
+    user: Dict = Depends(get_current_user)
+):
+    """Clear command logs older than specified days (admin only)"""
+    check_role(user, UserRole.ADMIN)
+    deleted = db.clear_old_command_logs(days)
+    logger.info(f"Command logs cleared by {user.get('username')}: {deleted} entries older than {days} days")
+    return {"status": "ok", "deleted": deleted, "days": days}
+
 
 # ============== Session Management Endpoints ==============
 
