@@ -5,8 +5,8 @@ After=network.target
 
 [Service]
 Type=simple
-User=water-controller
-Group=water-controller
+User=wtc
+Group=wtc
 WorkingDirectory=/opt/water-controller
 ExecStart=/usr/local/bin/water-controller --web-only
 ExecReload=/bin/kill -HUP $MAINPID
