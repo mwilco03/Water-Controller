@@ -198,6 +198,21 @@ target_link_libraries(water_treat_controller
 # Export board-specific definitions to main executable
 export_board_definitions(water_treat_controller)
 
+# Standalone Modbus Gateway executable
+add_executable(modbus_gateway src/modbus/modbus_gateway_main.c)
+target_link_libraries(modbus_gateway
+    wtc_modbus
+    wtc_core
+    wtc_registry
+    wtc_control
+    wtc_alarms
+    wtc_ipc
+    rt
+    m
+    systemd
+)
+export_board_definitions(modbus_gateway)
+
 # Tests
 if(BUILD_TESTS)
     enable_testing()
@@ -224,7 +239,7 @@ if(BUILD_TESTS)
 endif()
 
 # Installation
-install(TARGETS water_treat_controller
+install(TARGETS water_treat_controller modbus_gateway
     RUNTIME DESTINATION bin
 )
 
