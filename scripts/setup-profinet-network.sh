@@ -39,6 +39,40 @@ print_error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
 
+# Convert dotted decimal netmask to CIDR notation
+# Handles both formats: "255.255.255.0" -> "24" or "24" -> "24"
+netmask_to_cidr() {
+    local mask="$1"
+
+    # If already CIDR notation (just a number), return it
+    if [[ "$mask" =~ ^[0-9]+$ ]] && [[ "$mask" -ge 0 ]] && [[ "$mask" -le 32 ]]; then
+        echo "$mask"
+        return
+    fi
+
+    # Convert dotted decimal to CIDR
+    local cidr=0
+    local IFS='.'
+    read -ra octets <<< "$mask"
+
+    for octet in "${octets[@]}"; do
+        case $octet in
+            255) cidr=$((cidr + 8)) ;;
+            254) cidr=$((cidr + 7)) ;;
+            252) cidr=$((cidr + 6)) ;;
+            248) cidr=$((cidr + 5)) ;;
+            240) cidr=$((cidr + 4)) ;;
+            224) cidr=$((cidr + 3)) ;;
+            192) cidr=$((cidr + 2)) ;;
+            128) cidr=$((cidr + 1)) ;;
+            0)   ;;
+            *)   print_error "Invalid netmask octet: $octet"; exit 1 ;;
+        esac
+    done
+
+    echo "$cidr"
+}
+
 check_root() {
     if [[ $EUID -ne 0 ]]; then
         print_error "This script must be run as root"
@@ -97,8 +131,12 @@ configure_interface() {
         PROFINET_INTERFACE="${PROFINET_INTERFACE}.${PROFINET_VLAN}"
     fi
 
+    # Convert netmask to CIDR notation if needed
+    local cidr
+    cidr=$(netmask_to_cidr "$PROFINET_NETMASK")
+
     # Set IP address
-    ip addr add "${PROFINET_IP}/${PROFINET_NETMASK}" dev "$PROFINET_INTERFACE"
+    ip addr add "${PROFINET_IP}/${cidr}" dev "$PROFINET_INTERFACE"
 
     # Bring interface up
     ip link set "$PROFINET_INTERFACE" up
@@ -106,7 +144,7 @@ configure_interface() {
     # Enable multicast (required for DCP discovery)
     ip link set "$PROFINET_INTERFACE" multicast on
 
-    print_step "Interface configured: $PROFINET_IP/$PROFINET_NETMASK"
+    print_step "Interface configured: $PROFINET_IP/$cidr (netmask: $PROFINET_NETMASK)"
 }
 
 configure_kernel_params() {
@@ -194,6 +232,10 @@ configure_network_priority() {
 create_systemd_network() {
     print_step "Creating persistent network configuration..."
 
+    # Convert netmask to CIDR notation if needed
+    local cidr
+    cidr=$(netmask_to_cidr "$PROFINET_NETMASK")
+
     # Create systemd-networkd configuration
     mkdir -p /etc/systemd/network
 
@@ -202,7 +244,7 @@ create_systemd_network() {
 Name=$PROFINET_INTERFACE
 
 [Network]
-Address=$PROFINET_IP/$PROFINET_NETMASK
+Address=$PROFINET_IP/$cidr
 DHCP=no
 MulticastDNS=yes
 
