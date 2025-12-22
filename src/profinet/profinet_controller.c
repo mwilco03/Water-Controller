@@ -669,6 +669,161 @@ wtc_result_t profinet_controller_write_output(profinet_controller_t *controller,
     return WTC_ERROR_NOT_FOUND;
 }
 
+/* PROFINET RPC constants */
+#define PNIO_RPC_PORT           34964
+#define RPC_VERSION             4
+#define RPC_PACKET_REQUEST      0
+#define RPC_PACKET_RESPONSE     2
+#define RPC_OPNUM_READ          0
+#define RPC_OPNUM_WRITE         1
+#define RPC_TIMEOUT_MS          5000
+
+/* PROFINET IO Device Interface UUID */
+static const uint8_t PNIO_DEVICE_INTERFACE_UUID[16] = {
+    0xDE, 0xA0, 0x00, 0x01, 0x6C, 0x97, 0x11, 0xD1,
+    0x82, 0x71, 0x00, 0xA0, 0x24, 0x42, 0xDF, 0x7D
+};
+
+/* Build RPC read/write request */
+static wtc_result_t build_rpc_record_request(
+    uint8_t *buffer, size_t *buf_len,
+    const uint8_t *ar_uuid, uint16_t session_key,
+    uint32_t api, uint16_t slot, uint16_t subslot, uint16_t index,
+    const void *write_data, size_t write_len, bool is_write)
+{
+    if (*buf_len < sizeof(profinet_rpc_header_t) + 64) {
+        return WTC_ERROR_NO_MEMORY;
+    }
+
+    size_t pos = 0;
+    profinet_rpc_header_t *rpc = (profinet_rpc_header_t *)buffer;
+
+    /* RPC header */
+    memset(rpc, 0, sizeof(profinet_rpc_header_t));
+    rpc->version = RPC_VERSION;
+    rpc->packet_type = RPC_PACKET_REQUEST;
+    rpc->flags1 = 0x20; /* First fragment, last fragment */
+    rpc->drep[0] = 0x10; /* Little-endian */
+
+    /* Generate activity UUID from current time */
+    uint64_t now = time_get_ms();
+    memset(rpc->activity_uuid, 0, 16);
+    memcpy(rpc->activity_uuid, &now, sizeof(now));
+
+    /* Interface UUID */
+    memcpy(rpc->interface_uuid, PNIO_DEVICE_INTERFACE_UUID, 16);
+
+    /* Object UUID (AR UUID) */
+    memcpy(rpc->object_uuid, ar_uuid, 16);
+
+    rpc->interface_version = 1;
+    rpc->opnum = htons(is_write ? RPC_OPNUM_WRITE : RPC_OPNUM_READ);
+
+    pos = sizeof(profinet_rpc_header_t);
+
+    /* IODReadReq / IODWriteReq block */
+    /* Block header */
+    uint16_t block_type = htons(is_write ? 0x0008 : 0x0009); /* IODWriteReqHeader / IODReadReqHeader */
+    memcpy(buffer + pos, &block_type, 2); pos += 2;
+
+    uint16_t block_length = htons(is_write ? (uint16_t)(24 + write_len) : 24);
+    memcpy(buffer + pos, &block_length, 2); pos += 2;
+
+    buffer[pos++] = 1; /* Block version high */
+    buffer[pos++] = 0; /* Block version low */
+
+    /* Sequence number */
+    uint16_t seq = htons(1);
+    memcpy(buffer + pos, &seq, 2); pos += 2;
+
+    /* AR UUID */
+    memcpy(buffer + pos, ar_uuid, 16); pos += 16;
+
+    /* API */
+    uint32_t api_be = htonl(api);
+    memcpy(buffer + pos, &api_be, 4); pos += 4;
+
+    /* Slot number */
+    uint16_t slot_be = htons(slot);
+    memcpy(buffer + pos, &slot_be, 2); pos += 2;
+
+    /* Subslot number */
+    uint16_t subslot_be = htons(subslot);
+    memcpy(buffer + pos, &subslot_be, 2); pos += 2;
+
+    /* Padding */
+    buffer[pos++] = 0;
+    buffer[pos++] = 0;
+
+    /* Index */
+    uint16_t index_be = htons(index);
+    memcpy(buffer + pos, &index_be, 2); pos += 2;
+
+    /* Record data length */
+    uint32_t rec_len = htonl(is_write ? (uint32_t)write_len : 0);
+    memcpy(buffer + pos, &rec_len, 4); pos += 4;
+
+    /* For write requests, append the data */
+    if (is_write && write_data && write_len > 0) {
+        memcpy(buffer + pos, write_data, write_len);
+        pos += write_len;
+    }
+
+    /* Update fragment length in RPC header */
+    rpc->fragment_length = htons((uint16_t)(pos - sizeof(profinet_rpc_header_t)));
+
+    *buf_len = pos;
+    return WTC_OK;
+}
+
+/* Send RPC request and wait for response */
+static wtc_result_t send_rpc_request(
+    int socket_fd, uint32_t device_ip,
+    const uint8_t *request, size_t req_len,
+    uint8_t *response, size_t *resp_len)
+{
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(PNIO_RPC_PORT);
+    addr.sin_addr.s_addr = device_ip;
+
+    /* Send request */
+    ssize_t sent = sendto(socket_fd, request, req_len, 0,
+                          (struct sockaddr *)&addr, sizeof(addr));
+    if (sent < 0) {
+        LOG_ERROR("Failed to send RPC request: %s", strerror(errno));
+        return WTC_ERROR_IO;
+    }
+
+    /* Wait for response with timeout */
+    struct pollfd pfd;
+    pfd.fd = socket_fd;
+    pfd.events = POLLIN;
+
+    int poll_result = poll(&pfd, 1, RPC_TIMEOUT_MS);
+    if (poll_result < 0) {
+        LOG_ERROR("Poll failed: %s", strerror(errno));
+        return WTC_ERROR_IO;
+    }
+    if (poll_result == 0) {
+        LOG_WARN("RPC request timeout");
+        return WTC_ERROR_TIMEOUT;
+    }
+
+    /* Receive response */
+    socklen_t addr_len = sizeof(addr);
+    ssize_t received = recvfrom(socket_fd, response, *resp_len, 0,
+                                 (struct sockaddr *)&addr, &addr_len);
+    if (received < 0) {
+        LOG_ERROR("Failed to receive RPC response: %s", strerror(errno));
+        return WTC_ERROR_IO;
+    }
+
+    *resp_len = (size_t)received;
+    return WTC_OK;
+}
+
 wtc_result_t profinet_controller_read_record(profinet_controller_t *controller,
                                               const char *station_name,
                                               uint32_t api,
@@ -677,16 +832,93 @@ wtc_result_t profinet_controller_read_record(profinet_controller_t *controller,
                                               uint16_t index,
                                               void *data,
                                               size_t *len) {
-    /* Acyclic read via RPC - implementation pending */
-    (void)controller;
-    (void)station_name;
-    (void)api;
-    (void)slot;
-    (void)subslot;
-    (void)index;
-    (void)data;
-    (void)len;
-    return WTC_ERROR_NOT_INITIALIZED;
+    if (!controller || !station_name || !data || !len) {
+        return WTC_ERROR_INVALID_PARAM;
+    }
+
+    pthread_mutex_lock(&controller->lock);
+
+    /* Get AR for this device */
+    profinet_ar_t *ar = ar_manager_get_ar(controller->ar_manager, station_name);
+    if (!ar) {
+        pthread_mutex_unlock(&controller->lock);
+        LOG_WARN("Device %s not found for record read", station_name);
+        return WTC_ERROR_NOT_FOUND;
+    }
+
+    if (ar->state != AR_STATE_RUN) {
+        pthread_mutex_unlock(&controller->lock);
+        LOG_WARN("Device %s not in RUN state for record read", station_name);
+        return WTC_ERROR_NOT_CONNECTED;
+    }
+
+    /* Build RPC request */
+    uint8_t request[512];
+    size_t req_len = sizeof(request);
+    wtc_result_t result = build_rpc_record_request(
+        request, &req_len,
+        (const uint8_t *)ar->ar_uuid, ar->session_key,
+        api, slot, subslot, index,
+        NULL, 0, false);
+
+    if (result != WTC_OK) {
+        pthread_mutex_unlock(&controller->lock);
+        return result;
+    }
+
+    /* Send request and receive response */
+    uint8_t response[2048];
+    size_t resp_len = sizeof(response);
+
+    result = send_rpc_request(controller->rpc_socket, ar->device_ip,
+                               request, req_len, response, &resp_len);
+
+    pthread_mutex_unlock(&controller->lock);
+
+    if (result != WTC_OK) {
+        return result;
+    }
+
+    /* Parse response - skip RPC header and find record data */
+    if (resp_len < sizeof(profinet_rpc_header_t) + 40) {
+        LOG_ERROR("RPC response too short");
+        return WTC_ERROR_PROTOCOL;
+    }
+
+    /* Check for error in response */
+    profinet_rpc_header_t *rpc_resp = (profinet_rpc_header_t *)response;
+    if (rpc_resp->packet_type != RPC_PACKET_RESPONSE) {
+        LOG_ERROR("Invalid RPC response type: %d", rpc_resp->packet_type);
+        return WTC_ERROR_PROTOCOL;
+    }
+
+    /* Extract record data from IODReadRes block */
+    /* Skip: RPC header (80) + block header (4) + sequence (2) + AR UUID (16) */
+    /* + API (4) + slot (2) + subslot (2) + padding (2) + index (2) + length (4) */
+    size_t data_offset = sizeof(profinet_rpc_header_t) + 38;
+    if (data_offset >= resp_len) {
+        LOG_WARN("No record data in response");
+        *len = 0;
+        return WTC_OK;
+    }
+
+    /* Get record data length from response */
+    uint32_t record_len_be;
+    memcpy(&record_len_be, response + sizeof(profinet_rpc_header_t) + 34, 4);
+    uint32_t record_len = ntohl(record_len_be);
+
+    if (record_len > resp_len - data_offset) {
+        record_len = resp_len - data_offset;
+    }
+
+    size_t copy_len = (record_len < *len) ? record_len : *len;
+    memcpy(data, response + data_offset, copy_len);
+    *len = copy_len;
+
+    LOG_DEBUG("Read record: station=%s, api=%u, slot=%u, subslot=%u, index=0x%04X, len=%zu",
+              station_name, api, slot, subslot, index, copy_len);
+
+    return WTC_OK;
 }
 
 wtc_result_t profinet_controller_write_record(profinet_controller_t *controller,
@@ -697,16 +929,69 @@ wtc_result_t profinet_controller_write_record(profinet_controller_t *controller,
                                                uint16_t index,
                                                const void *data,
                                                size_t len) {
-    /* Acyclic write via RPC - implementation pending */
-    (void)controller;
-    (void)station_name;
-    (void)api;
-    (void)slot;
-    (void)subslot;
-    (void)index;
-    (void)data;
-    (void)len;
-    return WTC_ERROR_NOT_INITIALIZED;
+    if (!controller || !station_name || (!data && len > 0)) {
+        return WTC_ERROR_INVALID_PARAM;
+    }
+
+    pthread_mutex_lock(&controller->lock);
+
+    /* Get AR for this device */
+    profinet_ar_t *ar = ar_manager_get_ar(controller->ar_manager, station_name);
+    if (!ar) {
+        pthread_mutex_unlock(&controller->lock);
+        LOG_WARN("Device %s not found for record write", station_name);
+        return WTC_ERROR_NOT_FOUND;
+    }
+
+    if (ar->state != AR_STATE_RUN) {
+        pthread_mutex_unlock(&controller->lock);
+        LOG_WARN("Device %s not in RUN state for record write", station_name);
+        return WTC_ERROR_NOT_CONNECTED;
+    }
+
+    /* Build RPC request */
+    uint8_t request[2048];
+    size_t req_len = sizeof(request);
+    wtc_result_t result = build_rpc_record_request(
+        request, &req_len,
+        (const uint8_t *)ar->ar_uuid, ar->session_key,
+        api, slot, subslot, index,
+        data, len, true);
+
+    if (result != WTC_OK) {
+        pthread_mutex_unlock(&controller->lock);
+        return result;
+    }
+
+    /* Send request and receive response */
+    uint8_t response[512];
+    size_t resp_len = sizeof(response);
+
+    result = send_rpc_request(controller->rpc_socket, ar->device_ip,
+                               request, req_len, response, &resp_len);
+
+    pthread_mutex_unlock(&controller->lock);
+
+    if (result != WTC_OK) {
+        return result;
+    }
+
+    /* Check response */
+    if (resp_len < sizeof(profinet_rpc_header_t)) {
+        LOG_ERROR("RPC write response too short");
+        return WTC_ERROR_PROTOCOL;
+    }
+
+    profinet_rpc_header_t *rpc_resp = (profinet_rpc_header_t *)response;
+    if (rpc_resp->packet_type != RPC_PACKET_RESPONSE) {
+        LOG_ERROR("Invalid RPC write response type: %d", rpc_resp->packet_type);
+        return WTC_ERROR_PROTOCOL;
+    }
+
+    LOG_DEBUG("Write record: station=%s, api=%u, slot=%u, subslot=%u, index=0x%04X, len=%zu",
+              station_name, api, slot, subslot, index, len);
+
+    return WTC_OK;
 }
 
 wtc_result_t profinet_controller_get_stats(profinet_controller_t *controller,

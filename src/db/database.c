@@ -793,7 +793,67 @@ wtc_result_t database_save_pid_loop(wtc_database_t *db, const pid_loop_t *loop) 
     if (!db || !loop) return WTC_ERROR_INVALID_PARAM;
     if (!db->connected) return WTC_ERROR_NOT_INITIALIZED;
 
-    LOG_DEBUG(LOG_TAG, "Saved PID loop %d", loop->loop_id);
+#ifdef HAVE_POSTGRESQL
+    pthread_mutex_lock(&db->lock);
+
+    const char *query =
+        "INSERT INTO pid_loops (loop_id, name, enabled, input_rtu, input_slot, "
+        "output_rtu, output_slot, kp, ki, kd, setpoint, output_min, output_max, "
+        "deadband, integral_limit, derivative_filter, mode) "
+        "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) "
+        "ON CONFLICT (loop_id) DO UPDATE SET "
+        "name = EXCLUDED.name, enabled = EXCLUDED.enabled, "
+        "input_rtu = EXCLUDED.input_rtu, input_slot = EXCLUDED.input_slot, "
+        "output_rtu = EXCLUDED.output_rtu, output_slot = EXCLUDED.output_slot, "
+        "kp = EXCLUDED.kp, ki = EXCLUDED.ki, kd = EXCLUDED.kd, "
+        "setpoint = EXCLUDED.setpoint, output_min = EXCLUDED.output_min, "
+        "output_max = EXCLUDED.output_max, deadband = EXCLUDED.deadband, "
+        "integral_limit = EXCLUDED.integral_limit, derivative_filter = EXCLUDED.derivative_filter, "
+        "mode = EXCLUDED.mode";
+
+    char loop_id_str[16], input_slot_str[16], output_slot_str[16];
+    char kp_str[32], ki_str[32], kd_str[32], setpoint_str[32];
+    char output_min_str[32], output_max_str[32], deadband_str[32];
+    char integral_limit_str[32], derivative_filter_str[32], mode_str[16];
+    char enabled_str[8];
+
+    snprintf(loop_id_str, sizeof(loop_id_str), "%d", loop->loop_id);
+    snprintf(enabled_str, sizeof(enabled_str), "%s", loop->enabled ? "true" : "false");
+    snprintf(input_slot_str, sizeof(input_slot_str), "%d", loop->input_slot);
+    snprintf(output_slot_str, sizeof(output_slot_str), "%d", loop->output_slot);
+    snprintf(kp_str, sizeof(kp_str), "%f", loop->kp);
+    snprintf(ki_str, sizeof(ki_str), "%f", loop->ki);
+    snprintf(kd_str, sizeof(kd_str), "%f", loop->kd);
+    snprintf(setpoint_str, sizeof(setpoint_str), "%f", loop->setpoint);
+    snprintf(output_min_str, sizeof(output_min_str), "%f", loop->output_min);
+    snprintf(output_max_str, sizeof(output_max_str), "%f", loop->output_max);
+    snprintf(deadband_str, sizeof(deadband_str), "%f", loop->deadband);
+    snprintf(integral_limit_str, sizeof(integral_limit_str), "%f", loop->integral_limit);
+    snprintf(derivative_filter_str, sizeof(derivative_filter_str), "%f", loop->derivative_filter);
+    snprintf(mode_str, sizeof(mode_str), "%d", loop->mode);
+
+    const char *params[] = {
+        loop_id_str, loop->name, enabled_str, loop->input_rtu, input_slot_str,
+        loop->output_rtu, output_slot_str, kp_str, ki_str, kd_str, setpoint_str,
+        output_min_str, output_max_str, deadband_str, integral_limit_str,
+        derivative_filter_str, mode_str
+    };
+
+    PGresult *res = PQexecParams(db->conn, query, 17, NULL, params, NULL, NULL, 0);
+
+    if (PQresultStatus(res) != PGRES_COMMAND_OK) {
+        LOG_ERROR(LOG_TAG, "Failed to save PID loop: %s", PQerrorMessage(db->conn));
+        PQclear(res);
+        pthread_mutex_unlock(&db->lock);
+        return WTC_ERROR_IO;
+    }
+
+    PQclear(res);
+    pthread_mutex_unlock(&db->lock);
+#else
+    LOG_DEBUG(LOG_TAG, "Saved PID loop %d (in-memory)", loop->loop_id);
+#endif
+
     return WTC_OK;
 }
 
@@ -803,7 +863,62 @@ wtc_result_t database_load_pid_loops(wtc_database_t *db, pid_loop_t **loops,
     if (!db->connected) return WTC_ERROR_NOT_INITIALIZED;
 
     *count = 0;
+
+#ifdef HAVE_POSTGRESQL
+    pthread_mutex_lock(&db->lock);
+
+    char query[512];
+    snprintf(query, sizeof(query),
+             "SELECT loop_id, name, enabled, input_rtu, input_slot, output_rtu, "
+             "output_slot, kp, ki, kd, setpoint, output_min, output_max, deadband, "
+             "integral_limit, derivative_filter, mode FROM pid_loops LIMIT %d", max_count);
+
+    PGresult *res = PQexec(db->conn, query);
+
+    if (PQresultStatus(res) != PGRES_TUPLES_OK) {
+        LOG_ERROR(LOG_TAG, "Failed to load PID loops: %s", PQerrorMessage(db->conn));
+        PQclear(res);
+        pthread_mutex_unlock(&db->lock);
+        return WTC_ERROR_IO;
+    }
+
+    int rows = PQntuples(res);
+    if (rows > max_count) rows = max_count;
+
+    *loops = calloc(rows, sizeof(pid_loop_t));
+    if (!*loops) {
+        PQclear(res);
+        pthread_mutex_unlock(&db->lock);
+        return WTC_ERROR_NO_MEMORY;
+    }
+
+    for (int i = 0; i < rows; i++) {
+        (*loops)[i].loop_id = atoi(PQgetvalue(res, i, 0));
+        strncpy((*loops)[i].name, PQgetvalue(res, i, 1), WTC_MAX_NAME - 1);
+        (*loops)[i].enabled = strcmp(PQgetvalue(res, i, 2), "t") == 0;
+        strncpy((*loops)[i].input_rtu, PQgetvalue(res, i, 3), WTC_MAX_STATION_NAME - 1);
+        (*loops)[i].input_slot = atoi(PQgetvalue(res, i, 4));
+        strncpy((*loops)[i].output_rtu, PQgetvalue(res, i, 5), WTC_MAX_STATION_NAME - 1);
+        (*loops)[i].output_slot = atoi(PQgetvalue(res, i, 6));
+        (*loops)[i].kp = (float)atof(PQgetvalue(res, i, 7));
+        (*loops)[i].ki = (float)atof(PQgetvalue(res, i, 8));
+        (*loops)[i].kd = (float)atof(PQgetvalue(res, i, 9));
+        (*loops)[i].setpoint = (float)atof(PQgetvalue(res, i, 10));
+        (*loops)[i].output_min = (float)atof(PQgetvalue(res, i, 11));
+        (*loops)[i].output_max = (float)atof(PQgetvalue(res, i, 12));
+        (*loops)[i].deadband = (float)atof(PQgetvalue(res, i, 13));
+        (*loops)[i].integral_limit = (float)atof(PQgetvalue(res, i, 14));
+        (*loops)[i].derivative_filter = (float)atof(PQgetvalue(res, i, 15));
+        (*loops)[i].mode = atoi(PQgetvalue(res, i, 16));
+    }
+
+    *count = rows;
+    PQclear(res);
+    pthread_mutex_unlock(&db->lock);
+#else
     (void)max_count;
+#endif
+
     return WTC_OK;
 }
 
@@ -811,7 +926,57 @@ wtc_result_t database_save_interlock(wtc_database_t *db, const interlock_t *inte
     if (!db || !interlock) return WTC_ERROR_INVALID_PARAM;
     if (!db->connected) return WTC_ERROR_NOT_INITIALIZED;
 
-    LOG_DEBUG(LOG_TAG, "Saved interlock %d", interlock->interlock_id);
+#ifdef HAVE_POSTGRESQL
+    pthread_mutex_lock(&db->lock);
+
+    const char *query =
+        "INSERT INTO interlocks (interlock_id, name, enabled, condition_rtu, "
+        "condition_slot, condition_type, threshold, delay_ms, action_rtu, "
+        "action_slot, action_type, action_value) "
+        "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) "
+        "ON CONFLICT (interlock_id) DO UPDATE SET "
+        "name = EXCLUDED.name, enabled = EXCLUDED.enabled, "
+        "condition_rtu = EXCLUDED.condition_rtu, condition_slot = EXCLUDED.condition_slot, "
+        "condition_type = EXCLUDED.condition_type, threshold = EXCLUDED.threshold, "
+        "delay_ms = EXCLUDED.delay_ms, action_rtu = EXCLUDED.action_rtu, "
+        "action_slot = EXCLUDED.action_slot, action_type = EXCLUDED.action_type, "
+        "action_value = EXCLUDED.action_value";
+
+    char interlock_id_str[16], condition_slot_str[16], condition_type_str[16];
+    char threshold_str[32], delay_str[16], action_slot_str[16];
+    char action_type_str[16], action_value_str[32], enabled_str[8];
+
+    snprintf(interlock_id_str, sizeof(interlock_id_str), "%d", interlock->interlock_id);
+    snprintf(enabled_str, sizeof(enabled_str), "%s", interlock->enabled ? "true" : "false");
+    snprintf(condition_slot_str, sizeof(condition_slot_str), "%d", interlock->condition_slot);
+    snprintf(condition_type_str, sizeof(condition_type_str), "%d", interlock->condition);
+    snprintf(threshold_str, sizeof(threshold_str), "%f", interlock->threshold);
+    snprintf(delay_str, sizeof(delay_str), "%u", interlock->delay_ms);
+    snprintf(action_slot_str, sizeof(action_slot_str), "%d", interlock->action_slot);
+    snprintf(action_type_str, sizeof(action_type_str), "%d", interlock->action);
+    snprintf(action_value_str, sizeof(action_value_str), "%f", interlock->action_value);
+
+    const char *params[] = {
+        interlock_id_str, interlock->name, enabled_str, interlock->condition_rtu,
+        condition_slot_str, condition_type_str, threshold_str, delay_str,
+        interlock->action_rtu, action_slot_str, action_type_str, action_value_str
+    };
+
+    PGresult *res = PQexecParams(db->conn, query, 12, NULL, params, NULL, NULL, 0);
+
+    if (PQresultStatus(res) != PGRES_COMMAND_OK) {
+        LOG_ERROR(LOG_TAG, "Failed to save interlock: %s", PQerrorMessage(db->conn));
+        PQclear(res);
+        pthread_mutex_unlock(&db->lock);
+        return WTC_ERROR_IO;
+    }
+
+    PQclear(res);
+    pthread_mutex_unlock(&db->lock);
+#else
+    LOG_DEBUG(LOG_TAG, "Saved interlock %d (in-memory)", interlock->interlock_id);
+#endif
+
     return WTC_OK;
 }
 
@@ -821,7 +986,57 @@ wtc_result_t database_load_interlocks(wtc_database_t *db, interlock_t **interloc
     if (!db->connected) return WTC_ERROR_NOT_INITIALIZED;
 
     *count = 0;
+
+#ifdef HAVE_POSTGRESQL
+    pthread_mutex_lock(&db->lock);
+
+    char query[512];
+    snprintf(query, sizeof(query),
+             "SELECT interlock_id, name, enabled, condition_rtu, condition_slot, "
+             "condition_type, threshold, delay_ms, action_rtu, action_slot, "
+             "action_type, action_value FROM interlocks LIMIT %d", max_count);
+
+    PGresult *res = PQexec(db->conn, query);
+
+    if (PQresultStatus(res) != PGRES_TUPLES_OK) {
+        LOG_ERROR(LOG_TAG, "Failed to load interlocks: %s", PQerrorMessage(db->conn));
+        PQclear(res);
+        pthread_mutex_unlock(&db->lock);
+        return WTC_ERROR_IO;
+    }
+
+    int rows = PQntuples(res);
+    if (rows > max_count) rows = max_count;
+
+    *interlocks = calloc(rows, sizeof(interlock_t));
+    if (!*interlocks) {
+        PQclear(res);
+        pthread_mutex_unlock(&db->lock);
+        return WTC_ERROR_NO_MEMORY;
+    }
+
+    for (int i = 0; i < rows; i++) {
+        (*interlocks)[i].interlock_id = atoi(PQgetvalue(res, i, 0));
+        strncpy((*interlocks)[i].name, PQgetvalue(res, i, 1), WTC_MAX_NAME - 1);
+        (*interlocks)[i].enabled = strcmp(PQgetvalue(res, i, 2), "t") == 0;
+        strncpy((*interlocks)[i].condition_rtu, PQgetvalue(res, i, 3), WTC_MAX_STATION_NAME - 1);
+        (*interlocks)[i].condition_slot = atoi(PQgetvalue(res, i, 4));
+        (*interlocks)[i].condition = atoi(PQgetvalue(res, i, 5));
+        (*interlocks)[i].threshold = (float)atof(PQgetvalue(res, i, 6));
+        (*interlocks)[i].delay_ms = (uint32_t)atoi(PQgetvalue(res, i, 7));
+        strncpy((*interlocks)[i].action_rtu, PQgetvalue(res, i, 8), WTC_MAX_STATION_NAME - 1);
+        (*interlocks)[i].action_slot = atoi(PQgetvalue(res, i, 9));
+        (*interlocks)[i].action = atoi(PQgetvalue(res, i, 10));
+        (*interlocks)[i].action_value = (float)atof(PQgetvalue(res, i, 11));
+    }
+
+    *count = rows;
+    PQclear(res);
+    pthread_mutex_unlock(&db->lock);
+#else
     (void)max_count;
+#endif
+
     return WTC_OK;
 }
 
@@ -831,7 +1046,46 @@ wtc_result_t database_save_user(wtc_database_t *db, const user_t *user) {
     if (!db || !user) return WTC_ERROR_INVALID_PARAM;
     if (!db->connected) return WTC_ERROR_NOT_INITIALIZED;
 
-    LOG_DEBUG(LOG_TAG, "Saved user %s", user->username);
+#ifdef HAVE_POSTGRESQL
+    pthread_mutex_lock(&db->lock);
+
+    const char *query =
+        "INSERT INTO users (user_id, username, password_hash, role, created_at, "
+        "last_login, active) "
+        "VALUES ($1, $2, $3, $4, to_timestamp($5/1000.0), to_timestamp($6/1000.0), $7) "
+        "ON CONFLICT (username) DO UPDATE SET "
+        "password_hash = EXCLUDED.password_hash, role = EXCLUDED.role, "
+        "last_login = EXCLUDED.last_login, active = EXCLUDED.active";
+
+    char user_id_str[16], role_str[16], created_str[32], login_str[32], active_str[8];
+
+    snprintf(user_id_str, sizeof(user_id_str), "%d", user->user_id);
+    snprintf(role_str, sizeof(role_str), "%d", user->role);
+    snprintf(created_str, sizeof(created_str), "%lu", user->created_at_ms);
+    snprintf(login_str, sizeof(login_str), "%lu", user->last_login_ms);
+    snprintf(active_str, sizeof(active_str), "%s", user->active ? "true" : "false");
+
+    const char *params[] = {
+        user_id_str, user->username, user->password_hash, role_str,
+        created_str, login_str, active_str
+    };
+
+    PGresult *res = PQexecParams(db->conn, query, 7, NULL, params, NULL, NULL, 0);
+
+    if (PQresultStatus(res) != PGRES_COMMAND_OK) {
+        LOG_ERROR(LOG_TAG, "Failed to save user: %s", PQerrorMessage(db->conn));
+        PQclear(res);
+        pthread_mutex_unlock(&db->lock);
+        return WTC_ERROR_IO;
+    }
+
+    PQclear(res);
+    pthread_mutex_unlock(&db->lock);
+    LOG_INFO(LOG_TAG, "Saved user %s to database", user->username);
+#else
+    LOG_DEBUG(LOG_TAG, "Saved user %s (in-memory)", user->username);
+#endif
+
     return WTC_OK;
 }
 
@@ -840,14 +1094,76 @@ wtc_result_t database_load_user(wtc_database_t *db, const char *username,
     if (!db || !username || !user) return WTC_ERROR_INVALID_PARAM;
     if (!db->connected) return WTC_ERROR_NOT_INITIALIZED;
 
+#ifdef HAVE_POSTGRESQL
+    pthread_mutex_lock(&db->lock);
+
+    const char *query =
+        "SELECT user_id, username, password_hash, role, "
+        "EXTRACT(EPOCH FROM created_at) * 1000, "
+        "EXTRACT(EPOCH FROM last_login) * 1000, active "
+        "FROM users WHERE username = $1";
+
+    const char *params[] = { username };
+
+    PGresult *res = PQexecParams(db->conn, query, 1, NULL, params, NULL, NULL, 0);
+
+    if (PQresultStatus(res) != PGRES_TUPLES_OK) {
+        LOG_ERROR(LOG_TAG, "Failed to load user: %s", PQerrorMessage(db->conn));
+        PQclear(res);
+        pthread_mutex_unlock(&db->lock);
+        return WTC_ERROR_IO;
+    }
+
+    if (PQntuples(res) == 0) {
+        PQclear(res);
+        pthread_mutex_unlock(&db->lock);
+        return WTC_ERROR_NOT_FOUND;
+    }
+
+    user->user_id = atoi(PQgetvalue(res, 0, 0));
+    strncpy(user->username, PQgetvalue(res, 0, 1), WTC_MAX_USERNAME - 1);
+    strncpy(user->password_hash, PQgetvalue(res, 0, 2), sizeof(user->password_hash) - 1);
+    user->role = atoi(PQgetvalue(res, 0, 3));
+    user->created_at_ms = (uint64_t)atof(PQgetvalue(res, 0, 4));
+    user->last_login_ms = (uint64_t)atof(PQgetvalue(res, 0, 5));
+    user->active = strcmp(PQgetvalue(res, 0, 6), "t") == 0;
+
+    PQclear(res);
+    pthread_mutex_unlock(&db->lock);
+    return WTC_OK;
+#else
+    (void)username;
+    (void)user;
     return WTC_ERROR_NOT_FOUND;
+#endif
 }
 
 wtc_result_t database_delete_user(wtc_database_t *db, const char *username) {
     if (!db || !username) return WTC_ERROR_INVALID_PARAM;
     if (!db->connected) return WTC_ERROR_NOT_INITIALIZED;
 
-    LOG_DEBUG(LOG_TAG, "Deleted user %s", username);
+#ifdef HAVE_POSTGRESQL
+    pthread_mutex_lock(&db->lock);
+
+    const char *query = "DELETE FROM users WHERE username = $1";
+    const char *params[] = { username };
+
+    PGresult *res = PQexecParams(db->conn, query, 1, NULL, params, NULL, NULL, 0);
+
+    if (PQresultStatus(res) != PGRES_COMMAND_OK) {
+        LOG_ERROR(LOG_TAG, "Failed to delete user: %s", PQerrorMessage(db->conn));
+        PQclear(res);
+        pthread_mutex_unlock(&db->lock);
+        return WTC_ERROR_IO;
+    }
+
+    PQclear(res);
+    pthread_mutex_unlock(&db->lock);
+    LOG_INFO(LOG_TAG, "Deleted user %s from database", username);
+#else
+    LOG_DEBUG(LOG_TAG, "Deleted user %s (in-memory)", username);
+#endif
+
     return WTC_OK;
 }
 
@@ -857,7 +1173,53 @@ wtc_result_t database_list_users(wtc_database_t *db, user_t **users,
     if (!db->connected) return WTC_ERROR_NOT_INITIALIZED;
 
     *count = 0;
+
+#ifdef HAVE_POSTGRESQL
+    pthread_mutex_lock(&db->lock);
+
+    char query[512];
+    snprintf(query, sizeof(query),
+             "SELECT user_id, username, password_hash, role, "
+             "EXTRACT(EPOCH FROM created_at) * 1000, "
+             "EXTRACT(EPOCH FROM last_login) * 1000, active "
+             "FROM users LIMIT %d", max_count);
+
+    PGresult *res = PQexec(db->conn, query);
+
+    if (PQresultStatus(res) != PGRES_TUPLES_OK) {
+        LOG_ERROR(LOG_TAG, "Failed to list users: %s", PQerrorMessage(db->conn));
+        PQclear(res);
+        pthread_mutex_unlock(&db->lock);
+        return WTC_ERROR_IO;
+    }
+
+    int rows = PQntuples(res);
+    if (rows > max_count) rows = max_count;
+
+    *users = calloc(rows, sizeof(user_t));
+    if (!*users) {
+        PQclear(res);
+        pthread_mutex_unlock(&db->lock);
+        return WTC_ERROR_NO_MEMORY;
+    }
+
+    for (int i = 0; i < rows; i++) {
+        (*users)[i].user_id = atoi(PQgetvalue(res, i, 0));
+        strncpy((*users)[i].username, PQgetvalue(res, i, 1), WTC_MAX_USERNAME - 1);
+        strncpy((*users)[i].password_hash, PQgetvalue(res, i, 2), sizeof((*users)[i].password_hash) - 1);
+        (*users)[i].role = atoi(PQgetvalue(res, i, 3));
+        (*users)[i].created_at_ms = (uint64_t)atof(PQgetvalue(res, i, 4));
+        (*users)[i].last_login_ms = (uint64_t)atof(PQgetvalue(res, i, 5));
+        (*users)[i].active = strcmp(PQgetvalue(res, i, 6), "t") == 0;
+    }
+
+    *count = rows;
+    PQclear(res);
+    pthread_mutex_unlock(&db->lock);
+#else
     (void)max_count;
+#endif
+
     return WTC_OK;
 }
 

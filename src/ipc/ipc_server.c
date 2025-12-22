@@ -815,3 +815,49 @@ wtc_result_t ipc_server_process_commands(ipc_server_t *server) {
 wtc_shared_memory_t *ipc_server_get_shm(ipc_server_t *server) {
     return server ? server->shm : NULL;
 }
+
+/* Post event notification for WebSocket broadcast */
+wtc_result_t ipc_server_post_notification(ipc_server_t *server,
+                                           int event_type,
+                                           const char *station_name,
+                                           const char *message) {
+    if (!server || !server->shm) {
+        return WTC_ERROR_NOT_INITIALIZED;
+    }
+
+    pthread_mutex_lock(&server->shm->lock);
+
+    /* Get next write index (circular buffer) */
+    int idx = server->shm->notification_write_idx;
+
+    /* Store notification */
+    server->shm->notifications[idx].event_type = event_type;
+    server->shm->notifications[idx].timestamp_ms = time_get_ms();
+
+    if (station_name) {
+        strncpy(server->shm->notifications[idx].station_name,
+                station_name,
+                sizeof(server->shm->notifications[idx].station_name) - 1);
+    } else {
+        server->shm->notifications[idx].station_name[0] = '\0';
+    }
+
+    if (message) {
+        strncpy(server->shm->notifications[idx].message,
+                message,
+                sizeof(server->shm->notifications[idx].message) - 1);
+    } else {
+        server->shm->notifications[idx].message[0] = '\0';
+    }
+
+    /* Advance write index */
+    server->shm->notification_write_idx = (idx + 1) % WTC_MAX_NOTIFICATIONS;
+
+    pthread_mutex_unlock(&server->shm->lock);
+
+    LOG_DEBUG(LOG_TAG, "Posted notification: type=%d, station=%s, msg=%s",
+              event_type, station_name ? station_name : "(none)",
+              message ? message : "(none)");
+
+    return WTC_OK;
+}

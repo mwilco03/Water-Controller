@@ -130,11 +130,21 @@ static void signal_handler(int sig) {
 static void on_failover_event(const char *primary, const char *backup,
                                bool failed_over, void *ctx) {
     (void)ctx;
+    char message[256];
+
     if (failed_over) {
         LOG_WARN("RTU OFFLINE: %s - failing over to %s", primary, backup ? backup : "none");
-        /* TODO: Send WebSocket notification via IPC */
+        snprintf(message, sizeof(message), "RTU offline - failing over to %s",
+                 backup ? backup : "none");
+        if (g_ipc) {
+            ipc_server_post_notification(g_ipc, WTC_EVENT_RTU_OFFLINE, primary, message);
+        }
     } else {
         LOG_INFO("RTU ONLINE: %s - restored from failover", primary);
+        snprintf(message, sizeof(message), "RTU online - restored from failover");
+        if (g_ipc) {
+            ipc_server_post_notification(g_ipc, WTC_EVENT_RTU_ONLINE, primary, message);
+        }
     }
 }
 
@@ -237,7 +247,42 @@ static wtc_result_t save_config_to_database(void) {
     }
     LOG_INFO("  Saved %d RTUs", rtu_count);
 
-    /* TODO: Save other configuration as needed */
+    /* Save PID loops */
+    if (g_control) {
+        pid_loop_t *loops = NULL;
+        int loop_count = 0;
+        if (control_engine_list_pid_loops(g_control, &loops, &loop_count, WTC_MAX_PID_LOOPS) == WTC_OK) {
+            for (int i = 0; i < loop_count; i++) {
+                database_save_pid_loop(g_database, &loops[i]);
+            }
+            free(loops);
+        }
+        LOG_INFO("  Saved %d PID loops", loop_count);
+
+        /* Save interlocks */
+        interlock_t *interlocks = NULL;
+        int interlock_count = 0;
+        if (control_engine_list_interlocks(g_control, &interlocks, &interlock_count, WTC_MAX_INTERLOCKS) == WTC_OK) {
+            for (int i = 0; i < interlock_count; i++) {
+                database_save_interlock(g_database, &interlocks[i]);
+            }
+            free(interlocks);
+        }
+        LOG_INFO("  Saved %d interlocks", interlock_count);
+    }
+
+    /* Save alarm rules */
+    if (g_alarms) {
+        alarm_rule_t *rules = NULL;
+        int rule_count = 0;
+        if (alarm_manager_list_rules(g_alarms, &rules, &rule_count, WTC_MAX_ALARM_RULES) == WTC_OK) {
+            for (int i = 0; i < rule_count; i++) {
+                database_save_alarm_rule(g_database, &rules[i]);
+            }
+            free(rules);
+        }
+        LOG_INFO("  Saved %d alarm rules", rule_count);
+    }
 
     LOG_INFO("Configuration saved successfully");
     return WTC_OK;
