@@ -262,9 +262,27 @@ typedef struct {
     int onewire_device_count;
     bool onewire_discovery_complete;
 
+    /* Event notification queue (Controller -> API for WebSocket broadcast) */
+    #define WTC_MAX_NOTIFICATIONS 32
+    struct {
+        int event_type;      /* 0=none, 1=RTU offline, 2=RTU online, 3=alarm, 4=config change */
+        char station_name[64];
+        char message[256];
+        uint64_t timestamp_ms;
+    } notifications[WTC_MAX_NOTIFICATIONS];
+    int notification_write_idx;  /* Next write position (circular buffer) */
+    int notification_read_idx;   /* Next read position for API */
+
     /* Mutex for synchronization */
     pthread_mutex_t lock;
 } wtc_shared_memory_t;
+
+/* Event types for notifications */
+#define WTC_EVENT_NONE          0
+#define WTC_EVENT_RTU_OFFLINE   1
+#define WTC_EVENT_RTU_ONLINE    2
+#define WTC_EVENT_ALARM         3
+#define WTC_EVENT_CONFIG_CHANGE 4
 
 /* IPC server handle */
 typedef struct ipc_server ipc_server_t;
@@ -314,6 +332,12 @@ wtc_result_t ipc_server_process_commands(ipc_server_t *server);
 
 /* Get shared memory pointer (for direct access) */
 wtc_shared_memory_t *ipc_server_get_shm(ipc_server_t *server);
+
+/* Post event notification (for WebSocket broadcast by API) */
+wtc_result_t ipc_server_post_notification(ipc_server_t *server,
+                                           int event_type,
+                                           const char *station_name,
+                                           const char *message);
 
 #ifdef __cplusplus
 }
