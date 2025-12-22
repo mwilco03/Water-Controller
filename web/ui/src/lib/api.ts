@@ -16,12 +16,19 @@ export interface RTUDevice {
   actuators: ActuatorState[];
 }
 
+/* Quality codes (OPC UA compatible - 5-byte sensor format) */
+export const QUALITY_GOOD = 0x00;
+export const QUALITY_UNCERTAIN = 0x40;
+export const QUALITY_BAD = 0x80;
+export const QUALITY_NOT_CONNECTED = 0xC0;
+
 export interface SensorData {
   slot: number;
   name: string;
   value: number;
   unit: string;
-  quality: string;
+  quality: string;           /* Human-readable quality name */
+  quality_code?: number;     /* OPC UA quality code from 5-byte format */
   timestamp: string;
 }
 

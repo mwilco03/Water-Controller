@@ -9,9 +9,11 @@ interface Props {
   showDetails?: boolean;
 }
 
-// Quality code constants (OPC UA compatible)
-const QUALITY_GOOD = 192;
-const QUALITY_BAD = 0;
+// Quality code constants (OPC UA compatible - 5-byte sensor format)
+const QUALITY_GOOD = 0x00;
+const QUALITY_UNCERTAIN = 0x40;
+const QUALITY_BAD = 0x80;
+const QUALITY_NOT_CONNECTED = 0xC0;
 
 export default function SensorDisplay({ sensor, size = 'md', showDetails = false }: Props) {
   const dimensions = useMemo(() => {
@@ -22,8 +24,21 @@ export default function SensorDisplay({ sensor, size = 'md', showDetails = false
     }
   }, [size]);
 
-  const isGoodQuality = sensor.last_quality >= QUALITY_GOOD;
+  /* Check quality from 5-byte sensor format */
+  const isGoodQuality = sensor.last_quality === QUALITY_GOOD;
+  const isUncertainQuality = sensor.last_quality === QUALITY_UNCERTAIN;
+  const isBadQuality = sensor.last_quality === QUALITY_BAD;
+  const isNotConnected = sensor.last_quality === QUALITY_NOT_CONNECTED;
   const value = sensor.last_value ?? null;
+
+  /* Get quality indicator per ISA-101 */
+  const getQualityIndicator = () => {
+    if (isGoodQuality) return null;
+    if (isUncertainQuality) return '?';  /* Uncertain */
+    if (isBadQuality) return 'X';        /* Bad */
+    if (isNotConnected) return '-';      /* Not connected */
+    return '!';
+  };
 
   // Get color based on sensor type and value
   const getColor = () => {
@@ -130,7 +145,12 @@ export default function SensorDisplay({ sensor, size = 'md', showDetails = false
             {sensor.name}
           </span>
           {!isGoodQuality && (
-            <span className="text-xs text-red-500" title="Bad quality">!</span>
+            <span
+              className={`text-xs font-bold ${isUncertainQuality ? 'text-yellow-500' : 'text-red-500'}`}
+              title={isUncertainQuality ? 'Uncertain quality' : isBadQuality ? 'Bad quality' : isNotConnected ? 'Not connected' : 'Unknown quality'}
+            >
+              {getQualityIndicator()}
+            </span>
           )}
         </div>
 

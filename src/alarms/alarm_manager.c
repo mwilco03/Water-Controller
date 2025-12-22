@@ -567,13 +567,21 @@ wtc_result_t alarm_manager_process(alarm_manager_t *manager) {
 
         bool condition_met = false;
 
-        if (res != WTC_OK || sensor.status != IOPS_GOOD) {
-            /* Bad quality alarm */
+        /* Check quality from 5-byte sensor format
+         * Don't alarm on BAD/NOT_CONNECTED values except for BAD_QUALITY rules
+         */
+        bool quality_good = (res == WTC_OK &&
+                             sensor.status == IOPS_GOOD &&
+                             sensor.quality == QUALITY_GOOD);
+
+        if (!quality_good) {
+            /* Bad quality alarm - trigger only for BAD_QUALITY condition */
             if (rule->condition == ALARM_CONDITION_BAD_QUALITY) {
                 condition_met = true;
             }
+            /* Skip other alarms when quality is bad/uncertain/not_connected */
         } else {
-            /* Evaluate condition */
+            /* Evaluate condition only when quality is GOOD */
             switch (rule->condition) {
             case ALARM_CONDITION_HIGH:
             case ALARM_CONDITION_HIGH_HIGH:

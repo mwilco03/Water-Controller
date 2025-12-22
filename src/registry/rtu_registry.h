@@ -82,12 +82,15 @@ wtc_result_t rtu_registry_set_device_state(rtu_registry_t *registry,
                                             const char *station_name,
                                             profinet_state_t state);
 
-/* Update sensor data */
+/* Update sensor data with quality
+ * Uses 5-byte sensor format: Float32 + Quality byte
+ */
 wtc_result_t rtu_registry_update_sensor(rtu_registry_t *registry,
                                          const char *station_name,
                                          int slot,
                                          float value,
-                                         iops_t status);
+                                         iops_t status,
+                                         data_quality_t quality);
 
 /* Update actuator state */
 wtc_result_t rtu_registry_update_actuator(rtu_registry_t *registry,

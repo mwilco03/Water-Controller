@@ -32,11 +32,12 @@ typedef struct {
     int connection_state;
     int slot_count;
 
-    /* Sensor data */
+    /* Sensor data - 5-byte format with quality */
     struct {
         int slot;
         float value;
-        int status;
+        int status;           /* IOPS status */
+        uint8_t quality;      /* Data quality (OPC UA compatible: 0x00=GOOD, 0x40=UNCERTAIN, 0x80=BAD, 0xC0=NOT_CONNECTED) */
         uint64_t timestamp_ms;
     } sensors[WTC_MAX_SHM_SENSORS];
     int sensor_count;
