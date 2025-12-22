@@ -4,27 +4,59 @@ This guide covers installation, configuration, and deployment of the Water Treat
 
 ## Table of Contents
 
-1. [System Requirements](#system-requirements)
-2. [Quick Installation](#quick-installation)
-3. [Manual Installation](#manual-installation)
-4. [Configuration](#configuration)
-5. [Service Management](#service-management)
-6. [Backup and Restore](#backup-and-restore)
-7. [Modbus Gateway](#modbus-gateway)
-8. [Troubleshooting](#troubleshooting)
+1. [Deployment Philosophy](#deployment-philosophy)
+2. [System Requirements](#system-requirements)
+3. [Pre-Deployment Checklist](#pre-deployment-checklist)
+4. [Quick Installation](#quick-installation)
+5. [Manual Installation](#manual-installation)
+6. [Configuration](#configuration)
+7. [Security Hardening](#security-hardening)
+8. [SD Card Protection](#sd-card-protection)
+9. [Service Management](#service-management)
+10. [Backup and Restore](#backup-and-restore)
+11. [Modbus Gateway](#modbus-gateway)
+12. [Deployment Verification](#deployment-verification)
+13. [Operational Handoff](#operational-handoff)
+14. [Troubleshooting](#troubleshooting)
+15. [Emergency Procedures](#emergency-procedures)
+16. [Cross-Compilation](#cross-compilation)
+17. [Board-Specific Installation](#board-specific-installation)
+
+---
+
+## Deployment Philosophy
+
+This is critical infrastructure. Deployment errors can cause:
+- Loss of process visibility (operator blindness)
+- Environmental contamination (treatment failures)
+- Equipment damage (uncontrolled actuators)
+- Regulatory violations (audit trail gaps)
+
+**Every configuration choice must answer: "What happens when this fails?"**
+
+Key architectural principles:
+- Two-plane architecture: controller commands flow THROUGH RTU, never direct to actuators
+- RTUs maintain safe state during controller disconnect - this is by design
+- Graceful degradation at every layer
+
+---
 
 ## System Requirements
 
 ### Hardware
 
-- **CPU**: ARM Cortex-A53 or x86_64 (multi-core recommended)
-- **RAM**: 512 MB minimum, 2 GB recommended
-- **Storage**: 1 GB minimum, 10 GB recommended for historian data
-- **Network**: Ethernet interface for PROFINET communication
+| Component | Minimum | Recommended |
+|-----------|---------|-------------|
+| **CPU** | ARM Cortex-A53 or x86_64 | Multi-core |
+| **RAM** | 2 GB | 4 GB (for historian workloads) |
+| **Storage** | 32 GB SD card | Industrial-grade for write endurance |
+| **Network** | Dedicated Ethernet for PROFINET | Secondary Ethernet for HMI/API |
+| **RTC** | - | Battery backup (critical for historian) |
+| **Power** | - | UPS or graceful shutdown capability |
 
 ### Software
 
-- **OS**: Debian 11+, Ubuntu 20.04+, or Raspberry Pi OS
+- **OS**: Ubuntu 22.04/24.04 LTS, Debian 11+, or Raspberry Pi OS (64-bit)
 - **Kernel**: Linux 4.19+ with PREEMPT_RT (recommended for real-time)
 - **Python**: 3.9+
 - **Node.js**: 18+ (for web UI)
@@ -40,8 +72,42 @@ sudo apt install -y \
     build-essential cmake pkg-config \
     libpq-dev libjson-c-dev \
     python3 python3-pip python3-venv \
-    nodejs npm
+    nodejs npm \
+    postgresql redis-server nginx
 ```
+
+---
+
+## Pre-Deployment Checklist
+
+### Hardware Verification
+
+- [ ] Single Board Computer (Raspberry Pi 4/5, BeagleBone, or industrial SBC)
+- [ ] Minimum 2GB RAM (4GB recommended for historian workloads)
+- [ ] 32GB SD card (industrial-grade recommended for write endurance)
+- [ ] Dedicated Ethernet interface for PROFINET (no shared traffic)
+- [ ] Optional: Secondary Ethernet for HMI/API access
+- [ ] Real-time clock with battery backup (critical for historian)
+- [ ] UPS or graceful shutdown capability
+
+### Network Requirements
+
+- [ ] PROFINET network segment isolated from IT traffic
+- [ ] Static IP addressing for controller and all RTUs
+- [ ] Network time synchronization (NTP or PTP) configured
+- [ ] Firewall rules defined for HMI access (port 3000, 8080)
+- [ ] No DHCP on PROFINET segment
+
+### Pre-Flight Checklist
+
+- [ ] Target OS is Ubuntu 22.04/24.04 LTS or Raspberry Pi OS (64-bit)
+- [ ] Root/sudo access available
+- [ ] RTU devices powered and network-reachable
+- [ ] Backup of any existing configuration exported
+- [ ] Maintenance window scheduled with operations
+- [ ] Rollback plan documented
+
+---
 
 ## Quick Installation
 
@@ -63,9 +129,23 @@ This will:
 - Set up systemd services
 - Create default configuration
 
+---
+
 ## Manual Installation
 
-### 1. Build the Controller
+### Phase 1: System Preparation
+
+```bash
+# Update system packages (security baseline)
+sudo apt update && sudo apt upgrade -y
+
+# Configure system for real-time operation
+echo 'net.core.rmem_max=16777216' | sudo tee -a /etc/sysctl.d/99-water-controller.conf
+echo 'net.core.wmem_max=16777216' | sudo tee -a /etc/sysctl.d/99-water-controller.conf
+sudo sysctl --system
+```
+
+### Phase 2: Build the Controller
 
 ```bash
 mkdir build && cd build
@@ -73,7 +153,7 @@ cmake -DCMAKE_BUILD_TYPE=Release ..
 make -j$(nproc)
 ```
 
-### 2. Install Files
+### Phase 3: Install Files
 
 ```bash
 # Create directories
@@ -90,7 +170,7 @@ sudo cp build/lib*.so /opt/water-controller/lib/
 sudo cp -r web /opt/water-controller/
 ```
 
-### 3. Create Service User
+### Phase 4: Create Service User
 
 ```bash
 sudo useradd --system --user-group --no-create-home --shell /usr/sbin/nologin wtc
@@ -98,7 +178,7 @@ sudo usermod -a -G dialout wtc  # For serial port access
 sudo chown -R wtc:wtc /var/lib/water-controller /var/log/water-controller
 ```
 
-### 4. Install Python Environment
+### Phase 5: Install Python Environment
 
 ```bash
 cd /opt/water-controller
@@ -106,7 +186,7 @@ sudo python3 -m venv venv
 sudo /opt/water-controller/venv/bin/pip install -r web/api/requirements.txt
 ```
 
-### 5. Install Node.js Dependencies
+### Phase 6: Install Node.js Dependencies
 
 ```bash
 cd /opt/water-controller/web/ui
@@ -114,7 +194,20 @@ sudo npm install --production
 sudo npm run build
 ```
 
-### 6. Install Systemd Services
+### Phase 7: Database Initialization (Optional)
+
+```bash
+# Create PostgreSQL database and user
+sudo -u postgres psql <<EOF
+CREATE USER wtc WITH PASSWORD 'CHANGE_THIS_PASSWORD';
+CREATE DATABASE water_controller OWNER wtc;
+GRANT ALL PRIVILEGES ON DATABASE water_controller TO wtc;
+\c water_controller
+CREATE EXTENSION IF NOT EXISTS timescaledb;  -- Optional: for historian performance
+EOF
+```
+
+### Phase 8: Install Systemd Services
 
 ```bash
 sudo cp systemd/*.service /etc/systemd/system/
@@ -122,7 +215,28 @@ sudo systemctl daemon-reload
 sudo systemctl enable water-controller water-controller-api water-controller-ui
 ```
 
+---
+
 ## Configuration
+
+### Configuration File Hierarchy
+
+```
+/etc/water-controller/
+├── controller.conf          # Main controller configuration
+├── profinet.conf            # PROFINET network settings
+├── rtus/                    # Per-RTU configuration files
+│   ├── tank-1.conf
+│   ├── pump-station.conf
+│   └── filter-1.conf
+├── alarms/                  # Alarm rule definitions
+│   ├── process-alarms.json
+│   └── system-alarms.json
+├── historian.conf           # Data retention and compression settings
+├── modbus.conf              # Modbus gateway mappings (if enabled)
+├── auth.conf                # Authentication settings (AD integration)
+└── backup.conf              # Backup schedule and destinations
+```
 
 ### Main Configuration File
 
@@ -130,26 +244,97 @@ Location: `/etc/water-controller/controller.conf`
 
 ```ini
 [general]
+station_name = "WTP-Controller-01"
 log_level = INFO
+log_retention_days = 90
 cycle_time_ms = 1000
 
 [profinet]
 interface = eth0
 station_name = wtc-controller
+cycle_time_ms = 1000
+watchdog_factor = 3
+dcp_discovery_interval = 60
+
+[database]
+connection_string = postgresql://wtc:PASSWORD@localhost/water_controller
+pool_size = 10
+connection_timeout = 5
+
+[redis]
+url = redis://localhost:6379/0
+
+[historian]
+enabled = true
+retention_days = 365
+compression = swinging_door
+compression_enabled = true
+deadband_default = 0.5
+flush_interval_seconds = 30
+
+[alarms]
+isa_18_2_compliant = true
+max_active_alarms = 1000
+alarm_rate_limit = 10
 
 [modbus]
 tcp_enabled = true
 tcp_port = 502
 rtu_enabled = false
 
-[historian]
-enabled = true
-retention_days = 365
-compression = swinging_door
+[security]
+session_timeout_minutes = 480
+require_https = true
+api_rate_limit = 100
+```
 
-[database]
-# PostgreSQL (optional)
-# connection_string = postgresql://user:pass@localhost/wtc
+### PROFINET Interface Configuration
+
+Location: `/etc/water-controller/profinet.conf`
+
+```ini
+[network]
+interface = eth0
+mac_filter = true
+
+[timing]
+cycle_time_ms = 1000
+reduction_ratio = 1
+send_clock_factor = 1
+
+[discovery]
+dcp_enabled = true
+dcp_interval_seconds = 60
+auto_register_rtus = false
+
+[failover]
+connection_timeout_cycles = 3
+reconnect_delay_ms = 5000
+max_reconnect_attempts = 0
+```
+
+### RTU Registration
+
+Location: `/etc/water-controller/rtus/tank-1.conf`
+
+```ini
+[identity]
+station_name = "Tank-1"
+ip_address = 192.168.1.100
+mac_address = AA:BB:CC:DD:EE:01
+vendor_id = 0x1234
+device_id = 0x0001
+
+[communication]
+expected_cycle_time_ms = 1000
+timeout_action = LAST_KNOWN   # LAST_KNOWN | SAFE_STATE | ALARM_ONLY
+
+[slots]
+expected_slot_count = 8
+
+[alarms]
+communication_alarm_priority = HIGH
+communication_alarm_delay_ms = 5000
 ```
 
 ### Environment Variables
@@ -164,6 +349,7 @@ Location: `/etc/water-controller/environment`
 | `WT_CONFIG_DIR` | Configuration directory | `/etc/water-controller` |
 | `WT_DATA_DIR` | Data directory | `/var/lib/water-controller` |
 | `DATABASE_URL` | PostgreSQL connection string | - |
+| `REDIS_URL` | Redis connection URL | `redis://localhost:6379` |
 
 ### Modbus Configuration
 
@@ -185,6 +371,117 @@ auto_generate = true
 sensor_base_addr = 0
 actuator_base_addr = 100
 ```
+
+---
+
+## Security Hardening
+
+### Network Security
+
+```bash
+# Configure firewall (ufw example)
+sudo ufw default deny incoming
+sudo ufw default allow outgoing
+
+# Allow HMI access (restrict to operator network)
+sudo ufw allow from 10.0.0.0/8 to any port 443   # HTTPS
+sudo ufw allow from 10.0.0.0/8 to any port 3000  # Web UI
+sudo ufw allow from 10.0.0.0/8 to any port 8080  # API
+
+# PROFINET requires raw socket access - no firewall on that interface
+# Instead, use separate network segment
+
+sudo ufw enable
+```
+
+### HTTPS Configuration
+
+```bash
+# Generate or install TLS certificates
+sudo mkdir -p /etc/water-controller/ssl
+
+# Self-signed for initial deployment (replace in production)
+sudo openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+    -keyout /etc/water-controller/ssl/controller.key \
+    -out /etc/water-controller/ssl/controller.crt \
+    -subj "/CN=water-controller.local"
+```
+
+### Authentication Setup
+
+Location: `/etc/water-controller/auth.conf`
+
+```ini
+[authentication]
+method = LOCAL                # LOCAL | LDAP | AD
+session_store = redis
+password_min_length = 12
+lockout_threshold = 5
+lockout_duration_minutes = 30
+
+[local_users]
+# Initial admin user - change password immediately after first login
+admin_password_hash = $argon2id$...  # Generated during install
+
+[ldap]
+# Uncomment and configure for Active Directory integration
+# server = ldaps://dc.example.com:636
+# base_dn = OU=SCADA,DC=example,DC=com
+# bind_dn = CN=water-controller,OU=Service Accounts,DC=example,DC=com
+# bind_password_file = /etc/water-controller/secrets/ldap.password
+# user_filter = (&(objectClass=user)(sAMAccountName={username}))
+# operator_group = CN=SCADA-Operators,OU=Groups,DC=example,DC=com
+# admin_group = CN=SCADA-Admins,OU=Groups,DC=example,DC=com
+```
+
+---
+
+## SD Card Protection
+
+### Mount Options
+
+Add to `/etc/fstab` for SD card protection:
+
+```
+tmpfs  /tmp      tmpfs  defaults,noatime,nosuid,size=256M  0 0
+tmpfs  /var/log  tmpfs  defaults,noatime,nosuid,size=128M  0 0
+```
+
+**Note:** Logs in tmpfs are lost on reboot. Configure log forwarding to preserve critical logs.
+
+### Write Coalescing Configuration
+
+Add to `/etc/water-controller/controller.conf`:
+
+```ini
+[storage]
+write_debounce_seconds = 30
+config_save_delay_seconds = 60
+historian_batch_size = 1000
+historian_flush_interval = 60
+track_unsaved_changes = true
+unsaved_indicator_visible = true
+```
+
+### Log Forwarding
+
+Location: `/etc/water-controller/logging.conf`
+
+```ini
+[local]
+ring_buffer_size = 10000
+persist_on_shutdown = true
+persist_path = /var/lib/water-controller/logs/
+
+[forwarding]
+enabled = true
+protocol = SYSLOG_TLS         # SYSLOG | SYSLOG_TLS | ELASTICSEARCH | GRAYLOG
+destination = siem.example.com:6514
+retry_queue_size = 5000
+retry_interval_seconds = 30
+```
+
+---
 
 ## Service Management
 
@@ -243,7 +540,54 @@ water-controller (main PROFINET controller)
     └── water-controller-modbus (Modbus gateway)
 ```
 
+### Service Health Checks
+
+```bash
+# Verify all services running
+sudo systemctl status water-controller water-controller-api water-controller-ui
+
+# Check for errors
+sudo journalctl -u water-controller -p err --since "1 hour ago"
+
+# Verify PROFINET connectivity
+curl -s http://localhost:8080/api/v1/rtus | jq '.[] | {name, status}'
+
+# Verify historian writing
+curl -s http://localhost:8080/api/v1/trends/tags | jq 'length'
+
+# Verify alarm system
+curl -s http://localhost:8080/api/v1/alarms | jq 'length'
+```
+
+---
+
 ## Backup and Restore
+
+### Backup Configuration
+
+Location: `/etc/water-controller/backup.conf`
+
+```ini
+[schedule]
+config_backup_interval = daily
+config_backup_retention = 30
+historian_backup_interval = weekly
+historian_backup_retention = 52
+
+[destinations]
+local_path = /var/backups/water-controller
+remote_enabled = true
+remote_type = S3                  # S3 | SFTP | NFS
+remote_path = s3://bucket/water-controller-backups/
+remote_credentials_file = /etc/water-controller/secrets/backup-creds
+
+[content]
+include_configuration = true
+include_alarm_history = true
+include_audit_log = true
+include_historian_data = false
+include_user_preferences = true
+```
 
 ### Creating Backups
 
@@ -312,6 +656,8 @@ curl -X POST http://localhost:8080/api/v1/system/config \
   -d @config_backup.json
 ```
 
+---
+
 ## Modbus Gateway
 
 The Modbus gateway bridges PROFINET data to Modbus TCP/RTU, allowing integration with:
@@ -370,6 +716,110 @@ curl -X POST http://localhost:8080/api/v1/modbus/mappings \
   }'
 ```
 
+---
+
+## Deployment Verification
+
+### Post-Deployment Checklist
+
+#### PROFINET Connectivity
+- [ ] All configured RTUs discovered via DCP
+- [ ] All RTUs show status ONLINE
+- [ ] Cyclic data exchange active (verify in HMI)
+- [ ] No communication alarms present
+
+#### Historian
+- [ ] Tags auto-created for all RTU sensors
+- [ ] Data points being recorded (check trend display)
+- [ ] Compression working (check storage growth rate)
+- [ ] Retention policy applied (verify old data pruned)
+
+#### Alarms
+- [ ] Alarm rules loaded from configuration
+- [ ] Test alarm triggers correctly (simulate out-of-range)
+- [ ] Alarm acknowledgment works
+- [ ] Alarm history recording to database
+
+#### HMI
+- [ ] Web interface accessible via browser
+- [ ] Real-time values updating (WebSocket active)
+- [ ] User authentication working
+- [ ] All pages rendering correctly
+
+#### Security
+- [ ] HTTPS certificate valid
+- [ ] Non-admin users restricted appropriately
+- [ ] API rate limiting active
+- [ ] Audit logging capturing access
+
+#### Integration
+- [ ] Log forwarding to SIEM verified
+- [ ] Backup job scheduled and tested
+- [ ] Modbus gateway responding (if enabled)
+- [ ] NTP synchronization confirmed
+
+### Performance Baseline
+
+```bash
+# Capture baseline metrics
+curl -s http://localhost:8080/api/v1/system/diagnostics | jq > baseline.json
+
+# Should include:
+# - Memory usage (should be stable, not growing)
+# - CPU usage (should be low between cycles)
+# - PROFINET cycle time jitter (should be < 10% of cycle time)
+# - Database connection pool status
+# - Active WebSocket connections
+```
+
+---
+
+## Operational Handoff
+
+### Documentation to Provide
+
+1. Network diagram showing controller, RTUs, and network segments
+2. IP address assignments for all devices
+3. User accounts created and their roles
+4. Alarm rule summary with expected trigger conditions
+5. Backup schedule and restore procedure
+6. Escalation contacts for system issues
+7. Known limitations or deferred configuration
+
+### Operator Training Topics
+
+1. HMI navigation and process overview
+2. Alarm acknowledgment and response procedures
+3. How to identify RTU communication issues
+4. Where to find historian trends
+5. How to recognize "unsaved changes" indicator
+6. Who to contact for different issue types
+7. What NOT to touch (configuration vs. operation)
+
+### Scheduled Maintenance Tasks
+
+**Weekly:**
+- Review alarm history for patterns
+- Verify backup completion
+- Check disk space (if not using tmpfs for logs)
+
+**Monthly:**
+- Review and prune old historian data if needed
+- Update passwords for service accounts
+- Review audit logs for anomalies
+
+**Quarterly:**
+- Test backup restore procedure
+- Review and update alarm rules
+- Security patch assessment
+
+**Annually:**
+- Full system backup and archive
+- Review PROFINET timing and performance
+- Plan hardware refresh if needed
+
+---
+
 ## Troubleshooting
 
 ### Controller Won't Start
@@ -389,6 +839,17 @@ curl -X POST http://localhost:8080/api/v1/modbus/mappings \
    ls -la /dev/eth0  # Raw socket access
    ```
 
+### RTU Shows OFFLINE Status
+
+1. Verify RTU is powered and network link is up
+2. Check RTU IP address matches configuration
+3. Verify PROFINET interface is correct in profinet.conf
+4. Check for duplicate IP addresses on network
+5. Review controller logs:
+   ```bash
+   journalctl -u water-controller | grep -i profinet
+   ```
+
 ### No PROFINET Communication
 
 1. Verify interface is up:
@@ -402,6 +863,17 @@ curl -X POST http://localhost:8080/api/v1/modbus/mappings \
    ```
 
 3. Verify RTU is powered and connected
+
+### HMI Not Loading
+
+1. Verify water-controller-ui service running
+2. Check nginx configuration and logs
+3. Verify React build completed successfully
+4. Check browser console for JavaScript errors
+5. Verify API service responding:
+   ```bash
+   curl http://localhost:8080/api/v1/health
+   ```
 
 ### API Not Responding
 
@@ -419,6 +891,25 @@ curl -X POST http://localhost:8080/api/v1/modbus/mappings \
    ```bash
    sudo journalctl -u water-controller-api -f
    ```
+
+### Historian Not Recording
+
+1. Verify PostgreSQL service running
+2. Check database connection in controller.conf
+3. Verify disk space available
+4. Check historian flush interval settings
+5. Review API logs:
+   ```bash
+   journalctl -u water-controller-api | grep -i historian
+   ```
+
+### Alarms Not Triggering
+
+1. Verify alarm rules loaded: `GET /api/v1/alarms/rules`
+2. Check data quality - bad quality suppresses alarms
+3. Verify alarm priorities match filter settings
+4. Check alarm rate limiting (chattering protection)
+5. Review alarm manager logs for rule evaluation errors
 
 ### Modbus Connection Issues
 
@@ -438,6 +929,22 @@ curl -X POST http://localhost:8080/api/v1/modbus/mappings \
    sudo journalctl -u water-controller-modbus -f
    ```
 
+### High Memory Usage
+
+1. Check historian cache size settings
+2. Review ring buffer depths
+3. Look for WebSocket connection leaks
+4. Check for excessive alarm count
+5. Restart services if memory leak suspected (and report bug)
+
+### SD Card Write Warnings
+
+1. Reduce historian flush frequency
+2. Increase write debounce intervals
+3. Move logs to tmpfs if not already
+4. Enable log forwarding to reduce local writes
+5. Consider industrial SD card upgrade
+
 ### Performance Issues
 
 1. Check CPU usage:
@@ -452,6 +959,61 @@ curl -X POST http://localhost:8080/api/v1/modbus/mappings \
 
 3. Reduce historian sample rate if needed
 
+---
+
+## Emergency Procedures
+
+### Controller Failure
+
+If controller fails completely:
+1. RTUs continue operating with last known state or safe mode
+2. Process continues but without supervisory control
+3. Local RTU interlocks remain active
+4. Replace/recover controller and restore from backup
+
+**DO NOT attempt to bypass RTU and control actuators directly.**
+The two-plane architecture exists for safety.
+
+### Graceful Shutdown
+
+```bash
+sudo systemctl stop water-controller-ui
+sudo systemctl stop water-controller-api
+sudo systemctl stop water-controller
+```
+
+This allows:
+- Pending writes to flush
+- Active alarms to persist
+- RTUs to detect disconnect gracefully
+
+### Emergency Stop
+
+```bash
+# If immediate stop required:
+sudo systemctl kill water-controller
+```
+
+**Note:** Unsaved changes may be lost. RTUs will detect communication loss and enter safe state.
+
+### Recovery Procedure
+
+```bash
+# 1. Stop services
+sudo systemctl stop water-controller water-controller-api water-controller-ui
+
+# 2. Restore configuration
+sudo wtc-ctl restore /path/to/backup.tar.gz
+
+# 3. Restart services
+sudo systemctl start water-controller water-controller-api water-controller-ui
+
+# 4. Verify RTU connectivity
+curl -s http://localhost:8080/api/v1/rtus | jq '.[] | {name, status}'
+```
+
+---
+
 ## Network Ports
 
 | Port | Service | Protocol |
@@ -463,13 +1025,7 @@ curl -X POST http://localhost:8080/api/v1/modbus/mappings \
 | 34963 | PROFINET RT | UDP |
 | 34964 | PROFINET DCP | UDP |
 
-## Security Considerations
-
-1. **Network Isolation**: Place PROFINET network on isolated VLAN
-2. **Firewall**: Restrict access to management ports (8080, 3000)
-3. **Authentication**: Configure reverse proxy with authentication for web UI
-4. **Updates**: Keep system and dependencies updated
-5. **Backups**: Regular automated backups to off-site storage
+---
 
 ## Cross-Compilation
 
@@ -534,6 +1090,8 @@ cmake -DCMAKE_TOOLCHAIN_FILE=../cmake/toolchain-luckfox.cmake \
 make -j$(nproc)
 ```
 
+---
+
 ## Board-Specific Installation
 
 ### Raspberry Pi 4 / Raspberry Pi 5 (ARM64)
@@ -554,7 +1112,6 @@ sudo nano /etc/water-controller/controller.conf
 # Set: interface = eth0  (or wlan0 for WiFi, not recommended for PROFINET)
 
 # Enable real-time kernel (recommended)
-# Install the RT kernel for better PROFINET timing
 sudo apt install linux-image-rt-arm64
 ```
 
@@ -584,10 +1141,6 @@ sudo apt install -y nodejs
 git clone https://github.com/mwilco03/Water-Controller.git
 cd Water-Controller
 sudo ./scripts/install.sh
-
-# BeagleBone PRU notes:
-# The PRU could be used for ultra-low-latency I/O if needed
-# This requires additional configuration not covered here
 ```
 
 ### Luckfox Lyra (RV1103/RV1106)
@@ -641,11 +1194,9 @@ cd Water-Controller
 sudo ./scripts/install.sh
 ```
 
-## Network Interface Selection
+### Network Interface Selection
 
 PROFINET requires a dedicated Ethernet interface. WiFi is not recommended.
-
-### Finding Available Interfaces
 
 ```bash
 # List network interfaces
@@ -658,8 +1209,6 @@ ip link show
 # wlan0   - WiFi (NOT recommended for PROFINET)
 ```
 
-### Configuration
-
 Edit `/etc/water-controller/controller.conf`:
 
 ```ini
@@ -667,14 +1216,58 @@ Edit `/etc/water-controller/controller.conf`:
 interface = eth0  # Change to your interface name
 ```
 
-### Network Requirements
-
+Network requirements:
 - Dedicated Ethernet for PROFINET (not shared with management traffic)
 - 100 Mbps minimum (1 Gbps recommended)
 - Switch should support multicast (required for DCP)
 - VLAN isolation recommended for production
 
+---
+
 ## Support
 
 - GitHub Issues: https://github.com/mwilco03/Water-Controller/issues
 - Documentation: https://github.com/mwilco03/Water-Controller/wiki
+
+---
+
+## Appendix A: System Prompt Summary
+
+Use this condensed version as a system instruction when working on Water-Controller deployment tasks:
+
+```
+You are deploying Water-Controller, a production PROFINET IO Controller for Water Treatment
+SCADA systems. This is critical infrastructure - deployment errors have real consequences.
+
+SYSTEM CONTEXT:
+- Water-Controller runs on SBC #1, communicates with Water-Treat RTUs via PROFINET
+- Components: C PROFINET stack, FastAPI backend, React HMI, PostgreSQL historian, Redis cache
+- Two-plane architecture: controller commands flow THROUGH RTU, never direct to actuators
+- RTUs maintain safe state during controller disconnect - this is by design
+
+KEY CONSTRAINTS:
+- Dedicated Ethernet interface for PROFINET (no shared traffic)
+- Static IP addressing for controller and all RTUs
+- Run services as non-root user (wtc)
+- PROFINET requires CAP_NET_RAW, CAP_NET_ADMIN capabilities
+- SD card protection: mount /tmp and /var/log as tmpfs, configure write debouncing
+
+CRITICAL PARAMETERS:
+- profinet.interface: Must be dedicated, no IP routing
+- profinet.cycle_time_ms: Must match RTU configuration
+- profinet.watchdog_factor: Cycles before RTU marked offline (default 3)
+- historian.flush_interval: Balance data freshness vs SD writes
+- alarms.alarm_rate_limit: Chattering protection (10/min/tag default)
+
+NEVER:
+- Deploy without testing backup/restore procedure
+- Skip the post-deployment verification checklist
+- Bypass RTU to control actuators directly
+- Run production with default passwords
+
+ALWAYS:
+- Document IP assignments and network topology
+- Verify NTP synchronization before deployment
+- Create pre-deployment configuration backup
+- Have rollback plan ready before changes
+```
