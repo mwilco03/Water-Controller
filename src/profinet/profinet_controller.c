@@ -604,14 +604,17 @@ wtc_result_t profinet_controller_read_input(profinet_controller_t *controller,
         return WTC_ERROR_NOT_INITIALIZED;
     }
 
-    /* Find input IOCR for this slot */
+    /* Find input IOCR for this slot
+     * Uses 5-byte sensor format: Float32 (big-endian) + Quality byte
+     */
     for (int i = 0; i < ar->iocr_count; i++) {
         if (ar->iocr[i].type == IOCR_TYPE_INPUT) {
-            /* Calculate offset for slot */
-            size_t offset = (slot - 1) * 4; /* 4 bytes per sensor slot */
-            if (offset + 4 <= ar->iocr[i].data_length && ar->iocr[i].data_buffer) {
-                memcpy(data, ar->iocr[i].data_buffer + offset, 4);
-                if (*len > 4) *len = 4;
+            /* Calculate offset for slot - 5 bytes per sensor slot */
+            size_t offset = (slot - 1) * 5;
+            if (offset + 5 <= ar->iocr[i].data_length && ar->iocr[i].data_buffer) {
+                size_t copy_len = (*len >= 5) ? 5 : *len;
+                memcpy(data, ar->iocr[i].data_buffer + offset, copy_len);
+                *len = copy_len;
                 if (status) *status = IOPS_GOOD;
                 pthread_mutex_unlock(&controller->lock);
                 return WTC_OK;

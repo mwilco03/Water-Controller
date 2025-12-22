@@ -206,12 +206,13 @@ static void update_rtu_data(ipc_server_t *server) {
             server->shm->connected_rtus++;
         }
 
-        /* Copy sensor data */
+        /* Copy sensor data with quality (5-byte format) */
         shm_rtu->sensor_count = rtu->sensor_count;
         for (int j = 0; j < rtu->sensor_count && j < WTC_MAX_SHM_SENSORS; j++) {
             shm_rtu->sensors[j].slot = j;
             shm_rtu->sensors[j].value = rtu->sensors[j].value;
             shm_rtu->sensors[j].status = rtu->sensors[j].status;
+            shm_rtu->sensors[j].quality = rtu->sensors[j].quality;  /* OPC UA quality */
             shm_rtu->sensors[j].timestamp_ms = rtu->sensors[j].timestamp_ms;
         }
 

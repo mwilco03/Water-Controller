@@ -373,7 +373,8 @@ wtc_result_t rtu_registry_update_sensor(rtu_registry_t *registry,
                                          const char *station_name,
                                          int slot,
                                          float value,
-                                         iops_t status) {
+                                         iops_t status,
+                                         data_quality_t quality) {
     if (!registry || !station_name || slot < 0) {
         return WTC_ERROR_INVALID_PARAM;
     }
@@ -390,6 +391,7 @@ wtc_result_t rtu_registry_update_sensor(rtu_registry_t *registry,
 
     device->sensors[slot].value = value;
     device->sensors[slot].status = status;
+    device->sensors[slot].quality = quality;  /* 5-byte format quality */
     device->sensors[slot].timestamp_ms = time_get_ms();
     device->sensors[slot].stale = false;
 

@@ -60,7 +60,7 @@ CONNECTION_STATE_NAMES = {
     CONN_STATE_OFFLINE: "OFFLINE",
 }
 
-# Sensor status codes
+# Sensor status codes (IOPS)
 SENSOR_STATUS_GOOD = 0
 SENSOR_STATUS_BAD = 1
 SENSOR_STATUS_UNCERTAIN = 2
@@ -71,12 +71,27 @@ SENSOR_STATUS_NAMES = {
     SENSOR_STATUS_UNCERTAIN: "uncertain",
 }
 
+# Data quality codes (OPC UA compatible - 5-byte sensor format)
+QUALITY_GOOD = 0x00
+QUALITY_UNCERTAIN = 0x40
+QUALITY_BAD = 0x80
+QUALITY_NOT_CONNECTED = 0xC0
+
+QUALITY_NAMES = {
+    QUALITY_GOOD: "good",
+    QUALITY_UNCERTAIN: "uncertain",
+    QUALITY_BAD: "bad",
+    QUALITY_NOT_CONNECTED: "not_connected",
+}
+
 
 class ShmSensor(ctypes.Structure):
+    """Sensor data - 5-byte format with quality"""
     _fields_ = [
         ("slot", c_int),
         ("value", c_float),
-        ("status", c_int),
+        ("status", c_int),            # IOPS status
+        ("quality", c_uint8),         # Data quality (OPC UA compatible)
         ("timestamp_ms", c_uint64),
     ]
 
@@ -303,6 +318,7 @@ class WtcShmClient:
                     "slot": s.slot,
                     "value": s.value,
                     "status": s.status,
+                    "quality": s.quality,  # OPC UA quality from 5-byte format
                     "timestamp_ms": s.timestamp_ms,
                 })
 
@@ -467,13 +483,15 @@ class WtcShmClient:
 
         sensors = []
         for sensor in rtu.get("sensors", []):
+            quality_code = sensor.get("quality", QUALITY_GOOD)
             sensors.append({
                 "slot": sensor["slot"],
                 "value": sensor["value"],
                 "status": SENSOR_STATUS_NAMES.get(sensor["status"], "unknown"),
                 "status_code": sensor["status"],
+                "quality": QUALITY_NAMES.get(quality_code, "unknown"),
+                "quality_code": quality_code,
                 "timestamp_ms": sensor["timestamp_ms"],
-                "quality": "good" if sensor["status"] == SENSOR_STATUS_GOOD else "bad",
             })
         return sensors
 

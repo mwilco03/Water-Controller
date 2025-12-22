@@ -2,12 +2,19 @@
 
 import { useMemo } from 'react';
 
+// Quality code constants (OPC UA compatible - 5-byte sensor format)
+const QUALITY_GOOD = 0x00;
+const QUALITY_UNCERTAIN = 0x40;
+const QUALITY_BAD = 0x80;
+const QUALITY_NOT_CONNECTED = 0xC0;
+
 interface Props {
   value: number;
   min: number;
   max: number;
   label: string;
   unit: string;
+  quality?: number;  /* OPC UA quality code from 5-byte format */
   thresholds?: {
     warning?: number;
     danger?: number;
@@ -22,10 +29,25 @@ export default function CircularGauge({
   max,
   label,
   unit,
+  quality = QUALITY_GOOD,
   thresholds,
   size = 'md',
   showTicks = true,
 }: Props) {
+  /* Quality check for 5-byte sensor format */
+  const isGoodQuality = quality === QUALITY_GOOD;
+  const isUncertainQuality = quality === QUALITY_UNCERTAIN;
+  const isBadQuality = quality === QUALITY_BAD;
+  const isNotConnected = quality === QUALITY_NOT_CONNECTED;
+
+  /* Get quality indicator per ISA-101 */
+  const getQualityIndicator = () => {
+    if (isGoodQuality) return null;
+    if (isUncertainQuality) return '?';
+    if (isBadQuality) return 'X';
+    if (isNotConnected) return '-';
+    return '!';
+  };
   const dimensions = useMemo(() => {
     switch (size) {
       case 'sm': return { width: 120, strokeWidth: 8, fontSize: 18, labelSize: 10 };
@@ -44,6 +66,11 @@ export default function CircularGauge({
   const offset = arcLength - (percentage * arcLength);
 
   const getColor = () => {
+    /* Override color for bad quality */
+    if (!isGoodQuality) {
+      if (isUncertainQuality) return '#f59e0b'; /* Yellow for uncertain */
+      return '#ef4444'; /* Red for bad/not connected */
+    }
     if (thresholds?.danger && value >= thresholds.danger) return '#ef4444';
     if (thresholds?.warning && value >= thresholds.warning) return '#f59e0b';
     return '#10b981';
@@ -224,6 +251,15 @@ export default function CircularGauge({
         >
           {label}
         </span>
+        {/* Quality indicator per ISA-101 */}
+        {!isGoodQuality && (
+          <span
+            className={`ml-1 text-sm font-bold ${isUncertainQuality ? 'text-yellow-500' : 'text-red-500'}`}
+            title={isUncertainQuality ? 'Uncertain quality' : isBadQuality ? 'Bad quality' : isNotConnected ? 'Not connected' : 'Unknown quality'}
+          >
+            {getQualityIndicator()}
+          </span>
+        )}
       </div>
     </div>
   );

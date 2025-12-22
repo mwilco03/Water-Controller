@@ -121,6 +121,25 @@ typedef enum {
     IOPS_GOOD = 0x80,
 } iops_t;
 
+/* Data Quality (OPC UA compatible)
+ * Extracted from 5-byte sensor data format:
+ * Bytes 0-3: Float32 value (big-endian)
+ * Byte 4:    Quality indicator
+ */
+typedef enum {
+    QUALITY_GOOD          = 0x00,
+    QUALITY_UNCERTAIN     = 0x40,
+    QUALITY_BAD           = 0x80,
+    QUALITY_NOT_CONNECTED = 0xC0,
+} data_quality_t;
+
+/* Sensor reading with quality (5-byte format) */
+typedef struct {
+    float value;
+    data_quality_t quality;
+    uint64_t timestamp_us;
+} sensor_reading_t;
+
 /* PID mode */
 typedef enum {
     PID_MODE_OFF = 0,
@@ -217,10 +236,13 @@ typedef enum {
 
 /* ============== Data Structures ============== */
 
-/* Sensor input data (from RTU) */
+/* Sensor input data (from RTU)
+ * Extended to support 5-byte sensor format with quality byte
+ */
 typedef struct {
     float value;
     iops_t status;
+    data_quality_t quality;      /* Application-level quality from 5-byte format */
     uint64_t timestamp_ms;
     bool stale;
 } sensor_data_t;

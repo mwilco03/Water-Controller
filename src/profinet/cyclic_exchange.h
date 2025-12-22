@@ -58,20 +58,39 @@ wtc_result_t parse_input_frame(profinet_ar_t *ar,
 bool check_frame_timeout(profinet_ar_t *ar, uint32_t timeout_us);
 
 /**
- * Get input slot data as float
+ * Get input slot data as float with quality
  *
  * RTU dictates slot configuration; controller adapts dynamically.
+ * Uses 5-byte sensor format: Float32 (big-endian) + Quality byte
  *
  * @param ar          Application Relationship
  * @param slot_index  0-based index into input data buffer
  * @param value       Output: float value from slot
  * @param status      Output: I/O provider status (can be NULL)
+ * @param quality     Output: Data quality from 5th byte (can be NULL)
  * @return WTC_OK on success, error code otherwise
  */
 wtc_result_t get_slot_input_float(profinet_ar_t *ar,
                                    int slot_index,
                                    float *value,
-                                   iops_t *status);
+                                   iops_t *status,
+                                   data_quality_t *quality);
+
+/**
+ * Unpack sensor data from 5-byte PROFINET format
+ *
+ * Format per IEC-61158-6 Section 4.10.3.3:
+ * Bytes 0-3: Float32 value (big-endian, IEEE 754)
+ * Byte 4:    Quality indicator (OPC UA compatible)
+ *
+ * @param data        Pointer to 5-byte sensor data
+ * @param len         Length of data buffer (must be >= 5)
+ * @param reading     Output: sensor_reading_t with value, quality, timestamp
+ * @return WTC_OK on success, error code otherwise
+ */
+wtc_result_t unpack_sensor_from_profinet(const uint8_t *data,
+                                          size_t len,
+                                          sensor_reading_t *reading);
 
 /**
  * Set output slot data

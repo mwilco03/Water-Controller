@@ -140,8 +140,10 @@ wtc_result_t parse_input_frame(profinet_ar_t *ar,
         }
     }
 
-    /* Skip IOCS bytes (one per slot, based on actual data length) */
-    int input_slot_count = data_len / 4;
+    /* Skip IOCS bytes (one per slot, based on actual data length)
+     * Input slots are 5 bytes each (Float32 + Quality)
+     */
+    int input_slot_count = data_len / 5;
     frame_skip_bytes(&parser, input_slot_count);
 
     /* Read RT header */
@@ -177,14 +179,48 @@ bool check_frame_timeout(profinet_ar_t *ar, uint32_t timeout_us) {
     return false;
 }
 
-/* Get input slot data (float) - dynamic slot support
+/* Sensor data size: 5 bytes (Float32 + Quality byte) */
+#define SENSOR_SLOT_SIZE 5
+
+/* Unpack sensor data from 5-byte PROFINET format
+ * Format per IEC-61158-6 Section 4.10.3.3:
+ * Bytes 0-3: Float32 value (big-endian, IEEE 754)
+ * Byte 4:    Quality indicator (OPC UA compatible)
+ */
+wtc_result_t unpack_sensor_from_profinet(const uint8_t *data,
+                                          size_t len,
+                                          sensor_reading_t *reading) {
+    if (!data || !reading) {
+        return WTC_ERROR_INVALID_PARAM;
+    }
+
+    if (len < SENSOR_SLOT_SIZE) {
+        return WTC_ERROR_INVALID_PARAM;
+    }
+
+    /* Convert from big-endian (network byte order) */
+    uint32_t be;
+    memcpy(&be, data, 4);
+    uint32_t raw = ntohl(be);
+    memcpy(&reading->value, &raw, sizeof(float));
+
+    /* Extract quality byte */
+    reading->quality = (data_quality_t)data[4];
+    reading->timestamp_us = time_get_monotonic_us();
+
+    return WTC_OK;
+}
+
+/* Get input slot data (float) with quality - dynamic slot support
  * slot_index: 0-based index into the input data buffer
  * RTU dictates slot configuration; controller adapts dynamically
+ * Uses 5-byte sensor format: Float32 (big-endian) + Quality byte
  */
 wtc_result_t get_slot_input_float(profinet_ar_t *ar,
                                    int slot_index,
                                    float *value,
-                                   iops_t *status) {
+                                   iops_t *status,
+                                   data_quality_t *quality) {
     if (!ar || !value || slot_index < 0) {
         return WTC_ERROR_INVALID_PARAM;
     }
@@ -192,26 +228,40 @@ wtc_result_t get_slot_input_float(profinet_ar_t *ar,
     /* Find input IOCR */
     for (int i = 0; i < ar->iocr_count; i++) {
         if (ar->iocr[i].type == IOCR_TYPE_INPUT) {
-            /* Calculate offset - no hardcoded slot limits */
-            size_t offset = slot_index * 4; /* 4 bytes per float */
-            if (offset + 4 <= ar->iocr[i].data_length &&
+            /* Calculate offset - 5 bytes per sensor slot */
+            size_t offset = slot_index * SENSOR_SLOT_SIZE;
+            if (offset + SENSOR_SLOT_SIZE <= ar->iocr[i].data_length &&
                 ar->iocr[i].data_buffer) {
-                /* Read float value (already in host byte order from device) */
-                uint32_t int_val;
-                memcpy(&int_val, ar->iocr[i].data_buffer + offset, 4);
-                int_val = ntohl(int_val); /* Network to host */
-                memcpy(value, &int_val, 4);
+                /* Unpack using 5-byte format */
+                sensor_reading_t reading;
+                wtc_result_t res = unpack_sensor_from_profinet(
+                    ar->iocr[i].data_buffer + offset,
+                    SENSOR_SLOT_SIZE,
+                    &reading);
 
-                if (status) {
-                    *status = IOPS_GOOD;
+                if (res == WTC_OK) {
+                    *value = reading.value;
+
+                    if (status) {
+                        /* Map quality to IOPS for backwards compatibility */
+                        *status = (reading.quality == QUALITY_GOOD) ? IOPS_GOOD : IOPS_BAD;
+                    }
+
+                    if (quality) {
+                        *quality = reading.quality;
+                    }
+
+                    return WTC_OK;
                 }
-                return WTC_OK;
             }
         }
     }
 
     if (status) {
         *status = IOPS_BAD;
+    }
+    if (quality) {
+        *quality = QUALITY_NOT_CONNECTED;
     }
     return WTC_ERROR_NOT_FOUND;
 }
@@ -250,7 +300,13 @@ wtc_result_t set_slot_output(profinet_ar_t *ar,
     return WTC_ERROR_NOT_FOUND;
 }
 
-/* Allocate IOCR data buffers */
+/* Actuator slot size: 4 bytes (unchanged) */
+#define ACTUATOR_SLOT_SIZE 4
+
+/* Allocate IOCR data buffers
+ * Input slots use 5-byte format (Float32 + Quality)
+ * Output slots use 4-byte format (actuator_output_t)
+ */
 wtc_result_t allocate_iocr_buffers(profinet_ar_t *ar,
                                     int input_slots,
                                     int output_slots) {
@@ -258,24 +314,24 @@ wtc_result_t allocate_iocr_buffers(profinet_ar_t *ar,
         return WTC_ERROR_INVALID_PARAM;
     }
 
-    /* Create input IOCR */
+    /* Create input IOCR - 5 bytes per sensor slot */
     if (input_slots > 0 && ar->iocr_count < PROFINET_MAX_IOCR) {
         int idx = ar->iocr_count++;
         ar->iocr[idx].type = IOCR_TYPE_INPUT;
         ar->iocr[idx].frame_id = PROFINET_FRAME_ID_RTC1_MIN + ar->session_key * 2;
-        ar->iocr[idx].data_length = input_slots * 4; /* 4 bytes per slot */
+        ar->iocr[idx].data_length = input_slots * SENSOR_SLOT_SIZE; /* 5 bytes per slot */
         ar->iocr[idx].data_buffer = calloc(1, ar->iocr[idx].data_length);
         if (!ar->iocr[idx].data_buffer) {
             return WTC_ERROR_NO_MEMORY;
         }
     }
 
-    /* Create output IOCR */
+    /* Create output IOCR - 4 bytes per actuator slot (unchanged) */
     if (output_slots > 0 && ar->iocr_count < PROFINET_MAX_IOCR) {
         int idx = ar->iocr_count++;
         ar->iocr[idx].type = IOCR_TYPE_OUTPUT;
         ar->iocr[idx].frame_id = PROFINET_FRAME_ID_RTC1_MIN + ar->session_key * 2 + 1;
-        ar->iocr[idx].data_length = output_slots * 4; /* 4 bytes per slot */
+        ar->iocr[idx].data_length = output_slots * ACTUATOR_SLOT_SIZE; /* 4 bytes per slot */
         ar->iocr[idx].data_buffer = calloc(1, ar->iocr[idx].data_length);
         if (!ar->iocr[idx].data_buffer) {
             return WTC_ERROR_NO_MEMORY;
