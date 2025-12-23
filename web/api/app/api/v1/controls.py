@@ -11,13 +11,13 @@ from fastapi import APIRouter, Depends, Path
 from sqlalchemy.orm import Session
 
 from ...core.exceptions import (
-    RtuNotFoundError,
     RtuNotConnectedError,
     ControlNotFoundError,
     CommandRejectedError,
     CommandTimeoutError,
 )
 from ...core.errors import build_success_response
+from ...core.rtu_utils import get_rtu_or_404, get_data_quality
 from ...models.base import get_db
 from ...models.rtu import RTU, Control, RtuState, ControlType
 from ...models.audit import CommandAudit, CommandResult
@@ -33,14 +33,6 @@ from ...schemas.control import (
 router = APIRouter()
 
 
-def get_rtu_or_404(db: Session, name: str) -> RTU:
-    """Get RTU by station name or raise 404."""
-    rtu = db.query(RTU).filter(RTU.station_name == name).first()
-    if not rtu:
-        raise RtuNotFoundError(name)
-    return rtu
-
-
 def get_control_or_404(db: Session, rtu: RTU, tag: str) -> Control:
     """Get control by tag or raise 404."""
     control = db.query(Control).filter(
@@ -50,16 +42,6 @@ def get_control_or_404(db: Session, rtu: RTU, tag: str) -> Control:
     if not control:
         raise ControlNotFoundError(rtu.station_name, tag)
     return control
-
-
-def get_data_quality(rtu_state: str) -> DataQuality:
-    """Determine data quality based on RTU state."""
-    if rtu_state == RtuState.RUNNING:
-        return DataQuality.GOOD
-    elif rtu_state in [RtuState.CONNECTING, RtuState.DISCOVERY]:
-        return DataQuality.UNCERTAIN
-    else:
-        return DataQuality.NOT_CONNECTED
 
 
 @router.get("")
