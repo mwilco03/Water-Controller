@@ -278,6 +278,7 @@ wtc_result_t database_list_rtus(wtc_database_t *db, rtu_device_t **rtus,
     if (!db->connected) return WTC_ERROR_NOT_INITIALIZED;
 
     *count = 0;
+    (void)max_count;  /* Used conditionally with HAVE_POSTGRESQL */
 
 #ifdef HAVE_POSTGRESQL
     pthread_mutex_lock(&db->lock);
@@ -383,6 +384,7 @@ wtc_result_t database_load_alarm_rules(wtc_database_t *db, alarm_rule_t **rules,
     if (!db->connected) return WTC_ERROR_NOT_INITIALIZED;
 
     *count = 0;
+    (void)max_count;  /* Used conditionally with HAVE_POSTGRESQL */
 
 #ifdef HAVE_POSTGRESQL
     pthread_mutex_lock(&db->lock);

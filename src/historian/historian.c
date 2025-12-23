@@ -55,7 +55,8 @@ struct historian {
     historian_stats_t stats;
 };
 
-/* Swinging door compression */
+/* Swinging door compression (reserved for batch compression) */
+__attribute__((unused))
 static bool swinging_door_compress(float last_value, float current_value,
                                     float next_value, float deadband) {
     if (deadband <= 0) return false;
@@ -418,7 +419,7 @@ wtc_result_t historian_process(historian_t *historian) {
         if (!tag->enabled) continue;
 
         /* Check if it's time to sample */
-        if (now_ms - tag->last_sample_time_ms < tag->info.sample_rate_ms) {
+        if (now_ms - tag->last_sample_time_ms < (uint64_t)tag->info.sample_rate_ms) {
             continue;
         }
 

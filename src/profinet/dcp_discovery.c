@@ -130,6 +130,7 @@ static void parse_dcp_blocks(dcp_discovery_t *dcp,
                               dcp_device_info_t *device,
                               frame_parser_t *parser,
                               uint16_t data_length) {
+    (void)dcp;  /* Device info is passed directly */
     size_t end_pos = parser->position + data_length;
 
     while (parser->position < end_pos && frame_parser_remaining(parser) >= 4) {

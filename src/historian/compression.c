@@ -48,8 +48,9 @@ static bool swinging_door_check(compression_state_t *state, float value, uint64_
         return false;
     }
 
-    /* Calculate slope to current point */
+    /* Calculate slope to current point (used for debugging/analysis) */
     float slope = (value - state->last_stored_value) / dt;
+    (void)slope;  /* Retained for future slope logging */
 
     /* Calculate slopes to deadband boundaries */
     float slope_upper = (value + state->deadband - state->last_stored_value) / dt;

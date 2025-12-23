@@ -325,6 +325,37 @@ wtc_result_t alarm_manager_enable_rule(alarm_manager_t *manager,
     return WTC_ERROR_NOT_FOUND;
 }
 
+wtc_result_t alarm_manager_list_rules(alarm_manager_t *manager,
+                                       alarm_rule_t **rules,
+                                       int *count,
+                                       int max_count) {
+    if (!manager || !rules || !count) {
+        return WTC_ERROR_INVALID_PARAM;
+    }
+
+    pthread_mutex_lock(&manager->lock);
+
+    int copy_count = manager->rule_count;
+    if (copy_count > max_count) {
+        copy_count = max_count;
+    }
+
+    if (copy_count > 0) {
+        *rules = calloc(copy_count, sizeof(alarm_rule_t));
+        if (!*rules) {
+            pthread_mutex_unlock(&manager->lock);
+            return WTC_ERROR_NO_MEMORY;
+        }
+        memcpy(*rules, manager->rules, copy_count * sizeof(alarm_rule_t));
+    } else {
+        *rules = NULL;
+    }
+
+    *count = copy_count;
+    pthread_mutex_unlock(&manager->lock);
+    return WTC_OK;
+}
+
 wtc_result_t alarm_manager_acknowledge(alarm_manager_t *manager,
                                         int alarm_id, const char *user) {
     if (!manager || !user) {
@@ -619,7 +650,7 @@ wtc_result_t alarm_manager_process(alarm_manager_t *manager) {
                     alarm->threshold = rule->threshold;
                     alarm->raise_time_ms = now_ms;
 
-                    snprintf(alarm->message, WTC_MAX_MESSAGE, "%s (value=%.2f, threshold=%.2f)",
+                    snprintf(alarm->message, WTC_MAX_MESSAGE, "%.200s (value=%.2f, threshold=%.2f)",
                              rule->message_template, sensor.value, rule->threshold);
 
                     rule->active = true;

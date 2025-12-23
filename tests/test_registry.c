@@ -239,8 +239,8 @@ TEST(registry_update_sensor)
 
     rtu_registry_set_device_config(reg, "rtu-tank-1", &slot, 1);
 
-    /* Update sensor value */
-    wtc_result_t result = rtu_registry_update_sensor(reg, "rtu-tank-1", 1, 7.0f, IOPS_GOOD);
+    /* Update sensor value with quality (5-byte format: Float32 + Quality) */
+    wtc_result_t result = rtu_registry_update_sensor(reg, "rtu-tank-1", 1, 7.0f, IOPS_GOOD, QUALITY_GOOD);
     ASSERT_EQ(WTC_OK, result);
 
     /* Read back */
