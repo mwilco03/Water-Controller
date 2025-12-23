@@ -2155,6 +2155,95 @@ async def delete_alarm_rule(rule_id: int, user: Dict = Depends(get_current_user)
         raise HTTPException(status_code=404, detail="Alarm rule not found")
     return {"status": "deleted", "rule_id": rule_id}
 
+
+# ============== Alarm Shelving Endpoints (ISA-18.2) ==============
+
+class ShelveAlarmRequest(BaseModel):
+    """Request to shelve an alarm"""
+    rtu_station: str
+    slot: int
+    duration_minutes: int  # Typical: 60, 120, 240, 480
+    reason: Optional[str] = None
+
+
+@app.get("/api/v1/alarms/shelved")
+async def get_shelved_alarms(include_expired: bool = False, user: Dict = Depends(get_current_user)):
+    """
+    Get all currently shelved alarms.
+
+    Shelving temporarily suppresses alarm notifications for maintenance or known conditions.
+    """
+    # Cleanup expired shelves first
+    db.cleanup_expired_shelves()
+
+    shelved = db.get_shelved_alarms(include_expired=include_expired)
+    return {"shelved_alarms": shelved, "count": len(shelved)}
+
+
+@app.post("/api/v1/alarms/shelve")
+async def shelve_alarm(request: ShelveAlarmRequest, user: Dict = Depends(get_current_user)):
+    """
+    Shelve an alarm for a specified duration.
+
+    ISA-18.2 compliant alarm shelving - temporarily suppresses the alarm.
+    Shelved alarms are still logged but hidden from active alarm lists.
+
+    Requires: Operator role or higher
+
+    Duration options (typical):
+    - 60 minutes (1 hour)
+    - 120 minutes (2 hours)
+    - 240 minutes (4 hours)
+    - 480 minutes (8 hours)
+    """
+    check_role(user, UserRole.OPERATOR)
+
+    # Validate duration (max 8 hours = 480 minutes)
+    if request.duration_minutes < 1 or request.duration_minutes > 480:
+        raise HTTPException(status_code=400, detail="Duration must be between 1 and 480 minutes")
+
+    shelf_id = db.shelve_alarm(
+        rtu_station=request.rtu_station,
+        slot=request.slot,
+        username=user.get("username", "unknown"),
+        duration_minutes=request.duration_minutes,
+        reason=request.reason
+    )
+
+    return {
+        "status": "shelved",
+        "shelf_id": shelf_id,
+        "rtu_station": request.rtu_station,
+        "slot": request.slot,
+        "duration_minutes": request.duration_minutes,
+        "reason": request.reason
+    }
+
+
+@app.delete("/api/v1/alarms/shelved/{shelf_id}")
+async def unshelve_alarm(shelf_id: int, user: Dict = Depends(get_current_user)):
+    """
+    Manually unshelve an alarm before its expiration.
+
+    Requires: Operator role or higher
+    """
+    check_role(user, UserRole.OPERATOR)
+
+    if not db.unshelve_alarm(shelf_id, user.get("username", "unknown")):
+        raise HTTPException(status_code=404, detail="Shelved alarm not found")
+
+    return {"status": "unshelved", "shelf_id": shelf_id}
+
+
+@app.get("/api/v1/alarms/shelved/check")
+async def check_alarm_shelved(rtu_station: str, slot: int, user: Dict = Depends(get_current_user)):
+    """
+    Check if a specific alarm is currently shelved.
+    """
+    is_shelved = db.is_alarm_shelved(rtu_station, slot)
+    return {"rtu_station": rtu_station, "slot": slot, "is_shelved": is_shelved}
+
+
 # ============== Control Endpoints ==============
 
 def _get_pid_loop_with_live_values(loop_config: Dict, shm_loops: List[Dict] = None) -> PIDLoop:

@@ -12,6 +12,78 @@ interface Props {
   onCommandSent?: () => void;
 }
 
+// Confirmation Modal Component
+function ConfirmationModal({
+  isOpen,
+  onConfirm,
+  onCancel,
+  controlName,
+  command,
+  value,
+}: {
+  isOpen: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+  controlName: string;
+  command: string;
+  value?: number;
+}) {
+  if (!isOpen) return null;
+
+  const getCommandDescription = () => {
+    switch (command) {
+      case 'ON':
+        return 'turn ON';
+      case 'OFF':
+        return 'turn OFF';
+      case 'OPEN':
+        return 'OPEN';
+      case 'CLOSE':
+        return 'CLOSE';
+      case 'SET':
+        return `set to ${value}`;
+      case 'PULSE':
+        return 'send PULSE';
+      default:
+        return command;
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50">
+      <div className="bg-gray-800 rounded-lg p-6 max-w-md w-full mx-4 border border-gray-600">
+        <div className="flex items-center gap-3 mb-4">
+          <div className="w-10 h-10 rounded-full bg-yellow-600/20 flex items-center justify-center">
+            <svg className="w-6 h-6 text-yellow-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
+          </div>
+          <h3 className="text-lg font-semibold text-white">Confirm Control Action</h3>
+        </div>
+
+        <p className="text-gray-300 mb-6">
+          Are you sure you want to <span className="font-bold text-yellow-400">{getCommandDescription()}</span> the control <span className="font-bold text-white">{controlName}</span>?
+        </p>
+
+        <div className="flex gap-3 justify-end">
+          <button
+            onClick={onCancel}
+            className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            className="px-4 py-2 bg-yellow-600 hover:bg-yellow-500 text-white rounded font-medium transition-colors"
+          >
+            Confirm
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function ControlWidget({
   control,
   rtuStation,
@@ -21,9 +93,9 @@ export default function ControlWidget({
 }: Props) {
   const [loading, setLoading] = useState(false);
   const [sliderValue, setSliderValue] = useState(control.current_value ?? control.range_min ?? 0);
+  const [confirmDialog, setConfirmDialog] = useState<{ command: string; value?: number } | null>(null);
 
-  const handleCommand = useCallback(async (command: string, value?: number) => {
-    if (loading || disabled || !interactive) return;
+  const executeCommand = useCallback(async (command: string, value?: number) => {
     setLoading(true);
     try {
       await sendControlCommand(rtuStation, control.control_id, command, value);
@@ -32,8 +104,25 @@ export default function ControlWidget({
       console.error('Failed to send command:', error);
     } finally {
       setLoading(false);
+      setConfirmDialog(null);
     }
-  }, [loading, disabled, interactive, rtuStation, control.control_id, onCommandSent]);
+  }, [rtuStation, control.control_id, onCommandSent]);
+
+  const handleCommand = useCallback((command: string, value?: number) => {
+    if (loading || disabled || !interactive) return;
+    // Show confirmation dialog
+    setConfirmDialog({ command, value });
+  }, [loading, disabled, interactive]);
+
+  const handleConfirm = useCallback(() => {
+    if (confirmDialog) {
+      executeCommand(confirmDialog.command, confirmDialog.value);
+    }
+  }, [confirmDialog, executeCommand]);
+
+  const handleCancel = useCallback(() => {
+    setConfirmDialog(null);
+  }, []);
 
   // Get color based on control state
   const getStateColor = () => {
@@ -227,50 +316,62 @@ export default function ControlWidget({
   };
 
   return (
-    <div
-      className="rounded-lg p-3 transition-all"
-      style={{
-        backgroundColor: 'rgba(15, 23, 42, 0.8)',
-        border: `1px solid ${stateColor}40`,
-        boxShadow: isOn ? `0 0 15px ${stateColor}20` : 'none',
-      }}
-    >
-      {/* Header */}
-      <div className="flex items-center gap-2 mb-3">
-        <span style={{ color: stateColor }}>{getIcon()}</span>
-        <span className="font-medium text-white flex-1 truncate" title={control.name}>
-          {control.name}
-        </span>
-        <span
-          className="text-xs px-2 py-0.5 rounded capitalize"
-          style={{
-            backgroundColor: `${stateColor}20`,
-            color: stateColor,
-          }}
-        >
-          {control.current_state || 'Unknown'}
-        </span>
-      </div>
+    <>
+      {/* Confirmation Modal */}
+      <ConfirmationModal
+        isOpen={confirmDialog !== null}
+        onConfirm={handleConfirm}
+        onCancel={handleCancel}
+        controlName={control.name}
+        command={confirmDialog?.command || ''}
+        value={confirmDialog?.value}
+      />
 
-      {/* Loading overlay */}
-      {loading && (
-        <div className="flex items-center justify-center py-2">
-          <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-500" />
-        </div>
-      )}
-
-      {/* Control */}
-      {!loading && renderControl()}
-
-      {/* Footer info */}
-      <div className="mt-2 text-xs text-gray-500 flex justify-between">
-        <span className="capitalize">{control.control_type}</span>
-        {control.last_update && (
-          <span title={new Date(control.last_update).toLocaleString()}>
-            {new Date(control.last_update).toLocaleTimeString()}
+      <div
+        className="rounded-lg p-3 transition-all"
+        style={{
+          backgroundColor: 'rgba(15, 23, 42, 0.8)',
+          border: `1px solid ${stateColor}40`,
+          boxShadow: isOn ? `0 0 15px ${stateColor}20` : 'none',
+        }}
+      >
+        {/* Header */}
+        <div className="flex items-center gap-2 mb-3">
+          <span style={{ color: stateColor }}>{getIcon()}</span>
+          <span className="font-medium text-white flex-1 truncate" title={control.name}>
+            {control.name}
           </span>
+          <span
+            className="text-xs px-2 py-0.5 rounded capitalize"
+            style={{
+              backgroundColor: `${stateColor}20`,
+              color: stateColor,
+            }}
+          >
+            {control.current_state || 'Unknown'}
+          </span>
+        </div>
+
+        {/* Loading overlay */}
+        {loading && (
+          <div className="flex items-center justify-center py-2">
+            <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-500" />
+          </div>
         )}
+
+        {/* Control */}
+        {!loading && renderControl()}
+
+        {/* Footer info */}
+        <div className="mt-2 text-xs text-gray-500 flex justify-between">
+          <span className="capitalize">{control.control_type}</span>
+          {control.last_update && (
+            <span title={new Date(control.last_update).toLocaleString()}>
+              {new Date(control.last_update).toLocaleTimeString()}
+            </span>
+          )}
+        </div>
       </div>
-    </div>
+    </>
   );
 }

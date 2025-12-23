@@ -375,6 +375,28 @@ def init_database():
             )
         ''')
 
+        # Shelved Alarms table (ISA-18.2 alarm shelving)
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS shelved_alarms (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                rtu_station TEXT NOT NULL,
+                slot INTEGER NOT NULL,
+                shelved_by TEXT NOT NULL,
+                shelved_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                shelf_duration_minutes INTEGER NOT NULL,
+                expires_at TIMESTAMP NOT NULL,
+                reason TEXT,
+                active INTEGER DEFAULT 1,
+                UNIQUE(rtu_station, slot, active)
+            )
+        ''')
+
+        # Create index for shelved alarms queries
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_shelved_alarms_active
+            ON shelved_alarms(active, expires_at)
+        ''')
+
         # Create index for command log queries
         cursor.execute('''
             CREATE INDEX IF NOT EXISTS idx_command_log_timestamp
@@ -1877,6 +1899,94 @@ def clear_old_command_logs(days: int = 90) -> int:
         if deleted > 0:
             logger.info(f"Cleaned up {deleted} old command log entries")
         return deleted
+
+
+# ============== Shelved Alarms Operations (ISA-18.2) ==============
+
+def get_shelved_alarms(include_expired: bool = False) -> List[Dict[str, Any]]:
+    """Get all shelved alarms, optionally including expired ones"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        if include_expired:
+            cursor.execute('SELECT * FROM shelved_alarms ORDER BY shelved_at DESC')
+        else:
+            cursor.execute('''
+                SELECT * FROM shelved_alarms
+                WHERE active = 1 AND expires_at > datetime('now')
+                ORDER BY shelved_at DESC
+            ''')
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def is_alarm_shelved(rtu_station: str, slot: int) -> bool:
+    """Check if an alarm is currently shelved"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT COUNT(*) FROM shelved_alarms
+            WHERE rtu_station = ? AND slot = ? AND active = 1 AND expires_at > datetime('now')
+        ''', (rtu_station, slot))
+        return cursor.fetchone()[0] > 0
+
+
+def shelve_alarm(rtu_station: str, slot: int, username: str, duration_minutes: int, reason: str = None) -> int:
+    """Shelve an alarm for a specified duration"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        # First, deactivate any existing shelving for this alarm
+        cursor.execute('''
+            UPDATE shelved_alarms SET active = 0
+            WHERE rtu_station = ? AND slot = ? AND active = 1
+        ''', (rtu_station, slot))
+
+        # Create new shelving entry
+        cursor.execute('''
+            INSERT INTO shelved_alarms (rtu_station, slot, shelved_by, shelf_duration_minutes, expires_at, reason)
+            VALUES (?, ?, ?, ?, datetime('now', ? || ' minutes'), ?)
+        ''', (rtu_station, slot, username, duration_minutes, f'+{duration_minutes}', reason))
+        conn.commit()
+        log_audit(username, 'shelve', 'alarm', f"{rtu_station}:{slot}",
+                  f"Shelved alarm for {duration_minutes} min: {reason or 'No reason'}")
+        return cursor.lastrowid
+
+
+def unshelve_alarm(shelf_id: int, username: str) -> bool:
+    """Manually unshelve an alarm before expiration"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute('SELECT rtu_station, slot FROM shelved_alarms WHERE id = ?', (shelf_id,))
+        row = cursor.fetchone()
+        if not row:
+            return False
+
+        cursor.execute('UPDATE shelved_alarms SET active = 0 WHERE id = ?', (shelf_id,))
+        conn.commit()
+        log_audit(username, 'unshelve', 'alarm', f"{row['rtu_station']}:{row['slot']}", "Manually unshelved")
+        return cursor.rowcount > 0
+
+
+def cleanup_expired_shelves() -> int:
+    """Deactivate all expired shelved alarms"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            UPDATE shelved_alarms SET active = 0
+            WHERE active = 1 AND expires_at <= datetime('now')
+        ''')
+        conn.commit()
+        count = cursor.rowcount
+        if count > 0:
+            logger.info(f"Cleaned up {count} expired shelved alarms")
+        return count
+
+
+def get_shelved_alarm(shelf_id: int) -> Optional[Dict[str, Any]]:
+    """Get a single shelved alarm entry"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM shelved_alarms WHERE id = ?', (shelf_id,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
 
 
 # Flag to track initialization state
