@@ -453,13 +453,15 @@ async def test_connection(
     return build_success_response(response_data.model_dump())
 
 
-# Include nested routers for slots, sensors, controls, profinet
+# Include nested routers for slots, sensors, controls, profinet, pid
 from .slots import router as slots_router
 from .sensors import router as sensors_router
 from .controls import router as controls_router
 from .profinet import router as profinet_router
+from .pid import router as pid_router
 
 router.include_router(slots_router, prefix="/{name}/slots")
 router.include_router(sensors_router, prefix="/{name}/sensors")
 router.include_router(controls_router, prefix="/{name}/controls")
 router.include_router(profinet_router, prefix="/{name}/profinet")
+router.include_router(pid_router, prefix="/{name}/pid")

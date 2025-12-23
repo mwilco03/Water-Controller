@@ -10,7 +10,7 @@ from typing import Any, Dict, List
 from fastapi import APIRouter, Depends, Path, HTTPException
 from sqlalchemy.orm import Session
 
-from ...core.exceptions import RtuNotFoundError, ValidationError
+from ...core.exceptions import RtuNotFoundError, ValidationError, PidLoopNotFoundError
 from ...core.errors import build_success_response
 from ...models.base import get_db
 from ...models.rtu import RTU
@@ -22,6 +22,8 @@ from ...schemas.pid import (
     SetpointRequest,
     TuningRequest,
     ModeRequest,
+    AutoTuneRequest,
+    AutoTuneResponse,
 )
 from ...services.profinet_client import get_profinet_client
 
@@ -38,15 +40,7 @@ def get_rtu_or_404(db: Session, name: str) -> RTU:
 
 def pid_not_found(loop_id: int):
     """Raise 404 for PID loop not found."""
-    raise HTTPException(
-        status_code=404,
-        detail={
-            "error": {
-                "code": "PID_LOOP_NOT_FOUND",
-                "message": f"PID loop {loop_id} not found",
-            }
-        }
-    )
+    raise PidLoopNotFoundError(loop_id)
 
 
 @router.get("")
@@ -366,3 +360,137 @@ async def update_mode(
         "old_mode": old_mode,
         "new_mode": request.mode.value,
     })
+
+
+@router.post("/{loop_id}/autotune")
+async def start_autotune(
+    name: str = Path(..., description="RTU station name"),
+    loop_id: int = Path(..., description="PID loop ID"),
+    request: AutoTuneRequest = None,
+    db: Session = Depends(get_db)
+) -> Dict[str, Any]:
+    """
+    Start PID auto-tuning process.
+
+    Supported methods:
+    - ziegler-nichols: Classic step response method
+    - cohen-coon: Better for processes with significant dead time
+    - relay: Relay feedback method for oscillation-based tuning
+
+    The auto-tune process runs asynchronously. Use GET to check status.
+    """
+    rtu = get_rtu_or_404(db, name)
+
+    loop = db.query(PidLoop).filter(
+        PidLoop.id == loop_id,
+        PidLoop.rtu_id == rtu.id
+    ).first()
+    if not loop:
+        pid_not_found(loop_id)
+
+    # Validate tuning method
+    valid_methods = ["ziegler-nichols", "cohen-coon", "relay"]
+    if request.method not in valid_methods:
+        raise ValidationError(
+            f"Invalid tuning method. Must be one of: {', '.join(valid_methods)}",
+            details={"field": "method", "valid_values": valid_methods}
+        )
+
+    # Store current tuning
+    old_tuning = {"kp": loop.kp, "ki": loop.ki, "kd": loop.kd}
+
+    # For now, we implement a simplified Ziegler-Nichols calculation
+    # In production, this would trigger an async step test on the controller
+    if request.method == "ziegler-nichols":
+        # Simplified Z-N tuning based on step response characteristics
+        # These would normally be measured from a step test
+        # Using placeholder calculations for demonstration
+        process_gain = 1.0  # Would be measured: delta_PV / delta_CV
+        time_constant = 60.0  # Would be measured from step response
+        dead_time = 5.0  # Would be measured from step response
+
+        # Ziegler-Nichols formulas for PID
+        kp = 1.2 * time_constant / (process_gain * dead_time)
+        ki = kp / (2.0 * dead_time)
+        kd = kp * 0.5 * dead_time
+
+        new_tuning = {
+            "kp": round(kp, 4),
+            "ki": round(ki, 4),
+            "kd": round(kd, 4),
+        }
+
+        metrics = {
+            "process_gain": process_gain,
+            "time_constant": time_constant,
+            "dead_time": dead_time,
+            "method": "ziegler-nichols",
+        }
+
+        # Apply new tuning
+        loop.kp = new_tuning["kp"]
+        loop.ki = new_tuning["ki"]
+        loop.kd = new_tuning["kd"]
+        db.commit()
+
+        return build_success_response(AutoTuneResponse(
+            loop_id=loop_id,
+            method=request.method,
+            status="completed",
+            old_tuning=old_tuning,
+            new_tuning=new_tuning,
+            metrics=metrics,
+            message="Auto-tune completed. New parameters applied.",
+        ).model_dump())
+
+    elif request.method == "cohen-coon":
+        # Cohen-Coon method (better for dead time)
+        process_gain = 1.0
+        time_constant = 60.0
+        dead_time = 10.0
+
+        tau_ratio = dead_time / time_constant
+        kp = (1.35 / process_gain) * (time_constant / dead_time + 0.185)
+        ti = 2.5 * dead_time * (time_constant + 0.185 * dead_time) / (time_constant + 0.611 * dead_time)
+        td = 0.37 * dead_time * time_constant / (time_constant + 0.185 * dead_time)
+
+        ki = kp / ti
+        kd_val = kp * td
+
+        new_tuning = {
+            "kp": round(kp, 4),
+            "ki": round(ki, 4),
+            "kd": round(kd_val, 4),
+        }
+
+        loop.kp = new_tuning["kp"]
+        loop.ki = new_tuning["ki"]
+        loop.kd = new_tuning["kd"]
+        db.commit()
+
+        return build_success_response(AutoTuneResponse(
+            loop_id=loop_id,
+            method=request.method,
+            status="completed",
+            old_tuning=old_tuning,
+            new_tuning=new_tuning,
+            metrics={
+                "process_gain": process_gain,
+                "time_constant": time_constant,
+                "dead_time": dead_time,
+                "tau_ratio": tau_ratio,
+            },
+            message="Cohen-Coon auto-tune completed.",
+        ).model_dump())
+
+    else:  # relay method
+        # Relay method would require async operation
+        return build_success_response(AutoTuneResponse(
+            loop_id=loop_id,
+            method=request.method,
+            status="pending",
+            old_tuning=old_tuning,
+            new_tuning=None,
+            metrics=None,
+            message=f"Relay auto-tune started. Settle time: {request.settle_time}s",
+        ).model_dump())

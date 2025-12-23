@@ -27,8 +27,10 @@ def sample_sensor(db_session: Session, running_rtu: RTU) -> Sensor:
         channel=0,
         sensor_type="level",
         unit="ft",
-        range_min=0.0,
-        range_max=20.0,
+        scale_min=0.0,
+        scale_max=4095.0,
+        eng_min=0.0,
+        eng_max=20.0,
     )
     db_session.add(sensor)
     db_session.commit()

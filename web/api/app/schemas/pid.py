@@ -93,5 +93,17 @@ class AutoTuneRequest(BaseModel):
     """Request to auto-tune a PID loop."""
 
     method: str = Field("ziegler-nichols", description="Tuning method")
-    step_size: float = Field(10.0, description="Step size for step test")
-    settle_time: float = Field(300.0, description="Settle time in seconds")
+    step_size: float = Field(10.0, ge=1.0, le=50.0, description="Step size for step test")
+    settle_time: float = Field(300.0, ge=60.0, le=1800.0, description="Settle time in seconds")
+
+
+class AutoTuneResponse(BaseModel):
+    """Response from auto-tune operation."""
+
+    loop_id: int = Field(description="PID loop ID")
+    method: str = Field(description="Tuning method used")
+    status: str = Field(description="Tuning status: pending, running, completed, failed")
+    old_tuning: Optional[dict] = Field(None, description="Previous tuning parameters")
+    new_tuning: Optional[dict] = Field(None, description="Calculated tuning parameters")
+    metrics: Optional[dict] = Field(None, description="Process metrics from step test")
+    message: Optional[str] = Field(None, description="Status message")

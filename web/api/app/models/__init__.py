@@ -12,6 +12,7 @@ from .alarm import AlarmRule, AlarmEvent
 from .historian import HistorianSample, ProfinetDiagnostic
 from .audit import CommandAudit
 from .pid import PidLoop, PidMode
+from .template import ConfigTemplate
 
 __all__ = [
     "Base",
@@ -29,4 +30,5 @@ __all__ = [
     "CommandAudit",
     "PidLoop",
     "PidMode",
+    "ConfigTemplate",
 ]

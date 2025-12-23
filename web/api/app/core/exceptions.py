@@ -223,3 +223,16 @@ class SensorNotFoundError(ScadaException):
             recoverable=True,
             suggested_action="Verify sensor tag name or check sensors list"
         )
+
+
+class PidLoopNotFoundError(ScadaException):
+    """PID loop does not exist."""
+
+    def __init__(self, loop_id: int):
+        super().__init__(
+            code="PID_LOOP_NOT_FOUND",
+            message=f"PID loop {loop_id} not found",
+            details={"loop_id": loop_id},
+            recoverable=True,
+            suggested_action="Verify loop ID or check PID loops list"
+        )
