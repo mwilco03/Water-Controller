@@ -24,18 +24,18 @@ This audit analyzed both Water-Controller and Water-Treat repositories for optim
 
 Non-breaking changes with immediate benefit, minimal effort:
 
-| # | Change | Location | Impact | Effort |
-|---|--------|----------|--------|--------|
-| 1 | Remove 6 unused Python dependencies | `web/api/requirements.txt` | 12-15 MB saved, faster install | Low |
-| 2 | Remove 3 unused JS dependencies | `web/ui/package.json` | 2.5 MB saved | Low |
-| 3 | Remove duplicate httpx entry | `requirements.txt:36` | Cleaner deps | Trivial |
-| 4 | Cache tag Map in trends page | `web/ui/src/app/trends/page.tsx` | 3x faster lookups | Low |
-| 5 | Single-pass min/max calculation | `web/ui/src/app/trends/page.tsx:269-272` | 4 iterations → 1 | Low |
-| 6 | Pre-index samples by (tag, timestamp) | `web/api/app/api/v1/trends.py:204-215` | O(n²) → O(n) | Low |
-| 7 | GROUP BY for RTU state counts | `web/api/app/api/v1/system.py:80-113` | 4 queries → 1 | Low |
-| 8 | Extract `get_rtu_or_404()` utility | 6 endpoint files | 36 lines removed | Low |
-| 9 | Use array.join() for XML building | `web/ui/src/lib/exportUtils.ts:170-221` | 300+ allocs avoided | Low |
-| 10 | Reduce cycle time to 50ms | PROFINET config | 20× faster response | Trivial |
+| # | Change | Location | Impact | Effort | Status |
+|---|--------|----------|--------|--------|--------|
+| 1 | Remove 6 unused Python dependencies | `web/api/requirements.txt` | 12-15 MB saved | Low | ✅ DONE |
+| 2 | Remove 3 unused JS dependencies | `web/ui/package.json` | 2.5 MB saved | Low | ✅ DONE |
+| 3 | Remove duplicate httpx entry | `requirements.txt:36` | Cleaner deps | Trivial | ✅ DONE |
+| 4 | Cache tag Map in trends page | `web/ui/src/app/trends/page.tsx` | 3x faster lookups | Low | |
+| 5 | Single-pass min/max calculation | `web/ui/src/app/trends/page.tsx:269-272` | 4 iterations → 1 | Low | |
+| 6 | Pre-index samples by (tag, timestamp) | `web/api/app/api/v1/trends.py:204-215` | O(n²) → O(n) | Low | ✅ DONE |
+| 7 | GROUP BY for RTU state counts | `web/api/app/api/v1/system.py:80-113` | 4 queries → 1 | Low | ✅ DONE |
+| 8 | Extract `get_rtu_or_404()` utility | 6 endpoint files | 36 lines removed | Low | ✅ DONE |
+| 9 | Use array.join() for XML building | `web/ui/src/lib/exportUtils.ts:170-221` | 300+ allocs avoided | Low | |
+| 10 | Reduce cycle time to 50ms | PROFINET config | 20× faster response | Trivial | ✅ N/A (already 1ms) |
 
 ---
 
@@ -43,10 +43,10 @@ Non-breaking changes with immediate benefit, minimal effort:
 
 ### Code Duplication (Within Water-Controller)
 
-| Duplicate Set | Locations | Lines | Consolidation Strategy |
-|---------------|-----------|-------|------------------------|
-| `get_rtu_or_404()` | sensors.py, controls.py, rtus.py, slots.py, pid.py, profinet.py | 36 | Create `/core/rtu_utils.py` |
-| `get_data_quality()` | sensors.py:31-38, controls.py:55-62 | 16 | Move to `/core/quality.py` |
+| Duplicate Set | Locations | Lines | Consolidation Strategy | Status |
+|---------------|-----------|-------|------------------------|--------|
+| `get_rtu_or_404()` | sensors.py, controls.py, rtus.py, slots.py, pid.py, profinet.py | 36 | Create `/core/rtu_utils.py` | ✅ DONE |
+| `get_data_quality()` | sensors.py:31-38, controls.py:55-62 | 16 | Move to `/core/rtu_utils.py` | ✅ DONE |
 | `AlarmEventSchema` builder | alarms.py:71-87, alarms.py:141-157 | 40 | Extract `build_alarm_schema()` |
 | `TemplateResponse` builder | templates.py:64-79, 158-173, 519-534 | 54 | Extract `build_template_response()` |
 | RTU stats counting | rtus.py:58-70, 241-247, 278-284 | 24 | Use existing `build_rtu_stats()` |
@@ -78,15 +78,11 @@ Water-Treat:      LOW=0, MEDIUM=1, HIGH=2, CRITICAL=3
 ```
 **Impact:** Value `1` means MEDIUM in Water-Controller but LOW in Water-Treat!
 
-**Recommended Fix:** Create `/shared/include/alarm_definitions.h` with canonical definitions:
-```c
-typedef enum {
-    ALARM_SEVERITY_LOW = 0,
-    ALARM_SEVERITY_MEDIUM = 1,
-    ALARM_SEVERITY_HIGH = 2,
-    ALARM_SEVERITY_CRITICAL = 3,
-} alarm_severity_t;
-```
+**Status:** ✅ FIXED - Created `/shared/include/alarm_definitions.h` with:
+- Canonical definitions (0-based: LOW=0, MEDIUM=1, HIGH=2, CRITICAL=3)
+- Legacy compatibility macros for gradual migration
+- Conversion functions: `alarm_severity_from_legacy()`, `alarm_severity_to_legacy()`
+- Also created `/shared/include/data_quality.h` for quality codes
 
 ---
 
@@ -115,27 +111,18 @@ typedef enum {
 | PTCP Time Sync | ❌ No | Add for historian consistency |
 | Media Redundancy (MRP) | ❌ No | Add for fault tolerance |
 
-### Anti-Pattern: Polling Over PROFINET
+### PROFINET Timing Clarification
 
-**Current (Wrong):**
-```c
-// profinet_manager.c:92-123
-static void* profinet_tick_thread(void *arg) {
-    while (g_pn.running) {
-        if (g_pn.connected) {
-            poll_output_slots();  // 1ms polling - BAD
-        }
-        usleep(PROFINET_TICK_INTERVAL_US);
-    }
-}
-```
+**Original Assessment:** Reported 1000ms cycle time - this was INCORRECT.
 
-**Correct:**
-```c
-// Use p-net callback instead
-g_pn.pnet_cfg.new_data_status_cb = profinet_new_data_status_callback;
-// Data delivered via callback, no polling needed
-```
+**Actual Configuration:**
+- `PROFINET_TICK_INTERVAL_US = 1000` = 1000 **microseconds** = **1ms** (correct)
+- `min_device_interval = 32` = 32 × 31.25µs = 1ms minimum (optimal)
+- Polling loop services p-net stack every 1ms (required by p-net design)
+
+**Status:** ✅ No change needed - the implementation is correct. The p-net stack
+requires periodic calls to `pnet_handle_periodic()` and the output polling is the
+correct pattern for this stack version.
 
 ---
 

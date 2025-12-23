@@ -8,14 +8,14 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List
 
 from fastapi import APIRouter, Depends, Path
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from ...core.exceptions import (
-    RtuNotFoundError,
     SlotNotFoundError,
     ValidationError,
 )
 from ...core.errors import build_success_response
+from ...core.rtu_utils import get_rtu_or_404
 from ...models.base import get_db
 from ...models.rtu import RTU, Slot, Sensor, Control, SlotStatus
 from ...schemas.slot import (
@@ -26,14 +26,6 @@ from ...schemas.slot import (
 )
 
 router = APIRouter()
-
-
-def get_rtu_or_404(db: Session, name: str) -> RTU:
-    """Get RTU by station name or raise 404."""
-    rtu = db.query(RTU).filter(RTU.station_name == name).first()
-    if not rtu:
-        raise RtuNotFoundError(name)
-    return rtu
 
 
 def get_slot_or_404(db: Session, rtu: RTU, slot_number: int) -> Slot:
@@ -57,12 +49,28 @@ async def list_slots(
     """
     rtu = get_rtu_or_404(db, name)
 
+    # Single query with eager loading - eliminates N+1 problem
+    # Previously: 1 + 2*N queries (1 for slots, N for sensors, N for controls)
+    # Now: 3 queries total (1 for slots, 1 for all sensors, 1 for all controls)
     slots = db.query(Slot).filter(Slot.rtu_id == rtu.id).order_by(Slot.slot_number).all()
+
+    # Batch load sensors and controls for all slots at once
+    slot_ids = [slot.id for slot in slots]
+    all_sensors = db.query(Sensor).filter(Sensor.slot_id.in_(slot_ids)).all() if slot_ids else []
+    all_controls = db.query(Control).filter(Control.slot_id.in_(slot_ids)).all() if slot_ids else []
+
+    # Group by slot_id for O(1) lookup
+    sensors_by_slot = {}
+    for s in all_sensors:
+        sensors_by_slot.setdefault(s.slot_id, []).append(s)
+
+    controls_by_slot = {}
+    for c in all_controls:
+        controls_by_slot.setdefault(c.slot_id, []).append(c)
 
     result = []
     for slot in slots:
-        # Get sensors for this slot
-        sensors = db.query(Sensor).filter(Sensor.slot_id == slot.id).all()
+        sensors = sensors_by_slot.get(slot.id, [])
         sensor_summaries = [
             SlotSensorSummary(
                 id=s.id,
@@ -72,8 +80,7 @@ async def list_slots(
             for s in sensors
         ]
 
-        # Get controls for this slot
-        controls = db.query(Control).filter(Control.slot_id == slot.id).all()
+        controls = controls_by_slot.get(slot.id, [])
         control_list = [
             {"id": c.id, "tag": c.tag, "type": c.equipment_type}
             for c in controls
