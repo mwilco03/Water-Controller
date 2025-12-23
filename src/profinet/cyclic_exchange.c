@@ -12,6 +12,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <pthread.h>
+#include <arpa/inet.h>
 
 /* Cyclic exchange context */
 typedef struct {
@@ -28,7 +29,8 @@ typedef struct {
     uint64_t overruns;
 } cyclic_context_t;
 
-/* Build cyclic output frame */
+/* Build cyclic output frame (reserved for direct frame building) */
+__attribute__((unused))
 static wtc_result_t build_output_frame(profinet_ar_t *ar,
                                         uint8_t *frame,
                                         size_t *frame_len,

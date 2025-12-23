@@ -166,6 +166,7 @@ void logger_set_colors(bool enabled) {
 
 void logger_vlog(log_level_t level, const char *file, int line,
                  const char *func, const char *fmt, va_list args) {
+    (void)func;  /* Reserved for future use in extended log format */
     if (level < g_logger.level) return;
 
     if (!g_logger.initialized) {

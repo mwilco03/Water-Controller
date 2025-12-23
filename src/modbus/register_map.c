@@ -312,7 +312,7 @@ wtc_result_t register_map_auto_generate(register_map_t *map,
                 .enabled = true,
             };
             strncpy(reg.rtu_station, dev->station_name, 63);
-            snprintf(reg.description, 63, "%s Sensor %d", dev->station_name, s + 1);
+            snprintf(reg.description, sizeof(reg.description), "%.48s Sensor %d", dev->station_name, s + 1);
 
             register_map_add_register(map, &reg);
             sensor_addr += 2;
@@ -331,7 +331,7 @@ wtc_result_t register_map_auto_generate(register_map_t *map,
                 .enabled = true,
             };
             strncpy(reg.rtu_station, dev->station_name, 63);
-            snprintf(reg.description, 63, "%s Actuator %d", dev->station_name, a + 1);
+            snprintf(reg.description, sizeof(reg.description), "%.44s Actuator %d", dev->station_name, a + 1);
 
             register_map_add_register(map, &reg);
             actuator_addr++;
@@ -348,7 +348,7 @@ wtc_result_t register_map_auto_generate(register_map_t *map,
                 .enabled = true,
             };
             strncpy(coil.rtu_station, dev->station_name, 63);
-            snprintf(coil.description, 63, "%s Actuator %d On/Off", dev->station_name, a + 1);
+            snprintf(coil.description, sizeof(coil.description), "%.36s Act %d On/Off", dev->station_name, a + 1);
 
             register_map_add_coil(map, &coil);
             coil_addr++;

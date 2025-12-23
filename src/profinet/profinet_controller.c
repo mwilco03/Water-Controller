@@ -691,6 +691,7 @@ static wtc_result_t build_rpc_record_request(
     uint32_t api, uint16_t slot, uint16_t subslot, uint16_t index,
     const void *write_data, size_t write_len, bool is_write)
 {
+    (void)session_key;  /* Reserved for session validation */
     if (*buf_len < sizeof(profinet_rpc_header_t) + 64) {
         return WTC_ERROR_NO_MEMORY;
     }
