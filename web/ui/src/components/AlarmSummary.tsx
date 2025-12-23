@@ -10,13 +10,16 @@ interface Alarm {
   message: string;
   state: string;
   timestamp: string;
+  value?: number;
+  threshold?: number;
 }
 
 interface Props {
   alarms: Alarm[];
+  onShelve?: (alarm: Alarm) => void;
 }
 
-export default function AlarmSummary({ alarms }: Props) {
+export default function AlarmSummary({ alarms, onShelve }: Props) {
   const [filter, setFilter] = useState<string>('all');
 
   const getSeverityClass = (severity: string) => {
@@ -119,14 +122,27 @@ export default function AlarmSummary({ alarms }: Props) {
                   {new Date(alarm.timestamp).toLocaleString()}
                 </div>
               </div>
-              {isUnacknowledged(alarm.state) && (
-                <button
-                  onClick={() => acknowledgeAlarm(alarm.alarm_id)}
-                  className="text-xs bg-scada-accent hover:bg-scada-highlight px-2 py-1 rounded transition-colors whitespace-nowrap"
-                >
-                  ACK
-                </button>
-              )}
+              <div className="flex gap-1">
+                {onShelve && (
+                  <button
+                    onClick={() => onShelve(alarm)}
+                    className="text-xs bg-purple-700 hover:bg-purple-600 px-2 py-1 rounded transition-colors whitespace-nowrap"
+                    title="Shelve alarm"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                  </button>
+                )}
+                {isUnacknowledged(alarm.state) && (
+                  <button
+                    onClick={() => acknowledgeAlarm(alarm.alarm_id)}
+                    className="text-xs bg-scada-accent hover:bg-scada-highlight px-2 py-1 rounded transition-colors whitespace-nowrap"
+                  >
+                    ACK
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         ))}

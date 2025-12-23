@@ -32,12 +32,74 @@ interface Interlock {
   threshold: number;
 }
 
+interface ConfirmAction {
+  type: 'setpoint' | 'mode' | 'interlock';
+  name: string;
+  description: string;
+  onConfirm: () => void;
+}
+
+// Confirmation Modal Component
+function ConfirmationModal({
+  action,
+  onCancel,
+}: {
+  action: ConfirmAction | null;
+  onCancel: () => void;
+}) {
+  if (!action) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50">
+      <div className="bg-gray-800 rounded-lg p-6 max-w-md w-full mx-4 border border-gray-600">
+        <div className="flex items-center gap-3 mb-4">
+          <div className="w-10 h-10 rounded-full bg-yellow-600/20 flex items-center justify-center">
+            <svg className="w-6 h-6 text-yellow-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
+          </div>
+          <h3 className="text-lg font-semibold text-white">
+            {action.type === 'interlock' ? 'Confirm Interlock Reset' : 'Confirm Control Change'}
+          </h3>
+        </div>
+
+        <p className="text-gray-300 mb-2">
+          <span className="font-bold text-white">{action.name}</span>
+        </p>
+        <p className="text-gray-300 mb-6">
+          {action.description}
+        </p>
+
+        <div className="flex gap-3 justify-end">
+          <button
+            onClick={onCancel}
+            className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={() => {
+              action.onConfirm();
+              onCancel();
+            }}
+            className="px-4 py-2 bg-yellow-600 hover:bg-yellow-500 text-white rounded font-medium transition-colors"
+          >
+            Confirm
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function ControlPage() {
   const { canCommand, mode } = useCommandMode();
   const [pidLoops, setPidLoops] = useState<PIDLoop[]>([]);
   const [interlocks, setInterlocks] = useState<Interlock[]>([]);
   const [selectedLoop, setSelectedLoop] = useState<PIDLoop | null>(null);
   const [loading, setLoading] = useState(true);
+  const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null);
+  const [pendingSetpoint, setPendingSetpoint] = useState<number | null>(null);
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   const fetchControlData = useCallback(async () => {
@@ -126,8 +188,7 @@ export default function ControlPage() {
     };
   }, [fetchControlData]);
 
-  const updateSetpoint = async (loopId: number, setpoint: number) => {
-    if (!canCommand) return;
+  const doUpdateSetpoint = async (loopId: number, setpoint: number) => {
     try {
       await fetch(`/api/v1/control/pid/${loopId}/setpoint`, {
         method: 'PUT',
@@ -140,8 +201,21 @@ export default function ControlPage() {
     }
   };
 
-  const toggleMode = async (loopId: number, pidMode: string) => {
+  const updateSetpoint = (loopId: number, setpoint: number, loopName: string) => {
     if (!canCommand) return;
+    setPendingSetpoint(setpoint);
+    setConfirmAction({
+      type: 'setpoint',
+      name: loopName,
+      description: `Change setpoint to ${setpoint.toFixed(2)}?`,
+      onConfirm: () => {
+        doUpdateSetpoint(loopId, setpoint);
+        setPendingSetpoint(null);
+      },
+    });
+  };
+
+  const doToggleMode = async (loopId: number, pidMode: string) => {
     try {
       await fetch(`/api/v1/control/pid/${loopId}/mode`, {
         method: 'PUT',
@@ -154,8 +228,17 @@ export default function ControlPage() {
     }
   };
 
-  const resetInterlock = async (interlockId: number) => {
+  const toggleMode = (loopId: number, pidMode: string, loopName: string) => {
     if (!canCommand) return;
+    setConfirmAction({
+      type: 'mode',
+      name: loopName,
+      description: `Switch PID loop to ${pidMode} mode?`,
+      onConfirm: () => doToggleMode(loopId, pidMode),
+    });
+  };
+
+  const doResetInterlock = async (interlockId: number) => {
     try {
       await fetch(`/api/v1/control/interlocks/${interlockId}/reset`, {
         method: 'POST',
@@ -166,12 +249,32 @@ export default function ControlPage() {
     }
   };
 
+  const resetInterlock = (interlockId: number, interlockName: string) => {
+    if (!canCommand) return;
+    setConfirmAction({
+      type: 'interlock',
+      name: interlockName,
+      description: 'Are you sure you want to reset this safety interlock? Ensure conditions are safe before proceeding.',
+      onConfirm: () => doResetInterlock(interlockId),
+    });
+  };
+
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-white">Control System</h1>
-        {mode === 'view' && <CommandModeLogin showButton />}
-      </div>
+    <>
+      {/* Confirmation Modal */}
+      <ConfirmationModal
+        action={confirmAction}
+        onCancel={() => {
+          setConfirmAction(null);
+          setPendingSetpoint(null);
+        }}
+      />
+
+      <div className="space-y-6">
+        <div className="flex items-center justify-between">
+          <h1 className="text-2xl font-bold text-white">Control System</h1>
+          {mode === 'view' && <CommandModeLogin showButton />}
+        </div>
 
       {/* Command Mode Notice */}
       {mode === 'view' && (
@@ -284,7 +387,7 @@ export default function ControlPage() {
                     </span>
                     {interlock.tripped && canCommand && (
                       <button
-                        onClick={() => resetInterlock(interlock.interlock_id)}
+                        onClick={() => resetInterlock(interlock.interlock_id, interlock.name)}
                         className="text-xs bg-scada-highlight hover:bg-red-600 px-3 py-1 rounded transition-colors"
                       >
                         Reset
@@ -310,16 +413,25 @@ export default function ControlPage() {
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <div>
               <label className="text-xs text-gray-400 block mb-1">Setpoint</label>
-              <input
-                type="number"
-                value={selectedLoop.setpoint}
-                onChange={(e) =>
-                  updateSetpoint(selectedLoop.loop_id, parseFloat(e.target.value))
-                }
-                className="w-full bg-scada-accent text-white rounded px-3 py-2 disabled:opacity-50 disabled:cursor-not-allowed"
-                step="0.1"
-                disabled={!canCommand}
-              />
+              <div className="flex gap-2">
+                <input
+                  type="number"
+                  value={pendingSetpoint ?? selectedLoop.setpoint}
+                  onChange={(e) => setPendingSetpoint(parseFloat(e.target.value))}
+                  className="flex-1 bg-scada-accent text-white rounded px-3 py-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                  step="0.1"
+                  disabled={!canCommand}
+                />
+                {pendingSetpoint !== null && pendingSetpoint !== selectedLoop.setpoint && (
+                  <button
+                    onClick={() => updateSetpoint(selectedLoop.loop_id, pendingSetpoint, selectedLoop.name)}
+                    className="px-3 py-2 bg-blue-600 hover:bg-blue-500 rounded text-sm font-medium transition-colors"
+                    disabled={!canCommand}
+                  >
+                    Set
+                  </button>
+                )}
+              </div>
             </div>
             <div>
               <label className="text-xs text-gray-400 block mb-1">Kp</label>
@@ -342,8 +454,8 @@ export default function ControlPage() {
           </div>
           <div className="mt-4 flex gap-2">
             <button
-              onClick={() => toggleMode(selectedLoop.loop_id, 'AUTO')}
-              disabled={!canCommand}
+              onClick={() => toggleMode(selectedLoop.loop_id, 'AUTO', selectedLoop.name)}
+              disabled={!canCommand || selectedLoop.mode === 'AUTO'}
               className={`px-4 py-2 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
                 selectedLoop.mode === 'AUTO' ? 'bg-green-600' : 'bg-scada-accent hover:bg-scada-accent/80'
               }`}
@@ -351,8 +463,8 @@ export default function ControlPage() {
               AUTO
             </button>
             <button
-              onClick={() => toggleMode(selectedLoop.loop_id, 'MANUAL')}
-              disabled={!canCommand}
+              onClick={() => toggleMode(selectedLoop.loop_id, 'MANUAL', selectedLoop.name)}
+              disabled={!canCommand || selectedLoop.mode === 'MANUAL'}
               className={`px-4 py-2 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
                 selectedLoop.mode === 'MANUAL' ? 'bg-yellow-600' : 'bg-scada-accent hover:bg-scada-accent/80'
               }`}
@@ -362,6 +474,7 @@ export default function ControlPage() {
           </div>
         </div>
       )}
-    </div>
+      </div>
+    </>
   );
 }
