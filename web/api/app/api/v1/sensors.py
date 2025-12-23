@@ -10,32 +10,15 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, Path, Query
 from sqlalchemy.orm import Session
 
-from ...core.exceptions import RtuNotFoundError, SensorNotFoundError
+from ...core.exceptions import SensorNotFoundError
 from ...core.errors import build_success_response
+from ...core.rtu_utils import get_rtu_or_404, get_data_quality
 from ...models.base import get_db
 from ...models.rtu import RTU, Sensor, RtuState
 from ...schemas.common import DataQuality
 from ...schemas.sensor import SensorValue, SensorListMeta
 
 router = APIRouter()
-
-
-def get_rtu_or_404(db: Session, name: str) -> RTU:
-    """Get RTU by station name or raise 404."""
-    rtu = db.query(RTU).filter(RTU.station_name == name).first()
-    if not rtu:
-        raise RtuNotFoundError(name)
-    return rtu
-
-
-def get_data_quality(rtu_state: str) -> DataQuality:
-    """Determine data quality based on RTU state."""
-    if rtu_state == RtuState.RUNNING:
-        return DataQuality.GOOD
-    elif rtu_state in [RtuState.CONNECTING, RtuState.DISCOVERY]:
-        return DataQuality.UNCERTAIN
-    else:
-        return DataQuality.NOT_CONNECTED
 
 
 @router.get("")

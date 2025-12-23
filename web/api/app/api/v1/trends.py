@@ -194,23 +194,24 @@ async def export_trends(
             header += [f"{tag}_quality" for tag in request.tags]
         writer.writerow(header)
 
-        # Collect all unique timestamps
+        # Pre-index samples by (tag, timestamp) for O(1) lookup instead of O(n) per row
+        # This converts O(n²m) to O(nm) where n=timestamps, m=tags
+        sample_index = {}
         all_timestamps = set()
         for tag, samples in samples_by_tag.items():
             for sample in samples:
                 all_timestamps.add(sample.timestamp)
+                sample_index[(tag, sample.timestamp)] = sample
 
-        # Write rows
+        # Write rows with O(1) lookups
         for ts in sorted(all_timestamps):
             row = [ts.isoformat()]
             for tag in request.tags:
-                samples = samples_by_tag.get(tag, [])
-                sample = next((s for s in samples if s.timestamp == ts), None)
+                sample = sample_index.get((tag, ts))
                 row.append(sample.value if sample else "")
             if request.include_metadata:
                 for tag in request.tags:
-                    samples = samples_by_tag.get(tag, [])
-                    sample = next((s for s in samples if s.timestamp == ts), None)
+                    sample = sample_index.get((tag, ts))
                     row.append(sample.quality if sample else "")
             writer.writerow(row)
 

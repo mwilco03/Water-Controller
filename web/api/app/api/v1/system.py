@@ -12,6 +12,8 @@ from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from sqlalchemy import func
+
 from ...core.errors import build_success_response
 from ...models.base import get_db
 from ...models.rtu import RTU, RtuState
@@ -76,17 +78,19 @@ async def get_system_status(
     now = datetime.now(timezone.utc)
     uptime = int((now - SERVER_START_TIME).total_seconds())
 
-    # RTU summary
-    total_rtus = db.query(RTU).count()
-    running_rtus = db.query(RTU).filter(RTU.state == RtuState.RUNNING).count()
-    offline_rtus = db.query(RTU).filter(RTU.state == RtuState.OFFLINE).count()
-    error_rtus = db.query(RTU).filter(RTU.state == RtuState.ERROR).count()
+    # RTU summary - single query with GROUP BY instead of 4 separate queries
+    state_counts = dict(
+        db.query(RTU.state, func.count(RTU.id))
+        .group_by(RTU.state)
+        .all()
+    )
+    total_rtus = sum(state_counts.values())
 
     rtu_summary = RtuSummary(
         total=total_rtus,
-        running=running_rtus,
-        offline=offline_rtus,
-        error=error_rtus,
+        running=state_counts.get(RtuState.RUNNING, 0),
+        offline=state_counts.get(RtuState.OFFLINE, 0),
+        error=state_counts.get(RtuState.ERROR, 0),
     )
 
     # Alarm summary
