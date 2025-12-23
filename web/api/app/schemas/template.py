@@ -7,7 +7,7 @@ Pydantic models for RTU configuration templates.
 """
 
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 from pydantic import BaseModel, Field
 
 
@@ -15,7 +15,7 @@ class SlotTemplate(BaseModel):
     """Slot configuration template."""
 
     slot_number: int = Field(ge=0, le=31, description="Slot number")
-    module_type: str = Field(description="Module type (analog_input, digital_output, etc.)")
+    module_type: Optional[str] = Field(None, description="Module type (analog_input, digital_output, etc.)")
     module_id: Optional[str] = Field(None, description="Module identifier")
 
 
@@ -93,8 +93,8 @@ class TemplateResponse(BaseModel):
     name: str = Field(description="Template name")
     description: Optional[str] = Field(None, description="Description")
     category: str = Field(description="Template category")
-    vendor_id: Optional[int] = Field(None, description="Target vendor ID")
-    device_id: Optional[int] = Field(None, description="Target device ID")
+    vendor_id: Optional[Union[int, str]] = Field(None, description="Target vendor ID")
+    device_id: Optional[Union[int, str]] = Field(None, description="Target device ID")
     slot_count: int = Field(description="Number of slots")
     slots: List[SlotTemplate] = Field(description="Slot configs")
     sensors: List[SensorTemplate] = Field(description="Sensor configs")
