@@ -5,12 +5,12 @@ import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { getRTU, getRTUInventory, refreshRTUInventory } from '@/lib/api';
 import type { RTUDevice, RTUInventory } from '@/lib/api';
-import { SensorList, ControlList, InventoryRefresh } from '@/components/rtu';
+import { SensorList, ControlList, InventoryRefresh, RtuStateBadge, ProfinetStatus, StaleIndicator } from '@/components/rtu';
 import { useWebSocket } from '@/hooks/useWebSocket';
 import { useCommandMode } from '@/contexts/CommandModeContext';
 import CommandModeLogin from '@/components/CommandModeLogin';
 
-type Tab = 'overview' | 'sensors' | 'controls';
+type Tab = 'overview' | 'sensors' | 'controls' | 'profinet';
 
 export default function RTUDetailPage() {
   const params = useParams();
@@ -145,23 +145,8 @@ export default function RTUDetailPage() {
           </Link>
           <div>
             <div className="flex items-center gap-3">
-              <div
-                className="w-4 h-4 rounded-full"
-                style={{
-                  backgroundColor: stateColor,
-                  boxShadow: isOnline ? `0 0 10px ${stateColor}` : 'none',
-                }}
-              />
               <h1 className="text-2xl font-bold text-white">{rtu.station_name}</h1>
-              <span
-                className="text-xs px-2 py-1 rounded capitalize"
-                style={{
-                  backgroundColor: `${stateColor}20`,
-                  color: stateColor,
-                }}
-              >
-                {rtu.state}
-              </span>
+              <RtuStateBadge state={rtu.state} size="md" />
             </div>
             <p className="text-gray-400 font-mono mt-1">{rtu.ip_address || 'No IP address'}</p>
           </div>
@@ -211,7 +196,7 @@ export default function RTUDetailPage() {
       {/* Tabs */}
       <div className="border-b border-gray-700">
         <nav className="flex gap-4">
-          {(['overview', 'sensors', 'controls'] as Tab[]).map((tab) => (
+          {(['overview', 'sensors', 'controls', 'profinet'] as Tab[]).map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
@@ -224,6 +209,7 @@ export default function RTUDetailPage() {
               {tab === 'overview' && 'Overview'}
               {tab === 'sensors' && `Sensors (${sensors.length})`}
               {tab === 'controls' && `Controls (${controls.length})`}
+              {tab === 'profinet' && 'PROFINET'}
             </button>
           ))}
         </nav>
@@ -302,7 +288,7 @@ export default function RTUDetailPage() {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z" />
                 </svg>
                 <p>No inventory data</p>
-                <p className="text-sm mt-1">Click "Refresh Inventory" to query the RTU</p>
+                <p className="text-sm mt-1">Click &quot;Refresh Inventory&quot; to query the RTU</p>
               </div>
             )}
 
@@ -360,6 +346,14 @@ export default function RTUDetailPage() {
               onCommandSent={fetchData}
             />
           </div>
+        )}
+
+        {activeTab === 'profinet' && (
+          <ProfinetStatus
+            stationName={stationName}
+            autoRefresh={true}
+            refreshIntervalMs={5000}
+          />
         )}
       </div>
     </div>

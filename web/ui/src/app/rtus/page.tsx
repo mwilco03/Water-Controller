@@ -1,8 +1,10 @@
 'use client';
 
 import { useEffect, useState, useCallback, useRef } from 'react';
+import Link from 'next/link';
 import { useWebSocket } from '@/hooks/useWebSocket';
-import { DiscoveryPanel } from '@/components/rtu';
+import { DiscoveryPanel, RtuStateBadge, AddRtuModal, DeleteRtuModal, StaleIndicator } from '@/components/rtu';
+import { useToast } from '@/components/ui/Toast';
 import type { DiscoveredDevice } from '@/lib/api';
 
 interface RTUDevice {
@@ -25,6 +27,13 @@ interface RTUHealth {
   in_failover: boolean;
 }
 
+interface AddRtuPrefill {
+  station_name?: string;
+  ip_address?: string;
+  vendor_id?: string;
+  device_id?: string;
+}
+
 export default function RTUsPage() {
   const [rtus, setRtus] = useState<RTUDevice[]>([]);
   const [selectedRtu, setSelectedRtu] = useState<RTUDevice | null>(null);
@@ -32,18 +41,12 @@ export default function RTUsPage() {
   const [showAddModal, setShowAddModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState<string | null>(null);
   const [showDiscovery, setShowDiscovery] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [actionLoading, setActionLoading] = useState<string | null>(null);
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const toast = useToast();
 
-  // Form state for adding RTU
-  const [newRtu, setNewRtu] = useState({
-    station_name: '',
-    ip_address: '',
-    vendor_id: 0x0493,
-    device_id: 0x0001,
-    slot_count: 16,
-  });
+  // Prefill data for add modal (used when selecting from discovery)
+  const [addPrefill, setAddPrefill] = useState<AddRtuPrefill | undefined>(undefined);
 
   const fetchRtus = useCallback(async () => {
     try {
@@ -107,11 +110,6 @@ export default function RTUsPage() {
     };
   }, [fetchRtus]);
 
-  const showMessage = (type: 'success' | 'error', text: string) => {
-    setMessage({ type, text });
-    setTimeout(() => setMessage(null), 5000);
-  };
-
   const fetchHealth = async (stationName: string) => {
     try {
       const res = await fetch(`/api/v1/rtus/${stationName}/health`);
@@ -119,102 +117,67 @@ export default function RTUsPage() {
         const health = await res.json();
         setRtuHealth((prev) => ({ ...prev, [stationName]: health }));
       }
-    } catch (error) {
-      console.error('Failed to fetch health:', error);
+    } catch {
+      // Silently fail - health data is supplementary
     }
   };
 
-  const addRtu = async () => {
-    if (!newRtu.station_name || !newRtu.ip_address) {
-      showMessage('error', 'Station name and IP address are required');
-      return;
+  const handleAddSuccess = useCallback((rtu: { station_name: string }) => {
+    setShowAddModal(false);
+    setAddPrefill(undefined);
+    toast.success('RTU added successfully', `${rtu.station_name} has been registered`);
+    fetchRtus();
+  }, [toast, fetchRtus]);
+
+  const handleDeleteSuccess = useCallback((result: { deleted: { alarm_rules: number; pid_loops: number; historian_tags: number } }) => {
+    const deleted = result.deleted;
+    const stationName = showDeleteModal;
+    setShowDeleteModal(null);
+    if (selectedRtu?.station_name === stationName) {
+      setSelectedRtu(null);
     }
-
-    setLoading(true);
-    try {
-      const res = await fetch('/api/v1/rtus', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newRtu),
-      });
-
-      if (res.ok) {
-        showMessage('success', `RTU ${newRtu.station_name} added successfully`);
-        setShowAddModal(false);
-        setNewRtu({
-          station_name: '',
-          ip_address: '',
-          vendor_id: 0x0493,
-          device_id: 0x0001,
-          slot_count: 16,
-        });
-        fetchRtus();
-      } else {
-        const error = await res.json();
-        showMessage('error', error.detail || 'Failed to add RTU');
-      }
-    } catch (error) {
-      showMessage('error', 'Error adding RTU');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const deleteRtu = async (stationName: string) => {
-    setLoading(true);
-    try {
-      const res = await fetch(`/api/v1/rtus/${stationName}?cascade=true`, {
-        method: 'DELETE',
-      });
-
-      if (res.ok) {
-        const result = await res.json();
-        const deleted = result.cascade_deleted;
-        showMessage(
-          'success',
-          `RTU ${stationName} deleted. Cleaned up: ${deleted.alarm_rules} alarm rules, ` +
-            `${deleted.pid_loops} PID loops, ${deleted.historian_tags} historian tags`
-        );
-        setShowDeleteModal(null);
-        if (selectedRtu?.station_name === stationName) {
-          setSelectedRtu(null);
-        }
-        fetchRtus();
-      } else {
-        showMessage('error', 'Failed to delete RTU');
-      }
-    } catch (error) {
-      showMessage('error', 'Error deleting RTU');
-    } finally {
-      setLoading(false);
-    }
-  };
+    toast.success(
+      'RTU deleted',
+      `Cleaned up: ${deleted.alarm_rules} alarm rules, ${deleted.pid_loops} PID loops, ${deleted.historian_tags} historian tags`
+    );
+    fetchRtus();
+  }, [showDeleteModal, selectedRtu, toast, fetchRtus]);
 
   const connectRtu = async (stationName: string) => {
+    setActionLoading(`connect-${stationName}`);
     try {
       const res = await fetch(`/api/v1/rtus/${stationName}/connect`, {
         method: 'POST',
       });
       if (res.ok) {
-        showMessage('success', `Connecting to ${stationName}...`);
+        toast.info('Connecting...', `Establishing connection to ${stationName}`);
         fetchRtus();
+      } else {
+        toast.error('Connection failed', 'Check RTU status and network connectivity');
       }
-    } catch (error) {
-      showMessage('error', 'Connection failed');
+    } catch {
+      toast.error('Connection failed', 'Unable to reach server');
+    } finally {
+      setActionLoading(null);
     }
   };
 
   const disconnectRtu = async (stationName: string) => {
+    setActionLoading(`disconnect-${stationName}`);
     try {
       const res = await fetch(`/api/v1/rtus/${stationName}/disconnect`, {
         method: 'POST',
       });
       if (res.ok) {
-        showMessage('success', `Disconnected from ${stationName}`);
+        toast.success('Disconnected', `${stationName} has been disconnected`);
         fetchRtus();
+      } else {
+        toast.error('Disconnect failed', 'Unable to disconnect RTU');
       }
-    } catch (error) {
-      showMessage('error', 'Disconnect failed');
+    } catch {
+      toast.error('Disconnect failed', 'Unable to reach server');
+    } finally {
+      setActionLoading(null);
     }
   };
 
@@ -244,13 +207,17 @@ export default function RTUsPage() {
   // Handle device selection from discovery panel
   const handleDiscoveredDeviceSelect = (device: DiscoveredDevice) => {
     // Pre-fill the add RTU form with discovered device info
-    setNewRtu({
+    setAddPrefill({
       station_name: device.device_name || `rtu-${device.mac_address.replace(/:/g, '').slice(-6)}`,
       ip_address: device.ip_address || '',
-      vendor_id: device.vendor_id || 0x0493,
-      device_id: device.device_id || 0x0001,
-      slot_count: 16,
+      vendor_id: device.vendor_id ? `0x${device.vendor_id.toString(16).padStart(4, '0')}` : undefined,
+      device_id: device.device_id ? `0x${device.device_id.toString(16).padStart(4, '0')}` : undefined,
     });
+    setShowAddModal(true);
+  };
+
+  const handleOpenAddModal = () => {
+    setAddPrefill(undefined);
     setShowAddModal(true);
   };
 
@@ -269,25 +236,23 @@ export default function RTUsPage() {
           >
             {showDiscovery ? 'Hide Discovery' : 'Scan Network'}
           </button>
-          <button
-            onClick={() => setShowAddModal(true)}
-            className="px-4 py-2 bg-green-600 hover:bg-green-700 rounded text-white"
+          <Link
+            href="/wizard"
+            className="px-4 py-2 bg-purple-600 hover:bg-purple-700 rounded text-white transition-colors"
           >
-            + Add RTU
+            Setup Wizard
+          </Link>
+          <button
+            onClick={handleOpenAddModal}
+            className="px-4 py-2 bg-green-600 hover:bg-green-700 rounded text-white flex items-center gap-2"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+            </svg>
+            Add RTU
           </button>
         </div>
       </div>
-
-      {/* Message Banner */}
-      {message && (
-        <div
-          className={`p-4 rounded-lg ${
-            message.type === 'success' ? 'bg-green-900 text-green-200' : 'bg-red-900 text-red-200'
-          }`}
-        >
-          {message.text}
-        </div>
-      )}
 
       {/* Discovery Panel */}
       {showDiscovery && (
@@ -303,27 +268,42 @@ export default function RTUsPage() {
           <h2 className="text-lg font-semibold text-white mb-4">Registered RTUs</h2>
 
           {rtus.length === 0 ? (
-            <p className="text-gray-400">No RTUs registered</p>
+            <div className="text-center py-8">
+              <p className="text-gray-400 mb-4">No RTUs registered</p>
+              <button
+                onClick={handleOpenAddModal}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded text-white text-sm"
+              >
+                Add Your First RTU
+              </button>
+            </div>
           ) : (
             <div className="space-y-2">
               {rtus.map((rtu) => (
                 <div
                   key={rtu.station_name}
                   onClick={() => setSelectedRtu(rtu)}
-                  className={`p-3 rounded cursor-pointer transition-colors ${
+                  className={`p-3 rounded cursor-pointer transition-all ${
                     selectedRtu?.station_name === rtu.station_name
-                      ? 'bg-blue-900 border border-blue-500'
-                      : 'bg-gray-800 hover:bg-gray-700'
+                      ? 'bg-blue-900/50 border border-blue-500'
+                      : 'bg-gray-800 hover:bg-gray-700 border border-transparent'
                   }`}
                 >
                   <div className="flex justify-between items-center">
-                    <div>
-                      <div className="font-medium text-white">{rtu.station_name}</div>
-                      <div className="text-sm text-gray-400">{rtu.ip_address}</div>
+                    <div className="min-w-0 flex-1">
+                      <div className="font-medium text-white truncate">{rtu.station_name}</div>
+                      <div className="flex items-center gap-2 mt-1">
+                        <span className="text-sm text-gray-400">{rtu.ip_address}</span>
+                        {rtu.last_seen && (
+                          <StaleIndicator
+                            lastUpdated={rtu.last_seen}
+                            size="xs"
+                            variant="dot"
+                          />
+                        )}
+                      </div>
                     </div>
-                    <span className={`px-2 py-1 rounded text-xs ${getStateBadge(rtu.connection_state)}`}>
-                      {rtu.connection_state}
-                    </span>
+                    <RtuStateBadge state={rtu.connection_state} size="sm" />
                   </div>
                 </div>
               ))}
@@ -340,25 +320,40 @@ export default function RTUsPage() {
                   <h2 className="text-xl font-semibold text-white">{selectedRtu.station_name}</h2>
                   <p className="text-gray-400">{selectedRtu.ip_address}</p>
                 </div>
-                <div className="flex space-x-2">
+                <div className="flex items-center space-x-2">
+                  <RtuStateBadge state={selectedRtu.connection_state} size="md" />
                   {selectedRtu.connection_state === 'OFFLINE' ? (
                     <button
                       onClick={() => connectRtu(selectedRtu.station_name)}
-                      className="px-3 py-1 bg-green-600 hover:bg-green-700 rounded text-sm text-white"
+                      disabled={actionLoading === `connect-${selectedRtu.station_name}`}
+                      className="px-3 py-1.5 bg-green-600 hover:bg-green-500 rounded text-sm text-white flex items-center gap-1.5 disabled:opacity-50"
                     >
+                      {actionLoading === `connect-${selectedRtu.station_name}` && (
+                        <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                        </svg>
+                      )}
                       Connect
                     </button>
-                  ) : (
+                  ) : selectedRtu.connection_state !== 'CONNECTING' && (
                     <button
                       onClick={() => disconnectRtu(selectedRtu.station_name)}
-                      className="px-3 py-1 bg-yellow-600 hover:bg-yellow-700 rounded text-sm text-white"
+                      disabled={actionLoading === `disconnect-${selectedRtu.station_name}`}
+                      className="px-3 py-1.5 bg-amber-600 hover:bg-amber-500 rounded text-sm text-white flex items-center gap-1.5 disabled:opacity-50"
                     >
+                      {actionLoading === `disconnect-${selectedRtu.station_name}` && (
+                        <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                        </svg>
+                      )}
                       Disconnect
                     </button>
                   )}
                   <button
                     onClick={() => setShowDeleteModal(selectedRtu.station_name)}
-                    className="px-3 py-1 bg-red-600 hover:bg-red-700 rounded text-sm text-white"
+                    className="px-3 py-1.5 bg-red-600 hover:bg-red-500 rounded text-sm text-white"
                   >
                     Delete
                   </button>
@@ -415,16 +410,19 @@ export default function RTUsPage() {
               )}
 
               {/* Quick Links */}
-              <div className="flex space-x-4">
-                <a href={`/rtus/${selectedRtu.station_name}/sensors`} className="text-blue-400 hover:underline">
-                  View Sensors
-                </a>
-                <a href={`/rtus/${selectedRtu.station_name}/actuators`} className="text-blue-400 hover:underline">
-                  View Actuators
-                </a>
-                <a href={`/trends?rtu=${selectedRtu.station_name}`} className="text-blue-400 hover:underline">
+              <div className="flex flex-wrap gap-3">
+                <Link
+                  href={`/rtus/${selectedRtu.station_name}`}
+                  className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 rounded text-sm text-white transition-colors"
+                >
+                  Full Details
+                </Link>
+                <Link
+                  href={`/trends?rtu=${selectedRtu.station_name}`}
+                  className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded text-sm text-white transition-colors"
+                >
                   View Trends
-                </a>
+                </Link>
               </div>
             </div>
           ) : (
@@ -436,129 +434,23 @@ export default function RTUsPage() {
       </div>
 
       {/* Add RTU Modal */}
-      {showAddModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-gray-900 p-6 rounded-lg w-full max-w-md">
-            <h2 className="text-xl font-semibold text-white mb-4">Add New RTU</h2>
+      <AddRtuModal
+        isOpen={showAddModal}
+        onClose={() => {
+          setShowAddModal(false);
+          setAddPrefill(undefined);
+        }}
+        onSuccess={handleAddSuccess}
+        prefillData={addPrefill}
+      />
 
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm text-gray-300 mb-1">Station Name</label>
-                <input
-                  type="text"
-                  value={newRtu.station_name}
-                  onChange={(e) => setNewRtu({ ...newRtu, station_name: e.target.value })}
-                  placeholder="e.g., water-treat-rtu"
-                  className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm text-gray-300 mb-1">IP Address</label>
-                <input
-                  type="text"
-                  value={newRtu.ip_address}
-                  onChange={(e) => setNewRtu({ ...newRtu, ip_address: e.target.value })}
-                  placeholder="e.g., 192.168.1.100"
-                  className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm text-gray-300 mb-1">Vendor ID</label>
-                  <input
-                    type="text"
-                    value={`0x${newRtu.vendor_id.toString(16).padStart(4, '0')}`}
-                    onChange={(e) => setNewRtu({ ...newRtu, vendor_id: parseInt(e.target.value, 16) || 0 })}
-                    className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white font-mono"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm text-gray-300 mb-1">Device ID</label>
-                  <input
-                    type="text"
-                    value={`0x${newRtu.device_id.toString(16).padStart(4, '0')}`}
-                    onChange={(e) => setNewRtu({ ...newRtu, device_id: parseInt(e.target.value, 16) || 0 })}
-                    className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white font-mono"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-sm text-gray-300 mb-1">Slot Count</label>
-                <select
-                  value={newRtu.slot_count}
-                  onChange={(e) => setNewRtu({ ...newRtu, slot_count: parseInt(e.target.value) })}
-                  className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white"
-                >
-                  {[8, 16, 32, 64].map((count) => (
-                    <option key={count} value={count}>
-                      {count} slots
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            <div className="flex justify-end space-x-3 mt-6">
-              <button
-                onClick={() => setShowAddModal(false)}
-                className="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded text-white"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={addRtu}
-                disabled={loading}
-                className="px-4 py-2 bg-green-600 hover:bg-green-700 rounded text-white disabled:opacity-50"
-              >
-                {loading ? 'Adding...' : 'Add RTU'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Delete Confirmation Modal */}
-      {showDeleteModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-gray-900 p-6 rounded-lg w-full max-w-md">
-            <h2 className="text-xl font-semibold text-white mb-4">Delete RTU</h2>
-
-            <p className="text-gray-300 mb-4">
-              Are you sure you want to delete <strong>{showDeleteModal}</strong>?
-            </p>
-
-            <div className="bg-yellow-900 text-yellow-200 p-3 rounded mb-4">
-              <strong>Warning:</strong> This will also delete all associated:
-              <ul className="list-disc ml-5 mt-2">
-                <li>Alarm rules</li>
-                <li>PID loops</li>
-                <li>Historian tags</li>
-                <li>Modbus mappings</li>
-                <li>Active alarms</li>
-              </ul>
-            </div>
-
-            <div className="flex justify-end space-x-3">
-              <button
-                onClick={() => setShowDeleteModal(null)}
-                className="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded text-white"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => deleteRtu(showDeleteModal)}
-                disabled={loading}
-                className="px-4 py-2 bg-red-600 hover:bg-red-700 rounded text-white disabled:opacity-50"
-              >
-                {loading ? 'Deleting...' : 'Delete RTU'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Delete RTU Modal */}
+      <DeleteRtuModal
+        isOpen={showDeleteModal !== null}
+        stationName={showDeleteModal || ''}
+        onClose={() => setShowDeleteModal(null)}
+        onSuccess={handleDeleteSuccess}
+      />
     </div>
   );
 }

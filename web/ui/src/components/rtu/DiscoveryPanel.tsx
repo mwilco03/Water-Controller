@@ -255,7 +255,7 @@ export default function DiscoveryPanel({ onDeviceSelect }: Props) {
           </svg>
           <p className="text-lg font-medium text-gray-300">No devices found</p>
           <p className="text-sm mt-1">
-            Click "Scan Network" to discover PROFINET devices
+            Click &quot;Scan Network&quot; to discover PROFINET devices
           </p>
         </div>
       )}

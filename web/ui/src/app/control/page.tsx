@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import { useWebSocket } from '@/hooks/useWebSocket';
 import { useCommandMode } from '@/contexts/CommandModeContext';
 import CommandModeLogin from '@/components/CommandModeLogin';
+import CoupledActionsPanel from '@/components/control/CoupledActionsPanel';
 
 interface PIDLoop {
   loop_id: number;
@@ -474,6 +475,11 @@ export default function ControlPage() {
           </div>
         </div>
       )}
+
+      {/* Coupled Actions Panel */}
+      <div className="scada-panel p-4">
+        <CoupledActionsPanel showAll />
+      </div>
       </div>
     </>
   );
