@@ -1,7 +1,15 @@
 """
-Water Treatment Controller - FastAPI Web Backend
+Water Treatment Controller - FastAPI Web Backend (LEGACY)
 Copyright (C) 2024
 SPDX-License-Identifier: GPL-3.0-or-later
+
+DEPRECATED: This file is the legacy monolithic API implementation.
+Use the new modular structure in app/main.py instead.
+
+To run the new API:
+    uvicorn app.main:app --reload
+
+This file is preserved for reference during migration.
 """
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Depends
