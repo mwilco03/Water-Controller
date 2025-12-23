@@ -137,7 +137,7 @@ Functions/modules requiring refactoring:
 | `dialog_io_wizard.c` switches | Cyclomatic | 18 | < 10 | State machine with dispatch table |
 | `sensor_instance_create_from_db()` | Cyclomatic | 19 | < 10 | Driver registry pattern |
 | `ProfinetClient` methods | Cyclomatic | 15 | < 10 | Extract `_execute_if_connected()` helper |
-| `db_persistence.py` | Lines | 2029 | < 500 | Split into entity-specific modules |
+| `db_persistence.py` | Lines | 2029 | < 500 | ✅ Split into 11 entity-specific modules |
 
 ### Example Refactoring: config_load_app_config()
 
@@ -244,13 +244,30 @@ Code that should be shared between repositories:
 
 ### MEDIUM TERM (This Month) - Larger refactors:
 
-| # | Action | Scope | Risk |
-|---|--------|-------|------|
-| 1 | Create shared alarm definitions header | Both repos | Medium |
-| 2 | Split `db_persistence.py` into modules | 2029 lines → 4-5 files | Medium |
-| 3 | Table-driven config loading | Water-Treat `config.c` | Medium |
-| 4 | Implement alarm callback chain | Both PROFINET stacks | Medium |
-| 5 | Create shared component library | Frontend | Medium |
+| # | Action | Scope | Risk | Status |
+|---|--------|-------|------|--------|
+| 1 | Create shared alarm definitions header | Both repos | Medium | ✅ DONE |
+| 2 | Split `db_persistence.py` into modules | 2029 lines → 11 modules | Medium | ✅ DONE |
+| 3 | Table-driven config loading | Water-Treat `config.c` | Medium | |
+| 4 | Implement alarm callback chain | Both PROFINET stacks | Medium | |
+| 5 | Create shared component library | Frontend | Medium | |
+
+**db_persistence.py Split Details:**
+The 2029-line monolithic persistence file has been split into:
+- `app/persistence/base.py` - Database connection, schema initialization (380 lines)
+- `app/persistence/rtu.py` - RTU devices, sensors, controls (235 lines)
+- `app/persistence/alarms.py` - Alarm rules, shelved alarms (170 lines)
+- `app/persistence/pid.py` - PID control loops (100 lines)
+- `app/persistence/modbus.py` - Modbus server, devices, mappings (155 lines)
+- `app/persistence/sessions.py` - User session management (135 lines)
+- `app/persistence/users.py` - User management, authentication (165 lines)
+- `app/persistence/historian.py` - Historian tags, slot configs (130 lines)
+- `app/persistence/config.py` - Log forwarding, AD, backups, import/export (235 lines)
+- `app/persistence/discovery.py` - DCP discovery cache (55 lines)
+- `app/persistence/audit.py` - Audit log, command log (130 lines)
+- `app/persistence/__init__.py` - Re-exports all functions for backward compatibility (180 lines)
+
+Original `db_persistence.py` is now a thin compatibility shim that imports from the new package.
 
 ---
 
