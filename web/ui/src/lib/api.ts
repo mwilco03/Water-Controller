@@ -223,6 +223,54 @@ export async function acknowledgeAllAlarms(user: string): Promise<void> {
   });
 }
 
+// Alarm Shelving API (ISA-18.2)
+export interface ShelvedAlarm {
+  id: number;
+  rtu_station: string;
+  slot: number;
+  shelved_by: string;
+  shelved_at: string;
+  shelf_duration_minutes: number;
+  expires_at: string;
+  reason: string | null;
+  active: number;
+}
+
+export async function getShelvedAlarms(): Promise<ShelvedAlarm[]> {
+  const data = await apiFetch<{ shelved_alarms: ShelvedAlarm[] }>('/api/v1/alarms/shelved');
+  return data.shelved_alarms || [];
+}
+
+export async function shelveAlarm(
+  rtuStation: string,
+  slot: number,
+  durationMinutes: number,
+  reason?: string
+): Promise<{ shelf_id: number }> {
+  return apiFetch('/api/v1/alarms/shelve', {
+    method: 'POST',
+    body: JSON.stringify({
+      rtu_station: rtuStation,
+      slot: slot,
+      duration_minutes: durationMinutes,
+      reason: reason || null,
+    }),
+  });
+}
+
+export async function unshelveAlarm(shelfId: number): Promise<void> {
+  await apiFetch(`/api/v1/alarms/shelved/${shelfId}`, {
+    method: 'DELETE',
+  });
+}
+
+export async function isAlarmShelved(rtuStation: string, slot: number): Promise<boolean> {
+  const data = await apiFetch<{ is_shelved: boolean }>(
+    `/api/v1/alarms/shelved/check?rtu_station=${encodeURIComponent(rtuStation)}&slot=${slot}`
+  );
+  return data.is_shelved;
+}
+
 // Control API
 export async function getPIDLoops(): Promise<PIDLoop[]> {
   const data = await apiFetch<{ loops: PIDLoop[] }>('/api/v1/control/pid');

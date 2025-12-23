@@ -136,6 +136,9 @@ export default function RootLayout({
                       <a href="/io-tags" className="block px-4 py-2 text-sm text-slate-300 hover:text-white hover:bg-slate-700">
                         I/O Tags
                       </a>
+                      <a href="/modbus" className="block px-4 py-2 text-sm text-slate-300 hover:text-white hover:bg-slate-700">
+                        Modbus Gateway
+                      </a>
                       <a href="/network" className="block px-4 py-2 text-sm text-slate-300 hover:text-white hover:bg-slate-700">
                         Network
                       </a>
