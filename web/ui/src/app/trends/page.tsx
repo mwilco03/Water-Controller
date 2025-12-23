@@ -3,6 +3,7 @@
 import { Suspense, useEffect, useState, useRef, useCallback } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useWebSocket } from '@/hooks/useWebSocket';
+import { exportTrendToCSV, exportTrendToJSON, exportTrendToExcel, TrendExportData } from '@/lib/exportUtils';
 
 interface HistorianTag {
   tag_id: number;
@@ -61,8 +62,38 @@ function TrendsContent() {
   const [timeRange, setTimeRange] = useState<'1h' | '6h' | '24h' | '7d' | '30d'>('1h');
   const [loading, setLoading] = useState(false);
   const [autoRefresh, setAutoRefresh] = useState(true);
+  const [showExportMenu, setShowExportMenu] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  const prepareExportData = useCallback((): TrendExportData[] => {
+    return Object.entries(trendData).map(([tagId, samples]) => {
+      const tag = tags.find(t => t.tag_id === parseInt(tagId));
+      return {
+        tagId: parseInt(tagId),
+        tagName: tag?.tag_name || `Tag ${tagId}`,
+        samples,
+      };
+    });
+  }, [trendData, tags]);
+
+  const handleExport = useCallback((format: 'csv' | 'json' | 'excel') => {
+    const data = prepareExportData();
+    const filename = `trend_export_${timeRange}_${new Date().toISOString().split('T')[0]}`;
+
+    switch (format) {
+      case 'csv':
+        exportTrendToCSV(data, { filename });
+        break;
+      case 'json':
+        exportTrendToJSON(data, { filename });
+        break;
+      case 'excel':
+        exportTrendToExcel(data, { filename });
+        break;
+    }
+    setShowExportMenu(false);
+  }, [prepareExportData, timeRange]);
 
   const fetchTags = useCallback(async () => {
     try {
@@ -360,6 +391,61 @@ function TrendsContent() {
           >
             {loading ? 'Loading...' : 'Refresh'}
           </button>
+
+          {/* Export Dropdown */}
+          <div className="relative">
+            <button
+              onClick={() => setShowExportMenu(!showExportMenu)}
+              disabled={Object.keys(trendData).length === 0}
+              className="flex items-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-700 rounded text-white disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+              </svg>
+              Export
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+
+            {showExportMenu && (
+              <>
+                <div
+                  className="fixed inset-0 z-40"
+                  onClick={() => setShowExportMenu(false)}
+                />
+                <div className="absolute right-0 mt-2 w-48 bg-gray-800 rounded-lg shadow-xl border border-gray-700 py-2 z-50">
+                  <button
+                    onClick={() => handleExport('csv')}
+                    className="w-full px-4 py-2 text-left text-sm text-gray-300 hover:text-white hover:bg-gray-700 flex items-center gap-3"
+                  >
+                    <svg className="w-4 h-4 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                    Export as CSV
+                  </button>
+                  <button
+                    onClick={() => handleExport('excel')}
+                    className="w-full px-4 py-2 text-left text-sm text-gray-300 hover:text-white hover:bg-gray-700 flex items-center gap-3"
+                  >
+                    <svg className="w-4 h-4 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2" />
+                    </svg>
+                    Export as Excel
+                  </button>
+                  <button
+                    onClick={() => handleExport('json')}
+                    className="w-full px-4 py-2 text-left text-sm text-gray-300 hover:text-white hover:bg-gray-700 flex items-center gap-3"
+                  >
+                    <svg className="w-4 h-4 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
+                    </svg>
+                    Export as JSON
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
         </div>
       </div>
 
