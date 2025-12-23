@@ -5,6 +5,7 @@ import { useState, useEffect } from 'react';
 import { usePathname } from 'next/navigation';
 import { CommandModeProvider } from '@/contexts/CommandModeContext';
 import CommandModeBanner from '@/components/CommandModeBanner';
+import { ToastProvider } from '@/components/ui/Toast';
 
 export default function RootLayout({
   children,
@@ -56,6 +57,7 @@ export default function RootLayout({
       </head>
       <body>
         <CommandModeProvider>
+        <ToastProvider>
         <div className="min-h-screen flex flex-col">
           {/* Command Mode Banner - shows when authenticated in command mode */}
           <CommandModeBanner />
@@ -212,6 +214,7 @@ export default function RootLayout({
             </div>
           </footer>
         </div>
+        </ToastProvider>
         </CommandModeProvider>
       </body>
     </html>

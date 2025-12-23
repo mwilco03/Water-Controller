@@ -1,16 +1,9 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
-
-interface RTUDevice {
-  station_name: string;
-  ip_address: string;
-  vendor_id: number;
-  device_id: number;
-  connection_state: string;
-  slot_count: number;
-}
+import { RtuStateBadge } from '@/components/rtu';
+import { useToast } from '@/components/ui/Toast';
 
 interface DiscoveredSensor {
   bus_type: string;
@@ -38,11 +31,59 @@ interface RTUTestResult {
 
 type WizardStep = 'welcome' | 'add-rtu' | 'connect' | 'discover' | 'configure' | 'test' | 'complete';
 
+const WIZARD_STORAGE_KEY = 'water-controller-wizard-state';
+
+interface WizardState {
+  currentStep: WizardStep;
+  rtuConfig: {
+    station_name: string;
+    ip_address: string;
+    vendor_id: number;
+    device_id: number;
+    slot_count: number;
+  };
+  completedSteps: WizardStep[];
+  skippedSteps: WizardStep[];
+  connectionState: string;
+}
+
+function loadWizardState(): WizardState | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const stored = localStorage.getItem(WIZARD_STORAGE_KEY);
+    if (stored) {
+      return JSON.parse(stored);
+    }
+  } catch {
+    // Invalid stored state
+  }
+  return null;
+}
+
+function saveWizardState(state: WizardState): void {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(WIZARD_STORAGE_KEY, JSON.stringify(state));
+  } catch {
+    // Storage full or unavailable
+  }
+}
+
+function clearWizardState(): void {
+  if (typeof window === 'undefined') return;
+  localStorage.removeItem(WIZARD_STORAGE_KEY);
+}
+
 export default function WizardPage() {
   const router = useRouter();
+  const toast = useToast();
   const [currentStep, setCurrentStep] = useState<WizardStep>('welcome');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [completedSteps, setCompletedSteps] = useState<WizardStep[]>([]);
+  const [skippedSteps, setSkippedSteps] = useState<WizardStep[]>([]);
+  const [connectionState, setConnectionState] = useState<string>('OFFLINE');
+  const [initialized, setInitialized] = useState(false);
 
   // RTU configuration
   const [rtuConfig, setRtuConfig] = useState({
@@ -67,7 +108,32 @@ export default function WizardPage() {
     enableModbus: false,
   });
 
-  const steps: { id: WizardStep; label: string }[] = [
+  // Load saved state on mount
+  useEffect(() => {
+    const saved = loadWizardState();
+    if (saved) {
+      setCurrentStep(saved.currentStep);
+      setRtuConfig(saved.rtuConfig);
+      setCompletedSteps(saved.completedSteps);
+      setSkippedSteps(saved.skippedSteps);
+      setConnectionState(saved.connectionState || 'OFFLINE');
+    }
+    setInitialized(true);
+  }, []);
+
+  // Save state on changes
+  useEffect(() => {
+    if (!initialized) return;
+    saveWizardState({
+      currentStep,
+      rtuConfig,
+      completedSteps,
+      skippedSteps,
+      connectionState,
+    });
+  }, [initialized, currentStep, rtuConfig, completedSteps, skippedSteps, connectionState]);
+
+  const steps = useMemo<{ id: WizardStep; label: string }[]>(() => [
     { id: 'welcome', label: 'Welcome' },
     { id: 'add-rtu', label: 'Add RTU' },
     { id: 'connect', label: 'Connect' },
@@ -75,28 +141,50 @@ export default function WizardPage() {
     { id: 'configure', label: 'Configure' },
     { id: 'test', label: 'Test' },
     { id: 'complete', label: 'Complete' },
-  ];
+  ], []);
 
   const currentStepIndex = steps.findIndex(s => s.id === currentStep);
 
-  const goToStep = (step: WizardStep) => {
+  const goToStep = useCallback((step: WizardStep) => {
     setError(null);
     setCurrentStep(step);
-  };
+  }, []);
 
-  const nextStep = () => {
+  const markStepCompleted = useCallback((step: WizardStep) => {
+    setCompletedSteps(prev => prev.includes(step) ? prev : [...prev, step]);
+  }, []);
+
+  const markStepSkipped = useCallback((step: WizardStep) => {
+    setSkippedSteps(prev => prev.includes(step) ? prev : [...prev, step]);
+  }, []);
+
+  const nextStep = useCallback(() => {
+    markStepCompleted(currentStep);
     const nextIndex = currentStepIndex + 1;
     if (nextIndex < steps.length) {
       goToStep(steps[nextIndex].id);
     }
-  };
+  }, [currentStep, currentStepIndex, steps, goToStep, markStepCompleted]);
 
-  const prevStep = () => {
+  const skipStep = useCallback(() => {
+    markStepSkipped(currentStep);
+    const nextIndex = currentStepIndex + 1;
+    if (nextIndex < steps.length) {
+      goToStep(steps[nextIndex].id);
+    }
+  }, [currentStep, currentStepIndex, steps, goToStep, markStepSkipped]);
+
+  const prevStep = useCallback(() => {
     const prevIndex = currentStepIndex - 1;
     if (prevIndex >= 0) {
       goToStep(steps[prevIndex].id);
     }
-  };
+  }, [currentStepIndex, steps, goToStep]);
+
+  const cancelWizard = useCallback(() => {
+    clearWizardState();
+    router.push('/rtus');
+  }, [router]);
 
   const addRtu = async () => {
     if (!rtuConfig.station_name || !rtuConfig.ip_address) {
@@ -130,6 +218,7 @@ export default function WizardPage() {
   const connectRtu = async () => {
     setLoading(true);
     setError(null);
+    setConnectionState('CONNECTING');
 
     try {
       const res = await fetch(`/api/v1/rtus/${rtuConfig.station_name}/connect`, {
@@ -137,14 +226,43 @@ export default function WizardPage() {
       });
 
       if (res.ok) {
-        // Wait for connection to establish
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        // Poll for connection state
+        let attempts = 0;
+        const maxAttempts = 10;
+        while (attempts < maxAttempts) {
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          attempts++;
+
+          try {
+            const statusRes = await fetch(`/api/v1/rtus/${rtuConfig.station_name}`);
+            if (statusRes.ok) {
+              const data = await statusRes.json();
+              setConnectionState(data.state || data.connection_state || 'UNKNOWN');
+              if (data.state === 'RUNNING' || data.connection_state === 'RUNNING') {
+                toast.success('Connected', `Successfully connected to ${rtuConfig.station_name}`);
+                nextStep();
+                return;
+              }
+              if (data.state === 'ERROR' || data.connection_state === 'ERROR') {
+                setError('Connection failed. Check RTU status and network connectivity.');
+                setConnectionState('ERROR');
+                return;
+              }
+            }
+          } catch {
+            // Continue polling
+          }
+        }
+        // Timeout - proceed anyway
+        toast.warning('Connection timeout', 'Connection is still in progress. You may continue.');
         nextStep();
       } else {
         setError('Failed to connect to RTU');
+        setConnectionState('OFFLINE');
       }
     } catch (err) {
-      setError('Connection failed');
+      setError('Connection failed. Check network connectivity.');
+      setConnectionState('OFFLINE');
     } finally {
       setLoading(false);
     }
@@ -234,10 +352,28 @@ export default function WizardPage() {
   };
 
   const getStepStatusClass = (stepId: WizardStep) => {
-    const stepIndex = steps.findIndex(s => s.id === stepId);
-    if (stepIndex < currentStepIndex) return 'bg-green-600 text-white';
-    if (stepIndex === currentStepIndex) return 'bg-blue-600 text-white';
+    if (completedSteps.includes(stepId)) return 'bg-green-600 text-white';
+    if (skippedSteps.includes(stepId)) return 'bg-amber-600 text-white';
+    if (stepId === currentStep) return 'bg-blue-600 text-white';
     return 'bg-gray-700 text-gray-400';
+  };
+
+  const getStepIcon = (stepId: WizardStep, index: number) => {
+    if (completedSteps.includes(stepId)) {
+      return (
+        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+        </svg>
+      );
+    }
+    if (skippedSteps.includes(stepId)) {
+      return (
+        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 5l7 7-7 7M5 5l7 7-7 7" />
+        </svg>
+      );
+    }
+    return index + 1;
   };
 
   return (
@@ -246,15 +382,31 @@ export default function WizardPage() {
         {/* Progress Bar */}
         <div className="mb-8">
           <div className="flex items-center justify-between">
+            <button
+              onClick={cancelWizard}
+              className="text-gray-400 hover:text-white text-sm flex items-center gap-1"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+              Cancel
+            </button>
+            <span className="text-sm text-gray-400">Step {currentStepIndex + 1} of {steps.length}</span>
+          </div>
+          <div className="flex items-center justify-between mt-4">
             {steps.map((step, index) => (
               <div key={step.id} className="flex items-center">
                 <div
                   className={`w-10 h-10 rounded-full flex items-center justify-center font-semibold ${getStepStatusClass(step.id)}`}
                 >
-                  {index + 1}
+                  {getStepIcon(step.id, index)}
                 </div>
                 {index < steps.length - 1 && (
-                  <div className={`h-1 w-16 mx-2 ${index < currentStepIndex ? 'bg-green-600' : 'bg-gray-700'}`} />
+                  <div className={`h-1 w-16 mx-2 ${
+                    completedSteps.includes(step.id) || skippedSteps.includes(step.id)
+                      ? completedSteps.includes(step.id) ? 'bg-green-600' : 'bg-amber-600'
+                      : 'bg-gray-700'
+                  }`} />
                 )}
               </div>
             ))}
@@ -414,6 +566,23 @@ export default function WizardPage() {
                 Establish a PROFINET connection to <strong>{rtuConfig.station_name}</strong> at {rtuConfig.ip_address}.
               </p>
 
+              {/* Connection Status */}
+              <div className="bg-gray-700 p-6 rounded-lg mb-6">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="font-semibold">Connection Status</h3>
+                  <RtuStateBadge state={connectionState} size="md" />
+                </div>
+                {loading && (
+                  <div className="flex items-center gap-3 text-blue-400">
+                    <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                    </svg>
+                    <span>Establishing connection...</span>
+                  </div>
+                )}
+              </div>
+
               <div className="bg-gray-700 p-6 rounded-lg mb-6">
                 <h3 className="font-semibold mb-4">Pre-flight Checklist</h3>
                 <ul className="space-y-2 text-gray-300">
@@ -443,13 +612,27 @@ export default function WizardPage() {
                 >
                   Back
                 </button>
-                <button
-                  onClick={connectRtu}
-                  disabled={loading}
-                  className="px-6 py-2 bg-blue-600 hover:bg-blue-700 rounded disabled:opacity-50"
-                >
-                  {loading ? 'Connecting...' : 'Connect'}
-                </button>
+                <div className="space-x-4">
+                  <button
+                    onClick={skipStep}
+                    className="px-6 py-2 bg-gray-600 hover:bg-gray-500 rounded"
+                  >
+                    Connect Later
+                  </button>
+                  <button
+                    onClick={connectRtu}
+                    disabled={loading}
+                    className="px-6 py-2 bg-blue-600 hover:bg-blue-700 rounded disabled:opacity-50 flex items-center gap-2 inline-flex"
+                  >
+                    {loading && (
+                      <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                      </svg>
+                    )}
+                    {loading ? 'Connecting...' : 'Connect'}
+                  </button>
+                </div>
               </div>
             </div>
           )}
@@ -493,16 +676,22 @@ export default function WizardPage() {
                 </button>
                 <div className="space-x-4">
                   <button
-                    onClick={nextStep}
+                    onClick={skipStep}
                     className="px-6 py-2 bg-gray-600 hover:bg-gray-500 rounded"
                   >
-                    Skip Discovery
+                    Configure Manually Later
                   </button>
                   <button
                     onClick={discoverSensors}
                     disabled={loading}
-                    className="px-6 py-2 bg-blue-600 hover:bg-blue-700 rounded disabled:opacity-50"
+                    className="px-6 py-2 bg-blue-600 hover:bg-blue-700 rounded disabled:opacity-50 inline-flex items-center gap-2"
                   >
+                    {loading && (
+                      <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                      </svg>
+                    )}
                     {loading ? 'Scanning...' : 'Scan for Sensors'}
                   </button>
                 </div>
@@ -675,12 +864,22 @@ export default function WizardPage() {
                 >
                   Back
                 </button>
-                <button
-                  onClick={nextStep}
-                  className="px-6 py-2 bg-blue-600 hover:bg-blue-700 rounded"
-                >
-                  {testResults ? 'Continue' : 'Skip Test'}
-                </button>
+                <div className="space-x-4">
+                  {!testResults && (
+                    <button
+                      onClick={skipStep}
+                      className="px-6 py-2 bg-gray-600 hover:bg-gray-500 rounded"
+                    >
+                      Skip Test
+                    </button>
+                  )}
+                  <button
+                    onClick={nextStep}
+                    className="px-6 py-2 bg-blue-600 hover:bg-blue-700 rounded"
+                  >
+                    {testResults ? 'Continue' : 'Finish Setup'}
+                  </button>
+                </div>
               </div>
             </div>
           )}
@@ -688,7 +887,11 @@ export default function WizardPage() {
           {/* Complete Step */}
           {currentStep === 'complete' && (
             <div className="text-center">
-              <div className="text-6xl mb-4">&#10003;</div>
+              <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-green-600 flex items-center justify-center">
+                <svg className="w-10 h-10 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                </svg>
+              </div>
               <h2 className="text-3xl font-bold mb-4">Setup Complete!</h2>
               <p className="text-gray-400 mb-8">
                 Your RTU <strong>{rtuConfig.station_name}</strong> has been configured successfully.
@@ -706,22 +909,39 @@ export default function WizardPage() {
                     <span className="font-mono">{rtuConfig.ip_address}</span>
                   </div>
                   <div className="flex justify-between">
+                    <span>Connection:</span>
+                    <RtuStateBadge state={connectionState} size="sm" />
+                  </div>
+                  <div className="flex justify-between">
                     <span>Sensors Configured:</span>
                     <span>{selectedSensors.size}</span>
                   </div>
+                  {skippedSteps.length > 0 && (
+                    <div className="flex justify-between text-amber-400">
+                      <span>Skipped Steps:</span>
+                      <span>{skippedSteps.length}</span>
+                    </div>
+                  )}
                 </div>
               </div>
 
               <div className="space-x-4">
                 <button
-                  onClick={() => router.push('/rtus')}
-                  className="px-6 py-2 bg-gray-700 hover:bg-gray-600 rounded"
+                  onClick={() => {
+                    clearWizardState();
+                    router.push('/rtus');
+                  }}
+                  className="px-6 py-2 bg-blue-600 hover:bg-blue-700 rounded"
                 >
-                  View RTUs
+                  Go to Dashboard
                 </button>
                 <button
                   onClick={() => {
+                    clearWizardState();
                     setCurrentStep('welcome');
+                    setCompletedSteps([]);
+                    setSkippedSteps([]);
+                    setConnectionState('OFFLINE');
                     setRtuConfig({
                       station_name: '',
                       ip_address: '',
@@ -732,8 +952,9 @@ export default function WizardPage() {
                     setDiscoveredSensors([]);
                     setSelectedSensors(new Set());
                     setTestResults(null);
+                    setError(null);
                   }}
-                  className="px-6 py-2 bg-blue-600 hover:bg-blue-700 rounded"
+                  className="px-6 py-2 bg-gray-700 hover:bg-gray-600 rounded"
                 >
                   Add Another RTU
                 </button>
