@@ -11,6 +11,7 @@ from .rtu import RTU, Slot, Sensor, Control
 from .alarm import AlarmRule, AlarmEvent
 from .historian import HistorianSample, ProfinetDiagnostic
 from .audit import CommandAudit
+from .pid import PidLoop, PidMode
 
 __all__ = [
     "Base",
@@ -26,4 +27,6 @@ __all__ = [
     "HistorianSample",
     "ProfinetDiagnostic",
     "CommandAudit",
+    "PidLoop",
+    "PidMode",
 ]

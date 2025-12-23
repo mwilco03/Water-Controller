@@ -15,6 +15,8 @@ from .alarms import router as alarms_router
 from .trends import router as trends_router
 from .discover import router as discover_router
 from .system import router as system_router
+from .pid import router as pid_router
+from .backup import router as backup_router
 
 api_router = APIRouter()
 
@@ -23,5 +25,9 @@ api_router.include_router(alarms_router, prefix="/alarms", tags=["Alarm Manageme
 api_router.include_router(trends_router, prefix="/trends", tags=["Historian/Trends"])
 api_router.include_router(discover_router, prefix="/discover", tags=["Network Discovery"])
 api_router.include_router(system_router, prefix="/system", tags=["System"])
+api_router.include_router(backup_router, prefix="/system", tags=["Backup/Restore"])
+
+# PID loops are nested under RTUs
+rtus_router.include_router(pid_router, prefix="/{name}/pid", tags=["PID Control"])
 
 __all__ = ["api_router"]
