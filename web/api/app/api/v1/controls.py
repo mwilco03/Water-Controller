@@ -121,11 +121,34 @@ async def send_command(
     Commands are routed THROUGH the RTU - never direct to actuator.
     RTU applies local interlocks.
 
+    **Idempotency**: If `idempotency_key` is provided, duplicate requests
+    with the same key return the original result. This ensures safe retries
+    in field deployments with unreliable networks.
+
     **Authentication Required**: This is a control action requiring
     operator or admin role.
     """
     rtu = get_rtu_or_404(db, name)
     control = get_control_or_404(db, rtu, tag)
+
+    # Idempotency check: Return cached result if this request was already processed
+    if command.idempotency_key:
+        existing = db.query(CommandAudit).filter(
+            CommandAudit.idempotency_key == command.idempotency_key
+        ).first()
+        if existing:
+            # Return the original response for this idempotent request
+            response_data = CommandResponse(
+                tag=existing.control_tag,
+                command=existing.command if existing.value is None else None,
+                value=existing.value,
+                accepted=(existing.result == CommandResult.SUCCESS),
+                previous_state=None,
+                new_state=existing.command if existing.value is None else None,
+                timestamp=existing.timestamp,
+                coupled_actions=[],
+            )
+            return build_success_response(response_data.model_dump())
 
     # Get username from authenticated session for audit trail
     username = session.get("username", "unknown")
@@ -152,7 +175,7 @@ async def send_command(
             )
         cmd_value = str(command.value)
 
-    # Log command before execution
+    # Log command before execution (with idempotency key for safe retries)
     audit = CommandAudit(
         control_id=control.id,
         rtu_name=rtu.station_name,
@@ -161,6 +184,7 @@ async def send_command(
         value=command.value if not is_discrete else None,
         result=CommandResult.SUCCESS,  # Will update on failure
         user=username,  # From authenticated session
+        idempotency_key=command.idempotency_key,
     )
     db.add(audit)
 

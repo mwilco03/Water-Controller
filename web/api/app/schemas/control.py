@@ -73,6 +73,14 @@ class AnalogCommand(BaseModel):
 class ControlCommand(BaseModel):
     """Generic control command (either discrete or analog)."""
 
+    # Idempotency support for safe retries in field deployments
+    idempotency_key: Optional[str] = Field(
+        None,
+        min_length=1,
+        max_length=64,
+        description="Unique request ID for deduplication. If provided, duplicate commands with the same key return the original result."
+    )
+
     # For discrete controls
     command: Optional[str] = Field(None, description="Discrete command")
 

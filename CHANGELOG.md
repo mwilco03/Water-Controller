@@ -49,6 +49,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Authority handoff and state reconciliation tests
   - Automated test script included
 
+- **Idempotency Support for Control Commands**:
+  - Added `idempotency_key` field to `ControlCommand` schema (`control.py`)
+  - Added `idempotency_key` column to `CommandAudit` model with unique index
+  - Deduplication check in `send_command()` prevents duplicate command execution
+
+- **Enhanced Health Endpoint**:
+  - Expanded `/health` endpoint with subsystem status checks
+  - Reports database, PROFINET controller, and persistence layer health
+  - Returns `healthy` or `degraded` status based on subsystem checks
+
+- **Circuit Breaker for Shared Memory**:
+  - Added `CircuitBreaker` class in `shm_client.py`
+  - States: CLOSED (normal), OPEN (blocking), HALF_OPEN (testing recovery)
+  - Configurable failure threshold and reset timeout
+  - `WtcShmClientWithCircuitBreaker` wrapper for production resilience
+
+- **Operator-Friendly Error Messages**:
+  - Added `OPERATOR_MESSAGES` dictionary in `errors.py`
+  - Plain-language descriptions for all error codes
+  - `get_operator_message()` helper for UI integration
+
+- **Service Layer for RTU Operations**:
+  - New `RtuService` class in `services/rtu_service.py`
+  - Extracted database logic from route handlers
+  - Improved testability and separation of concerns
+
+- **Centralized Timeout Configuration**:
+  - New `TimeoutConfig` class in `core/config.py`
+  - Environment variable overrides for all timeout values
+  - Documented rationale for field deployment tuning
+
+- **Frontend Testing Infrastructure**:
+  - Jest configuration with Next.js compatibility (`jest.config.js`)
+  - React Testing Library setup (`jest.setup.js`)
+  - Hook and utility tests (`hooks.test.tsx`)
+  - Visibility change, polling, and data fetching tests
+
+- **Backend Failure Mode Tests**:
+  - New `test_failure_modes.py` with comprehensive scenarios
+  - Controller unavailable, SHM disconnect, connection timeout tests
+  - Mocked SHM client for offline test execution
+
+- **OpenAPI TypeScript Generation**:
+  - Added `generate:types` script to `package.json`
+  - Generates typed API client from OpenAPI spec
+  - Prevents frontend/backend contract drift
+
 ### Changed
 
 - **Alarm Schema** (P0-3): Unified 4-state ISA-18.2 alarm model across C and Python
@@ -66,6 +113,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **historian_stats_t**: Added samples_flushed field
 
+- **Parallelized Trend Data Fetches**: `trends/page.tsx` now uses `Promise.all`
+
+- **Visibility-Aware Polling**: `page.tsx` pauses polling when tab is hidden
+
+- **RTU State Machine Documentation**: Comprehensive state diagram in `rtu.py`
+
 ### Fixed
 
 - Pre-existing build issue in `rtu_registry.c` (incorrect field names slot_number → slot)
@@ -73,6 +126,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Pre-existing build issue in `alarm_manager.h` (alarm_manager_unshelve signature mismatch)
 - Pre-existing build issue: missing `time_format_date` function in time_utils
 - Commented out undefined test functions in test_profinet.c and test_alarms.c
+
+### Documentation
+
+- Added state machine documentation with transition diagrams
+- Documented all timeout configuration values with field deployment rationale
+- Completed web component review with all 12 action items resolved
 
 ## [1.1.0] - 2025-12-27
 

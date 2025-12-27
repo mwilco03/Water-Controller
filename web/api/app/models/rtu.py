@@ -28,13 +28,80 @@ from .base import Base
 
 
 class RtuState:
-    """RTU connection state constants."""
+    """
+    RTU connection state constants and state machine documentation.
+
+    State Machine:
+    ==============
+
+        OFFLINE ────┬──────────────────────────────────┐
+           │        │                                   │
+           │ /connect                                   │ /connect (retry)
+           ▼        │                                   │
+      CONNECTING ───┴──────────► ERROR ◄───────────────┘
+           │                       │
+           │ AR established        │ /disconnect
+           ▼                       ▼
+       DISCOVERY                 OFFLINE
+           │
+           │ Modules enumerated
+           ▼
+        RUNNING ────────► ERROR ────► OFFLINE
+                  │       ▲
+                  │       │ comm failure
+                  └───────┘
+
+    Valid Transitions:
+    ------------------
+    - OFFLINE -> CONNECTING: POST /connect
+    - CONNECTING -> RUNNING: AR established (automatic)
+    - CONNECTING -> ERROR: Timeout or connection failure
+    - RUNNING -> OFFLINE: POST /disconnect
+    - RUNNING -> ERROR: Communication failure (automatic)
+    - ERROR -> OFFLINE: POST /disconnect
+    - ERROR -> CONNECTING: POST /connect (retry)
+
+    Invariants:
+    -----------
+    1. Only one RTU can be in CONNECTING state at a time
+       (prevents DCP/ARP conflicts during discovery)
+    2. RUNNING state requires valid AR with PROFINET controller
+    3. ERROR state preserves last_error for diagnostics
+    4. state_since is updated on every state transition
+    5. DELETE requires OFFLINE or ERROR state (no active connection)
+
+    Recovery Behavior:
+    ------------------
+    - Watchdog restarts: RTUs return to OFFLINE, require reconnection
+    - Power cycle: Same as watchdog - explicit reconnection needed
+    - Network partition: RTU transitions to ERROR, then OFFLINE on disconnect
+    """
 
     OFFLINE = "OFFLINE"
     CONNECTING = "CONNECTING"
     DISCOVERY = "DISCOVERY"
     RUNNING = "RUNNING"
     ERROR = "ERROR"
+
+    @classmethod
+    def can_connect(cls, current_state: str) -> bool:
+        """Check if RTU can transition to CONNECTING."""
+        return current_state in (cls.OFFLINE, cls.ERROR)
+
+    @classmethod
+    def can_disconnect(cls, current_state: str) -> bool:
+        """Check if RTU can transition to OFFLINE."""
+        return current_state in (cls.RUNNING, cls.ERROR)
+
+    @classmethod
+    def can_delete(cls, current_state: str) -> bool:
+        """Check if RTU can be deleted."""
+        return current_state in (cls.OFFLINE, cls.ERROR)
+
+    @classmethod
+    def requires_connection(cls, current_state: str) -> bool:
+        """Check if state requires active connection."""
+        return current_state == cls.RUNNING
 
 
 class SlotStatus:

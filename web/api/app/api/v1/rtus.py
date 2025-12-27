@@ -4,6 +4,9 @@ Copyright (C) 2024
 SPDX-License-Identifier: GPL-3.0-or-later
 
 RTU CRUD and connection management endpoints.
+
+Note: Business logic is delegated to RtuService for testability.
+Route handlers remain thin and declarative.
 """
 
 from datetime import datetime, timezone
@@ -41,46 +44,21 @@ from ...schemas.rtu import (
     TestResponse,
     TestResult,
 )
+from ...services.rtu_service import RtuService, get_rtu_service
 
 router = APIRouter()
 
 
 def get_rtu_or_404(db: Session, name: str) -> RTU:
     """Get RTU by station name or raise 404."""
-    rtu = db.query(RTU).filter(RTU.station_name == name).first()
-    if not rtu:
-        raise RtuNotFoundError(name)
-    return rtu
+    service = get_rtu_service(db)
+    return service.get_by_name(name)
 
 
 def build_rtu_stats(db: Session, rtu: RTU) -> RtuStats:
-    """Build statistics for an RTU."""
-    configured_slots = db.query(Slot).filter(
-        Slot.rtu_id == rtu.id,
-        Slot.module_type.isnot(None)
-    ).count()
-
-    sensor_count = db.query(Sensor).filter(Sensor.rtu_id == rtu.id).count()
-    control_count = db.query(Control).filter(Control.rtu_id == rtu.id).count()
-
-    alarm_count = db.query(AlarmRule).filter(AlarmRule.rtu_id == rtu.id).count()
-    active_alarms = db.query(AlarmEvent).filter(
-        AlarmEvent.rtu_id == rtu.id,
-        AlarmEvent.state == "ACTIVE"
-    ).count()
-
-    # PID loops would need a separate model/query
-    pid_loop_count = 0
-
-    return RtuStats(
-        slot_count=rtu.slot_count,
-        configured_slots=configured_slots,
-        sensor_count=sensor_count,
-        control_count=control_count,
-        alarm_count=alarm_count,
-        active_alarms=active_alarms,
-        pid_loop_count=pid_loop_count,
-    )
+    """Build statistics for an RTU (delegates to service)."""
+    service = get_rtu_service(db)
+    return service.get_stats(rtu)
 
 
 # ==================== RTU CRUD ====================
@@ -97,40 +75,9 @@ async def create_rtu(
     Creates the RTU record in the database and initializes empty slots.
     The RTU starts in OFFLINE state - use POST /connect to establish connection.
     """
-    # Check for duplicate station_name
-    existing = db.query(RTU).filter(RTU.station_name == request.station_name).first()
-    if existing:
-        raise RtuAlreadyExistsError("station_name", request.station_name)
-
-    # Check for duplicate IP
-    existing_ip = db.query(RTU).filter(RTU.ip_address == request.ip_address).first()
-    if existing_ip:
-        raise RtuAlreadyExistsError("ip_address", request.ip_address)
-
-    # Create RTU
-    rtu = RTU(
-        station_name=request.station_name,
-        ip_address=request.ip_address,
-        vendor_id=request.vendor_id,
-        device_id=request.device_id,
-        slot_count=request.slot_count,
-        state=RtuState.OFFLINE,
-        state_since=datetime.now(timezone.utc),
-    )
-    db.add(rtu)
-    db.flush()  # Get the ID
-
-    # Initialize slots
-    for i in range(1, request.slot_count + 1):
-        slot = Slot(
-            rtu_id=rtu.id,
-            slot_number=i,
-            status=SlotStatus.EMPTY,
-        )
-        db.add(slot)
-
-    db.commit()
-    db.refresh(rtu)
+    # Delegate to service layer
+    service = get_rtu_service(db)
+    rtu = service.create(request)
 
     response_data = {
         "id": rtu.id,
