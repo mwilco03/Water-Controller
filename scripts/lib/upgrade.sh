@@ -5,8 +5,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # This module provides comprehensive pre-upgrade assessment, post-upgrade
-# validation, field upgrade wizard, and rollback enhancements for production
-# field deployments.
+# validation, and rollback enhancements for production field deployments.
+# Use with: ./install.sh --upgrade
 #
 # Target: ARM/x86 SBCs running Debian-based Linux
 # Requirements: Existing Water Controller installation
@@ -829,162 +829,6 @@ EOF
     return 0
 }
 
-# =============================================================================
-# Field Upgrade Wizard
-# =============================================================================
-
-# Interactive upgrade with technician prompts
-field_upgrade_wizard() {
-    local target_version="${1:-latest}"
-
-    echo ""
-    echo "============================================================"
-    echo "         Water Controller Field Upgrade Wizard"
-    echo "============================================================"
-    echo ""
-
-    # Get current version
-    local current_version="unknown"
-    if [ -f "$INSTALL_DIR/version.txt" ]; then
-        current_version=$(cat "$INSTALL_DIR/version.txt" 2>/dev/null | tr -d '[:space:]')
-    fi
-
-    echo "Current Version: $current_version"
-    echo "Target Version:  $target_version"
-    echo ""
-    echo "Estimated Downtime: 3-5 minutes"
-    echo ""
-
-    # Step 1: Pre-flight checks
-    echo "Step 1/7: Running pre-flight checks..."
-    if ! pre_upgrade_health_check; then
-        echo ""
-        echo "[WARNING] Pre-flight checks found issues."
-        read -r -p "Continue anyway? [y/N]: " response
-        if [[ ! "$response" =~ ^[Yy] ]]; then
-            echo "Upgrade cancelled by user."
-            return 1
-        fi
-    fi
-    echo ""
-
-    # Step 2: Disk space verification
-    echo "Step 2/7: Verifying backup space..."
-    if ! check_disk_space_for_upgrade; then
-        echo "[ERROR] Insufficient disk space for upgrade."
-        return 1
-    fi
-    echo ""
-
-    # Step 3: Create backup
-    echo "Step 3/7: Creating rollback point..."
-    local rollback_name="pre-upgrade-$(date +%Y%m%d_%H%M%S)"
-    # Note: create_rollback_point is in documentation.sh
-    if type create_rollback_point >/dev/null 2>&1; then
-        create_rollback_point "$rollback_name" "Pre-upgrade backup" || {
-            echo "[ERROR] Failed to create rollback point."
-            return 1
-        }
-    else
-        echo "[INFO] Rollback function not available, skipping backup"
-    fi
-    echo ""
-
-    # Step 4: Pause point - service will stop
-    echo "============================================================"
-    echo "  PAUSE: Service will now be stopped."
-    echo "  The Water Controller will be OFFLINE during the upgrade."
-    echo "============================================================"
-    echo ""
-    read -r -p "Continue with upgrade? [y/N]: " response
-    if [[ ! "$response" =~ ^[Yy] ]]; then
-        echo "Upgrade cancelled by user."
-        return 1
-    fi
-
-    local upgrade_start
-    upgrade_start=$(date -Iseconds)
-
-    # Step 5: Stop service
-    echo ""
-    echo "Step 4/7: Stopping service..."
-    sudo systemctl stop water-controller.service 2>/dev/null || true
-    sleep 2
-
-    # Step 6: Perform upgrade (this would call the actual upgrade logic)
-    echo "Step 5/7: Upgrading to $target_version..."
-    echo "  (Upgrade logic would execute here)"
-    # In real implementation, this would call the upgrade steps
-    sleep 2
-
-    # Step 7: Start service
-    echo "Step 6/7: Starting service..."
-    sudo systemctl start water-controller.service 2>/dev/null || {
-        echo "[ERROR] Failed to start service!"
-        echo ""
-        read -r -p "Attempt rollback? [Y/n]: " response
-        if [[ ! "$response" =~ ^[Nn] ]]; then
-            echo "Initiating rollback..."
-            # Note: perform_rollback is in documentation.sh
-            if type perform_rollback >/dev/null 2>&1; then
-                perform_rollback "$rollback_name"
-            fi
-        fi
-        return 1
-    }
-    sleep 3
-
-    # Step 8: Post-upgrade validation
-    echo "Step 7/7: Running post-upgrade validation..."
-    if ! post_upgrade_validation; then
-        echo ""
-        echo "[WARNING] Post-upgrade validation found issues."
-    fi
-    echo ""
-
-    # Final pause point - verification
-    echo "============================================================"
-    echo "  VERIFICATION: Upgrade appears complete."
-    echo ""
-    echo "  Please verify the following:"
-    echo "    - Service is running: systemctl status water-controller"
-    echo "    - API is accessible: curl http://localhost:$API_PORT/api/health"
-    echo "    - No errors in logs: journalctl -u water-controller -f"
-    echo ""
-    echo "  Rollback is available for the next 30 minutes."
-    echo "============================================================"
-    echo ""
-
-    read -r -p "Confirm upgrade successful? [Y/n]: " response
-    if [[ "$response" =~ ^[Nn] ]]; then
-        echo ""
-        read -r -p "Initiate rollback? [y/N]: " response
-        if [[ "$response" =~ ^[Yy] ]]; then
-            echo "Initiating rollback..."
-            if type perform_rollback >/dev/null 2>&1; then
-                perform_rollback "$rollback_name"
-            fi
-            return 1
-        fi
-    fi
-
-    # Generate field service report
-    echo ""
-    echo "Generating field service report..."
-    local report_file
-    report_file=$(generate_upgrade_report "$upgrade_start" "$(date -Iseconds)" "completed")
-
-    echo ""
-    echo "============================================================"
-    echo "         Field Upgrade Complete!"
-    echo "============================================================"
-    echo ""
-    echo "New Version: $target_version"
-    echo "Report: $report_file"
-    echo ""
-
-    return 0
-}
 
 # =============================================================================
 # Rollback Enhancements
@@ -1272,9 +1116,6 @@ POST-UPGRADE FUNCTIONS:
     generate_upgrade_report       Create detailed upgrade summary
     notify_upgrade_complete [url] Send webhook notification
 
-FIELD UPGRADE:
-    field_upgrade_wizard [ver]    Interactive upgrade with confirmations
-
 ROLLBACK ENHANCEMENTS:
     verify_rollback_point [name]  Validate rollback archive integrity
     test_rollback_restore [name]  Dry-run restore to temp location
@@ -1284,9 +1125,6 @@ ROLLBACK ENHANCEMENTS:
 EXAMPLES:
     # Run pre-upgrade health check
     ./upgrade.sh health-check
-
-    # Start field upgrade wizard
-    ./upgrade.sh field-upgrade 1.2.0
 
     # Run post-upgrade validation
     ./upgrade.sh validate
@@ -1311,9 +1149,6 @@ EOF
         validate)
             post_upgrade_validation
             ;;
-        field-upgrade)
-            field_upgrade_wizard "${2:-latest}"
-            ;;
         verify-rollback)
             verify_rollback_point "${2:-}"
             ;;
@@ -1321,7 +1156,7 @@ EOF
             emergency_rollback "${2:-}"
             ;;
         *)
-            echo "Usage: $0 {health-check|disk-check|export-config|db-snapshot|plan|validate|field-upgrade|verify-rollback|emergency-rollback|--help}"
+            echo "Usage: $0 {health-check|disk-check|export-config|db-snapshot|plan|validate|verify-rollback|emergency-rollback|--help}"
             exit 1
             ;;
     esac
