@@ -119,7 +119,9 @@ generate_service_unit() {
     local platform="${1:-generic}"
     local workers="${2:-auto}"
 
-    log_info "Generating systemd service unit..."
+    # Note: All logging in this function goes to stderr to avoid
+    # mixing with the service unit output on stdout
+    echo "[DEBUG] Generating systemd service unit..." >&2
 
     # Calculate resource limits
     _calculate_resources
@@ -137,8 +139,8 @@ generate_service_unit() {
         app_module="app.main:app"
     fi
 
-    log_debug "App module: $app_module"
-    log_debug "Workers: $workers"
+    echo "[DEBUG] App module: $app_module" >&2
+    echo "[DEBUG] Workers: $workers" >&2
 
     # Generate service unit
     cat << EOF
