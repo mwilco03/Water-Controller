@@ -1,9 +1,39 @@
 /**
  * Water Treatment Controller - API Client
  * Clean REST API client for SCADA/HMI frontend
+ *
+ * Authentication:
+ * - GET requests: No auth required (view access)
+ * - POST/PUT/DELETE requests: Auth required for control actions
+ * - Use setAuthToken() after login to enable authenticated requests
  */
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || '';
+
+// Auth token storage (in-memory for security - cleared on page refresh)
+let authToken: string | null = null;
+
+/**
+ * Set the authentication token for API requests.
+ * Call this after successful login.
+ */
+export function setAuthToken(token: string | null): void {
+  authToken = token;
+}
+
+/**
+ * Get the current authentication token.
+ */
+export function getAuthToken(): string | null {
+  return authToken;
+}
+
+/**
+ * Check if user is authenticated.
+ */
+export function isAuthenticated(): boolean {
+  return authToken !== null;
+}
 
 export interface RTUDevice {
   station_name: string;
@@ -146,21 +176,37 @@ export interface DiscoveredDevice {
   added_to_registry: boolean;
 }
 
-// Generic fetch wrapper with error handling
+// Generic fetch wrapper with error handling and automatic auth
 async function apiFetch<T>(
   endpoint: string,
   options?: RequestInit
 ): Promise<T> {
+  // Build headers with auth token if available
+  const headers: HeadersInit = {
+    'Content-Type': 'application/json',
+    ...options?.headers,
+  };
+
+  // Add Authorization header if token is available
+  if (authToken) {
+    (headers as Record<string, string>)['Authorization'] = `Bearer ${authToken}`;
+  }
+
   const res = await fetch(`${API_BASE}${endpoint}`, {
     ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...options?.headers,
-    },
+    headers,
   });
 
   if (!res.ok) {
     const errorText = await res.text().catch(() => 'Unknown error');
+
+    // Handle 401 specifically for auth errors
+    if (res.status === 401) {
+      // Clear invalid token
+      authToken = null;
+      throw new Error('Authentication required. Please log in.');
+    }
+
     throw new Error(`API Error ${res.status}: ${errorText}`);
   }
 

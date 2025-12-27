@@ -221,6 +221,8 @@ function TrendsContent() {
     }
   }, [autoRefresh, selectedTags, connected, fetchTrendData]);
 
+  // Re-draw chart when trend data changes
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     drawChart();
   }, [trendData]);

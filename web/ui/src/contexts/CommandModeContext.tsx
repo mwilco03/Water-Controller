@@ -1,6 +1,7 @@
 'use client';
 
 import { createContext, useContext, useState, useCallback, useEffect, useRef, ReactNode } from 'react';
+import { setAuthToken } from '@/lib/api';
 
 // Command mode configuration
 const COMMAND_MODE_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
@@ -60,6 +61,8 @@ export function CommandModeProvider({ children }: CommandModeProviderProps) {
     } else {
       setTimeRemaining(null);
     }
+    // exitCommandMode is stable (empty deps) but defined after this effect
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, expiryTime]);
 
   // Clear timeout on unmount
@@ -95,6 +98,9 @@ export function CommandModeProvider({ children }: CommandModeProviderProps) {
         return false;
       }
 
+      // Store token for API requests
+      setAuthToken(data.token);
+
       setUser({
         username: data.username,
         role: data.role,
@@ -125,8 +131,11 @@ export function CommandModeProvider({ children }: CommandModeProviderProps) {
     setMode('view');
     setExpiryTime(null);
     setTimeRemaining(null);
-    // Keep user logged in, just exit command mode
-    // User can stay logged in for viewing
+
+    // Clear auth token - control actions require re-authentication
+    // This implements the read-first model: view is always available,
+    // but control requires fresh authentication
+    setAuthToken(null);
 
     if (timeoutRef.current) {
       clearTimeout(timeoutRef.current);
