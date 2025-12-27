@@ -780,16 +780,8 @@ step_configure_service() {
         return 0
     fi
 
-    # Generate service unit
-    local service_content
-    service_content=$(generate_service_unit)
-    if [ -z "$service_content" ]; then
-        log_error "Failed to generate service unit"
-        return 1
-    fi
-
-    # Install service
-    if ! install_service "$service_content"; then
+    # Install service (install_service handles generation internally)
+    if ! install_service; then
         log_error "Failed to install service"
         return 1
     fi
