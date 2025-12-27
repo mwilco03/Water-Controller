@@ -288,10 +288,27 @@ wtc_result_t frame_parse_ethernet(frame_parser_t *parser,
     }
     parser->position += ETH_ADDR_LEN;
 
-    if (ethertype) {
-        *ethertype = ntohs(*(uint16_t *)(parser->buffer + parser->position));
-    }
+    uint16_t etype = ntohs(*(uint16_t *)(parser->buffer + parser->position));
     parser->position += 2;
+
+    /* Handle VLAN tagged frames (PN-H2 fix) */
+    if (etype == PROFINET_ETHERTYPE_VLAN) {
+        /* Check if we have enough bytes for VLAN TCI + real ethertype */
+        if (frame_parser_remaining(parser) < 4) {
+            return WTC_ERROR_PROTOCOL;
+        }
+
+        /* Skip VLAN TCI (2 bytes - contains PCP, DEI, VID) */
+        parser->position += 2;
+
+        /* Read the real ethertype */
+        etype = ntohs(*(uint16_t *)(parser->buffer + parser->position));
+        parser->position += 2;
+    }
+
+    if (ethertype) {
+        *ethertype = etype;
+    }
 
     return WTC_OK;
 }

@@ -753,3 +753,245 @@ wtc_result_t alarm_manager_raise_alarm(alarm_manager_t *manager,
 
     return WTC_OK;
 }
+
+/* ALM-H1 fix: Implement missing ISA-18.2 functions */
+
+/* Shelving with configurable time limit */
+wtc_result_t alarm_manager_shelve(alarm_manager_t *manager,
+                                   int alarm_id,
+                                   uint32_t duration_ms,
+                                   const char *reason,
+                                   const char *user) {
+    if (!manager || !user) {
+        return WTC_ERROR_INVALID_PARAM;
+    }
+
+    /* Maximum shelve duration: 24 hours (ISA-18.2 recommendation) */
+    if (duration_ms > 86400000) {
+        duration_ms = 86400000;
+    }
+
+    pthread_mutex_lock(&manager->lock);
+
+    for (int i = 0; i < manager->active_count; i++) {
+        if (manager->active_alarms[i].alarm_id == alarm_id) {
+            alarm_t *alarm = &manager->active_alarms[i];
+            alarm->shelved = true;
+            alarm->shelve_end_time_ms = time_get_ms() + duration_ms;
+            strncpy(alarm->shelve_user, user, WTC_MAX_USERNAME - 1);
+            if (reason) {
+                strncpy(alarm->shelve_reason, reason, sizeof(alarm->shelve_reason) - 1);
+            }
+
+            pthread_mutex_unlock(&manager->lock);
+            LOG_WARN("Alarm %d shelved by %s for %u ms: %s",
+                     alarm_id, user, duration_ms, reason ? reason : "no reason");
+            return WTC_OK;
+        }
+    }
+
+    pthread_mutex_unlock(&manager->lock);
+    return WTC_ERROR_NOT_FOUND;
+}
+
+/* Unshelve alarm */
+wtc_result_t alarm_manager_unshelve(alarm_manager_t *manager, int alarm_id) {
+    if (!manager) {
+        return WTC_ERROR_INVALID_PARAM;
+    }
+
+    pthread_mutex_lock(&manager->lock);
+
+    for (int i = 0; i < manager->active_count; i++) {
+        if (manager->active_alarms[i].alarm_id == alarm_id) {
+            manager->active_alarms[i].shelved = false;
+            manager->active_alarms[i].shelve_end_time_ms = 0;
+
+            pthread_mutex_unlock(&manager->lock);
+            LOG_INFO("Alarm %d unshelved", alarm_id);
+            return WTC_OK;
+        }
+    }
+
+    pthread_mutex_unlock(&manager->lock);
+    return WTC_ERROR_NOT_FOUND;
+}
+
+/* Set alarm point out-of-service (ISA-18.2) */
+wtc_result_t alarm_manager_set_out_of_service(alarm_manager_t *manager,
+                                               int rule_id,
+                                               bool oos,
+                                               const char *reason,
+                                               const char *user) {
+    if (!manager || !user) {
+        return WTC_ERROR_INVALID_PARAM;
+    }
+
+    pthread_mutex_lock(&manager->lock);
+
+    for (int i = 0; i < manager->rule_count; i++) {
+        if (manager->rules[i].rule_id == rule_id) {
+            alarm_rule_t *rule = &manager->rules[i];
+            rule->out_of_service = oos;
+            if (oos) {
+                strncpy(rule->oos_user, user, WTC_MAX_USERNAME - 1);
+                if (reason) {
+                    strncpy(rule->oos_reason, reason, sizeof(rule->oos_reason) - 1);
+                }
+                rule->oos_start_time_ms = time_get_ms();
+            } else {
+                memset(rule->oos_user, 0, sizeof(rule->oos_user));
+                memset(rule->oos_reason, 0, sizeof(rule->oos_reason));
+                rule->oos_start_time_ms = 0;
+            }
+
+            pthread_mutex_unlock(&manager->lock);
+            LOG_WARN("Alarm rule %d (%s) set %s by %s: %s",
+                     rule_id, rule->name, oos ? "OUT OF SERVICE" : "in service",
+                     user, reason ? reason : "no reason");
+            return WTC_OK;
+        }
+    }
+
+    pthread_mutex_unlock(&manager->lock);
+    return WTC_ERROR_NOT_FOUND;
+}
+
+/* Set rationalization data (ISA-18.2) */
+wtc_result_t alarm_manager_set_rationalization(alarm_manager_t *manager,
+                                                int rule_id,
+                                                const char *consequence,
+                                                const char *response,
+                                                uint32_t response_time_sec) {
+    if (!manager) {
+        return WTC_ERROR_INVALID_PARAM;
+    }
+
+    pthread_mutex_lock(&manager->lock);
+
+    for (int i = 0; i < manager->rule_count; i++) {
+        if (manager->rules[i].rule_id == rule_id) {
+            alarm_rule_t *rule = &manager->rules[i];
+
+            if (consequence) {
+                strncpy(rule->consequence, consequence, sizeof(rule->consequence) - 1);
+            }
+            if (response) {
+                strncpy(rule->corrective_action, response, sizeof(rule->corrective_action) - 1);
+            }
+            rule->response_time_sec = response_time_sec;
+
+            pthread_mutex_unlock(&manager->lock);
+            LOG_INFO("Rationalization set for rule %d", rule_id);
+            return WTC_OK;
+        }
+    }
+
+    pthread_mutex_unlock(&manager->lock);
+    return WTC_ERROR_NOT_FOUND;
+}
+
+/* Get rationalization data */
+wtc_result_t alarm_manager_get_rationalization(alarm_manager_t *manager,
+                                                int rule_id,
+                                                char *consequence,
+                                                size_t consequence_len,
+                                                char *response,
+                                                size_t response_len,
+                                                uint32_t *response_time_sec) {
+    if (!manager) {
+        return WTC_ERROR_INVALID_PARAM;
+    }
+
+    pthread_mutex_lock(&manager->lock);
+
+    for (int i = 0; i < manager->rule_count; i++) {
+        if (manager->rules[i].rule_id == rule_id) {
+            alarm_rule_t *rule = &manager->rules[i];
+
+            if (consequence && consequence_len > 0) {
+                strncpy(consequence, rule->consequence, consequence_len - 1);
+            }
+            if (response && response_len > 0) {
+                strncpy(response, rule->corrective_action, response_len - 1);
+            }
+            if (response_time_sec) {
+                *response_time_sec = rule->response_time_sec;
+            }
+
+            pthread_mutex_unlock(&manager->lock);
+            return WTC_OK;
+        }
+    }
+
+    pthread_mutex_unlock(&manager->lock);
+    return WTC_ERROR_NOT_FOUND;
+}
+
+/* Export alarm configuration to JSON */
+wtc_result_t alarm_manager_export_config(alarm_manager_t *manager,
+                                          char *buffer,
+                                          size_t buffer_size) {
+    if (!manager || !buffer || buffer_size < 256) {
+        return WTC_ERROR_INVALID_PARAM;
+    }
+
+    pthread_mutex_lock(&manager->lock);
+
+    int pos = 0;
+    pos += snprintf(buffer + pos, buffer_size - pos,
+                   "{\"version\":1,\"rules\":[");
+
+    for (int i = 0; i < manager->rule_count; i++) {
+        alarm_rule_t *rule = &manager->rules[i];
+        if (i > 0) {
+            pos += snprintf(buffer + pos, buffer_size - pos, ",");
+        }
+        pos += snprintf(buffer + pos, buffer_size - pos,
+            "{\"id\":%d,\"name\":\"%s\",\"rtu\":\"%s\",\"slot\":%d,"
+            "\"condition\":%d,\"threshold\":%.3f,\"severity\":%d,"
+            "\"delay\":%u,\"enabled\":%s}",
+            rule->rule_id, rule->name, rule->rtu_station, rule->slot,
+            rule->condition, rule->threshold, rule->severity,
+            rule->delay_ms, rule->enabled ? "true" : "false");
+    }
+
+    pos += snprintf(buffer + pos, buffer_size - pos, "]}");
+
+    pthread_mutex_unlock(&manager->lock);
+    return WTC_OK;
+}
+
+/* Get alarm history */
+wtc_result_t alarm_manager_get_history(alarm_manager_t *manager,
+                                        alarm_t *alarms,
+                                        int *count,
+                                        int max_count,
+                                        uint64_t from_time_ms,
+                                        uint64_t to_time_ms) {
+    if (!manager || !alarms || !count) {
+        return WTC_ERROR_INVALID_PARAM;
+    }
+
+    pthread_mutex_lock(&manager->lock);
+
+    int result_count = 0;
+
+    for (int i = 0; i < manager->history_count && result_count < max_count; i++) {
+        alarm_t *alarm = &manager->history[i];
+
+        /* Filter by time range */
+        if (from_time_ms > 0 && alarm->raise_time_ms < from_time_ms) {
+            continue;
+        }
+        if (to_time_ms > 0 && alarm->raise_time_ms > to_time_ms) {
+            continue;
+        }
+
+        memcpy(&alarms[result_count++], alarm, sizeof(alarm_t));
+    }
+
+    *count = result_count;
+    pthread_mutex_unlock(&manager->lock);
+    return WTC_OK;
+}

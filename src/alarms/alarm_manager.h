@@ -157,6 +157,36 @@ wtc_result_t alarm_manager_unshelve(alarm_manager_t *manager,
                                      int rule_id,
                                      const char *user);
 
+/* ============== ISA-18.2 Compliance (ALM-H1 fix) ============== */
+
+/* Set alarm point out-of-service */
+wtc_result_t alarm_manager_set_out_of_service(alarm_manager_t *manager,
+                                               int rule_id,
+                                               bool oos,
+                                               const char *reason,
+                                               const char *user);
+
+/* Set rationalization data for alarm rule */
+wtc_result_t alarm_manager_set_rationalization(alarm_manager_t *manager,
+                                                int rule_id,
+                                                const char *consequence,
+                                                const char *response,
+                                                uint32_t response_time_sec);
+
+/* Get rationalization data for alarm rule */
+wtc_result_t alarm_manager_get_rationalization(alarm_manager_t *manager,
+                                                int rule_id,
+                                                char *consequence,
+                                                size_t consequence_len,
+                                                char *response,
+                                                size_t response_len,
+                                                uint32_t *response_time_sec);
+
+/* Export alarm configuration to JSON */
+wtc_result_t alarm_manager_export_config(alarm_manager_t *manager,
+                                          char *buffer,
+                                          size_t buffer_size);
+
 /* ============== Statistics ============== */
 
 /* Get alarm statistics */

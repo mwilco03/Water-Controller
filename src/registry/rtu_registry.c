@@ -243,10 +243,22 @@ rtu_device_t *rtu_registry_get_device(rtu_registry_t *registry,
 }
 
 rtu_device_t *rtu_registry_get_device_by_index(rtu_registry_t *registry, int index) {
-    if (!registry || index < 0 || index >= registry->device_count) {
+    if (!registry) {
         return NULL;
     }
-    return registry->devices[index];
+
+    /* REG-C1 fix: protect device_count read with lock */
+    pthread_mutex_lock(&registry->lock);
+
+    if (index < 0 || index >= registry->device_count) {
+        pthread_mutex_unlock(&registry->lock);
+        return NULL;
+    }
+
+    rtu_device_t *device = registry->devices[index];
+    pthread_mutex_unlock(&registry->lock);
+
+    return device;
 }
 
 wtc_result_t rtu_registry_list_devices(rtu_registry_t *registry,
@@ -271,16 +283,57 @@ wtc_result_t rtu_registry_list_devices(rtu_registry_t *registry,
         return WTC_OK;
     }
 
-    /* Allocate array of device structs (caller must free) */
+    /* Allocate array of device structs (caller must free with rtu_registry_free_device_list) */
     *devices = calloc(copy_count, sizeof(rtu_device_t));
     if (!*devices) {
         pthread_mutex_unlock(&registry->lock);
         return WTC_ERROR_NO_MEMORY;
     }
 
-    /* Copy device data (shallow copy - pointers inside are shared) */
+    /* REG-C4 fix: Deep copy device data including dynamic arrays */
     for (int i = 0; i < copy_count; i++) {
-        memcpy(&(*devices)[i], registry->devices[i], sizeof(rtu_device_t));
+        rtu_device_t *src = registry->devices[i];
+        rtu_device_t *dst = &(*devices)[i];
+
+        /* Copy base struct */
+        memcpy(dst, src, sizeof(rtu_device_t));
+
+        /* Deep copy slots array */
+        if (src->slots && src->slot_capacity > 0) {
+            dst->slots = calloc(src->slot_capacity, sizeof(slot_config_t));
+            if (dst->slots) {
+                memcpy(dst->slots, src->slots, src->slot_count * sizeof(slot_config_t));
+            } else {
+                dst->slot_capacity = 0;
+                dst->slot_count = 0;
+            }
+        } else {
+            dst->slots = NULL;
+        }
+
+        /* Deep copy sensors array */
+        if (src->sensors && src->sensor_capacity > 0) {
+            dst->sensors = calloc(src->sensor_capacity, sizeof(sensor_data_t));
+            if (dst->sensors) {
+                memcpy(dst->sensors, src->sensors, src->sensor_capacity * sizeof(sensor_data_t));
+            } else {
+                dst->sensor_capacity = 0;
+            }
+        } else {
+            dst->sensors = NULL;
+        }
+
+        /* Deep copy actuators array */
+        if (src->actuators && src->actuator_capacity > 0) {
+            dst->actuators = calloc(src->actuator_capacity, sizeof(actuator_state_t));
+            if (dst->actuators) {
+                memcpy(dst->actuators, src->actuators, src->actuator_capacity * sizeof(actuator_state_t));
+            } else {
+                dst->actuator_capacity = 0;
+            }
+        } else {
+            dst->actuators = NULL;
+        }
     }
     *count = copy_count;
 
@@ -288,8 +341,29 @@ wtc_result_t rtu_registry_list_devices(rtu_registry_t *registry,
     return WTC_OK;
 }
 
+/* Free device list returned by rtu_registry_list_devices (REG-C4 fix) */
+void rtu_registry_free_device_list(rtu_device_t *devices, int count) {
+    if (!devices) return;
+
+    for (int i = 0; i < count; i++) {
+        free(devices[i].slots);
+        free(devices[i].sensors);
+        free(devices[i].actuators);
+    }
+    free(devices);
+}
+
 int rtu_registry_get_device_count(rtu_registry_t *registry) {
-    return registry ? registry->device_count : 0;
+    if (!registry) {
+        return 0;
+    }
+
+    /* REG-C1 fix: protect device_count read with lock */
+    pthread_mutex_lock(&registry->lock);
+    int count = registry->device_count;
+    pthread_mutex_unlock(&registry->lock);
+
+    return count;
 }
 
 wtc_result_t rtu_registry_set_device_config(rtu_registry_t *registry,
@@ -300,12 +374,22 @@ wtc_result_t rtu_registry_set_device_config(rtu_registry_t *registry,
         return WTC_ERROR_INVALID_PARAM;
     }
 
-    rtu_device_t *device = rtu_registry_get_device(registry, station_name);
-    if (!device) {
-        return WTC_ERROR_NOT_FOUND;
+    /* REG-C3 fix: Keep lock held for entire operation */
+    pthread_mutex_lock(&registry->lock);
+
+    /* Find device while holding lock */
+    rtu_device_t *device = NULL;
+    for (int i = 0; i < registry->device_count; i++) {
+        if (strcmp(registry->devices[i]->station_name, station_name) == 0) {
+            device = registry->devices[i];
+            break;
+        }
     }
 
-    pthread_mutex_lock(&registry->lock);
+    if (!device) {
+        pthread_mutex_unlock(&registry->lock);
+        return WTC_ERROR_NOT_FOUND;
+    }
 
     /* Reallocate slots array if needed */
     if (slot_count > device->slot_capacity) {
@@ -474,14 +558,76 @@ wtc_result_t rtu_registry_get_actuator(rtu_registry_t *registry,
     return WTC_OK;
 }
 
+/* REG-H1 fix: Implement actual persistence using JSON file */
 wtc_result_t rtu_registry_save_topology(rtu_registry_t *registry) {
     if (!registry) {
         return WTC_ERROR_INVALID_PARAM;
     }
 
-    /* In a full implementation, this would serialize to database */
-    LOG_INFO("Saving topology (%d devices)", registry->device_count);
+    const char *path = registry->config.database_path;
+    if (!path) {
+        path = "/var/lib/water-controller/topology.json";
+    }
 
+    pthread_mutex_lock(&registry->lock);
+
+    /* Build JSON content */
+    char *buffer = malloc(65536);
+    if (!buffer) {
+        pthread_mutex_unlock(&registry->lock);
+        return WTC_ERROR_NO_MEMORY;
+    }
+
+    int pos = 0;
+    pos += snprintf(buffer + pos, 65536 - pos, "{\"version\":1,\"devices\":[");
+
+    for (int i = 0; i < registry->device_count; i++) {
+        rtu_device_t *dev = registry->devices[i];
+        if (i > 0) {
+            pos += snprintf(buffer + pos, 65536 - pos, ",");
+        }
+
+        pos += snprintf(buffer + pos, 65536 - pos,
+            "{\"station_name\":\"%s\",\"ip_address\":\"%s\","
+            "\"vendor_id\":%u,\"device_id\":%u,"
+            "\"slot_count\":%d,\"slots\":[",
+            dev->station_name, dev->ip_address,
+            dev->vendor_id, dev->device_id, dev->slot_count);
+
+        for (int j = 0; j < dev->slot_count; j++) {
+            if (j > 0) {
+                pos += snprintf(buffer + pos, 65536 - pos, ",");
+            }
+            pos += snprintf(buffer + pos, 65536 - pos,
+                "{\"number\":%u,\"type\":%d,\"subslot\":%u,\"module_id\":%u}",
+                dev->slots[j].slot_number, dev->slots[j].type,
+                dev->slots[j].subslot, dev->slots[j].module_id);
+        }
+
+        pos += snprintf(buffer + pos, 65536 - pos, "]}");
+    }
+
+    pos += snprintf(buffer + pos, 65536 - pos, "]}");
+
+    pthread_mutex_unlock(&registry->lock);
+
+    FILE *fp = fopen(path, "w");
+    if (!fp) {
+        LOG_ERROR("Failed to open topology file for writing: %s", path);
+        free(buffer);
+        return WTC_ERROR_IO;
+    }
+
+    size_t written = fwrite(buffer, 1, pos, fp);
+    fclose(fp);
+    free(buffer);
+
+    if (written != (size_t)pos) {
+        LOG_ERROR("Failed to write complete topology file");
+        return WTC_ERROR_IO;
+    }
+
+    LOG_INFO("Saved topology to %s (%d devices)", path, registry->device_count);
     return WTC_OK;
 }
 
@@ -490,9 +636,79 @@ wtc_result_t rtu_registry_load_topology(rtu_registry_t *registry) {
         return WTC_ERROR_INVALID_PARAM;
     }
 
-    /* In a full implementation, this would load from database */
-    LOG_INFO("Loading topology from database");
+    const char *path = registry->config.database_path;
+    if (!path) {
+        path = "/var/lib/water-controller/topology.json";
+    }
 
+    FILE *fp = fopen(path, "r");
+    if (!fp) {
+        LOG_INFO("No existing topology file at %s", path);
+        return WTC_OK;
+    }
+
+    fseek(fp, 0, SEEK_END);
+    long size = ftell(fp);
+    fseek(fp, 0, SEEK_SET);
+
+    if (size <= 0 || size > 1024 * 1024) {
+        fclose(fp);
+        LOG_WARN("Topology file invalid size: %ld", size);
+        return WTC_ERROR_INVALID_PARAM;
+    }
+
+    char *buffer = malloc(size + 1);
+    if (!buffer) {
+        fclose(fp);
+        return WTC_ERROR_NO_MEMORY;
+    }
+
+    size_t read_bytes = fread(buffer, 1, size, fp);
+    fclose(fp);
+
+    if (read_bytes != (size_t)size) {
+        free(buffer);
+        return WTC_ERROR_IO;
+    }
+    buffer[size] = '\0';
+
+    const char *p = buffer;
+    int loaded = 0;
+
+    while ((p = strstr(p, "\"station_name\":\"")) != NULL) {
+        p += 16;
+        const char *end = strchr(p, '"');
+        if (!end) break;
+
+        char station_name[64] = {0};
+        size_t len = end - p;
+        if (len >= sizeof(station_name)) len = sizeof(station_name) - 1;
+        strncpy(station_name, p, len);
+
+        const char *ip_start = strstr(end, "\"ip_address\":\"");
+        char ip_address[16] = {0};
+        if (ip_start) {
+            ip_start += 14;
+            const char *ip_end = strchr(ip_start, '"');
+            if (ip_end) {
+                len = ip_end - ip_start;
+                if (len >= sizeof(ip_address)) len = sizeof(ip_address) - 1;
+                strncpy(ip_address, ip_start, len);
+            }
+        }
+
+        wtc_result_t res = rtu_registry_add_device(registry, station_name,
+                                                    ip_address[0] ? ip_address : NULL,
+                                                    NULL, 0);
+        if (res == WTC_OK) {
+            loaded++;
+        }
+
+        p = end;
+    }
+
+    free(buffer);
+    LOG_INFO("Loaded %d devices from %s", loaded, path);
     return WTC_OK;
 }
 

@@ -363,6 +363,7 @@ wtc_result_t register_map_auto_generate(register_map_t *map,
     return WTC_OK;
 }
 
+/* MB-C1 fix: Implement actual JSON loading for register maps */
 wtc_result_t register_map_load_json(register_map_t *map, const char *filename) {
     if (!map || !filename) return WTC_ERROR_INVALID_PARAM;
 
@@ -372,11 +373,190 @@ wtc_result_t register_map_load_json(register_map_t *map, const char *filename) {
         return WTC_ERROR_IO;
     }
 
-    /* Simple JSON parser would go here */
-    /* For now, just close the file */
+    /* Read entire file */
+    fseek(f, 0, SEEK_END);
+    long size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+
+    if (size <= 0 || size > 1024 * 1024) {
+        fclose(f);
+        return WTC_ERROR_INVALID_PARAM;
+    }
+
+    char *buffer = malloc(size + 1);
+    if (!buffer) {
+        fclose(f);
+        return WTC_ERROR_NO_MEMORY;
+    }
+
+    size_t read = fread(buffer, 1, size, f);
     fclose(f);
 
-    LOG_INFO(LOG_TAG, "Loaded register map from %s", filename);
+    if (read != (size_t)size) {
+        free(buffer);
+        return WTC_ERROR_IO;
+    }
+    buffer[size] = '\0';
+
+    /* Simple JSON parsing for register entries */
+    const char *p = buffer;
+    int reg_loaded = 0, coil_loaded = 0;
+
+    /* Parse register section */
+    const char *reg_section = strstr(p, "\"registers\"");
+    if (reg_section) {
+        const char *addr_key = reg_section;
+        while ((addr_key = strstr(addr_key, "\"address\"")) != NULL) {
+            register_mapping_t reg = {0};
+            reg.enabled = true;
+
+            /* Parse address */
+            const char *num_start = addr_key + 10;
+            while (*num_start && (*num_start < '0' || *num_start > '9')) num_start++;
+            reg.modbus_addr = atoi(num_start);
+
+            /* Parse type */
+            const char *type_key = strstr(num_start, "\"type\"");
+            if (type_key) {
+                type_key += 7;
+                while (*type_key && (*type_key < '0' || *type_key > '9')) type_key++;
+                reg.reg_type = atoi(type_key);
+            }
+
+            /* Parse data_type */
+            const char *dtype_key = strstr(num_start, "\"data_type\"");
+            if (dtype_key) {
+                dtype_key += 12;
+                while (*dtype_key && (*dtype_key < '0' || *dtype_key > '9')) dtype_key++;
+                reg.data_type = atoi(dtype_key);
+            }
+
+            /* Parse source */
+            const char *src_key = strstr(num_start, "\"source\"");
+            if (src_key) {
+                src_key += 9;
+                while (*src_key && (*src_key < '0' || *src_key > '9')) src_key++;
+                reg.source = atoi(src_key);
+            }
+
+            /* Parse rtu_station */
+            const char *rtu_key = strstr(num_start, "\"rtu_station\"");
+            if (rtu_key) {
+                rtu_key = strchr(rtu_key + 13, '"');
+                if (rtu_key) {
+                    rtu_key++;
+                    const char *end = strchr(rtu_key, '"');
+                    if (end) {
+                        size_t len = end - rtu_key;
+                        if (len >= sizeof(reg.rtu_station)) len = sizeof(reg.rtu_station) - 1;
+                        strncpy(reg.rtu_station, rtu_key, len);
+                    }
+                }
+            }
+
+            /* Parse slot */
+            const char *slot_key = strstr(num_start, "\"slot\"");
+            if (slot_key) {
+                slot_key += 7;
+                while (*slot_key && (*slot_key < '0' || *slot_key > '9')) slot_key++;
+                reg.slot = atoi(slot_key);
+            }
+
+            /* Parse description */
+            const char *desc_key = strstr(num_start, "\"description\"");
+            if (desc_key) {
+                desc_key = strchr(desc_key + 13, '"');
+                if (desc_key) {
+                    desc_key++;
+                    const char *end = strchr(desc_key, '"');
+                    if (end) {
+                        size_t len = end - desc_key;
+                        if (len >= sizeof(reg.description)) len = sizeof(reg.description) - 1;
+                        strncpy(reg.description, desc_key, len);
+                    }
+                }
+            }
+
+            /* Set register count based on data type */
+            if (reg.data_type == MODBUS_DTYPE_FLOAT32_BE || reg.data_type == MODBUS_DTYPE_FLOAT32_LE ||
+                reg.data_type == MODBUS_DTYPE_INT32_BE || reg.data_type == MODBUS_DTYPE_INT32_LE) {
+                reg.register_count = 2;
+            } else {
+                reg.register_count = 1;
+            }
+
+            register_map_add_register(map, &reg);
+            reg_loaded++;
+
+            addr_key = num_start;
+        }
+    }
+
+    /* Parse coils section */
+    const char *coil_section = strstr(p, "\"coils\"");
+    if (coil_section) {
+        const char *addr_key = coil_section;
+        while ((addr_key = strstr(addr_key, "\"address\"")) != NULL) {
+            coil_mapping_t coil = {0};
+            coil.enabled = true;
+            coil.command_on_value = 1;
+            coil.command_off_value = 0;
+
+            /* Parse address */
+            const char *num_start = addr_key + 10;
+            while (*num_start && (*num_start < '0' || *num_start > '9')) num_start++;
+            coil.modbus_addr = atoi(num_start);
+
+            /* Parse type */
+            const char *type_key = strstr(num_start, "\"type\"");
+            if (type_key) {
+                type_key += 7;
+                while (*type_key && (*type_key < '0' || *type_key > '9')) type_key++;
+                coil.reg_type = atoi(type_key);
+            }
+
+            /* Parse source */
+            const char *src_key = strstr(num_start, "\"source\"");
+            if (src_key) {
+                src_key += 9;
+                while (*src_key && (*src_key < '0' || *src_key > '9')) src_key++;
+                coil.source = atoi(src_key);
+            }
+
+            /* Parse rtu_station */
+            const char *rtu_key = strstr(num_start, "\"rtu_station\"");
+            if (rtu_key) {
+                rtu_key = strchr(rtu_key + 13, '"');
+                if (rtu_key) {
+                    rtu_key++;
+                    const char *end = strchr(rtu_key, '"');
+                    if (end) {
+                        size_t len = end - rtu_key;
+                        if (len >= sizeof(coil.rtu_station)) len = sizeof(coil.rtu_station) - 1;
+                        strncpy(coil.rtu_station, rtu_key, len);
+                    }
+                }
+            }
+
+            /* Parse slot */
+            const char *slot_key = strstr(num_start, "\"slot\"");
+            if (slot_key) {
+                slot_key += 7;
+                while (*slot_key && (*slot_key < '0' || *slot_key > '9')) slot_key++;
+                coil.slot = atoi(slot_key);
+            }
+
+            register_map_add_coil(map, &coil);
+            coil_loaded++;
+
+            addr_key = num_start;
+        }
+    }
+
+    free(buffer);
+
+    LOG_INFO(LOG_TAG, "Loaded register map from %s: %d registers, %d coils",
+             filename, reg_loaded, coil_loaded);
     return WTC_OK;
 }
 

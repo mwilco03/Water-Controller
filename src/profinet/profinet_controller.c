@@ -354,9 +354,33 @@ wtc_result_t profinet_controller_init(profinet_controller_t **controller,
         return res;
     }
 
+    /* Create RPC socket for acyclic communication (PN-C1 fix) */
+    ctrl->rpc_socket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (ctrl->rpc_socket < 0) {
+        LOG_ERROR("Failed to create RPC socket: %s", strerror(errno));
+        close(ctrl->raw_socket);
+        free(ctrl);
+        return WTC_ERROR_IO;
+    }
+
+    /* Set RPC socket options */
+    struct timeval tv;
+    tv.tv_sec = 5;  /* 5 second timeout */
+    tv.tv_usec = 0;
+    if (setsockopt(ctrl->rpc_socket, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0) {
+        LOG_WARN("Failed to set RPC socket timeout: %s", strerror(errno));
+    }
+
+    /* Enable socket reuse */
+    int reuse = 1;
+    setsockopt(ctrl->rpc_socket, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+
+    LOG_INFO("RPC socket created for acyclic communication");
+
     /* Initialize DCP discovery */
     res = dcp_discovery_init(&ctrl->dcp, ctrl->config.interface_name);
     if (res != WTC_OK) {
+        close(ctrl->rpc_socket);
         close(ctrl->raw_socket);
         free(ctrl);
         return res;
@@ -366,6 +390,7 @@ wtc_result_t profinet_controller_init(profinet_controller_t **controller,
     res = ar_manager_init(&ctrl->ar_manager, ctrl->raw_socket, ctrl->mac_address);
     if (res != WTC_OK) {
         dcp_discovery_cleanup(ctrl->dcp);
+        close(ctrl->rpc_socket);
         close(ctrl->raw_socket);
         free(ctrl);
         return res;

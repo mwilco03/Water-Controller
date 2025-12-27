@@ -20,6 +20,12 @@
 /* Maximum ARs */
 #define MAX_ARS 64
 
+/* Connect request timeout in milliseconds (PN-C3 fix) */
+#define AR_CONNECT_TIMEOUT_MS 10000
+
+/* Maximum retry attempts for ABORT recovery (PN-C4 fix) */
+#define AR_MAX_RETRY_ATTEMPTS 3
+
 /* AR manager structure */
 struct ar_manager {
     int socket_fd;
@@ -323,6 +329,8 @@ wtc_result_t ar_manager_process(ar_manager_t *manager) {
         return WTC_ERROR_INVALID_PARAM;
     }
 
+    uint64_t now_ms = time_get_ms();
+
     /* Process each AR state machine */
     for (int i = 0; i < manager->ar_count; i++) {
         profinet_ar_t *ar = manager->ars[i];
@@ -334,24 +342,32 @@ wtc_result_t ar_manager_process(ar_manager_t *manager) {
             break;
 
         case AR_STATE_CONNECT_REQ:
-            /* Waiting for connect response */
-            /* Timeout handling would go here */
+            /* Waiting for connect response - check timeout (PN-C3 fix) */
+            if (now_ms - ar->last_activity_ms > AR_CONNECT_TIMEOUT_MS) {
+                LOG_WARN("AR %s connect request timeout after %d ms",
+                         ar->device_station_name, AR_CONNECT_TIMEOUT_MS);
+                ar->state = AR_STATE_ABORT;
+                ar->last_activity_ms = now_ms;
+            }
             break;
 
         case AR_STATE_CONNECT_CNF:
             /* Connection confirmed, move to parameter server */
             ar->state = AR_STATE_PRMSRV;
+            ar->last_activity_ms = now_ms;
             break;
 
         case AR_STATE_PRMSRV:
             /* Parameter server phase */
             /* Send parameter end when done */
             ar->state = AR_STATE_READY;
+            ar->last_activity_ms = now_ms;
             break;
 
         case AR_STATE_READY:
             /* Ready for cyclic data exchange */
             ar->state = AR_STATE_RUN;
+            ar->last_activity_ms = now_ms;
             LOG_INFO("AR %s entered RUN state", ar->device_station_name);
             break;
 
@@ -360,8 +376,19 @@ wtc_result_t ar_manager_process(ar_manager_t *manager) {
             break;
 
         case AR_STATE_CLOSE:
+            /* AR is closing - allow graceful shutdown */
+            break;
+
         case AR_STATE_ABORT:
-            /* AR is closing or aborted */
+            /* AR aborted - implement recovery (PN-C4 fix) */
+            /* After a brief delay, attempt to re-establish connection */
+            if (now_ms - ar->last_activity_ms > 5000) { /* 5 second recovery delay */
+                LOG_INFO("AR %s attempting recovery from ABORT state",
+                         ar->device_station_name);
+                /* Reset to INIT state for reconnection attempt */
+                ar->state = AR_STATE_INIT;
+                ar->last_activity_ms = now_ms;
+            }
             break;
         }
     }

@@ -102,12 +102,15 @@ wtc_result_t historian_flush(historian_t *historian);
 
 /* ============== Data Query ============== */
 
-/* Query data for a single tag */
+/* Query data for a single tag
+ * HIST-C2 fix: Returns copies to caller-provided array instead of pointers
+ * to avoid dangling reference issues with ring buffer
+ */
 wtc_result_t historian_query(historian_t *historian,
                               int tag_id,
                               uint64_t start_time_ms,
                               uint64_t end_time_ms,
-                              historian_sample_t **samples,
+                              historian_sample_t *samples_out,
                               int *count,
                               int max_count);
 

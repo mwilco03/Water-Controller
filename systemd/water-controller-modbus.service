@@ -28,6 +28,14 @@ ReadWritePaths=/var/lib/water-controller /dev/shm
 # Serial port access for RTU mode
 SupplementaryGroups=dialout
 
+# Resource limits (SVC-M1 fix)
+MemoryMax=256M
+MemoryHigh=192M
+CPUQuota=50%
+TasksMax=64
+LimitNOFILE=2048
+LimitCORE=0
+
 # Environment
 EnvironmentFile=-/etc/water-controller/environment
 

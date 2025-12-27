@@ -96,6 +96,10 @@ static wtc_result_t build_output_frame(profinet_ar_t *ar,
     return WTC_OK;
 }
 
+/* Track last received cycle counter for replay detection (PN-H1 fix) */
+static uint16_t last_cycle_counters[PROFINET_MAX_IOCR];
+static bool cycle_counter_initialized[PROFINET_MAX_IOCR];
+
 /* Parse cyclic input frame */
 wtc_result_t parse_input_frame(profinet_ar_t *ar,
                                 const uint8_t *frame,
@@ -149,8 +153,37 @@ wtc_result_t parse_input_frame(profinet_ar_t *ar,
     frame_skip_bytes(&parser, input_slot_count);
 
     /* Read RT header */
-    if (cycle_counter && frame_parser_remaining(&parser) >= 2) {
-        frame_read_u16(&parser, cycle_counter);
+    uint16_t received_counter = 0;
+    if (frame_parser_remaining(&parser) >= 2) {
+        frame_read_u16(&parser, &received_counter);
+        if (cycle_counter) {
+            *cycle_counter = received_counter;
+        }
+
+        /* Validate sequence number for replay detection (PN-H1 fix) */
+        if (input_iocr < PROFINET_MAX_IOCR) {
+            if (cycle_counter_initialized[input_iocr]) {
+                /* Check for replay - counter should be incrementing (with 16-bit wrap) */
+                uint16_t expected_min = last_cycle_counters[input_iocr] + 1;
+                uint16_t expected_max = last_cycle_counters[input_iocr] + 100; /* Allow some gap */
+
+                /* Handle 16-bit wraparound */
+                bool valid = false;
+                if (expected_max >= expected_min) {
+                    valid = (received_counter >= expected_min && received_counter <= expected_max);
+                } else {
+                    /* Wrapped around */
+                    valid = (received_counter >= expected_min || received_counter <= expected_max);
+                }
+
+                if (!valid && received_counter == last_cycle_counters[input_iocr]) {
+                    LOG_WARN("Duplicate/replay frame detected: counter=%u", received_counter);
+                    return WTC_ERROR_PROTOCOL;
+                }
+            }
+            last_cycle_counters[input_iocr] = received_counter;
+            cycle_counter_initialized[input_iocr] = true;
+        }
     }
 
     if (data_status && frame_parser_remaining(&parser) >= 1) {

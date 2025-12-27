@@ -91,8 +91,22 @@ static void free_tag_buffer(tag_buffer_t *buffer) {
 }
 
 /* Add sample to buffer */
-static void buffer_add_sample(tag_buffer_t *buffer, const historian_sample_t *sample) {
+static void buffer_add_sample(tag_buffer_t *buffer, const historian_sample_t *sample,
+                               int tag_id) {
     if (!buffer->samples) return;
+
+    /* HIST-H3 fix: Log warning when ring buffer overflows */
+    bool overflow = (buffer->count >= buffer->capacity);
+    if (overflow) {
+        static uint64_t last_overflow_log_ms = 0;
+        uint64_t now_ms = time_get_ms();
+        /* Rate-limit overflow logging to once per minute */
+        if (now_ms - last_overflow_log_ms > 60000) {
+            LOG_WARN("Historian ring buffer overflow for tag %d - oldest samples being dropped",
+                     tag_id);
+            last_overflow_log_ms = now_ms;
+        }
+    }
 
     memcpy(&buffer->samples[buffer->write_pos], sample, sizeof(historian_sample_t));
     buffer->write_pos = (buffer->write_pos + 1) % buffer->capacity;
@@ -393,7 +407,7 @@ wtc_result_t historian_record_sample(historian_t *historian,
     sample.quality = quality;
 
     /* Add to buffer */
-    buffer_add_sample(&tag->buffer, &sample);
+    buffer_add_sample(&tag->buffer, &sample, tag_id);
 
     /* Update tag stats */
     tag->info.total_samples++;
@@ -453,7 +467,7 @@ wtc_result_t historian_process(historian_t *historian) {
             sample.quality = sensor.status == IOPS_GOOD ? 192 : 0;
 
             /* Add to buffer */
-            buffer_add_sample(&tag->buffer, &sample);
+            buffer_add_sample(&tag->buffer, &sample, tag->info.tag_id);
 
             /* Update tag stats */
             tag->info.total_samples++;
@@ -484,26 +498,90 @@ wtc_result_t historian_process(historian_t *historian) {
     return WTC_OK;
 }
 
+/* HIST-C1 fix: Implement actual data persistence */
 wtc_result_t historian_flush(historian_t *historian) {
     if (!historian) {
         return WTC_ERROR_INVALID_PARAM;
     }
 
-    /* In a full implementation, this would write to database */
-    LOG_DEBUG("Historian flush: %lu samples in buffers",
-              historian->stats.samples_in_buffer);
+    pthread_mutex_lock(&historian->lock);
+
+    const char *data_dir = historian->config.database_path;
+    if (!data_dir) {
+        data_dir = "/var/lib/water-controller/historian";
+    }
+
+    uint64_t now_ms = time_get_ms();
+    int total_flushed = 0;
+
+    /* Flush each tag's buffer to a binary file */
+    for (int t = 0; t < historian->tag_count; t++) {
+        historian_tag_internal_t *tag = &historian->tags[t];
+        if (tag->buffer.count == 0) continue;
+
+        /* Create filename based on tag ID and date */
+        char filename[256];
+        char date_str[16];
+        time_format_date(now_ms, date_str, sizeof(date_str));
+        snprintf(filename, sizeof(filename), "%s/%s_%d.dat",
+                 data_dir, date_str, tag->info.tag_id);
+
+        FILE *fp = fopen(filename, "ab"); /* Append binary */
+        if (!fp) {
+            /* Try to create directory first */
+            char mkdir_cmd[300];
+            snprintf(mkdir_cmd, sizeof(mkdir_cmd), "mkdir -p %s", data_dir);
+            system(mkdir_cmd);
+
+            fp = fopen(filename, "ab");
+            if (!fp) {
+                LOG_ERROR("Failed to open historian file: %s", filename);
+                continue;
+            }
+        }
+
+        /* Write samples from ring buffer */
+        for (int i = 0; i < tag->buffer.count; i++) {
+            int idx = (tag->buffer.write_pos - tag->buffer.count + i + tag->buffer.capacity)
+                      % tag->buffer.capacity;
+            historian_sample_t *sample = &tag->buffer.samples[idx];
+
+            /* Write binary record: timestamp (8 bytes), value (4 bytes), quality (1 byte) */
+            fwrite(&sample->timestamp_ms, sizeof(uint64_t), 1, fp);
+            fwrite(&sample->value, sizeof(float), 1, fp);
+            fwrite(&sample->quality, sizeof(uint8_t), 1, fp);
+
+            total_flushed++;
+        }
+
+        fclose(fp);
+
+        /* Clear buffer after successful flush */
+        tag->buffer.count = 0;
+        tag->buffer.write_pos = 0;
+    }
+
+    historian->stats.samples_in_buffer = 0;
+    historian->stats.samples_flushed += total_flushed;
+
+    pthread_mutex_unlock(&historian->lock);
+
+    if (total_flushed > 0) {
+        LOG_INFO("Historian flushed %d samples to disk", total_flushed);
+    }
 
     return WTC_OK;
 }
 
+/* HIST-C2 fix: Return copies instead of pointers to avoid dangling references */
 wtc_result_t historian_query(historian_t *historian,
                               int tag_id,
                               uint64_t start_time_ms,
                               uint64_t end_time_ms,
-                              historian_sample_t **samples,
+                              historian_sample_t *samples_out,
                               int *count,
                               int max_count) {
-    if (!historian || !samples || !count) {
+    if (!historian || !samples_out || !count) {
         return WTC_ERROR_INVALID_PARAM;
     }
 
@@ -523,7 +601,7 @@ wtc_result_t historian_query(historian_t *historian,
         return WTC_ERROR_NOT_FOUND;
     }
 
-    /* Query from buffer */
+    /* Query from buffer - copy samples to output array */
     int result_count = 0;
     for (int i = 0; i < tag->buffer.count && result_count < max_count; i++) {
         int idx = (tag->buffer.write_pos - tag->buffer.count + i + tag->buffer.capacity)
@@ -532,7 +610,9 @@ wtc_result_t historian_query(historian_t *historian,
 
         if (sample->timestamp_ms >= start_time_ms &&
             sample->timestamp_ms <= end_time_ms) {
-            samples[result_count++] = sample;
+            /* Copy sample data instead of returning pointer */
+            memcpy(&samples_out[result_count], sample, sizeof(historian_sample_t));
+            result_count++;
         }
     }
 

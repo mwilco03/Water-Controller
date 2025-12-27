@@ -70,6 +70,10 @@ typedef struct {
     uint64_t step_start_time_ms;
     uint64_t sequence_start_time_ms;
 
+    /* CE-H4 fix: Configurable timeouts per-sequence */
+    uint32_t sequence_timeout_ms;      /* Overall sequence timeout (0 = no limit) */
+    uint32_t default_step_timeout_ms;  /* Default timeout for steps (0 = no limit) */
+
     /* Callbacks */
     void (*on_step_change)(int sequence_id, int step, void *ctx);
     void (*on_complete)(int sequence_id, bool success, void *ctx);
@@ -253,6 +257,22 @@ wtc_result_t sequence_resume(int sequence_id) {
     return WTC_ERROR_NOT_FOUND;
 }
 
+/* CE-H4 fix: Set sequence timeouts */
+wtc_result_t sequence_set_timeouts(int sequence_id,
+                                    uint32_t sequence_timeout_ms,
+                                    uint32_t default_step_timeout_ms) {
+    for (int i = 0; i < sequence_count; i++) {
+        if (sequences[i].sequence_id == sequence_id) {
+            sequences[i].sequence_timeout_ms = sequence_timeout_ms;
+            sequences[i].default_step_timeout_ms = default_step_timeout_ms;
+            LOG_INFO("Sequence %d timeouts set: sequence=%ums, step=%ums",
+                     sequence_id, sequence_timeout_ms, default_step_timeout_ms);
+            return WTC_OK;
+        }
+    }
+    return WTC_ERROR_NOT_FOUND;
+}
+
 /* Process all running sequences */
 wtc_result_t sequence_process(void) {
     if (!seq_registry) return WTC_ERROR_NOT_INITIALIZED;
@@ -263,6 +283,19 @@ wtc_result_t sequence_process(void) {
         sequence_t *seq = &sequences[i];
 
         if (seq->state != SEQUENCE_STATE_RUNNING) continue;
+
+        /* CE-H4 fix: Check sequence-level timeout */
+        if (seq->sequence_timeout_ms > 0 &&
+            now_ms - seq->sequence_start_time_ms >= seq->sequence_timeout_ms) {
+            LOG_ERROR("Sequence %d (%s) timed out after %ums",
+                      seq->sequence_id, seq->name, seq->sequence_timeout_ms);
+            seq->state = SEQUENCE_STATE_FAULTED;
+            if (seq->on_complete) {
+                seq->on_complete(seq->sequence_id, false, seq->callback_ctx);
+            }
+            continue;
+        }
+
         if (seq->current_step >= seq->step_count) {
             seq->state = SEQUENCE_STATE_COMPLETE;
             continue;
