@@ -109,6 +109,9 @@ typedef struct {
     uint64_t last_activity_ms;
     uint32_t watchdog_ms;
 
+    /* Authority handoff - who has control of this device */
+    authority_context_t authority;
+
     /* Internal */
     void *internal;
 } profinet_ar_t;
@@ -184,6 +187,34 @@ wtc_result_t profinet_controller_write_record(profinet_controller_t *controller,
 /* Get controller statistics */
 wtc_result_t profinet_controller_get_stats(profinet_controller_t *controller,
                                             cycle_stats_t *stats);
+
+/* ============== Authority Handoff API ============== */
+
+/* Request control authority over a device
+ * Initiates the handoff protocol:
+ * 1. Sends AUTHORITY_REQUEST to RTU
+ * 2. Waits for RTU to acknowledge (AUTHORITY_GRANT)
+ * 3. Transitions to SUPERVISED state
+ */
+wtc_result_t profinet_controller_request_authority(profinet_controller_t *controller,
+                                                    const char *station_name);
+
+/* Release control authority back to device
+ * Initiates graceful release:
+ * 1. Sends AUTHORITY_RELEASE to RTU
+ * 2. Waits for RTU to acknowledge (AUTHORITY_RELEASED)
+ * 3. RTU transitions to AUTONOMOUS state
+ */
+wtc_result_t profinet_controller_release_authority(profinet_controller_t *controller,
+                                                    const char *station_name);
+
+/* Get current authority state for a device */
+authority_state_t profinet_controller_get_authority_state(profinet_controller_t *controller,
+                                                           const char *station_name);
+
+/* Get current authority epoch for a device */
+uint32_t profinet_controller_get_authority_epoch(profinet_controller_t *controller,
+                                                  const char *station_name);
 
 #ifdef __cplusplus
 }

@@ -3,6 +3,8 @@ Water Treatment Controller - Shared Memory Client
 Provides Python access to controller data via shared memory
 Copyright (C) 2024
 SPDX-License-Identifier: GPL-3.0-or-later
+
+Includes correlation ID support for distributed tracing.
 """
 
 import mmap
@@ -13,16 +15,49 @@ from typing import Optional, List, Dict, Any
 import posix_ipc
 import logging
 
+# Import correlation ID support (if available)
+try:
+    from app.core.logging import get_correlation_id
+except ImportError:
+    def get_correlation_id():
+        return None
+
 logger = logging.getLogger(__name__)
+
+
+def _log_with_correlation(level: int, msg: str, *args, **kwargs):
+    """Log with correlation ID if available."""
+    cid = get_correlation_id()
+    extra = kwargs.get('extra', {})
+    if cid:
+        extra['correlation_id'] = cid
+    kwargs['extra'] = extra
+    logger.log(level, msg, *args, **kwargs)
 
 # Shared memory constants
 SHM_NAME = "/wtc_shared_memory"
 SHM_KEY = 0x57544301
-SHM_VERSION = 1
+SHM_VERSION = 3  # Must match C definition - v3 adds correlation_id to commands
+CORRELATION_ID_LEN = 37  # UUID format + null terminator
 MAX_SHM_RTUS = 64
 MAX_SHM_ALARMS = 256
 MAX_SHM_SENSORS = 32
 MAX_SHM_ACTUATORS = 32
+
+# Protocol version for compatibility checking
+PROTOCOL_VERSION_MAJOR = 1
+PROTOCOL_VERSION_MINOR = 0
+PROTOCOL_VERSION = (PROTOCOL_VERSION_MAJOR << 8) | PROTOCOL_VERSION_MINOR
+
+# Capability flags - must match C definitions
+CAP_AUTHORITY_HANDOFF = (1 << 0)
+CAP_STATE_RECONCILE = (1 << 1)
+CAP_5BYTE_SENSOR = (1 << 2)
+CAP_ALARM_ISA18 = (1 << 3)
+
+# All capabilities supported by this version
+CAPABILITIES_CURRENT = (CAP_AUTHORITY_HANDOFF | CAP_STATE_RECONCILE |
+                        CAP_5BYTE_SENSOR | CAP_ALARM_ISA18)
 
 # Command types
 SHM_CMD_NONE = 0
@@ -208,6 +243,7 @@ class ShmCommand(ctypes.Structure):
     _fields_ = [
         ("sequence", c_uint32),
         ("command_type", c_int),
+        ("correlation_id", c_char * CORRELATION_ID_LEN),  # For distributed tracing
         ("cmd", ShmCommandUnion),
     ]
 
@@ -244,7 +280,7 @@ class WtcShmClient:
         self._command_seq = 0
 
     def connect(self) -> bool:
-        """Connect to shared memory"""
+        """Connect to shared memory with version validation"""
         try:
             self.shm = posix_ipc.SharedMemory(SHM_NAME)
             self.mm = mmap.mmap(self.shm.fd, ctypes.sizeof(WtcSharedMemory))
@@ -256,7 +292,17 @@ class WtcShmClient:
                 self.disconnect()
                 return False
 
-            logger.info("Connected to WTC shared memory")
+            # Verify version compatibility
+            version = struct.unpack_from('I', self.mm, 4)[0]
+            if version != SHM_VERSION:
+                logger.error(
+                    f"Shared memory version mismatch: expected {SHM_VERSION}, got {version}. "
+                    f"Controller and API must be upgraded together."
+                )
+                self.disconnect()
+                return False
+
+            logger.info(f"Connected to WTC shared memory (version {version})")
             return True
 
         except posix_ipc.ExistentialError:
@@ -404,37 +450,47 @@ class WtcShmClient:
         return loops
 
     def _send_command(self, cmd_type: int, **kwargs) -> bool:
-        """Send command to controller"""
+        """Send command to controller with correlation ID for tracing"""
         if not self.mm:
             return False
 
         self._command_seq += 1
 
+        # Get correlation ID from context (if available)
+        correlation_id = get_correlation_id() or ""
+
         # Build command based on type
         cmd_data = bytearray(ctypes.sizeof(ShmCommand))
+        # Pack: sequence (4), command_type (4), correlation_id (37)
         struct.pack_into('II', cmd_data, 0, self._command_seq, cmd_type)
+        # Pack correlation ID at offset 8
+        cid_bytes = correlation_id.encode('utf-8')[:CORRELATION_ID_LEN-1]
+        struct.pack_into(f'{len(cid_bytes)}s', cmd_data, 8, cid_bytes)
+
+        # Command data starts after correlation_id (offset 8 + 37 = 45)
+        data_offset = 8 + CORRELATION_ID_LEN
 
         if cmd_type == SHM_CMD_ACTUATOR:
             station = kwargs['station'].encode('utf-8')[:63]
-            struct.pack_into('64sibb', cmd_data, 8, station, kwargs['slot'],
+            struct.pack_into('64sibb', cmd_data, data_offset, station, kwargs['slot'],
                            kwargs['command'], kwargs.get('pwm_duty', 0))
         elif cmd_type == SHM_CMD_SETPOINT:
-            struct.pack_into('if', cmd_data, 8, kwargs['loop_id'], kwargs['setpoint'])
+            struct.pack_into('if', cmd_data, data_offset, kwargs['loop_id'], kwargs['setpoint'])
         elif cmd_type == SHM_CMD_PID_MODE:
-            struct.pack_into('ii', cmd_data, 8, kwargs['loop_id'], kwargs['mode'])
+            struct.pack_into('ii', cmd_data, data_offset, kwargs['loop_id'], kwargs['mode'])
         elif cmd_type == SHM_CMD_ACK_ALARM:
             user = kwargs['user'].encode('utf-8')[:63]
-            struct.pack_into('i64s', cmd_data, 8, kwargs['alarm_id'], user)
+            struct.pack_into('i64s', cmd_data, data_offset, kwargs['alarm_id'], user)
         elif cmd_type == SHM_CMD_RESET_INTERLOCK:
-            struct.pack_into('i', cmd_data, 8, kwargs['interlock_id'])
+            struct.pack_into('i', cmd_data, data_offset, kwargs['interlock_id'])
 
         # Write command to shared memory
-        cmd_offset = ctypes.sizeof(WtcSharedMemory) - ctypes.sizeof(ShmCommand) - 8
-        self.mm.seek(cmd_offset)
+        shm_cmd_offset = ctypes.sizeof(WtcSharedMemory) - ctypes.sizeof(ShmCommand) - 8
+        self.mm.seek(shm_cmd_offset)
         self.mm.write(bytes(cmd_data))
 
         # Update sequence
-        seq_offset = cmd_offset + ctypes.sizeof(ShmCommand)
+        seq_offset = shm_cmd_offset + ctypes.sizeof(ShmCommand)
         struct.pack_into('I', self.mm, seq_offset, self._command_seq)
 
         return True
