@@ -21,6 +21,8 @@ from .core.logging import setup_logging, get_logger
 from .models.base import Base, engine
 from .api.v1 import api_router
 from .api.websocket import router as websocket_router
+from .persistence.base import initialize as init_persistence
+from .persistence.users import ensure_default_admin
 
 # Setup logging
 LOG_LEVEL = os.environ.get("WTC_LOG_LEVEL", "INFO")
@@ -36,9 +38,17 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info("Starting Water Treatment Controller API")
 
-    # Create database tables
+    # Create database tables (SQLAlchemy ORM)
     Base.metadata.create_all(bind=engine)
-    logger.info("Database tables initialized")
+    logger.info("SQLAlchemy tables initialized")
+
+    # Initialize persistence layer (SQLite direct) for auth/sessions
+    init_persistence()
+    logger.info("Persistence layer initialized")
+
+    # Ensure default admin user exists
+    ensure_default_admin()
+    logger.info("Default admin user verified")
 
     yield
 

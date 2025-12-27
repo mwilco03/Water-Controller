@@ -92,9 +92,10 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
     }
 
     // Determine WebSocket URL
+    // Backend WebSocket endpoint is at /api/v1/ws/live
     const protocol = typeof window !== 'undefined' && window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const host = typeof window !== 'undefined' ? window.location.host : 'localhost:8080';
-    const wsUrl = `${protocol}//${host}/ws`;
+    const wsUrl = `${protocol}//${host}/api/v1/ws/live`;
 
     try {
       const ws = new WebSocket(wsUrl);
@@ -127,7 +128,9 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
       ws.onmessage = (event) => {
         try {
           const message = JSON.parse(event.data);
-          const { type, data } = message;
+          // Backend sends 'channel', frontend uses 'type' - support both
+          const type = message.type || message.channel;
+          const data = message.data;
 
           setState(prev => ({
             ...prev,

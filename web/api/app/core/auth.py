@@ -137,14 +137,32 @@ def log_control_action(
     details: str = None,
     success: bool = True
 ):
-    """Log a control action for audit trail."""
+    """
+    Log a control action for audit trail.
+
+    Args:
+        session: User session dict containing username, token, etc.
+        action: The action type (e.g., "CONTROL_COMMAND")
+        target: Target in format "rtu_station/control_id"
+        details: Command details (e.g., "ON value=100")
+        success: Whether the command succeeded
+    """
     username = session.get("username", "unknown")
+
+    # Parse target format: "rtu_station/control_id"
+    parts = target.split("/", 1)
+    rtu_station = parts[0] if len(parts) > 0 else "unknown"
+    control_id = parts[1] if len(parts) > 1 else "unknown"
+
+    # Extract command from details
+    command = details or action
+
     log_command(
         username=username,
-        command_type=action,
-        target=target,
-        parameters=details or "",
-        result="success" if success else "failed"
+        rtu_station=rtu_station,
+        control_id=control_id,
+        command=command,
+        session_token=session.get("token")
     )
 
 
