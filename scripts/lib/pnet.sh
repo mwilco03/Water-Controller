@@ -38,7 +38,7 @@ readonly PNET_MODULE_VERSION="1.0.0"
 # P-Net source
 readonly PNET_REPO="https://github.com/rtlabs-com/p-net.git"
 readonly PNET_BRANCH="master"
-readonly PNET_RECOMMENDED_TAG="v0.5.0"
+readonly PNET_RECOMMENDED_TAG="master"
 
 # Installation paths
 readonly PNET_BUILD_DIR="/tmp/pnet-build-$$"
@@ -291,13 +291,19 @@ clone_pnet() {
     # Create parent directory
     mkdir -p "$(dirname "$target_dir")"
 
-    # Clone repository
-    if ! git clone --depth 1 --branch "$branch" "$PNET_REPO" "$target_dir" 2>&1; then
-        log_warn "Failed to clone tag $branch, trying master branch..."
-        if ! git clone --depth 1 "$PNET_REPO" "$target_dir" 2>&1; then
+    # Clone repository (full clone to ensure all files including submodules work)
+    if ! git clone --branch "$branch" "$PNET_REPO" "$target_dir" 2>&1; then
+        log_warn "Failed to clone branch $branch, trying default branch..."
+        if ! git clone "$PNET_REPO" "$target_dir" 2>&1; then
             log_error "Failed to clone p-net repository"
             return 1
         fi
+    fi
+
+    # Verify clone has required files
+    if [ ! -f "$target_dir/CMakeLists.txt" ]; then
+        log_error "Clone succeeded but CMakeLists.txt not found - repository structure may have changed"
+        return 1
     fi
 
     # Initialize submodules if any
@@ -328,6 +334,16 @@ build_pnet() {
 
     if [ ! -d "$source_dir" ]; then
         log_error "Source directory not found: $source_dir"
+        return 1
+    fi
+
+    # Check for CMakeLists.txt before attempting to build
+    if [ ! -f "$source_dir/CMakeLists.txt" ]; then
+        log_error "CMakeLists.txt not found in $source_dir"
+        log_error "The p-net repository may have changed structure or clone failed"
+        ls -la "$source_dir" 2>&1 | head -20 | while read -r line; do
+            log_debug "  $line"
+        done
         return 1
     fi
 
@@ -365,7 +381,9 @@ build_pnet() {
             ;;
     esac
 
-    if ! cmake "${cmake_opts[@]}" .. 2>&1; then
+    # Run cmake with explicit source directory path
+    log_debug "cmake options: ${cmake_opts[*]}"
+    if ! cmake -S "$source_dir" -B "$build_dir" "${cmake_opts[@]}" 2>&1; then
         log_error "cmake configuration failed"
         return 1
     fi
