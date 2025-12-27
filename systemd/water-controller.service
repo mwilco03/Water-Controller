@@ -28,6 +28,14 @@ ReadWritePaths=/var/lib/water-controller /var/log/water-controller /dev/shm
 AmbientCapabilities=CAP_NET_RAW CAP_NET_ADMIN
 CapabilityBoundingSet=CAP_NET_RAW CAP_NET_ADMIN
 
+# Resource limits (SVC-M1 fix)
+MemoryMax=512M
+MemoryHigh=384M
+CPUQuota=80%
+TasksMax=128
+LimitNOFILE=4096
+LimitCORE=0
+
 # Environment
 Environment=WT_LOG_LEVEL=INFO
 Environment=WT_CONFIG_DIR=/etc/water-controller

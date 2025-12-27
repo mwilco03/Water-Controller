@@ -17,13 +17,22 @@ services:
     volumes:
       - db_data:/var/lib/postgresql/data
       - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
-    ports:
-      - "5432:5432"
+    # DCK-C1 fix: Remove exposed ports - use internal network only
+    expose:
+      - "5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U wtc -d water_treatment"]
       interval: 10s
       timeout: 5s
       retries: 5
+    # DCK-H3 fix: Add resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
+        reservations:
+          memory: 256M
 
   # Redis for caching and pub/sub
   redis:
@@ -32,13 +41,22 @@ services:
     restart: unless-stopped
     volumes:
       - redis_data:/data
-    ports:
-      - "6379:6379"
+    # DCK-C2 fix: Remove exposed ports - use internal network only
+    expose:
+      - "6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
+    # DCK-H3 fix: Add resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          memory: 64M
 
   # Web API
   api:
@@ -47,6 +65,8 @@ services:
       dockerfile: docker/Dockerfile.web
     container_name: wtc-api
     restart: unless-stopped
+    # DCK-H1 fix: Run as non-root user
+    user: "1000:1000"
     environment:
       DATABASE_URL: postgresql://wtc:${DB_PASSWORD:-wtc_password}@database:5432/water_treatment
       REDIS_URL: redis://redis:6379
@@ -64,6 +84,14 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+    # DCK-H3 fix: Add resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+        reservations:
+          memory: 128M
 
   # PROFINET Controller (optional - requires host network mode)
   controller:
@@ -83,17 +111,34 @@ services:
     volumes:
       - ./config:/etc/water-controller:ro
       - controller_logs:/var/log/water-controller
+    # DCK-H2 fix: Add health check
+    healthcheck:
+      test: ["CMD", "/opt/water-controller/bin/health_check"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    # DCK-H3 fix: Add resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 512M
+        reservations:
+          memory: 128M
     # Only start if PROFINET interface is configured
     profiles:
       - profinet
 
-  # React HMI Frontend (with vulnerable react-server-components)
+  # React HMI Frontend
   ui:
     build:
       context: ..
       dockerfile: docker/Dockerfile.ui
     container_name: wtc-ui
     restart: unless-stopped
+    # DCK-H1 fix: Run as non-root user
+    user: "1000:1000"
     environment:
       NEXT_PUBLIC_API_URL: http://api:8080
     ports:
@@ -101,12 +146,28 @@ services:
     depends_on:
       api:
         condition: service_healthy
+    # DCK-H2 fix: Add health check
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    # DCK-H3 fix: Add resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          memory: 64M
 
   # Grafana for visualization
   grafana:
     image: grafana/grafana:latest
     container_name: wtc-grafana
     restart: unless-stopped
+    # DCK-H1 fix: Run as grafana user
+    user: "472:472"
     environment:
       GF_SECURITY_ADMIN_USER: admin
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
@@ -118,6 +179,20 @@ services:
       - "3000:3000"
     depends_on:
       - database
+    # DCK-H2 fix: Add health check
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    # DCK-H3 fix: Add resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          memory: 64M
 
 volumes:
   db_data:
