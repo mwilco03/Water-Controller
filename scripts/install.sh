@@ -1006,8 +1006,9 @@ do_uninstall() {
     log_info "Starting uninstallation process..."
 
     local manifest_file="/tmp/water-controller-uninstall-manifest-$(date +%Y%m%d_%H%M%S).txt"
-    local removed_items=()
-    local preserved_items=()
+    # Use global arrays so helper functions can append
+    UNINSTALL_REMOVED_ITEMS=()
+    UNINSTALL_PRESERVED_ITEMS=()
     local errors=0
 
     if [ $DRY_RUN -eq 1 ]; then
@@ -1067,14 +1068,14 @@ do_uninstall() {
     if command -v systemctl >/dev/null 2>&1; then
         sudo systemctl stop water-controller.service 2>/dev/null || true
         sudo systemctl disable water-controller.service 2>/dev/null || true
-        removed_items+=("Service: water-controller.service (stopped and disabled)")
+        UNINSTALL_REMOVED_ITEMS+=("Service: water-controller.service (stopped and disabled)")
     fi
 
     # Remove service file
     log_info "Removing service file..."
     if [ -f /etc/systemd/system/water-controller.service ]; then
         sudo rm -f /etc/systemd/system/water-controller.service
-        removed_items+=("File: /etc/systemd/system/water-controller.service")
+        UNINSTALL_REMOVED_ITEMS+=("File: /etc/systemd/system/water-controller.service")
     fi
     sudo systemctl daemon-reload 2>/dev/null || true
 
@@ -1082,20 +1083,20 @@ do_uninstall() {
     log_info "Removing installation directory..."
     if [ -d "$INSTALL_DIR" ]; then
         sudo rm -rf "$INSTALL_DIR" || ((errors++))
-        removed_items+=("Directory: $INSTALL_DIR")
+        UNINSTALL_REMOVED_ITEMS+=("Directory: $INSTALL_DIR")
     fi
 
     # Handle configuration based on --keep-data flag
     if [ -d "$CONFIG_DIR" ]; then
         if [ $KEEP_DATA -eq 1 ]; then
             log_info "Configuration preserved at $CONFIG_DIR (--keep-data)"
-            preserved_items+=("Directory: $CONFIG_DIR")
+            UNINSTALL_PRESERVED_ITEMS+=("Directory: $CONFIG_DIR")
         elif confirm "Remove configuration directory ($CONFIG_DIR)?" "n"; then
             sudo rm -rf "$CONFIG_DIR" || ((errors++))
-            removed_items+=("Directory: $CONFIG_DIR")
+            UNINSTALL_REMOVED_ITEMS+=("Directory: $CONFIG_DIR")
         else
             log_info "Configuration preserved at $CONFIG_DIR"
-            preserved_items+=("Directory: $CONFIG_DIR")
+            UNINSTALL_PRESERVED_ITEMS+=("Directory: $CONFIG_DIR")
         fi
     fi
 
@@ -1103,13 +1104,13 @@ do_uninstall() {
     if [ -d "$DATA_DIR" ]; then
         if [ $KEEP_DATA -eq 1 ]; then
             log_info "Data preserved at $DATA_DIR (--keep-data)"
-            preserved_items+=("Directory: $DATA_DIR")
+            UNINSTALL_PRESERVED_ITEMS+=("Directory: $DATA_DIR")
         elif confirm "Remove data directory ($DATA_DIR)? This includes the database!" "n"; then
             sudo rm -rf "$DATA_DIR" || ((errors++))
-            removed_items+=("Directory: $DATA_DIR")
+            UNINSTALL_REMOVED_ITEMS+=("Directory: $DATA_DIR")
         else
             log_info "Data preserved at $DATA_DIR"
-            preserved_items+=("Directory: $DATA_DIR")
+            UNINSTALL_PRESERVED_ITEMS+=("Directory: $DATA_DIR")
         fi
     fi
 
@@ -1117,13 +1118,13 @@ do_uninstall() {
     if [ -d "$LOG_DIR" ]; then
         if [ $KEEP_DATA -eq 1 ]; then
             log_info "Logs preserved at $LOG_DIR (--keep-data)"
-            preserved_items+=("Directory: $LOG_DIR")
+            UNINSTALL_PRESERVED_ITEMS+=("Directory: $LOG_DIR")
         elif confirm "Remove log directory ($LOG_DIR)?" "n"; then
             sudo rm -rf "$LOG_DIR" || ((errors++))
-            removed_items+=("Directory: $LOG_DIR")
+            UNINSTALL_REMOVED_ITEMS+=("Directory: $LOG_DIR")
         else
             log_info "Logs preserved at $LOG_DIR"
-            preserved_items+=("Directory: $LOG_DIR")
+            UNINSTALL_PRESERVED_ITEMS+=("Directory: $LOG_DIR")
         fi
     fi
 
@@ -1131,13 +1132,13 @@ do_uninstall() {
     if [ -d "$BACKUP_DIR" ]; then
         if [ $KEEP_DATA -eq 1 ]; then
             log_info "Backups preserved at $BACKUP_DIR (--keep-data)"
-            preserved_items+=("Directory: $BACKUP_DIR")
+            UNINSTALL_PRESERVED_ITEMS+=("Directory: $BACKUP_DIR")
         elif confirm "Remove backup directory ($BACKUP_DIR)?" "n"; then
             sudo rm -rf "$BACKUP_DIR" || ((errors++))
-            removed_items+=("Directory: $BACKUP_DIR")
+            UNINSTALL_REMOVED_ITEMS+=("Directory: $BACKUP_DIR")
         else
             log_info "Backups preserved at $BACKUP_DIR"
-            preserved_items+=("Directory: $BACKUP_DIR")
+            UNINSTALL_PRESERVED_ITEMS+=("Directory: $BACKUP_DIR")
         fi
     fi
 
@@ -1146,10 +1147,10 @@ do_uninstall() {
         if id water-controller >/dev/null 2>&1; then
             if confirm "Remove service user (water-controller)?" "n"; then
                 sudo userdel water-controller 2>/dev/null || ((errors++))
-                removed_items+=("User: water-controller")
+                UNINSTALL_REMOVED_ITEMS+=("User: water-controller")
             else
                 log_info "Service user preserved"
-                preserved_items+=("User: water-controller")
+                UNINSTALL_PRESERVED_ITEMS+=("User: water-controller")
             fi
         fi
     fi
@@ -1157,20 +1158,20 @@ do_uninstall() {
     # Remove logrotate config
     if [ -f /etc/logrotate.d/water-controller ]; then
         sudo rm -f /etc/logrotate.d/water-controller 2>/dev/null || true
-        removed_items+=("File: /etc/logrotate.d/water-controller")
+        UNINSTALL_REMOVED_ITEMS+=("File: /etc/logrotate.d/water-controller")
     fi
 
     # Remove tmpfs mount from fstab
     if grep -q "water-controller" /etc/fstab 2>/dev/null; then
         log_info "Removing tmpfs mount from fstab..."
         sudo sed -i '/water-controller/d' /etc/fstab 2>/dev/null || true
-        removed_items+=("Fstab entry: water-controller tmpfs")
+        UNINSTALL_REMOVED_ITEMS+=("Fstab entry: water-controller tmpfs")
     fi
 
     # Unmount tmpfs if mounted
     if mountpoint -q /run/water-controller 2>/dev/null; then
         sudo umount /run/water-controller 2>/dev/null || true
-        removed_items+=("Mount: /run/water-controller")
+        UNINSTALL_REMOVED_ITEMS+=("Mount: /run/water-controller")
     fi
 
     # =========================================================================
@@ -1192,19 +1193,19 @@ do_uninstall() {
         if confirm "Remove Water Controller network configuration (static IP, etc.)?" "n"; then
             _uninstall_network_config || ((errors++))
         else
-            preserved_items+=("Network configuration")
+            UNINSTALL_PRESERVED_ITEMS+=("Network configuration")
         fi
     fi
 
     # Write manifest
-    for item in "${removed_items[@]}"; do
+    for item in "${UNINSTALL_REMOVED_ITEMS[@]}"; do
         echo "  - $item" >> "$manifest_file"
     done
 
-    if [ ${#preserved_items[@]} -gt 0 ]; then
+    if [ ${#UNINSTALL_PRESERVED_ITEMS[@]} -gt 0 ]; then
         echo "" >> "$manifest_file"
         echo "Preserved Items:" >> "$manifest_file"
-        for item in "${preserved_items[@]}"; do
+        for item in "${UNINSTALL_PRESERVED_ITEMS[@]}"; do
             echo "  - $item" >> "$manifest_file"
         done
     fi
@@ -1250,6 +1251,7 @@ _uninstall_pnet_libraries() {
             if [ -f "$lib_file" ]; then
                 sudo rm -f "$lib_file" 2>/dev/null && {
                     log_info "  Removed: $lib_file"
+                    UNINSTALL_REMOVED_ITEMS+=("P-Net: $lib_file")
                     ((removed++))
                 }
             fi
@@ -1268,6 +1270,7 @@ _uninstall_pnet_libraries() {
         if [ -e "$path" ]; then
             sudo rm -rf "$path" 2>/dev/null && {
                 log_info "  Removed: $path"
+                UNINSTALL_REMOVED_ITEMS+=("P-Net: $path")
                 ((removed++))
             }
         fi
@@ -1277,6 +1280,7 @@ _uninstall_pnet_libraries() {
     if [ -d "/etc/pnet" ]; then
         sudo rm -rf /etc/pnet 2>/dev/null && {
             log_info "  Removed: /etc/pnet"
+            UNINSTALL_REMOVED_ITEMS+=("P-Net: /etc/pnet")
             ((removed++))
         }
     fi
@@ -1285,6 +1289,7 @@ _uninstall_pnet_libraries() {
     if [ -d "/opt/pnet-sample" ]; then
         sudo rm -rf /opt/pnet-sample 2>/dev/null && {
             log_info "  Removed: /opt/pnet-sample"
+            UNINSTALL_REMOVED_ITEMS+=("P-Net: /opt/pnet-sample")
             ((removed++))
         }
     fi
@@ -1299,6 +1304,7 @@ _uninstall_pnet_libraries() {
         if [ -f "$pc_file" ]; then
             sudo rm -f "$pc_file" 2>/dev/null && {
                 log_info "  Removed: $pc_file"
+                UNINSTALL_REMOVED_ITEMS+=("P-Net: $pc_file")
                 ((removed++))
             }
         fi
@@ -1321,10 +1327,10 @@ _uninstall_firewall_rules() {
     # Detect and clean up based on firewall system
     if command -v ufw >/dev/null 2>&1 && sudo ufw status 2>/dev/null | grep -q "Status: active"; then
         log_info "  Cleaning UFW rules..."
-        # Remove Water Controller specific rules
         sudo ufw delete allow 8000/tcp 2>/dev/null || true
         sudo ufw delete allow 34964/udp 2>/dev/null || true
         sudo ufw delete allow 34962:34963/tcp 2>/dev/null || true
+        UNINSTALL_REMOVED_ITEMS+=("Firewall: UFW rules (ports 8000, 34962-34964)")
         log_info "  UFW rules removed"
 
     elif command -v firewall-cmd >/dev/null 2>&1 && systemctl is-active firewalld >/dev/null 2>&1; then
@@ -1333,26 +1339,25 @@ _uninstall_firewall_rules() {
         sudo firewall-cmd --permanent --remove-port=34964/udp 2>/dev/null || true
         sudo firewall-cmd --permanent --remove-port=34962-34963/tcp 2>/dev/null || true
         sudo firewall-cmd --reload 2>/dev/null || true
+        UNINSTALL_REMOVED_ITEMS+=("Firewall: firewalld rules (ports 8000, 34962-34964)")
         log_info "  firewalld rules removed"
 
     elif command -v nft >/dev/null 2>&1; then
         log_info "  Cleaning nftables rules..."
-        # Remove water-controller table if exists
         sudo nft delete table inet water_controller 2>/dev/null || true
-        # Remove config file
         if [ -f /etc/nftables.d/water-controller.nft ]; then
             sudo rm -f /etc/nftables.d/water-controller.nft 2>/dev/null || true
+            UNINSTALL_REMOVED_ITEMS+=("Firewall: /etc/nftables.d/water-controller.nft")
             log_info "  Removed: /etc/nftables.d/water-controller.nft"
         fi
+        UNINSTALL_REMOVED_ITEMS+=("Firewall: nftables table water_controller")
         log_info "  nftables rules removed"
 
     elif command -v iptables >/dev/null 2>&1; then
         log_info "  Cleaning iptables rules..."
-        # Remove rules containing water-controller ports
         sudo iptables -D INPUT -p tcp --dport 8000 -j ACCEPT 2>/dev/null || true
         sudo iptables -D INPUT -p udp --dport 34964 -j ACCEPT 2>/dev/null || true
         sudo iptables -D INPUT -p tcp --dport 34962:34963 -j ACCEPT 2>/dev/null || true
-        # Save if possible
         if command -v iptables-save >/dev/null 2>&1; then
             if [ -d /etc/iptables ]; then
                 sudo iptables-save | sudo tee /etc/iptables/rules.v4 > /dev/null 2>/dev/null
@@ -1360,6 +1365,7 @@ _uninstall_firewall_rules() {
                 sudo netfilter-persistent save 2>/dev/null || true
             fi
         fi
+        UNINSTALL_REMOVED_ITEMS+=("Firewall: iptables rules (ports 8000, 34962-34964)")
         log_info "  iptables rules removed"
     else
         log_info "  No active firewall detected, skipping"
@@ -1383,6 +1389,7 @@ _uninstall_udev_rules() {
         if [ -f "$rule_file" ]; then
             sudo rm -f "$rule_file" 2>/dev/null && {
                 log_info "  Removed: $rule_file"
+                UNINSTALL_REMOVED_ITEMS+=("udev: $rule_file")
                 ((removed++))
             }
         fi
@@ -1413,6 +1420,7 @@ _uninstall_network_config() {
             if [ -f "$config_file" ]; then
                 sudo rm -f "$config_file" 2>/dev/null && {
                     log_info "  Removed: $config_file"
+                    UNINSTALL_REMOVED_ITEMS+=("Network: $config_file")
                 }
             fi
         done
@@ -1426,6 +1434,7 @@ _uninstall_network_config() {
             if [ -n "$conn" ]; then
                 sudo nmcli connection delete "$conn" 2>/dev/null && {
                     log_info "  Removed NetworkManager connection: $conn"
+                    UNINSTALL_REMOVED_ITEMS+=("Network: NetworkManager connection $conn")
                 }
             fi
         done <<< "$nm_connections"
@@ -1435,10 +1444,9 @@ _uninstall_network_config() {
     if [ -f /etc/dhcpcd.conf ]; then
         if grep -q "Water-Controller" /etc/dhcpcd.conf 2>/dev/null; then
             log_info "  Cleaning dhcpcd.conf..."
-            # Create backup
             sudo cp /etc/dhcpcd.conf /etc/dhcpcd.conf.pre-uninstall 2>/dev/null
-            # Remove water-controller block (from comment to next interface or EOF)
             sudo sed -i '/# Water-Controller/,/^interface\|^$/d' /etc/dhcpcd.conf 2>/dev/null || true
+            UNINSTALL_REMOVED_ITEMS+=("Network: dhcpcd.conf entries (backup saved)")
             log_info "  Cleaned dhcpcd.conf (backup: /etc/dhcpcd.conf.pre-uninstall)"
         fi
     fi
@@ -1453,6 +1461,7 @@ _uninstall_network_config() {
             if [ -f "$config_file" ]; then
                 sudo rm -f "$config_file" 2>/dev/null && {
                     log_info "  Removed: $config_file"
+                    UNINSTALL_REMOVED_ITEMS+=("Network: $config_file")
                 }
             fi
         done
