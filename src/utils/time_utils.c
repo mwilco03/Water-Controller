@@ -97,6 +97,15 @@ void time_format_iso8601(uint64_t ms, char *buf, size_t buf_size) {
     snprintf(buf + 19, buf_size - 19, ".%03dZ", millis);
 }
 
+void time_format_date(uint64_t ms, char *buf, size_t buf_size) {
+    if (!buf || buf_size < 11) return;  /* YYYY-MM-DD + null */
+
+    time_t secs = ms / 1000;
+    struct tm *tm_info = gmtime(&secs);
+
+    strftime(buf, buf_size, "%Y-%m-%d", tm_info);
+}
+
 uint64_t time_parse_iso8601(const char *str) {
     if (!str) return 0;
 

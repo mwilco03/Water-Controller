@@ -111,13 +111,13 @@ int alarm_manager_get_unack_count(alarm_manager_t *manager);
 
 /* ============== Alarm History ============== */
 
-/* Get alarm history */
+/* Get alarm history (caller provides buffer) */
 wtc_result_t alarm_manager_get_history(alarm_manager_t *manager,
-                                        uint64_t start_time_ms,
-                                        uint64_t end_time_ms,
-                                        alarm_t **alarms,
+                                        alarm_t *alarms,
                                         int *count,
-                                        int max_count);
+                                        int max_count,
+                                        uint64_t from_time_ms,
+                                        uint64_t to_time_ms);
 
 /* Clear alarm history older than specified time */
 wtc_result_t alarm_manager_clear_history(alarm_manager_t *manager,
@@ -154,8 +154,7 @@ wtc_result_t alarm_manager_shelve(alarm_manager_t *manager,
 
 /* Unshelve alarm */
 wtc_result_t alarm_manager_unshelve(alarm_manager_t *manager,
-                                     int rule_id,
-                                     const char *user);
+                                     int alarm_id);
 
 /* ============== ISA-18.2 Compliance (ALM-H1 fix) ============== */
 

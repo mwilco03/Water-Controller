@@ -426,6 +426,17 @@ typedef struct {
     alarm_severity_t severity;
     char message_template[WTC_MAX_MESSAGE];
 
+    /* ISA-18.2 Rationalization */
+    char consequence[WTC_MAX_MESSAGE];       /* What happens if not responded */
+    char corrective_action[WTC_MAX_MESSAGE]; /* Required operator response */
+    uint32_t response_time_sec;              /* Max time to respond */
+
+    /* Out of Service (OOS) */
+    bool out_of_service;
+    char oos_user[WTC_MAX_USERNAME];
+    char oos_reason[WTC_MAX_MESSAGE];
+    uint64_t oos_start_time_ms;
+
     /* Runtime */
     bool active;
     uint64_t condition_start_ms;
@@ -448,6 +459,12 @@ typedef struct {
     uint64_t ack_time_ms;
     uint64_t clear_time_ms;
     char ack_user[WTC_MAX_USERNAME];
+
+    /* Shelving (ISA-18.2) */
+    bool shelved;
+    uint64_t shelve_end_time_ms;
+    char shelve_user[WTC_MAX_USERNAME];
+    char shelve_reason[WTC_MAX_MESSAGE];
 } alarm_t;
 
 /* Historian tag */

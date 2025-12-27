@@ -186,6 +186,7 @@ typedef struct {
     int total_tags;
     uint64_t total_samples;
     uint64_t samples_in_buffer;
+    uint64_t samples_flushed;
     uint64_t storage_bytes;
     float avg_compression_ratio;
     uint64_t oldest_sample_ms;
