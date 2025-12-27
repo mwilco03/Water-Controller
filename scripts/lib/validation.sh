@@ -18,7 +18,7 @@ fi
 _WTC_VALIDATION_LOADED=1
 
 # Source detection module for logging functions
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+: "${SCRIPT_DIR:=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 if [ -f "$SCRIPT_DIR/detection.sh" ]; then
     # shellcheck source=detection.sh
     source "$SCRIPT_DIR/detection.sh"
@@ -31,20 +31,20 @@ fi
 readonly VALIDATION_VERSION="1.0.0"
 
 # Paths
-readonly INSTALL_BASE="/opt/water-controller"
-readonly VENV_PATH="$INSTALL_BASE/venv"
-readonly APP_PATH="$INSTALL_BASE/app"
-readonly WEB_PATH="$INSTALL_BASE/web"
-readonly CONFIG_DIR="/etc/water-controller"
-readonly DATA_DIR="/var/lib/water-controller"
-readonly LOG_DIR="/var/log/water-controller"
+: "${INSTALL_BASE:=/opt/water-controller}"
+: "${VENV_PATH:=$INSTALL_BASE/venv}"
+: "${APP_PATH:=$INSTALL_BASE/app}"
+: "${WEB_PATH:=$INSTALL_BASE/web}"
+: "${CONFIG_DIR:=/etc/water-controller}"
+: "${DATA_DIR:=/var/lib/water-controller}"
+: "${LOG_DIR:=/var/log/water-controller}"
 
 # Service
-readonly SERVICE_NAME="water-controller"
-readonly SERVICE_USER="water-controller"
+: "${SERVICE_NAME:=water-controller}"
+: "${SERVICE_USER:=water-controller}"
 
 # Network
-readonly DEFAULT_API_PORT=8000
+: "${DEFAULT_API_PORT:=8000}"
 
 # Test timeouts (seconds)
 readonly HTTP_TIMEOUT=5

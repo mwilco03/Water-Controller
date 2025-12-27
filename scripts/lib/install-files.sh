@@ -18,7 +18,7 @@ fi
 _WTC_INSTALL_FILES_LOADED=1
 
 # Source detection module for logging functions
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+: "${SCRIPT_DIR:=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 if [ -f "$SCRIPT_DIR/detection.sh" ]; then
     # shellcheck source=detection.sh
     source "$SCRIPT_DIR/detection.sh"
@@ -31,19 +31,19 @@ fi
 readonly INSTALL_FILES_VERSION="1.0.0"
 
 # Service user configuration
-readonly SERVICE_USER="water-controller"
-readonly SERVICE_GROUP="water-controller"
+: "${SERVICE_USER:=water-controller}"
+: "${SERVICE_GROUP:=water-controller}"
 
 # Installation paths
-readonly INSTALL_BASE="/opt/water-controller"
-readonly VENV_PATH="$INSTALL_BASE/venv"
-readonly APP_PATH="$INSTALL_BASE/app"
-readonly WEB_PATH="$INSTALL_BASE/web"
+: "${INSTALL_BASE:=/opt/water-controller}"
+: "${VENV_PATH:=$INSTALL_BASE/venv}"
+: "${APP_PATH:=$INSTALL_BASE/app}"
+: "${WEB_PATH:=$INSTALL_BASE/web}"
 readonly DOCS_PATH="$INSTALL_BASE/docs"
-readonly CONFIG_DIR="/etc/water-controller"
-readonly DATA_DIR="/var/lib/water-controller"
-readonly LOG_DIR="/var/log/water-controller"
-readonly RUN_DIR="/run/water-controller"
+: "${CONFIG_DIR:=/etc/water-controller}"
+: "${DATA_DIR:=/var/lib/water-controller}"
+: "${LOG_DIR:=/var/log/water-controller}"
+: "${RUN_DIR:=/run/water-controller}"
 
 # Backup directory
 readonly BACKUP_BASE="/var/backup/water-controller"

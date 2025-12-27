@@ -18,7 +18,7 @@ fi
 _WTC_DOCUMENTATION_LOADED=1
 
 # Source detection module for logging functions
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+: "${SCRIPT_DIR:=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 if [ -f "$SCRIPT_DIR/detection.sh" ]; then
     # shellcheck source=detection.sh
     source "$SCRIPT_DIR/detection.sh"
@@ -32,9 +32,9 @@ readonly DOCUMENTATION_VERSION="1.0.0"
 
 # Paths
 readonly INSTALL_DIR="${INSTALL_DIR:-/opt/water-controller}"
-readonly CONFIG_DIR="${CONFIG_DIR:-/etc/water-controller}"
-readonly DATA_DIR="${DATA_DIR:-/var/lib/water-controller}"
-readonly LOG_DIR="${LOG_DIR:-/var/log/water-controller}"
+: "${CONFIG_DIR:=/etc/water-controller}"
+: "${DATA_DIR:=/var/lib/water-controller}"
+: "${LOG_DIR:=/var/log/water-controller}"
 readonly BACKUP_DIR="${BACKUP_DIR:-/var/backups/water-controller}"
 readonly DOC_DIR="${DOC_DIR:-/usr/share/doc/water-controller}"
 

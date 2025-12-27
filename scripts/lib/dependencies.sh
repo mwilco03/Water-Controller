@@ -18,7 +18,7 @@ fi
 _WTC_DEPENDENCIES_LOADED=1
 
 # Source detection module for logging and detection functions
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+: "${SCRIPT_DIR:=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 if [ -f "$SCRIPT_DIR/detection.sh" ]; then
     # shellcheck source=detection.sh
     source "$SCRIPT_DIR/detection.sh"

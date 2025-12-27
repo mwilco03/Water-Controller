@@ -18,7 +18,7 @@ fi
 _WTC_NETWORK_STORAGE_LOADED=1
 
 # Source detection module for logging functions
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+: "${SCRIPT_DIR:=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 if [ -f "$SCRIPT_DIR/detection.sh" ]; then
     # shellcheck source=detection.sh
     source "$SCRIPT_DIR/detection.sh"
@@ -31,15 +31,15 @@ fi
 readonly NETWORK_STORAGE_VERSION="1.0.0"
 
 # Paths
-readonly DATA_DIR="/var/lib/water-controller"
-readonly LOG_DIR="/var/log/water-controller"
-readonly RUN_DIR="/run/water-controller"
-readonly CONFIG_DIR="/etc/water-controller"
+: "${DATA_DIR:=/var/lib/water-controller}"
+: "${LOG_DIR:=/var/log/water-controller}"
+: "${RUN_DIR:=/run/water-controller}"
+: "${CONFIG_DIR:=/etc/water-controller}"
 
 # Default network settings
 readonly DEFAULT_STATIC_IP="192.168.1.100"
 readonly DEFAULT_NETMASK="255.255.255.0"
-readonly DEFAULT_API_PORT=8000
+: "${DEFAULT_API_PORT:=8000}"
 
 # PROFINET ports
 readonly PROFINET_UDP_PORT=34964

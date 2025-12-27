@@ -18,7 +18,7 @@ fi
 _WTC_SERVICE_LOADED=1
 
 # Source detection module for logging functions
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+: "${SCRIPT_DIR:=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 if [ -f "$SCRIPT_DIR/detection.sh" ]; then
     # shellcheck source=detection.sh
     source "$SCRIPT_DIR/detection.sh"
@@ -31,22 +31,22 @@ fi
 readonly SERVICE_MODULE_VERSION="1.0.0"
 
 # Service configuration
-readonly SERVICE_NAME="water-controller"
+: "${SERVICE_NAME:=water-controller}"
 readonly SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
-readonly SERVICE_USER="water-controller"
-readonly SERVICE_GROUP="water-controller"
+: "${SERVICE_USER:=water-controller}"
+: "${SERVICE_GROUP:=water-controller}"
 
 # Paths
-readonly INSTALL_BASE="/opt/water-controller"
-readonly VENV_PATH="$INSTALL_BASE/venv"
-readonly APP_PATH="$INSTALL_BASE/app"
-readonly CONFIG_DIR="/etc/water-controller"
-readonly DATA_DIR="/var/lib/water-controller"
-readonly LOG_DIR="/var/log/water-controller"
-readonly RUN_DIR="/run/water-controller"
+: "${INSTALL_BASE:=/opt/water-controller}"
+: "${VENV_PATH:=$INSTALL_BASE/venv}"
+: "${APP_PATH:=$INSTALL_BASE/app}"
+: "${CONFIG_DIR:=/etc/water-controller}"
+: "${DATA_DIR:=/var/lib/water-controller}"
+: "${LOG_DIR:=/var/log/water-controller}"
+: "${RUN_DIR:=/run/water-controller}"
 
 # Default ports
-readonly DEFAULT_API_PORT=8000
+: "${DEFAULT_API_PORT:=8000}"
 
 # Timeouts
 readonly SERVICE_START_TIMEOUT=30

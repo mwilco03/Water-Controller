@@ -18,7 +18,7 @@ fi
 _WTC_BUILD_LOADED=1
 
 # Source detection module for logging and detection functions
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+: "${SCRIPT_DIR:=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 if [ -f "$SCRIPT_DIR/detection.sh" ]; then
     # shellcheck source=detection.sh
     source "$SCRIPT_DIR/detection.sh"
@@ -35,10 +35,10 @@ readonly DEFAULT_GIT_REPO="https://github.com/mwilco03/Water-Controller.git"
 readonly DEFAULT_GIT_BRANCH="main"
 
 # Installation paths
-readonly INSTALL_BASE="/opt/water-controller"
-readonly VENV_PATH="$INSTALL_BASE/venv"
-readonly APP_PATH="$INSTALL_BASE/app"
-readonly WEB_PATH="$INSTALL_BASE/web"
+: "${INSTALL_BASE:=/opt/water-controller}"
+: "${VENV_PATH:=$INSTALL_BASE/venv}"
+: "${APP_PATH:=$INSTALL_BASE/app}"
+: "${WEB_PATH:=$INSTALL_BASE/web}"
 
 # Source directory (set by acquire_source)
 SOURCE_DIR=""
