@@ -515,3 +515,301 @@ Invariant: Only one RTU can be in CONNECTING state at a time
 | `web/ui/src/app/rtus/page.tsx` | RTU list page |
 | `web/ui/src/app/rtus/[station_name]/page.tsx` | RTU detail page |
 | `web/ui/src/hooks/useWebSocket.ts` | WebSocket React hook |
+
+---
+
+## Appendix B: File-Level Mapping & Gap Analysis
+
+This section maps each review prompt to specific files, comparing the assumed structure
+with the actual implementation and providing specific line-reference findings.
+
+### Repository Structure: Expected vs Actual
+
+The mapping document assumed a simpler structure. The actual implementation is **more mature**:
+
+```
+ASSUMED:                              ACTUAL:
+web/api/                              web/api/
+├── main.py         ──────────────►   ├── app/
+└── shm_client.py                     │   ├── main.py           ✓ Thin entry point
+                                      │   ├── api/v1/           ✓ Routers separated
+                                      │   ├── schemas/          ✓ Pydantic models
+                                      │   ├── models/           ✓ SQLAlchemy ORM
+                                      │   ├── services/         ✓ Service layer exists
+                                      │   ├── persistence/      ✓ Data access layer
+                                      │   └── core/             ✓ Cross-cutting concerns
+                                      ├── shm_client.py         ✓ IPC abstraction
+                                      └── tests/                ✓ Test suite exists
+```
+
+**Gap Status:** The assumed refactor targets are **already implemented**.
+
+---
+
+### 1. Architecture & Separation of Concerns — File Mapping
+
+| File | Layer | Findings |
+|------|-------|----------|
+| `web/api/app/main.py:35-68` | Transport | ✅ Clean: Only wires routers and lifecycle |
+| `web/api/app/api/v1/__init__.py` | Router wiring | ✅ Clean: Declarative router composition |
+| `web/api/app/api/v1/rtus.py` | Route handlers | ⚠️ Some DB logic inline (lines 89-147) |
+| `web/api/app/api/v1/controls.py:110-193` | Route handlers | ✅ Clean: Uses helpers like `get_control_or_404` |
+| `web/api/app/services/profinet_client.py` | IPC | ✅ Clean abstraction with simulation mode |
+| `web/api/shm_client.py` | IPC | ✅ Low-level shared memory, well-isolated |
+| `web/ui/src/lib/api.ts` | API client | ✅ Centralized with typed interfaces |
+| `web/ui/src/hooks/useWebSocket.ts` | Transport | ✅ Clean subscription model |
+
+**Action Items:**
+- [ ] Extract remaining DB logic from `rtus.py` to `services/rtu_service.py`
+- [ ] Create facade for global singletons (`_profinet_client`, etc.)
+
+---
+
+### 2. Validation & Contract Enforcement — File Mapping
+
+| File | Purpose | Findings |
+|------|---------|----------|
+| `web/api/app/schemas/rtu.py:45-75` | RTU validation | ✅ `@field_validator` for IP, station_name |
+| `web/api/app/schemas/control.py` | Control schemas | ✅ Typed enums, `ControlCommand` model |
+| `web/api/app/schemas/common.py` | Shared types | ✅ `DataQuality`, `ErrorDetail` with hints |
+| `web/api/app/core/exceptions.py` | Error hierarchy | ✅ Custom exceptions with structured details |
+| `web/ui/src/lib/api.ts:38-164` | Frontend types | ⚠️ Manually defined, not generated |
+
+**Gap:**
+```typescript
+// web/ui/src/lib/api.ts:38-47 — Manual type definition
+export interface RTUDevice {
+  station_name: string;
+  ip_address: string;
+  // ... duplicates backend schema
+}
+```
+
+**Action Items:**
+- [ ] Add OpenAPI → TypeScript generation: `openapi-typescript /api/openapi.json`
+- [ ] Replace manual types in `api.ts` with generated imports
+
+---
+
+### 3. Idempotency & Deterministic Behavior — File Mapping
+
+| File | Operation | Retry-Safe |
+|------|-----------|-----------|
+| `web/api/app/api/v1/controls.py:110-193` | `POST /{tag}/command` | ⚠️ No idempotency key |
+| `web/api/app/api/v1/rtus.py` | `POST /` (create RTU) | ⚠️ Creates duplicate on retry |
+| `web/api/app/api/v1/alarms.py` | `POST /acknowledge` | ✅ Safe: Acknowledge is idempotent |
+| `web/ui/src/app/page.tsx:239-262` | Acknowledge action | ✅ Relies on WebSocket update |
+
+**Evidence of Issue:**
+```python
+# web/api/app/api/v1/controls.py:156-164
+audit = CommandAudit(
+    control_id=control.id,
+    # ... no idempotency_key check before insert
+)
+db.add(audit)
+```
+
+**Action Items:**
+- [ ] Add `idempotency_key` to `CommandAudit` model
+- [ ] Add `CommandLog` deduplication in `controls.py:110`
+
+---
+
+### 4. Efficiency & Resource Utilization — File Mapping
+
+| File | Pattern | Assessment |
+|------|---------|-----------|
+| `web/ui/src/app/page.tsx:46-89` | Full RTU fetch on update | ⚠️ Fetches all RTUs + inventory per RTU |
+| `web/ui/src/app/alarms/page.tsx:134-167` | Parallel fetches | ✅ `Promise.all` for active/history/shelved |
+| `web/ui/src/app/trends/page.tsx:130-146` | Sequential tag fetches | ⚠️ `for...of` loop, not parallelized |
+| `web/api/app/api/websocket.py:100-104` | Connection cleanup | ✅ Dead connections removed |
+
+**Efficiency Issue (trends/page.tsx:130-146):**
+```typescript
+for (const tagId of selectedTags) {
+  // Sequential fetches — should use Promise.all
+  const res = await fetch(`/api/v1/trends/${tagId}?...`);
+}
+```
+
+**Action Items:**
+- [ ] Parallelize trend data fetches with `Promise.all`
+- [ ] Add `?fields=` parameter for selective RTU fetches
+
+---
+
+### 5. Resilience & Fault Tolerance — File Mapping
+
+| File | Mechanism | Findings |
+|------|-----------|----------|
+| `web/api/app/services/profinet_client.py:52-79` | Simulation mode | ✅ Falls back cleanly |
+| `web/api/app/main.py:104-110` | Health endpoint | ⚠️ Minimal: Only timestamp/status |
+| `web/ui/src/hooks/useWebSocket.ts:117-121` | Reconnection | ✅ Exponential backoff |
+| `web/ui/src/app/page.tsx:381-406` | Degraded mode UI | ✅ Shows polling/disconnected states |
+| `web/ui/src/app/alarms/page.tsx:350-367` | Error display | ✅ Retry button with error details |
+
+**Health Endpoint Gap (`main.py:104-110`):**
+```python
+@app.get("/health")
+async def health_check():
+    return {
+        "status": "healthy",  # Always "healthy" — no subsystem checks
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+```
+
+**Action Items:**
+- [ ] Expand health endpoint with subsystem status
+- [ ] Add circuit breaker to `shm_client.py`
+
+---
+
+### 6. Testing Strategy — File Mapping
+
+| File | Type | Field-Runnable |
+|------|------|---------------|
+| `web/api/tests/conftest.py` | Fixtures | ✅ In-memory SQLite |
+| `web/api/tests/test_templates.py` | Unit | ✅ Schema validation tests |
+| `web/api/tests/test_pid.py` | Unit | ✅ PID algorithm tests |
+| `web/api/tests/test_backup.py` | Integration | ✅ Backup/restore flow |
+| `web/api/tests/integration/test_profinet_live.py` | Integration | ❌ Requires hardware |
+
+**Test Coverage Gaps:**
+```
+Missing:
+├── test_failure_modes.py     # Controller unavailable, SHM disconnect
+├── test_idempotency.py       # Duplicate command handling
+├── test_performance.py       # Resource limits under load
+└── web/ui/src/__tests__/     # No UI tests directory exists
+```
+
+**Action Items:**
+- [ ] Add `test_failure_modes.py` with mocked SHM client
+- [ ] Add UI component tests with React Testing Library
+
+---
+
+### 7. Dynamic Configuration — File Mapping
+
+| File | Static Assumption | Impact |
+|------|------------------|--------|
+| `web/api/app/api/v1/discover.py` | 5000ms timeout | ⚠️ Hardcoded |
+| `web/ui/src/app/page.tsx:229` | 5s poll interval | ⚠️ Fixed |
+| `web/ui/src/hooks/useWebSocket.ts:61-62` | 3000ms reconnect, 10 attempts | ⚠️ Fixed |
+| `web/ui/src/lib/api.ts:448` | 5000ms discovery timeout | ⚠️ Duplicated |
+
+**Hardcoded Value Example:**
+```typescript
+// web/ui/src/app/page.tsx:229
+pollIntervalRef.current = setInterval(fetchData, 5000);  // Fixed 5s
+```
+
+**Action Items:**
+- [ ] Create `TimeoutConfig` class with env-var overrides
+- [ ] Pass poll interval as prop/context in UI
+
+---
+
+### 8. Operational Simplicity — File Mapping
+
+| File | Operator Impact | Findings |
+|------|----------------|----------|
+| `web/api/app/core/exceptions.py` | Error codes | ⚠️ Technical: `PROFINET_ERROR` |
+| `web/api/app/core/errors.py:19-34` | Error mapping | ⚠️ HTTP codes, not operator guidance |
+| `web/ui/src/app/wizard/page.tsx` | Setup wizard | ✅ Present |
+| `web/ui/src/app/system/page.tsx` | System status | ⚠️ Requires navigation |
+| `web/ui/src/app/page.tsx:286-304` | Error state | ✅ Retry button, clear message |
+
+**Operator Message Gap:**
+```python
+# web/api/app/core/errors.py:19-34 — Maps to HTTP codes only
+ERROR_CODE_STATUS_MAP = {
+    "PROFINET_ERROR": 502,  # No human explanation
+}
+```
+
+**Action Items:**
+- [ ] Add `OPERATOR_MESSAGES` dict with plain-language descriptions
+- [ ] Surface suggested_action in UI error displays
+
+---
+
+### 9. Power Awareness — File Mapping
+
+| File | Idle Behavior | Findings |
+|------|--------------|----------|
+| `web/ui/src/app/page.tsx:225-236` | Polling always starts | ⚠️ No visibility check |
+| `web/ui/src/app/alarms/page.tsx:222-231` | Same pattern | ⚠️ No idle detection |
+| `web/ui/src/app/trends/page.tsx:209-222` | Auto-refresh toggle | ✅ User control |
+| `web/ui/src/hooks/useWebSocket.ts:184-190` | Connect on mount | ✅ Disconnect on unmount |
+
+**Power Issue (page.tsx:225-236):**
+```typescript
+useEffect(() => {
+  fetchData();
+  pollIntervalRef.current = setInterval(fetchData, 5000);
+  // No document.hidden check — polls even when tab is hidden
+  return () => { ... };
+}, [fetchData]);
+```
+
+**Action Items:**
+- [ ] Add `visibilitychange` listener to pause polling
+- [ ] Reduce poll rate when system is stable (no recent changes)
+
+---
+
+### 10. Long-Term Maintainability — File Mapping
+
+| File | Maintainability | Findings |
+|------|----------------|----------|
+| `web/api/app/models/rtu.py:30-48` | State constants | ✅ `RtuState`, `SlotStatus` classes |
+| `web/api/app/services/profinet_client.py` | Documentation | ✅ Docstrings on all methods |
+| `web/ui/src/hooks/useWebSocket.ts:21-53` | Usage docs | ✅ JSDoc with examples |
+| `web/api/app/persistence/base.py` | Schema docs | ⚠️ Schema comments minimal |
+| All | Magic numbers | ⚠️ Timeouts scattered |
+
+**Scattered Magic Numbers:**
+```python
+# Found in multiple files:
+# web/api/app/api/v1/discover.py: timeout_ms=5000
+# web/ui/src/hooks/useWebSocket.ts: reconnectInterval = 3000
+# web/ui/src/lib/api.ts: discoverRTUs(timeoutMs = 5000)
+```
+
+**Action Items:**
+- [ ] Create `constants.py` for backend timeouts
+- [ ] Create `config.ts` for frontend timeouts
+- [ ] Document state machine in `models/rtu.py`
+
+---
+
+## Appendix C: Consolidated Action Items
+
+### Immediate (High Priority)
+
+| Item | File | Line | Action |
+|------|------|------|--------|
+| 1 | `controls.py` | 110-193 | Add idempotency key check |
+| 2 | `main.py` | 104-110 | Expand health endpoint with subsystems |
+| 3 | `api.ts` | All | Generate from OpenAPI spec |
+| 4 | `exceptions.py` | All | Add OPERATOR_MESSAGES mapping |
+
+### Short-Term (Medium Priority)
+
+| Item | File | Action |
+|------|------|--------|
+| 5 | `rtus.py` | Extract DB logic to service layer |
+| 6 | `trends/page.tsx:130-146` | Parallelize with `Promise.all` |
+| 7 | `page.tsx` | Add `visibilitychange` handler |
+| 8 | `tests/` | Add `test_failure_modes.py` |
+
+### Long-Term (Low Priority)
+
+| Item | Action |
+|------|--------|
+| 9 | Create `TimeoutConfig` with env-var overrides |
+| 10 | Add circuit breaker to `shm_client.py` |
+| 11 | Document state machine invariants in code |
+| 12 | Add UI component tests |
