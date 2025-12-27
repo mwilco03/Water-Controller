@@ -224,7 +224,7 @@ create_service_user() {
         log_debug "Group already exists: $SERVICE_GROUP"
     else
         log_info "Creating group: $SERVICE_GROUP"
-        groupadd --system "$SERVICE_GROUP" || {
+        sudo groupadd --system "$SERVICE_GROUP" || {
             log_error "Failed to create group: $SERVICE_GROUP"
             return 1
         }
@@ -237,13 +237,13 @@ create_service_user() {
         # Ensure user is in the correct group
         if ! id -nG "$SERVICE_USER" | grep -qw "$SERVICE_GROUP"; then
             log_info "Adding user to group: $SERVICE_GROUP"
-            usermod -a -G "$SERVICE_GROUP" "$SERVICE_USER" || {
+            sudo usermod -a -G "$SERVICE_GROUP" "$SERVICE_USER" || {
                 log_warn "Failed to add user to group"
             }
         fi
     else
         log_info "Creating user: $SERVICE_USER"
-        useradd --system \
+        sudo useradd --system \
             --gid "$SERVICE_GROUP" \
             --no-create-home \
             --home-dir "$INSTALL_BASE" \
@@ -259,7 +259,7 @@ create_service_user() {
     if getent group dialout >/dev/null 2>&1; then
         if ! id -nG "$SERVICE_USER" | grep -qw "dialout"; then
             log_debug "Adding user to dialout group for serial access"
-            usermod -a -G dialout "$SERVICE_USER" || {
+            sudo usermod -a -G dialout "$SERVICE_USER" || {
                 log_warn "Failed to add user to dialout group"
             }
         fi
@@ -269,7 +269,7 @@ create_service_user() {
     if getent group gpio >/dev/null 2>&1; then
         if ! id -nG "$SERVICE_USER" | grep -qw "gpio"; then
             log_debug "Adding user to gpio group"
-            usermod -a -G gpio "$SERVICE_USER" || {
+            sudo usermod -a -G gpio "$SERVICE_USER" || {
                 log_warn "Failed to add user to gpio group"
             }
         fi
@@ -303,28 +303,28 @@ create_directory_structure() {
     for dir in "${app_dirs[@]}"; do
         if [ ! -d "$dir" ]; then
             log_debug "Creating directory: $dir"
-            mkdir -p "$dir" || {
+            sudo mkdir -p "$dir" || {
                 log_error "Failed to create directory: $dir"
                 failed=1
                 continue
             }
         fi
         # Set ownership: root:service-group
-        chown root:"$SERVICE_GROUP" "$dir" || {
+        sudo chown root:"$SERVICE_GROUP" "$dir" || {
             log_warn "Failed to set ownership on: $dir"
         }
         # Set permissions: rwxr-x--- (750)
-        chmod 750 "$dir" || {
+        sudo chmod 750 "$dir" || {
             log_warn "Failed to set permissions on: $dir"
         }
     done
 
     # Venv directory (may already exist from build)
     if [ -d "$VENV_PATH" ]; then
-        chown -R root:"$SERVICE_GROUP" "$VENV_PATH" || {
+        sudo chown -R root:"$SERVICE_GROUP" "$VENV_PATH" || {
             log_warn "Failed to set ownership on venv"
         }
-        chmod 750 "$VENV_PATH" || {
+        sudo chmod 750 "$VENV_PATH" || {
             log_warn "Failed to set permissions on venv"
         }
     fi
@@ -332,13 +332,13 @@ create_directory_structure() {
     # Configuration directory (sensitive, restricted access)
     if [ ! -d "$CONFIG_DIR" ]; then
         log_debug "Creating config directory: $CONFIG_DIR"
-        mkdir -p "$CONFIG_DIR" || {
+        sudo mkdir -p "$CONFIG_DIR" || {
             log_error "Failed to create config directory: $CONFIG_DIR"
             failed=1
         }
     fi
-    chown root:"$SERVICE_GROUP" "$CONFIG_DIR"
-    chmod 750 "$CONFIG_DIR"  # rwxr-x--- (group can read)
+    sudo chown root:"$SERVICE_GROUP" "$CONFIG_DIR"
+    sudo chmod 750 "$CONFIG_DIR"  # rwxr-x--- (group can read)
 
     # Data directory (service needs write access)
     local data_dirs=(
@@ -351,18 +351,18 @@ create_directory_structure() {
     for dir in "${data_dirs[@]}"; do
         if [ ! -d "$dir" ]; then
             log_debug "Creating data directory: $dir"
-            mkdir -p "$dir" || {
+            sudo mkdir -p "$dir" || {
                 log_error "Failed to create directory: $dir"
                 failed=1
                 continue
             }
         fi
         # Set ownership: service user
-        chown "$SERVICE_USER:$SERVICE_GROUP" "$dir" || {
+        sudo chown "$SERVICE_USER:$SERVICE_GROUP" "$dir" || {
             log_warn "Failed to set ownership on: $dir"
         }
         # Set permissions: rwxr-x--- (750)
-        chmod 750 "$dir" || {
+        sudo chmod 750 "$dir" || {
             log_warn "Failed to set permissions on: $dir"
         }
     done
@@ -370,37 +370,37 @@ create_directory_structure() {
     # Log directory (service needs write access)
     if [ ! -d "$LOG_DIR" ]; then
         log_debug "Creating log directory: $LOG_DIR"
-        mkdir -p "$LOG_DIR" || {
+        sudo mkdir -p "$LOG_DIR" || {
             log_error "Failed to create log directory: $LOG_DIR"
             failed=1
         }
     fi
-    chown "$SERVICE_USER:$SERVICE_GROUP" "$LOG_DIR"
-    chmod 750 "$LOG_DIR"
+    sudo chown "$SERVICE_USER:$SERVICE_GROUP" "$LOG_DIR"
+    sudo chmod 750 "$LOG_DIR"
 
     # Runtime directory (for PID files, sockets - tmpfs typically)
     # This is usually created by systemd, but we prepare it
     if [ ! -d "$RUN_DIR" ]; then
         log_debug "Creating runtime directory: $RUN_DIR"
-        mkdir -p "$RUN_DIR" || {
+        sudo mkdir -p "$RUN_DIR" || {
             log_warn "Failed to create runtime directory (may be created by systemd)"
         }
     fi
     if [ -d "$RUN_DIR" ]; then
-        chown "$SERVICE_USER:$SERVICE_GROUP" "$RUN_DIR"
-        chmod 755 "$RUN_DIR"
+        sudo chown "$SERVICE_USER:$SERVICE_GROUP" "$RUN_DIR"
+        sudo chmod 755 "$RUN_DIR"
     fi
 
     # Backup directory
     if [ ! -d "$BACKUP_BASE" ]; then
         log_debug "Creating backup directory: $BACKUP_BASE"
-        mkdir -p "$BACKUP_BASE" || {
+        sudo mkdir -p "$BACKUP_BASE" || {
             log_warn "Failed to create backup directory"
         }
     fi
     if [ -d "$BACKUP_BASE" ]; then
-        chown root:root "$BACKUP_BASE"
-        chmod 700 "$BACKUP_BASE"
+        sudo chown root:root "$BACKUP_BASE"
+        sudo chmod 700 "$BACKUP_BASE"
     fi
 
     if [ $failed -ne 0 ]; then
@@ -447,7 +447,7 @@ install_python_app() {
     log_info "Installing to: $APP_PATH"
 
     # Ensure destination directory exists
-    mkdir -p "$APP_PATH" || {
+    sudo mkdir -p "$APP_PATH" || {
         log_error "Failed to create app directory: $APP_PATH"
         return 4
     }
@@ -457,7 +457,7 @@ install_python_app() {
 
     # Use rsync if available for better control
     if command -v rsync >/dev/null 2>&1; then
-        rsync -av --delete \
+        sudo rsync -av --delete \
             --exclude='__pycache__' \
             --exclude='*.pyc' \
             --exclude='*.pyo' \
@@ -475,33 +475,33 @@ install_python_app() {
     else
         # Fallback to cp
         # First, clean destination
-        find "$APP_PATH" -mindepth 1 -delete 2>/dev/null || true
+        sudo find "$APP_PATH" -mindepth 1 -delete 2>/dev/null || true
 
         # Copy files
-        cp -r "$backend_src"/* "$APP_PATH/" 2>&1 | tee -a "$INSTALL_LOG_FILE" || {
+        sudo cp -r "$backend_src"/* "$APP_PATH/" 2>&1 | tee -a "$INSTALL_LOG_FILE" || {
             log_error "cp failed"
             return 4
         }
 
         # Remove unwanted files
-        find "$APP_PATH" -type d -name '__pycache__' -exec rm -rf {} + 2>/dev/null || true
-        find "$APP_PATH" -type f -name '*.pyc' -delete 2>/dev/null || true
-        find "$APP_PATH" -type f -name '*.pyo' -delete 2>/dev/null || true
-        find "$APP_PATH" -type d -name '.pytest_cache' -exec rm -rf {} + 2>/dev/null || true
-        find "$APP_PATH" -type d -name 'venv' -exec rm -rf {} + 2>/dev/null || true
-        find "$APP_PATH" -type d -name 'node_modules' -exec rm -rf {} + 2>/dev/null || true
+        sudo find "$APP_PATH" -type d -name '__pycache__' -exec rm -rf {} + 2>/dev/null || true
+        sudo find "$APP_PATH" -type f -name '*.pyc' -delete 2>/dev/null || true
+        sudo find "$APP_PATH" -type f -name '*.pyo' -delete 2>/dev/null || true
+        sudo find "$APP_PATH" -type d -name '.pytest_cache' -exec rm -rf {} + 2>/dev/null || true
+        sudo find "$APP_PATH" -type d -name 'venv' -exec rm -rf {} + 2>/dev/null || true
+        sudo find "$APP_PATH" -type d -name 'node_modules' -exec rm -rf {} + 2>/dev/null || true
     fi
 
     # Set ownership and permissions
     log_debug "Setting file ownership and permissions..."
-    chown -R root:"$SERVICE_GROUP" "$APP_PATH"
+    sudo chown -R root:"$SERVICE_GROUP" "$APP_PATH"
 
     # Directories: 750, Files: 640
-    find "$APP_PATH" -type d -exec chmod 750 {} \;
-    find "$APP_PATH" -type f -exec chmod 640 {} \;
+    sudo find "$APP_PATH" -type d -exec chmod 750 {} \;
+    sudo find "$APP_PATH" -type f -exec chmod 640 {} \;
 
     # Make any scripts executable
-    find "$APP_PATH" -type f -name '*.sh' -exec chmod 750 {} \;
+    sudo find "$APP_PATH" -type f -name '*.sh' -exec chmod 750 {} \;
 
     # Verify main application file exists
     local main_file=""
@@ -578,7 +578,7 @@ install_frontend() {
     log_info "Installing to: $WEB_PATH"
 
     # Ensure destination directory exists
-    mkdir -p "$WEB_PATH" || {
+    sudo mkdir -p "$WEB_PATH" || {
         log_error "Failed to create web directory: $WEB_PATH"
         return 4
     }
@@ -587,17 +587,17 @@ install_frontend() {
     log_debug "Copying frontend build files..."
 
     if command -v rsync >/dev/null 2>&1; then
-        rsync -av --delete \
+        sudo rsync -av --delete \
             "$frontend_build/" "$WEB_PATH/" 2>&1 | tee -a "$INSTALL_LOG_FILE" || {
             log_error "rsync failed"
             return 4
         }
     else
         # Clean destination first
-        find "$WEB_PATH" -mindepth 1 -delete 2>/dev/null || true
+        sudo find "$WEB_PATH" -mindepth 1 -delete 2>/dev/null || true
 
         # Copy files
-        cp -r "$frontend_build"/* "$WEB_PATH/" 2>&1 | tee -a "$INSTALL_LOG_FILE" || {
+        sudo cp -r "$frontend_build"/* "$WEB_PATH/" 2>&1 | tee -a "$INSTALL_LOG_FILE" || {
             log_error "cp failed"
             return 4
         }
@@ -605,12 +605,12 @@ install_frontend() {
 
     # Set ownership and permissions
     log_debug "Setting file ownership and permissions..."
-    chown -R root:"$SERVICE_GROUP" "$WEB_PATH"
+    sudo chown -R root:"$SERVICE_GROUP" "$WEB_PATH"
 
     # Directories: 755 (world readable for static files)
     # Files: 644
-    find "$WEB_PATH" -type d -exec chmod 755 {} \;
-    find "$WEB_PATH" -type f -exec chmod 644 {} \;
+    sudo find "$WEB_PATH" -type d -exec chmod 755 {} \;
+    sudo find "$WEB_PATH" -type f -exec chmod 644 {} \;
 
     # Verify index.html exists (for static builds)
     if [ -f "$WEB_PATH/index.html" ]; then

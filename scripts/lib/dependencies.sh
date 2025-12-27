@@ -252,46 +252,46 @@ install_system_package() {
             if [ ! -f /var/lib/apt/periodic/update-success-stamp ] || \
                [ "$(find /var/lib/apt/periodic/update-success-stamp -mmin +60 2>/dev/null)" ]; then
                 log_debug "Updating apt package lists..."
-                apt-get update -qq 2>&1 | tee -a "$INSTALL_LOG_FILE" || true
+                sudo apt-get update -qq 2>&1 | tee -a "$INSTALL_LOG_FILE" || true
             fi
 
-            DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "$package" 2>&1 | tee -a "$INSTALL_LOG_FILE"
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "$package" 2>&1 | tee -a "$INSTALL_LOG_FILE"
             result=${PIPESTATUS[0]}
             ;;
         dnf)
             if [[ "$package" == @* ]]; then
-                dnf group install -y "$package" 2>&1 | tee -a "$INSTALL_LOG_FILE"
+                sudo dnf group install -y "$package" 2>&1 | tee -a "$INSTALL_LOG_FILE"
             else
-                dnf install -y "$package" 2>&1 | tee -a "$INSTALL_LOG_FILE"
+                sudo dnf install -y "$package" 2>&1 | tee -a "$INSTALL_LOG_FILE"
             fi
             result=${PIPESTATUS[0]}
             ;;
         yum)
             if [[ "$package" == @* ]]; then
-                yum groupinstall -y "${package#@}" 2>&1 | tee -a "$INSTALL_LOG_FILE"
+                sudo yum groupinstall -y "${package#@}" 2>&1 | tee -a "$INSTALL_LOG_FILE"
             else
-                yum install -y "$package" 2>&1 | tee -a "$INSTALL_LOG_FILE"
+                sudo yum install -y "$package" 2>&1 | tee -a "$INSTALL_LOG_FILE"
             fi
             result=${PIPESTATUS[0]}
             ;;
         pacman)
             if [[ "$package" == "base-devel" ]]; then
-                pacman -S --noconfirm --needed base-devel 2>&1 | tee -a "$INSTALL_LOG_FILE"
+                sudo pacman -S --noconfirm --needed base-devel 2>&1 | tee -a "$INSTALL_LOG_FILE"
             else
-                pacman -S --noconfirm --needed "$package" 2>&1 | tee -a "$INSTALL_LOG_FILE"
+                sudo pacman -S --noconfirm --needed "$package" 2>&1 | tee -a "$INSTALL_LOG_FILE"
             fi
             result=${PIPESTATUS[0]}
             ;;
         apk)
-            apk add --no-cache "$package" 2>&1 | tee -a "$INSTALL_LOG_FILE"
+            sudo apk add --no-cache "$package" 2>&1 | tee -a "$INSTALL_LOG_FILE"
             result=${PIPESTATUS[0]}
             ;;
         zypper)
             if [[ "$package" == "-t pattern"* ]]; then
                 # shellcheck disable=SC2086
-                zypper install -y $package 2>&1 | tee -a "$INSTALL_LOG_FILE"
+                sudo zypper install -y $package 2>&1 | tee -a "$INSTALL_LOG_FILE"
             else
-                zypper install -y "$package" 2>&1 | tee -a "$INSTALL_LOG_FILE"
+                sudo zypper install -y "$package" 2>&1 | tee -a "$INSTALL_LOG_FILE"
             fi
             result=${PIPESTATUS[0]}
             ;;
@@ -490,7 +490,7 @@ install_nodejs() {
 
                 # Download and run NodeSource setup script
                 if curl -fsSL "$NODESOURCE_URL" -o /tmp/nodesource_setup.sh 2>&1 | tee -a "$INSTALL_LOG_FILE"; then
-                    bash /tmp/nodesource_setup.sh 2>&1 | tee -a "$INSTALL_LOG_FILE" || {
+                    sudo bash /tmp/nodesource_setup.sh 2>&1 | tee -a "$INSTALL_LOG_FILE" || {
                         log_error "NodeSource setup script failed"
                         rm -f /tmp/nodesource_setup.sh
                         return 1
@@ -499,7 +499,7 @@ install_nodejs() {
 
                     # Install Node.js from NodeSource
                     _wait_for_apt_lock || return 1
-                    DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs 2>&1 | tee -a "$INSTALL_LOG_FILE" || {
+                    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs 2>&1 | tee -a "$INSTALL_LOG_FILE" || {
                         log_error "Failed to install Node.js from NodeSource"
                         return 1
                     }
@@ -511,14 +511,14 @@ install_nodejs() {
             dnf)
                 # Use NodeSource or module stream
                 if dnf module list nodejs 2>/dev/null | grep -q "18"; then
-                    dnf module enable -y nodejs:18 2>&1 | tee -a "$INSTALL_LOG_FILE" || true
+                    sudo dnf module enable -y nodejs:18 2>&1 | tee -a "$INSTALL_LOG_FILE" || true
                 fi
                 install_system_package "nodejs" || return 1
                 ;;
             yum)
                 # Try NodeSource for older RHEL/CentOS
                 if curl -fsSL "$NODESOURCE_URL" -o /tmp/nodesource_setup.sh 2>&1; then
-                    bash /tmp/nodesource_setup.sh 2>&1 | tee -a "$INSTALL_LOG_FILE" || true
+                    sudo bash /tmp/nodesource_setup.sh 2>&1 | tee -a "$INSTALL_LOG_FILE" || true
                     rm -f /tmp/nodesource_setup.sh
                 fi
                 install_system_package "nodejs" || return 1
