@@ -40,6 +40,7 @@ export default function RTUStatusPage() {
     cycleTimeMs: 1000,
     pendingWrites: 0,
   });
+  const [isVisible, setIsVisible] = useState(true); // Track tab visibility for power efficiency
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   // Fetch RTU and alarm data
@@ -221,19 +222,35 @@ export default function RTUStatusPage() {
     };
   }, [subscribe, fetchData, alarms]);
 
-  // Initial data fetch and polling setup
+  // Track tab visibility for power efficiency (reduces polling when tab is hidden)
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      setIsVisible(!document.hidden);
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, []);
+
+  // Initial data fetch and polling setup (respects tab visibility)
   useEffect(() => {
     fetchData();
 
-    // Start polling initially (WebSocket will disable if it connects)
-    pollIntervalRef.current = setInterval(fetchData, 5000);
+    // Only poll when tab is visible (power efficiency for field deployments)
+    if (isVisible) {
+      // Start polling initially (WebSocket will disable if it connects)
+      pollIntervalRef.current = setInterval(fetchData, 5000);
+    }
 
     return () => {
       if (pollIntervalRef.current) {
         clearInterval(pollIntervalRef.current);
+        pollIntervalRef.current = null;
       }
     };
-  }, [fetchData]);
+  }, [fetchData, isVisible]);
 
   // Handle alarm acknowledge
   const handleAcknowledgeAlarm = async (alarmId: number | string) => {

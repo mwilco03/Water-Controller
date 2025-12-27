@@ -7,8 +7,10 @@ Main FastAPI application entry point with new modular structure.
 """
 
 import os
+import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from typing import Dict, Any
 from uuid import uuid4
 
 from fastapi import FastAPI, Request
@@ -18,11 +20,12 @@ from fastapi.responses import JSONResponse
 from .core.exceptions import ScadaException
 from .core.errors import scada_exception_handler, generic_exception_handler
 from .core.logging import setup_logging, get_logger
-from .models.base import Base, engine
+from .models.base import Base, engine, get_db
 from .api.v1 import api_router
 from .api.websocket import router as websocket_router
-from .persistence.base import initialize as init_persistence
+from .persistence.base import initialize as init_persistence, is_initialized
 from .persistence.users import ensure_default_admin
+from .services.profinet_client import get_profinet_client
 
 # Setup logging
 LOG_LEVEL = os.environ.get("WTC_LOG_LEVEL", "INFO")
@@ -102,11 +105,67 @@ app.include_router(websocket_router, prefix="/api/v1")
 
 # Health check endpoint
 @app.get("/health")
-async def health_check():
-    """Health check endpoint for load balancers."""
+async def health_check() -> Dict[str, Any]:
+    """
+    Health check endpoint with subsystem status.
+
+    Returns overall system health and individual subsystem status for:
+    - database: SQLite/SQLAlchemy connection
+    - profinet_controller: PROFINET IPC via shared memory
+    - persistence: Authentication/session storage
+
+    Useful for:
+    - Load balancer health checks
+    - Operator diagnostics
+    - Monitoring systems
+    """
+    subsystems = {}
+    overall_healthy = True
+
+    # Check database (SQLAlchemy ORM)
+    try:
+        start = time.perf_counter()
+        db = next(get_db())
+        db.execute("SELECT 1")
+        db.close()
+        latency_ms = round((time.perf_counter() - start) * 1000, 2)
+        subsystems["database"] = {"status": "ok", "latency_ms": latency_ms}
+    except Exception as e:
+        subsystems["database"] = {"status": "error", "error": str(e)}
+        overall_healthy = False
+
+    # Check PROFINET controller (shared memory IPC)
+    try:
+        profinet = get_profinet_client()
+        if profinet.is_connected():
+            controller_status = profinet.get_status()
+            if controller_status.get("simulation_mode"):
+                subsystems["profinet_controller"] = {
+                    "status": "simulation",
+                    "note": "Running without hardware controller"
+                }
+            else:
+                subsystems["profinet_controller"] = {
+                    "status": "ok",
+                    "controller_running": profinet.is_controller_running()
+                }
+        else:
+            subsystems["profinet_controller"] = {"status": "disconnected"}
+    except Exception as e:
+        subsystems["profinet_controller"] = {"status": "error", "error": str(e)}
+        # Don't mark as unhealthy - can operate in simulation mode
+
+    # Check persistence layer (SQLite direct for auth)
+    if is_initialized():
+        subsystems["persistence"] = {"status": "ok"}
+    else:
+        subsystems["persistence"] = {"status": "uninitialized"}
+        overall_healthy = False
+
     return {
-        "status": "healthy",
+        "status": "healthy" if overall_healthy else "degraded",
         "timestamp": datetime.now(timezone.utc).isoformat(),
+        "subsystems": subsystems,
     }
 
 

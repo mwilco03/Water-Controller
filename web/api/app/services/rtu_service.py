@@ -1,0 +1,210 @@
+"""
+Water Treatment Controller - RTU Service Layer
+Copyright (C) 2024
+SPDX-License-Identifier: GPL-3.0-or-later
+
+Business logic for RTU operations, extracted from route handlers.
+This service layer enables testability and reusability across endpoints.
+"""
+
+from datetime import datetime, timezone
+from typing import List, Optional
+
+from sqlalchemy.orm import Session
+
+from ..core.exceptions import (
+    RtuNotFoundError,
+    RtuAlreadyExistsError,
+    RtuNotConnectedError,
+    RtuBusyError,
+)
+from ..models.rtu import RTU, Slot, Sensor, Control, RtuState, SlotStatus
+from ..models.alarm import AlarmRule, AlarmEvent
+from ..models.historian import HistorianSample
+from ..schemas.rtu import RtuCreate, RtuStats
+
+
+class RtuService:
+    """
+    Service layer for RTU operations.
+
+    Encapsulates business logic separate from HTTP concerns,
+    enabling easier testing and reuse.
+    """
+
+    def __init__(self, db: Session):
+        self.db = db
+
+    def get_by_name(self, name: str) -> RTU:
+        """Get RTU by station name or raise 404."""
+        rtu = self.db.query(RTU).filter(RTU.station_name == name).first()
+        if not rtu:
+            raise RtuNotFoundError(name)
+        return rtu
+
+    def get_by_name_optional(self, name: str) -> Optional[RTU]:
+        """Get RTU by station name or return None."""
+        return self.db.query(RTU).filter(RTU.station_name == name).first()
+
+    def list_all(self, state_filter: Optional[str] = None) -> List[RTU]:
+        """List all RTUs with optional state filter."""
+        query = self.db.query(RTU)
+        if state_filter:
+            query = query.filter(RTU.state == state_filter.upper())
+        return query.order_by(RTU.station_name).all()
+
+    def create(self, request: RtuCreate) -> RTU:
+        """
+        Create a new RTU configuration.
+
+        Validates uniqueness of station_name and ip_address,
+        creates the RTU record, and initializes empty slots.
+        """
+        # Check for duplicate station_name
+        existing = self.db.query(RTU).filter(RTU.station_name == request.station_name).first()
+        if existing:
+            raise RtuAlreadyExistsError("station_name", request.station_name)
+
+        # Check for duplicate IP
+        existing_ip = self.db.query(RTU).filter(RTU.ip_address == request.ip_address).first()
+        if existing_ip:
+            raise RtuAlreadyExistsError("ip_address", request.ip_address)
+
+        # Create RTU
+        rtu = RTU(
+            station_name=request.station_name,
+            ip_address=request.ip_address,
+            vendor_id=request.vendor_id,
+            device_id=request.device_id,
+            slot_count=request.slot_count,
+            state=RtuState.OFFLINE,
+            state_since=datetime.now(timezone.utc),
+        )
+        self.db.add(rtu)
+        self.db.flush()  # Get the ID
+
+        # Initialize slots
+        self._initialize_slots(rtu)
+
+        self.db.commit()
+        self.db.refresh(rtu)
+        return rtu
+
+    def _initialize_slots(self, rtu: RTU) -> None:
+        """Initialize empty slots for an RTU."""
+        for i in range(1, rtu.slot_count + 1):
+            slot = Slot(
+                rtu_id=rtu.id,
+                slot_number=i,
+                status=SlotStatus.EMPTY,
+            )
+            self.db.add(slot)
+
+    def delete(self, name: str) -> dict:
+        """
+        Delete RTU and all associated resources.
+
+        RTU must be OFFLINE or ERROR.
+        Returns count of deleted resources.
+        """
+        rtu = self.get_by_name(name)
+
+        # Check state - must be offline
+        if rtu.state not in [RtuState.OFFLINE, RtuState.ERROR]:
+            raise RtuBusyError(name, rtu.state)
+
+        # Count resources for response
+        deletion_counts = self._count_resources(rtu)
+
+        # Delete RTU (cascade handles related records)
+        self.db.delete(rtu)
+        self.db.commit()
+
+        return deletion_counts
+
+    def _count_resources(self, rtu: RTU) -> dict:
+        """Count resources associated with an RTU."""
+        slot_count = self.db.query(Slot).filter(Slot.rtu_id == rtu.id).count()
+        sensor_count = self.db.query(Sensor).filter(Sensor.rtu_id == rtu.id).count()
+        control_count = self.db.query(Control).filter(Control.rtu_id == rtu.id).count()
+        alarm_count = self.db.query(AlarmRule).filter(AlarmRule.rtu_id == rtu.id).count()
+        historian_count = self.db.query(HistorianSample).join(Sensor).filter(
+            Sensor.rtu_id == rtu.id
+        ).count()
+
+        return {
+            "slots": slot_count,
+            "sensors": sensor_count,
+            "controls": control_count,
+            "alarms": alarm_count,
+            "pid_loops": 0,
+            "historian_samples": historian_count,
+        }
+
+    def get_stats(self, rtu: RTU) -> RtuStats:
+        """Build statistics for an RTU."""
+        configured_slots = self.db.query(Slot).filter(
+            Slot.rtu_id == rtu.id,
+            Slot.module_type.isnot(None)
+        ).count()
+
+        sensor_count = self.db.query(Sensor).filter(Sensor.rtu_id == rtu.id).count()
+        control_count = self.db.query(Control).filter(Control.rtu_id == rtu.id).count()
+
+        alarm_count = self.db.query(AlarmRule).filter(AlarmRule.rtu_id == rtu.id).count()
+        active_alarms = self.db.query(AlarmEvent).filter(
+            AlarmEvent.rtu_id == rtu.id,
+            AlarmEvent.state == "ACTIVE"
+        ).count()
+
+        return RtuStats(
+            slot_count=rtu.slot_count,
+            configured_slots=configured_slots,
+            sensor_count=sensor_count,
+            control_count=control_count,
+            alarm_count=alarm_count,
+            active_alarms=active_alarms,
+            pid_loop_count=0,
+        )
+
+    def connect(self, name: str) -> RTU:
+        """
+        Initiate connection to RTU.
+
+        RTU must be OFFLINE.
+        """
+        rtu = self.get_by_name(name)
+
+        if rtu.state != RtuState.OFFLINE:
+            raise RtuBusyError(name, rtu.state)
+
+        # Update state to CONNECTING
+        rtu.update_state(RtuState.CONNECTING)
+        self.db.commit()
+
+        return rtu
+
+    def disconnect(self, name: str) -> RTU:
+        """
+        Disconnect from RTU.
+
+        RTU must be RUNNING or ERROR.
+        """
+        rtu = self.get_by_name(name)
+
+        if rtu.state == RtuState.OFFLINE:
+            raise RtuNotConnectedError(name, rtu.state)
+
+        if rtu.state == RtuState.CONNECTING:
+            raise RtuBusyError(name, rtu.state)
+
+        # Update state to OFFLINE
+        rtu.update_state(RtuState.OFFLINE)
+        self.db.commit()
+
+        return rtu
+
+
+def get_rtu_service(db: Session) -> RtuService:
+    """Factory function for dependency injection."""
+    return RtuService(db)

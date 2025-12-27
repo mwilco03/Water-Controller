@@ -47,6 +47,9 @@ class CommandAudit(Base):
     rejection_reason = Column(String(256), nullable=True)
     user = Column(String(64), nullable=True)
 
+    # Idempotency support for safe retries
+    idempotency_key = Column(String(64), nullable=True, unique=True, index=True)
+
     # Additional context
     rtu_name = Column(String(32), nullable=False)
     control_tag = Column(String(32), nullable=False)

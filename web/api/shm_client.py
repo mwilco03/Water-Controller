@@ -871,6 +871,160 @@ class WtcShmClient:
         return success_count
 
 
+# ============== Circuit Breaker for Resilience ==============
+
+
+class CircuitBreaker:
+    """
+    Circuit breaker pattern for shared memory access.
+
+    Prevents cascade failures when the controller core becomes
+    unresponsive by temporarily blocking requests after repeated failures.
+
+    States:
+    - CLOSED: Normal operation, requests go through
+    - OPEN: Blocking requests, waiting for reset timeout
+    - HALF_OPEN: Testing if service recovered
+    """
+
+    def __init__(self, failure_threshold: int = 5, reset_timeout: int = 30,
+                 success_threshold: int = 3):
+        self.failure_threshold = failure_threshold
+        self.reset_timeout = reset_timeout
+        self.success_threshold = success_threshold
+
+        self._state = "CLOSED"
+        self._failures = 0
+        self._successes = 0
+        self._last_failure_time: Optional[float] = None
+
+    @property
+    def state(self) -> str:
+        """Get current circuit breaker state."""
+        return self._state
+
+    @property
+    def is_open(self) -> bool:
+        """Check if circuit is open (blocking requests)."""
+        if self._state == "OPEN":
+            # Check if reset timeout has elapsed
+            import time
+            if self._last_failure_time and \
+               (time.time() - self._last_failure_time) > self.reset_timeout:
+                self._state = "HALF_OPEN"
+                self._successes = 0
+                logger.info("Circuit breaker transitioning to HALF_OPEN")
+                return False
+            return True
+        return False
+
+    def record_success(self):
+        """Record a successful operation."""
+        if self._state == "HALF_OPEN":
+            self._successes += 1
+            if self._successes >= self.success_threshold:
+                self._state = "CLOSED"
+                self._failures = 0
+                logger.info("Circuit breaker CLOSED - service recovered")
+        elif self._state == "CLOSED":
+            # Reset failure count on success
+            self._failures = 0
+
+    def record_failure(self):
+        """Record a failed operation."""
+        import time
+        self._failures += 1
+        self._last_failure_time = time.time()
+
+        if self._state == "HALF_OPEN":
+            # Any failure in half-open state reopens the circuit
+            self._state = "OPEN"
+            logger.warning("Circuit breaker OPEN - service still failing")
+        elif self._state == "CLOSED" and self._failures >= self.failure_threshold:
+            self._state = "OPEN"
+            logger.warning(f"Circuit breaker OPEN after {self._failures} failures")
+
+
+class WtcShmClientWithCircuitBreaker:
+    """
+    Wrapper around WtcShmClient that adds circuit breaker protection.
+
+    Use this client in production to prevent cascade failures when
+    the controller core becomes unresponsive.
+    """
+
+    def __init__(self, failure_threshold: int = 5, reset_timeout: int = 30):
+        self._client = WtcShmClient()
+        self._circuit_breaker = CircuitBreaker(
+            failure_threshold=failure_threshold,
+            reset_timeout=reset_timeout
+        )
+
+    def connect(self) -> bool:
+        """Connect to shared memory with circuit breaker protection."""
+        if self._circuit_breaker.is_open:
+            logger.warning("Circuit breaker OPEN - skipping connection attempt")
+            return False
+
+        try:
+            result = self._client.connect()
+            if result:
+                self._circuit_breaker.record_success()
+            else:
+                self._circuit_breaker.record_failure()
+            return result
+        except Exception as e:
+            self._circuit_breaker.record_failure()
+            logger.error(f"Connection failed: {e}")
+            return False
+
+    def disconnect(self):
+        """Disconnect from shared memory."""
+        self._client.disconnect()
+
+    def is_connected(self) -> bool:
+        """Check if connected."""
+        return self._client.is_connected()
+
+    def get_status(self) -> Dict[str, Any]:
+        """Get system status with circuit breaker protection."""
+        if self._circuit_breaker.is_open:
+            return {"connected": False, "circuit_breaker": "OPEN"}
+
+        try:
+            result = self._client.get_status()
+            self._circuit_breaker.record_success()
+            result["circuit_breaker"] = self._circuit_breaker.state
+            return result
+        except Exception as e:
+            self._circuit_breaker.record_failure()
+            return {"connected": False, "error": str(e), "circuit_breaker": self._circuit_breaker.state}
+
+    def get_rtus(self) -> List[Dict[str, Any]]:
+        """Get RTUs with circuit breaker protection."""
+        if self._circuit_breaker.is_open:
+            return []
+
+        try:
+            result = self._client.get_rtus()
+            self._circuit_breaker.record_success()
+            return result
+        except Exception as e:
+            self._circuit_breaker.record_failure()
+            logger.error(f"get_rtus failed: {e}")
+            return []
+
+    @property
+    def circuit_breaker_state(self) -> str:
+        """Get current circuit breaker state."""
+        return self._circuit_breaker.state
+
+    # Delegate other methods to the wrapped client
+    def __getattr__(self, name):
+        """Delegate unknown attributes to wrapped client."""
+        return getattr(self._client, name)
+
+
 # Global client instance
 _client: Optional[WtcShmClient] = None
 
@@ -884,3 +1038,18 @@ def get_client() -> WtcShmClient:
     elif not _client.is_connected():
         _client.connect()
     return _client
+
+
+def get_resilient_client(failure_threshold: int = 5,
+                         reset_timeout: int = 30) -> WtcShmClientWithCircuitBreaker:
+    """
+    Get a shared memory client with circuit breaker protection.
+
+    Use this in production for resilience against controller failures.
+    """
+    client = WtcShmClientWithCircuitBreaker(
+        failure_threshold=failure_threshold,
+        reset_timeout=reset_timeout
+    )
+    client.connect()
+    return client
