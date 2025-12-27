@@ -483,7 +483,7 @@ post_upgrade_validation() {
 
     # Validation 2: API responsive
     log_info "  Testing API endpoints..."
-    if test_api_endpoints; then
+    if test_upgrade_api_endpoints; then
         echo "[PASS] API endpoints responding" >> "$report_file"
     else
         echo "[FAIL] API endpoints not responding" >> "$report_file"
@@ -608,9 +608,10 @@ verify_database_migration() {
     return 0
 }
 
-# Test critical API endpoints
+# Test critical API endpoints for upgrade validation
 # Returns: 0 if all pass, 1 if any fail
-test_api_endpoints() {
+# Note: Named differently from validation.sh test_api_endpoints to avoid conflict
+test_upgrade_api_endpoints() {
     log_info "Testing API endpoints..."
 
     local base_url="http://localhost:$API_PORT"
@@ -1110,7 +1111,7 @@ POST-UPGRADE FUNCTIONS:
     post_upgrade_validation       Run full validation suite
     compare_configuration [old]   Diff old vs new config
     verify_database_migration     Confirm DB schema updated correctly
-    test_api_endpoints            Hit critical API endpoints
+    test_upgrade_api_endpoints    Hit critical API endpoints
     test_profinet_connectivity    Verify P-Net stack responds
     verify_service_stability [s]  Monitor service for stability
     generate_upgrade_report       Create detailed upgrade summary

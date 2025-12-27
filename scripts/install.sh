@@ -107,6 +107,7 @@ load_modules() {
         "network-storage.sh"
         "validation.sh"
         "documentation.sh"
+        "upgrade.sh"
     )
 
     _early_log_info "Loading installation modules..."
@@ -950,6 +951,36 @@ step_generate_docs() {
 
 do_upgrade() {
     log_info "Starting upgrade process..."
+    local upgrade_start
+    upgrade_start=$(date -Iseconds)
+
+    # Pre-upgrade health check
+    log_info "Running pre-upgrade health check..."
+    if ! pre_upgrade_health_check; then
+        log_warn "Pre-upgrade health check found issues"
+        if ! confirm "Continue with upgrade despite issues?"; then
+            return 1
+        fi
+    fi
+
+    # Check disk space
+    log_info "Checking disk space..."
+    if ! check_disk_space_for_upgrade; then
+        log_error "Insufficient disk space for upgrade"
+        return 1
+    fi
+
+    # Check for running processes
+    if ! check_running_processes; then
+        log_warn "Critical operations may be in progress"
+        if ! confirm "Continue anyway?"; then
+            return 1
+        fi
+    fi
+
+    # Export current configuration for comparison
+    local old_config
+    old_config=$(export_current_configuration 2>/dev/null) || true
 
     # Create rollback point before upgrade
     log_info "Creating rollback point..."
@@ -981,6 +1012,29 @@ do_upgrade() {
 
     # Clean up build directory
     cleanup_build
+
+    # Post-upgrade validation
+    log_info "Running post-upgrade validation..."
+    if ! post_upgrade_validation; then
+        log_warn "Post-upgrade validation found issues"
+        log_warn "Consider rolling back if problems persist"
+    fi
+
+    # Compare configuration changes
+    if [ -n "$old_config" ] && [ -f "$old_config" ]; then
+        local config_diff
+        config_diff=$(compare_configuration "$old_config" 2>/dev/null) || true
+        if [ -n "$config_diff" ]; then
+            log_info "Configuration comparison saved to: $config_diff"
+        fi
+    fi
+
+    # Generate upgrade report
+    local report
+    report=$(generate_upgrade_report "$upgrade_start" "$(date -Iseconds)" "completed" 2>/dev/null) || true
+    if [ -n "$report" ]; then
+        log_info "Upgrade report saved to: $report"
+    fi
 
     log_info "Upgrade completed successfully"
     return 0
