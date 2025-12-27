@@ -68,6 +68,7 @@ KEEP_DATA=0
 UNATTENDED_MODE=0
 CANARY_MODE=0
 STAGED_MODE=0
+SELECTIVE_ROLLBACK_MODE=0
 
 # Network configuration
 CONFIGURE_NETWORK=0
@@ -272,6 +273,10 @@ parse_arguments() {
                 ;;
             --staged)
                 STAGED_MODE=1
+                shift
+                ;;
+            --selective-rollback)
+                SELECTIVE_ROLLBACK_MODE=1
                 shift
                 ;;
             --install-dir)
@@ -989,6 +994,22 @@ do_upgrade() {
         log_info "Mode: INTERACTIVE"
     fi
 
+    # Compare versions before upgrade
+    log_info "Checking version compatibility..."
+    compare_versions || log_warn "Could not compare versions"
+
+    # Verify network connectivity for downloads
+    log_info "Verifying network connectivity..."
+    if ! verify_network_connectivity; then
+        log_warn "Network connectivity issues detected"
+        if [ $UNATTENDED_MODE -eq 1 ]; then
+            log_error "Aborting unattended upgrade - network required"
+            return 1
+        elif ! confirm "Continue without verified network?"; then
+            return 1
+        fi
+    fi
+
     # Pre-upgrade health check
     log_info "Running pre-upgrade health check..."
     if ! pre_upgrade_health_check; then
@@ -1019,9 +1040,17 @@ do_upgrade() {
         fi
     fi
 
+    # Generate upgrade plan
+    log_info "Generating upgrade plan..."
+    generate_upgrade_plan || log_warn "Could not generate upgrade plan"
+
     # Export current configuration for comparison
     local old_config
     old_config=$(export_current_configuration 2>/dev/null) || true
+
+    # Snapshot database state for potential rollback
+    log_info "Creating database snapshot..."
+    snapshot_database_state || log_warn "Database snapshot not available"
 
     # Create rollback point before upgrade
     log_info "Creating rollback point..."
@@ -1036,6 +1065,23 @@ do_upgrade() {
         fi
     else
         log_info "Rollback point created: $ROLLBACK_POINT"
+        # Verify the rollback point is valid
+        if ! verify_rollback_point "$ROLLBACK_POINT"; then
+            log_warn "Rollback point verification failed"
+            if [ $UNATTENDED_MODE -eq 1 ]; then
+                log_error "Aborting - rollback point not reliable"
+                return 1
+            fi
+        fi
+    fi
+
+    # Canary mode: Test rollback restore capability before proceeding
+    if [ $CANARY_MODE -eq 1 ] && [ -n "$ROLLBACK_POINT" ]; then
+        log_info "CANARY MODE: Testing rollback restore capability..."
+        if ! test_rollback_restore "$ROLLBACK_POINT"; then
+            log_error "Rollback restore test failed - aborting upgrade"
+            return 1
+        fi
     fi
 
     # Staged mode: confirm before stopping service
@@ -1111,12 +1157,26 @@ do_upgrade() {
         fi
     fi
 
+    # Verify database migration if applicable
+    log_info "Verifying database migration..."
+    if ! verify_database_migration; then
+        log_warn "Database migration verification had issues"
+        if [ $UNATTENDED_MODE -eq 1 ] || [ $CANARY_MODE -eq 1 ]; then
+            log_error "Database migration failed - initiating rollback"
+            rollback_on_failure
+            return 1
+        fi
+    fi
+
     # Generate upgrade report
     local report
     report=$(generate_upgrade_report "$upgrade_start" "$(date -Iseconds)" "completed" 2>/dev/null) || true
     if [ -n "$report" ]; then
         log_info "Upgrade report saved to: $report"
     fi
+
+    # Send upgrade completion notification
+    notify_upgrade_complete || log_warn "Could not send upgrade notification"
 
     log_info "Upgrade completed successfully"
     return 0
@@ -1145,7 +1205,13 @@ rollback_on_failure() {
         if perform_rollback "$ROLLBACK_POINT"; then
             log_info "Rollback successful"
         else
-            log_error "Rollback failed - manual intervention required"
+            log_error "Standard rollback failed, trying emergency rollback..."
+            if emergency_rollback; then
+                log_info "Emergency rollback completed"
+            else
+                log_error "Emergency rollback also failed - manual intervention required"
+                log_error "Run: ./install.sh --selective-rollback for component-level recovery"
+            fi
         fi
     fi
 }
@@ -1797,7 +1863,9 @@ main() {
 
     # Execute appropriate mode
     local result=0
-    if [ $UNINSTALL_MODE -eq 1 ]; then
+    if [ $SELECTIVE_ROLLBACK_MODE -eq 1 ]; then
+        selective_rollback || result=1
+    elif [ $UNINSTALL_MODE -eq 1 ]; then
         do_uninstall || result=1
     elif [ $UPGRADE_MODE -eq 1 ]; then
         do_upgrade || result=1
