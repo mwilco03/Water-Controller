@@ -51,7 +51,8 @@ export default function RTUStatusPage() {
       ]);
 
       // Transform RTU data to RTUStatusData format
-      const rtuList = Array.isArray(rtusResponse) ? rtusResponse : rtusResponse?.rtus || [];
+      // Note: getRTUs() already returns RTUDevice[] directly
+      const rtuList = rtusResponse;
 
       // Fetch inventory for each RTU to get sensor/actuator counts
       const rtusWithInventory = await Promise.all(
@@ -88,7 +89,8 @@ export default function RTUStatusPage() {
       );
 
       // Process alarms
-      const alarmList = Array.isArray(alarmsResponse) ? alarmsResponse : alarmsResponse?.alarms || [];
+      // Note: getAlarms() already returns Alarm[] directly
+      const alarmList = alarmsResponse;
       const formattedAlarms: AlarmData[] = alarmList.map((alarm: any) => ({
         alarm_id: alarm.alarm_id || alarm.id,
         rtu_station: alarm.rtu_station || alarm.station_name,
