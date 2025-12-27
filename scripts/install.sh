@@ -744,21 +744,20 @@ step_install_files() {
         return 1
     fi
 
-    # Install Python application
-    local build_dir="${BUILD_DIR:-/tmp/water-controller-build-$$}"
-    if [ -d "$build_dir" ]; then
-        if ! install_python_app "$build_dir"; then
+    # Install Python application (uses SOURCE_DIR set by acquire_source)
+    if [ -n "$SOURCE_DIR" ] && [ -d "$SOURCE_DIR" ]; then
+        if ! install_python_app; then
             log_error "Failed to install Python application"
             return 1
         fi
 
         # Install frontend
-        if ! install_frontend "$build_dir"; then
+        if ! install_frontend; then
             log_error "Failed to install frontend"
             return 1
         fi
     elif [ $SKIP_BUILD -eq 0 ]; then
-        log_error "Build directory not found"
+        log_error "SOURCE_DIR not set or not found. Run build step first."
         return 1
     fi
 
@@ -781,16 +780,8 @@ step_configure_service() {
         return 0
     fi
 
-    # Generate service unit
-    local service_content
-    service_content=$(generate_service_unit)
-    if [ -z "$service_content" ]; then
-        log_error "Failed to generate service unit"
-        return 1
-    fi
-
-    # Install service
-    if ! install_service "$service_content"; then
+    # Install service (install_service handles generation internally)
+    if ! install_service; then
         log_error "Failed to install service"
         return 1
     fi

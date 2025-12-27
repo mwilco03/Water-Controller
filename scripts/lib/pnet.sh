@@ -22,7 +22,7 @@ fi
 _WTC_PNET_LOADED=1
 
 # Source detection module for logging functions
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+: "${SCRIPT_DIR:=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 if [ -f "$SCRIPT_DIR/detection.sh" ]; then
     # shellcheck source=detection.sh
     source "$SCRIPT_DIR/detection.sh"
@@ -213,14 +213,14 @@ install_pnet_build_deps() {
 
         # Update package list
         log_info "Updating package list..."
-        apt-get update -qq || {
+        sudo apt-get update -qq || {
             log_warn "apt-get update failed, continuing anyway"
         }
 
         # Install packages
         for pkg in "${packages[@]}"; do
             log_info "Installing $pkg..."
-            if ! apt-get install -y -qq "$pkg" 2>/dev/null; then
+            if ! sudo apt-get install -y -qq "$pkg" 2>/dev/null; then
                 log_warn "Failed to install $pkg"
             fi
         done
@@ -240,7 +240,7 @@ install_pnet_build_deps() {
 
         for pkg in "${packages[@]}"; do
             log_info "Installing $pkg..."
-            dnf install -y -q "$pkg" 2>/dev/null || log_warn "Failed to install $pkg"
+            sudo dnf install -y -q "$pkg" 2>/dev/null || log_warn "Failed to install $pkg"
         done
 
     elif command -v yum >/dev/null 2>&1; then
@@ -256,7 +256,7 @@ install_pnet_build_deps() {
 
         for pkg in "${packages[@]}"; do
             log_info "Installing $pkg..."
-            yum install -y -q "$pkg" 2>/dev/null || log_warn "Failed to install $pkg"
+            sudo yum install -y -q "$pkg" 2>/dev/null || log_warn "Failed to install $pkg"
         done
 
     else
@@ -398,18 +398,18 @@ install_pnet() {
     cd "$build_dir" || return 1
 
     # Install
-    if ! make install 2>&1; then
+    if ! sudo make install 2>&1; then
         log_error "Installation failed"
         return 1
     fi
 
     # Update library cache
     log_info "Updating library cache..."
-    ldconfig 2>/dev/null || true
+    sudo ldconfig 2>/dev/null || true
 
     # Create configuration directory
-    mkdir -p "$PNET_CONFIG_DIR"
-    chmod 755 "$PNET_CONFIG_DIR"
+    sudo mkdir -p "$PNET_CONFIG_DIR"
+    sudo chmod 755 "$PNET_CONFIG_DIR"
 
     log_info "p-net installed successfully"
     return 0
@@ -981,7 +981,7 @@ EOF
 #!/bin/bash
 # P-Net Test Runner
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+: "${SCRIPT_DIR:=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 cd "$SCRIPT_DIR"
 
 echo "Building p-net test application..."

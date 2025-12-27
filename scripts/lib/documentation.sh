@@ -18,7 +18,7 @@ fi
 _WTC_DOCUMENTATION_LOADED=1
 
 # Source detection module for logging functions
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+: "${SCRIPT_DIR:=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 if [ -f "$SCRIPT_DIR/detection.sh" ]; then
     # shellcheck source=detection.sh
     source "$SCRIPT_DIR/detection.sh"
@@ -32,9 +32,9 @@ readonly DOCUMENTATION_VERSION="1.0.0"
 
 # Paths
 readonly INSTALL_DIR="${INSTALL_DIR:-/opt/water-controller}"
-readonly CONFIG_DIR="${CONFIG_DIR:-/etc/water-controller}"
-readonly DATA_DIR="${DATA_DIR:-/var/lib/water-controller}"
-readonly LOG_DIR="${LOG_DIR:-/var/log/water-controller}"
+: "${CONFIG_DIR:=/etc/water-controller}"
+: "${DATA_DIR:=/var/lib/water-controller}"
+: "${LOG_DIR:=/var/log/water-controller}"
 readonly BACKUP_DIR="${BACKUP_DIR:-/var/backups/water-controller}"
 readonly DOC_DIR="${DOC_DIR:-/usr/share/doc/water-controller}"
 
@@ -962,7 +962,7 @@ create_rollback_point() {
     _cleanup_old_rollback_points
 
     # Create rollback directory
-    if ! mkdir -p "$rollback_path"; then
+    if ! sudo mkdir -p "$rollback_path"; then
         log_error "Failed to create rollback directory: $rollback_path"
         return 1
     fi
@@ -975,7 +975,7 @@ create_rollback_point() {
         if systemctl is-active --quiet water-controller.service 2>/dev/null; then
             service_was_running=1
             log_info "Stopping service for consistent snapshot..."
-            systemctl stop water-controller.service 2>/dev/null || true
+            sudo systemctl stop water-controller.service 2>/dev/null || true
             sleep 2
         fi
     fi
@@ -983,7 +983,7 @@ create_rollback_point() {
     # Backup application files
     if [ -d "$INSTALL_DIR" ]; then
         log_info "Backing up application directory..."
-        if tar -czf "${rollback_path}/app.tar.gz" -C "$(dirname "$INSTALL_DIR")" "$(basename "$INSTALL_DIR")" 2>/dev/null; then
+        if sudo tar -czf "${rollback_path}/app.tar.gz" -C "$(dirname "$INSTALL_DIR")" "$(basename "$INSTALL_DIR")" 2>/dev/null; then
             log_info "Application backup complete"
         else
             log_error "Failed to backup application directory"
@@ -994,7 +994,7 @@ create_rollback_point() {
     # Backup configuration
     if [ -d "$CONFIG_DIR" ]; then
         log_info "Backing up configuration directory..."
-        if tar -czf "${rollback_path}/config.tar.gz" -C "$(dirname "$CONFIG_DIR")" "$(basename "$CONFIG_DIR")" 2>/dev/null; then
+        if sudo tar -czf "${rollback_path}/config.tar.gz" -C "$(dirname "$CONFIG_DIR")" "$(basename "$CONFIG_DIR")" 2>/dev/null; then
             log_info "Configuration backup complete"
         else
             log_error "Failed to backup configuration directory"
@@ -1005,10 +1005,10 @@ create_rollback_point() {
     # Backup database
     if [ -f "${DATA_DIR}/water_controller.db" ]; then
         log_info "Backing up database..."
-        if cp -a "${DATA_DIR}/water_controller.db" "${rollback_path}/water_controller.db" 2>/dev/null; then
+        if sudo cp -a "${DATA_DIR}/water_controller.db" "${rollback_path}/water_controller.db" 2>/dev/null; then
             # Also backup WAL and SHM files if they exist
-            [ -f "${DATA_DIR}/water_controller.db-wal" ] && cp -a "${DATA_DIR}/water_controller.db-wal" "${rollback_path}/" 2>/dev/null
-            [ -f "${DATA_DIR}/water_controller.db-shm" ] && cp -a "${DATA_DIR}/water_controller.db-shm" "${rollback_path}/" 2>/dev/null
+            [ -f "${DATA_DIR}/water_controller.db-wal" ] && sudo cp -a "${DATA_DIR}/water_controller.db-wal" "${rollback_path}/" 2>/dev/null
+            [ -f "${DATA_DIR}/water_controller.db-shm" ] && sudo cp -a "${DATA_DIR}/water_controller.db-shm" "${rollback_path}/" 2>/dev/null
             log_info "Database backup complete"
         else
             log_error "Failed to backup database"
@@ -1019,7 +1019,7 @@ create_rollback_point() {
     # Backup service file
     if [ -f "/etc/systemd/system/water-controller.service" ]; then
         log_info "Backing up service file..."
-        if cp -a "/etc/systemd/system/water-controller.service" "${rollback_path}/" 2>/dev/null; then
+        if sudo cp -a "/etc/systemd/system/water-controller.service" "${rollback_path}/" 2>/dev/null; then
             log_info "Service file backup complete"
         else
             log_error "Failed to backup service file"
@@ -1028,7 +1028,7 @@ create_rollback_point() {
     fi
 
     # Create metadata file
-    cat > "${rollback_path}/metadata.json" <<EOF
+    sudo tee "${rollback_path}/metadata.json" > /dev/null <<EOF
 {
   "name": "$rollback_name",
   "timestamp": "$(_get_timestamp)",
@@ -1048,7 +1048,7 @@ EOF
     # Restart service if it was running
     if [ $service_was_running -eq 1 ]; then
         log_info "Restarting service..."
-        systemctl start water-controller.service 2>/dev/null || true
+        sudo systemctl start water-controller.service 2>/dev/null || true
     fi
 
     # Add to backup manifest
@@ -1083,7 +1083,7 @@ _cleanup_old_rollback_points() {
         find "$ROLLBACK_DIR" -maxdepth 1 -type d -name "rollback_*" 2>/dev/null | \
             sort | head -n "$to_remove" | while read -r old_rollback; do
             log_info "Removing old rollback: $(basename "$old_rollback")"
-            rm -rf "$old_rollback"
+            sudo rm -rf "$old_rollback"
         done
     fi
 }
@@ -1179,7 +1179,7 @@ perform_rollback() {
         if systemctl is-active --quiet water-controller.service 2>/dev/null; then
             service_was_running=1
             log_info "Stopping service..."
-            systemctl stop water-controller.service 2>/dev/null || true
+            sudo systemctl stop water-controller.service 2>/dev/null || true
             sleep 2
         fi
     fi
@@ -1193,18 +1193,18 @@ perform_rollback() {
 
             # Backup current app first
             if [ -d "$INSTALL_DIR" ]; then
-                mv "$INSTALL_DIR" "${INSTALL_DIR}.rollback-backup.$$" 2>/dev/null || true
+                sudo mv "$INSTALL_DIR" "${INSTALL_DIR}.rollback-backup.$$" 2>/dev/null || true
             fi
 
             # Extract
-            if tar -xzf "${rollback_path}/app.tar.gz" -C "$(dirname "$INSTALL_DIR")" 2>/dev/null; then
+            if sudo tar -xzf "${rollback_path}/app.tar.gz" -C "$(dirname "$INSTALL_DIR")" 2>/dev/null; then
                 log_info "Application restored"
-                rm -rf "${INSTALL_DIR}.rollback-backup.$$" 2>/dev/null || true
+                sudo rm -rf "${INSTALL_DIR}.rollback-backup.$$" 2>/dev/null || true
             else
                 log_error "Failed to restore application"
                 # Attempt to restore backup
                 if [ -d "${INSTALL_DIR}.rollback-backup.$$" ]; then
-                    mv "${INSTALL_DIR}.rollback-backup.$$" "$INSTALL_DIR" 2>/dev/null || true
+                    sudo mv "${INSTALL_DIR}.rollback-backup.$$" "$INSTALL_DIR" 2>/dev/null || true
                 fi
                 ((errors++))
             fi
@@ -1220,18 +1220,18 @@ perform_rollback() {
 
             # Backup current config first
             if [ -d "$CONFIG_DIR" ]; then
-                mv "$CONFIG_DIR" "${CONFIG_DIR}.rollback-backup.$$" 2>/dev/null || true
+                sudo mv "$CONFIG_DIR" "${CONFIG_DIR}.rollback-backup.$$" 2>/dev/null || true
             fi
 
             # Extract
-            if tar -xzf "${rollback_path}/config.tar.gz" -C "$(dirname "$CONFIG_DIR")" 2>/dev/null; then
+            if sudo tar -xzf "${rollback_path}/config.tar.gz" -C "$(dirname "$CONFIG_DIR")" 2>/dev/null; then
                 log_info "Configuration restored"
-                rm -rf "${CONFIG_DIR}.rollback-backup.$$" 2>/dev/null || true
+                sudo rm -rf "${CONFIG_DIR}.rollback-backup.$$" 2>/dev/null || true
             else
                 log_error "Failed to restore configuration"
                 # Attempt to restore backup
                 if [ -d "${CONFIG_DIR}.rollback-backup.$$" ]; then
-                    mv "${CONFIG_DIR}.rollback-backup.$$" "$CONFIG_DIR" 2>/dev/null || true
+                    sudo mv "${CONFIG_DIR}.rollback-backup.$$" "$CONFIG_DIR" 2>/dev/null || true
                 fi
                 ((errors++))
             fi
@@ -1247,25 +1247,25 @@ perform_rollback() {
 
             # Backup current database first
             if [ -f "${DATA_DIR}/water_controller.db" ]; then
-                cp -a "${DATA_DIR}/water_controller.db" "${DATA_DIR}/water_controller.db.rollback-backup.$$" 2>/dev/null || true
+                sudo cp -a "${DATA_DIR}/water_controller.db" "${DATA_DIR}/water_controller.db.rollback-backup.$$" 2>/dev/null || true
             fi
 
             # Copy database
-            if cp -a "${rollback_path}/water_controller.db" "${DATA_DIR}/water_controller.db" 2>/dev/null; then
+            if sudo cp -a "${rollback_path}/water_controller.db" "${DATA_DIR}/water_controller.db" 2>/dev/null; then
                 # Also restore WAL and SHM if present
-                [ -f "${rollback_path}/water_controller.db-wal" ] && cp -a "${rollback_path}/water_controller.db-wal" "${DATA_DIR}/" 2>/dev/null
-                [ -f "${rollback_path}/water_controller.db-shm" ] && cp -a "${rollback_path}/water_controller.db-shm" "${DATA_DIR}/" 2>/dev/null
+                [ -f "${rollback_path}/water_controller.db-wal" ] && sudo cp -a "${rollback_path}/water_controller.db-wal" "${DATA_DIR}/" 2>/dev/null
+                [ -f "${rollback_path}/water_controller.db-shm" ] && sudo cp -a "${rollback_path}/water_controller.db-shm" "${DATA_DIR}/" 2>/dev/null
 
                 # Set ownership
-                chown water-controller:water-controller "${DATA_DIR}/water_controller.db"* 2>/dev/null || true
+                sudo chown water-controller:water-controller "${DATA_DIR}/water_controller.db"* 2>/dev/null || true
 
                 log_info "Database restored"
-                rm -f "${DATA_DIR}/water_controller.db.rollback-backup.$$" 2>/dev/null || true
+                sudo rm -f "${DATA_DIR}/water_controller.db.rollback-backup.$$" 2>/dev/null || true
             else
                 log_error "Failed to restore database"
                 # Attempt to restore backup
                 if [ -f "${DATA_DIR}/water_controller.db.rollback-backup.$$" ]; then
-                    mv "${DATA_DIR}/water_controller.db.rollback-backup.$$" "${DATA_DIR}/water_controller.db" 2>/dev/null || true
+                    sudo mv "${DATA_DIR}/water_controller.db.rollback-backup.$$" "${DATA_DIR}/water_controller.db" 2>/dev/null || true
                 fi
                 ((errors++))
             fi
@@ -1279,8 +1279,8 @@ perform_rollback() {
         if [ -f "${rollback_path}/water-controller.service" ]; then
             log_info "Restoring service file..."
 
-            if cp -a "${rollback_path}/water-controller.service" "/etc/systemd/system/water-controller.service" 2>/dev/null; then
-                systemctl daemon-reload 2>/dev/null || true
+            if sudo cp -a "${rollback_path}/water-controller.service" "/etc/systemd/system/water-controller.service" 2>/dev/null; then
+                sudo systemctl daemon-reload 2>/dev/null || true
                 log_info "Service file restored"
             else
                 log_error "Failed to restore service file"
@@ -1294,7 +1294,7 @@ perform_rollback() {
     # Restart service if it was running
     if [ $service_was_running -eq 1 ]; then
         log_info "Starting service..."
-        if systemctl start water-controller.service 2>/dev/null; then
+        if sudo systemctl start water-controller.service 2>/dev/null; then
             sleep 3
             if systemctl is-active --quiet water-controller.service 2>/dev/null; then
                 log_info "Service started successfully"

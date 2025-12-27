@@ -18,7 +18,7 @@ fi
 _WTC_SERVICE_LOADED=1
 
 # Source detection module for logging functions
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+: "${SCRIPT_DIR:=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 if [ -f "$SCRIPT_DIR/detection.sh" ]; then
     # shellcheck source=detection.sh
     source "$SCRIPT_DIR/detection.sh"
@@ -31,22 +31,22 @@ fi
 readonly SERVICE_MODULE_VERSION="1.0.0"
 
 # Service configuration
-readonly SERVICE_NAME="water-controller"
+: "${SERVICE_NAME:=water-controller}"
 readonly SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
-readonly SERVICE_USER="water-controller"
-readonly SERVICE_GROUP="water-controller"
+: "${SERVICE_USER:=water-controller}"
+: "${SERVICE_GROUP:=water-controller}"
 
 # Paths
-readonly INSTALL_BASE="/opt/water-controller"
-readonly VENV_PATH="$INSTALL_BASE/venv"
-readonly APP_PATH="$INSTALL_BASE/app"
-readonly CONFIG_DIR="/etc/water-controller"
-readonly DATA_DIR="/var/lib/water-controller"
-readonly LOG_DIR="/var/log/water-controller"
-readonly RUN_DIR="/run/water-controller"
+: "${INSTALL_BASE:=/opt/water-controller}"
+: "${VENV_PATH:=$INSTALL_BASE/venv}"
+: "${APP_PATH:=$INSTALL_BASE/app}"
+: "${CONFIG_DIR:=/etc/water-controller}"
+: "${DATA_DIR:=/var/lib/water-controller}"
+: "${LOG_DIR:=/var/log/water-controller}"
+: "${RUN_DIR:=/run/water-controller}"
 
 # Default ports
-readonly DEFAULT_API_PORT=8000
+: "${DEFAULT_API_PORT:=8000}"
 
 # Timeouts
 readonly SERVICE_START_TIMEOUT=30
@@ -119,7 +119,9 @@ generate_service_unit() {
     local platform="${1:-generic}"
     local workers="${2:-auto}"
 
-    log_info "Generating systemd service unit..."
+    # Note: All logging in this function goes to stderr to avoid
+    # mixing with the service unit output on stdout
+    echo "[DEBUG] Generating systemd service unit..." >&2
 
     # Calculate resource limits
     _calculate_resources
@@ -137,8 +139,8 @@ generate_service_unit() {
         app_module="app.main:app"
     fi
 
-    log_debug "App module: $app_module"
-    log_debug "Workers: $workers"
+    echo "[DEBUG] App module: $app_module" >&2
+    echo "[DEBUG] Workers: $workers" >&2
 
     # Generate service unit
     cat << EOF
@@ -274,7 +276,7 @@ install_service() {
     if [ -f "$SERVICE_FILE" ]; then
         log_info "Backing up existing service file..."
         local backup_file="${SERVICE_FILE}.backup.$(date +%Y%m%d_%H%M%S)"
-        cp "$SERVICE_FILE" "$backup_file" || {
+        sudo cp "$SERVICE_FILE" "$backup_file" || {
             log_error "Failed to backup existing service file"
             return 4
         }
@@ -292,7 +294,7 @@ install_service() {
     }
 
     # Install service file
-    cp "$temp_file" "$SERVICE_FILE" || {
+    sudo cp "$temp_file" "$SERVICE_FILE" || {
         log_error "Failed to install service file"
         rm -f "$temp_file"
         return 4
@@ -300,12 +302,12 @@ install_service() {
     rm -f "$temp_file"
 
     # Set permissions
-    chmod 644 "$SERVICE_FILE"
-    chown root:root "$SERVICE_FILE"
+    sudo chmod 644 "$SERVICE_FILE"
+    sudo chown root:root "$SERVICE_FILE"
 
     # Reload systemd daemon
     log_info "Reloading systemd daemon..."
-    if ! systemctl daemon-reload; then
+    if ! sudo systemctl daemon-reload; then
         log_error "Failed to reload systemd daemon"
         return 4
     fi
@@ -331,7 +333,7 @@ install_service() {
 enable_service() {
     log_info "Enabling service..."
 
-    if ! systemctl enable "$SERVICE_NAME.service" 2>&1 | tee -a "$INSTALL_LOG_FILE"; then
+    if ! sudo systemctl enable "$SERVICE_NAME.service" 2>&1 | tee -a "$INSTALL_LOG_FILE"; then
         log_error "Failed to enable service"
         return 4
     fi
@@ -353,7 +355,7 @@ enable_service() {
 disable_service() {
     log_info "Disabling service..."
 
-    if ! systemctl disable "$SERVICE_NAME.service" 2>&1 | tee -a "$INSTALL_LOG_FILE"; then
+    if ! sudo systemctl disable "$SERVICE_NAME.service" 2>&1 | tee -a "$INSTALL_LOG_FILE"; then
         log_warn "Failed to disable service"
         return 1
     fi
@@ -378,7 +380,7 @@ start_service() {
     fi
 
     # Start the service
-    if ! systemctl start "$SERVICE_NAME.service" 2>&1 | tee -a "$INSTALL_LOG_FILE"; then
+    if ! sudo systemctl start "$SERVICE_NAME.service" 2>&1 | tee -a "$INSTALL_LOG_FILE"; then
         log_error "Failed to start service"
         _capture_service_logs
         return 4
@@ -438,7 +440,7 @@ stop_service() {
     fi
 
     # Stop the service
-    if ! systemctl stop "$SERVICE_NAME.service" 2>&1 | tee -a "$INSTALL_LOG_FILE"; then
+    if ! sudo systemctl stop "$SERVICE_NAME.service" 2>&1 | tee -a "$INSTALL_LOG_FILE"; then
         log_error "Failed to stop service"
         return 1
     fi
@@ -458,7 +460,7 @@ stop_service() {
     done
 
     log_warn "Service stop timed out, forcing..."
-    systemctl kill "$SERVICE_NAME.service" 2>/dev/null || true
+    sudo systemctl kill "$SERVICE_NAME.service" 2>/dev/null || true
 
     return 0
 }
@@ -468,7 +470,7 @@ stop_service() {
 restart_service() {
     log_info "Restarting service..."
 
-    if ! systemctl restart "$SERVICE_NAME.service" 2>&1 | tee -a "$INSTALL_LOG_FILE"; then
+    if ! sudo systemctl restart "$SERVICE_NAME.service" 2>&1 | tee -a "$INSTALL_LOG_FILE"; then
         log_error "Failed to restart service"
         _capture_service_logs
         return 4
@@ -716,12 +718,12 @@ uninstall_service() {
 
     # Remove service file
     if [ -f "$SERVICE_FILE" ]; then
-        rm -f "$SERVICE_FILE"
+        sudo rm -f "$SERVICE_FILE"
         log_debug "Removed service file: $SERVICE_FILE"
     fi
 
     # Reload daemon
-    systemctl daemon-reload 2>/dev/null || true
+    sudo systemctl daemon-reload 2>/dev/null || true
 
     log_info "Service uninstalled"
     return 0
