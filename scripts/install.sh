@@ -61,6 +61,14 @@ SKIP_NETWORK=0
 SKIP_VALIDATION=0
 UPGRADE_MODE=0
 UNINSTALL_MODE=0
+PURGE_MODE=0
+KEEP_DATA=0
+
+# Upgrade sub-modes
+UNATTENDED_MODE=0
+CANARY_MODE=0
+STAGED_MODE=0
+SELECTIVE_ROLLBACK_MODE=0
 
 # Network configuration
 CONFIGURE_NETWORK=0
@@ -105,6 +113,7 @@ load_modules() {
         "network-storage.sh"
         "validation.sh"
         "documentation.sh"
+        "upgrade.sh"
     )
 
     _early_log_info "Loading installation modules..."
@@ -146,8 +155,15 @@ USAGE:
 
 INSTALLATION MODES:
     (default)           Fresh installation
-    --upgrade           Upgrade existing installation
+    --upgrade           Upgrade existing installation (interactive)
     --uninstall         Remove installation completely
+    --uninstall --purge Remove everything including P-Net, firewall rules, udev rules
+    --uninstall --keep-data  Remove application but preserve data/config
+
+UPGRADE MODES (use with --upgrade):
+    --unattended        Fully automated, no prompts, auto-rollback on failure
+    --canary            Run extended tests after upgrade, auto-rollback if fail
+    --staged            Pause at each major step for confirmation
 
 OPTIONS:
     -h, --help          Show this help message
@@ -236,6 +252,31 @@ parse_arguments() {
                 ;;
             --uninstall)
                 UNINSTALL_MODE=1
+                shift
+                ;;
+            --purge)
+                PURGE_MODE=1
+                shift
+                ;;
+            --keep-data)
+                KEEP_DATA=1
+                shift
+                ;;
+            --unattended)
+                UNATTENDED_MODE=1
+                INTERACTIVE=0
+                shift
+                ;;
+            --canary)
+                CANARY_MODE=1
+                shift
+                ;;
+            --staged)
+                STAGED_MODE=1
+                shift
+                ;;
+            --selective-rollback)
+                SELECTIVE_ROLLBACK_MODE=1
                 shift
                 ;;
             --install-dir)
@@ -394,7 +435,8 @@ confirm() {
     local message="$1"
     local default="${2:-n}"
 
-    if [ $INTERACTIVE -eq 0 ] || [ $FORCE -eq 1 ]; then
+    # Auto-accept in non-interactive, force, or dry-run mode
+    if [ $INTERACTIVE -eq 0 ] || [ $FORCE -eq 1 ] || [ $DRY_RUN -eq 1 ]; then
         return 0
     fi
 
@@ -938,40 +980,222 @@ step_generate_docs() {
 
 do_upgrade() {
     log_info "Starting upgrade process..."
+    local upgrade_start
+    upgrade_start=$(date -Iseconds)
+
+    # Log upgrade mode
+    if [ $UNATTENDED_MODE -eq 1 ]; then
+        log_info "Mode: UNATTENDED (no prompts, auto-rollback on failure)"
+    elif [ $CANARY_MODE -eq 1 ]; then
+        log_info "Mode: CANARY (extended testing, auto-rollback if tests fail)"
+    elif [ $STAGED_MODE -eq 1 ]; then
+        log_info "Mode: STAGED (pause at each step for confirmation)"
+    else
+        log_info "Mode: INTERACTIVE"
+    fi
+
+    # Compare versions before upgrade
+    log_info "Checking version compatibility..."
+    compare_versions || log_warn "Could not compare versions"
+
+    # Verify network connectivity for downloads
+    log_info "Verifying network connectivity..."
+    if ! verify_network_connectivity; then
+        log_warn "Network connectivity issues detected"
+        if [ $UNATTENDED_MODE -eq 1 ]; then
+            log_error "Aborting unattended upgrade - network required"
+            return 1
+        elif ! confirm "Continue without verified network?"; then
+            return 1
+        fi
+    fi
+
+    # Pre-upgrade health check
+    log_info "Running pre-upgrade health check..."
+    if ! pre_upgrade_health_check; then
+        log_warn "Pre-upgrade health check found issues"
+        if [ $UNATTENDED_MODE -eq 1 ]; then
+            log_error "Aborting unattended upgrade due to health check failure"
+            return 1
+        elif ! confirm "Continue with upgrade despite issues?"; then
+            return 1
+        fi
+    fi
+
+    # Check disk space
+    log_info "Checking disk space..."
+    if ! check_disk_space_for_upgrade; then
+        log_error "Insufficient disk space for upgrade"
+        return 1
+    fi
+
+    # Check for running processes
+    if ! check_running_processes; then
+        log_warn "Critical operations may be in progress"
+        if [ $UNATTENDED_MODE -eq 1 ]; then
+            log_error "Aborting unattended upgrade - critical operations in progress"
+            return 1
+        elif ! confirm "Continue anyway?"; then
+            return 1
+        fi
+    fi
+
+    # Generate upgrade plan
+    log_info "Generating upgrade plan..."
+    generate_upgrade_plan || log_warn "Could not generate upgrade plan"
+
+    # Export current configuration for comparison
+    local old_config
+    old_config=$(export_current_configuration 2>/dev/null) || true
+
+    # Snapshot database state for potential rollback
+    log_info "Creating database snapshot..."
+    snapshot_database_state || log_warn "Database snapshot not available"
 
     # Create rollback point before upgrade
     log_info "Creating rollback point..."
     ROLLBACK_POINT=$(create_rollback_point "Pre-upgrade backup")
     if [ -z "$ROLLBACK_POINT" ]; then
         log_error "Failed to create rollback point"
-        if ! confirm "Continue without rollback capability?"; then
+        if [ $UNATTENDED_MODE -eq 1 ]; then
+            log_error "Aborting unattended upgrade - rollback point required"
+            return 1
+        elif ! confirm "Continue without rollback capability?"; then
             return 1
         fi
     else
         log_info "Rollback point created: $ROLLBACK_POINT"
+        # Verify the rollback point is valid
+        if ! verify_rollback_point "$ROLLBACK_POINT"; then
+            log_warn "Rollback point verification failed"
+            if [ $UNATTENDED_MODE -eq 1 ]; then
+                log_error "Aborting - rollback point not reliable"
+                return 1
+            fi
+        fi
+    fi
+
+    # Canary mode: Test rollback restore capability before proceeding
+    if [ $CANARY_MODE -eq 1 ] && [ -n "$ROLLBACK_POINT" ]; then
+        log_info "CANARY MODE: Testing rollback restore capability..."
+        if ! test_rollback_restore "$ROLLBACK_POINT"; then
+            log_error "Rollback restore test failed - aborting upgrade"
+            return 1
+        fi
+    fi
+
+    # Staged mode: confirm before stopping service
+    if [ $STAGED_MODE -eq 1 ]; then
+        if ! confirm "Ready to stop service and begin upgrade?"; then
+            log_info "Upgrade cancelled by user"
+            return 1
+        fi
     fi
 
     # Stop existing service
     log_info "Stopping existing service..."
     stop_service || log_warn "Service stop failed or not running"
 
-    # Run installation steps
-    step_detect_system || { rollback_on_failure; return 1; }
-    step_install_dependencies || { rollback_on_failure; return 1; }
-    step_install_pnet || { rollback_on_failure; return 1; }
-    step_build || { rollback_on_failure; return 1; }
-    step_install_files || { rollback_on_failure; return 1; }
-    step_configure_service || { rollback_on_failure; return 1; }
-    step_configure_network_storage || { rollback_on_failure; return 1; }
-    step_start_service || { rollback_on_failure; return 1; }
-    step_validate || log_warn "Validation had issues"
+    # Run installation steps with staged pauses if requested
+    _run_upgrade_step "step_detect_system" "System Detection" || { rollback_on_failure; return 1; }
+    _run_upgrade_step "step_install_dependencies" "Dependency Installation" || { rollback_on_failure; return 1; }
+    _run_upgrade_step "step_install_pnet" "P-Net Installation" || { rollback_on_failure; return 1; }
+    _run_upgrade_step "step_build" "Source Build" || { rollback_on_failure; return 1; }
+    _run_upgrade_step "step_install_files" "File Installation" || { rollback_on_failure; return 1; }
+    _run_upgrade_step "step_configure_service" "Service Configuration" || { rollback_on_failure; return 1; }
+    _run_upgrade_step "step_configure_network_storage" "Network/Storage Configuration" || { rollback_on_failure; return 1; }
+    _run_upgrade_step "step_start_service" "Service Startup" || { rollback_on_failure; return 1; }
+    _run_upgrade_step "step_validate" "Validation" || log_warn "Validation had issues"
     step_generate_docs
 
     # Clean up build directory
     cleanup_build
 
+    # Post-upgrade validation
+    log_info "Running post-upgrade validation..."
+    if ! post_upgrade_validation; then
+        log_warn "Post-upgrade validation found issues"
+        if [ $UNATTENDED_MODE -eq 1 ] || [ $CANARY_MODE -eq 1 ]; then
+            log_error "Auto-rollback triggered due to validation failure"
+            rollback_on_failure
+            return 1
+        fi
+        log_warn "Consider rolling back if problems persist"
+    fi
+
+    # Canary mode: Extended testing with stability monitoring
+    if [ $CANARY_MODE -eq 1 ]; then
+        log_info "CANARY MODE: Running extended tests..."
+
+        # Test API endpoints
+        if ! test_upgrade_api_endpoints; then
+            log_error "API endpoint test failed - initiating rollback"
+            rollback_on_failure
+            return 1
+        fi
+
+        # Test PROFINET connectivity
+        test_profinet_connectivity || log_warn "PROFINET test had issues"
+
+        # Monitor service stability for 60 seconds
+        log_info "Monitoring service stability (60 seconds)..."
+        if ! verify_service_stability 60; then
+            log_error "Service stability check failed - initiating rollback"
+            rollback_on_failure
+            return 1
+        fi
+
+        log_info "CANARY MODE: All extended tests passed"
+    fi
+
+    # Compare configuration changes
+    if [ -n "$old_config" ] && [ -f "$old_config" ]; then
+        local config_diff
+        config_diff=$(compare_configuration "$old_config" 2>/dev/null) || true
+        if [ -n "$config_diff" ]; then
+            log_info "Configuration comparison saved to: $config_diff"
+        fi
+    fi
+
+    # Verify database migration if applicable
+    log_info "Verifying database migration..."
+    if ! verify_database_migration; then
+        log_warn "Database migration verification had issues"
+        if [ $UNATTENDED_MODE -eq 1 ] || [ $CANARY_MODE -eq 1 ]; then
+            log_error "Database migration failed - initiating rollback"
+            rollback_on_failure
+            return 1
+        fi
+    fi
+
+    # Generate upgrade report
+    local report
+    report=$(generate_upgrade_report "$upgrade_start" "$(date -Iseconds)" "completed" 2>/dev/null) || true
+    if [ -n "$report" ]; then
+        log_info "Upgrade report saved to: $report"
+    fi
+
+    # Send upgrade completion notification
+    notify_upgrade_complete || log_warn "Could not send upgrade notification"
+
     log_info "Upgrade completed successfully"
     return 0
+}
+
+# Helper function to run upgrade steps with optional staging
+_run_upgrade_step() {
+    local step_func="$1"
+    local step_name="$2"
+
+    if [ $STAGED_MODE -eq 1 ]; then
+        log_info "=== STAGED: $step_name ==="
+        if ! confirm "Proceed with $step_name?"; then
+            log_info "Upgrade cancelled at: $step_name"
+            return 1
+        fi
+    fi
+
+    $step_func
 }
 
 # Rollback on failure during upgrade
@@ -981,7 +1205,13 @@ rollback_on_failure() {
         if perform_rollback "$ROLLBACK_POINT"; then
             log_info "Rollback successful"
         else
-            log_error "Rollback failed - manual intervention required"
+            log_error "Standard rollback failed, trying emergency rollback..."
+            if emergency_rollback; then
+                log_info "Emergency rollback completed"
+            else
+                log_error "Emergency rollback also failed - manual intervention required"
+                log_error "Run: ./install.sh --selective-rollback for component-level recovery"
+            fi
         fi
     fi
 }
@@ -993,95 +1223,216 @@ rollback_on_failure() {
 do_uninstall() {
     log_info "Starting uninstallation process..."
 
+    local manifest_file="/tmp/water-controller-uninstall-manifest-$(date +%Y%m%d_%H%M%S).txt"
+    # Use global arrays so helper functions can append
+    UNINSTALL_REMOVED_ITEMS=()
+    UNINSTALL_PRESERVED_ITEMS=()
+    local errors=0
+
     if [ $DRY_RUN -eq 1 ]; then
         log_info "[DRY RUN] Would uninstall Water Controller"
         log_info "  - Stop and disable service"
         log_info "  - Remove $INSTALL_DIR"
-        log_info "  - Remove $CONFIG_DIR (optional)"
-        log_info "  - Remove $DATA_DIR (optional)"
-        log_info "  - Remove service user (optional)"
+        log_info "  - Remove service file"
+        log_info "  - Remove logrotate config"
+        log_info "  - Remove tmpfs mount from fstab"
+        if [ $KEEP_DATA -eq 0 ]; then
+            log_info "  - Remove $CONFIG_DIR (with confirmation)"
+            log_info "  - Remove $DATA_DIR (with confirmation)"
+            log_info "  - Remove $LOG_DIR (with confirmation)"
+            log_info "  - Remove $BACKUP_DIR (with confirmation)"
+        else
+            log_info "  - Preserve $CONFIG_DIR (--keep-data)"
+            log_info "  - Preserve $DATA_DIR (--keep-data)"
+            log_info "  - Preserve $LOG_DIR (--keep-data)"
+            log_info "  - Preserve $BACKUP_DIR (--keep-data)"
+        fi
+        if [ $PURGE_MODE -eq 1 ]; then
+            log_info "  - Remove P-Net libraries and headers (--purge)"
+            log_info "  - Remove firewall rules (--purge)"
+            log_info "  - Remove udev rules (--purge)"
+            log_info "  - Remove network configuration (--purge)"
+        fi
         return 0
     fi
 
     # Confirm uninstallation
-    if ! confirm "This will remove the Water Controller installation. Continue?" "n"; then
+    local confirm_msg="This will remove the Water Controller installation."
+    if [ $PURGE_MODE -eq 1 ]; then
+        confirm_msg="$confirm_msg Including P-Net libraries, firewall rules, and udev rules (PURGE mode)."
+    fi
+    if [ $KEEP_DATA -eq 1 ]; then
+        confirm_msg="$confirm_msg Configuration and data will be PRESERVED."
+    fi
+    confirm_msg="$confirm_msg Continue?"
+
+    if ! confirm "$confirm_msg" "n"; then
         log_info "Uninstallation cancelled"
         return 0
     fi
 
-    local errors=0
+    # Initialize manifest
+    {
+        echo "Water Controller Uninstall Manifest"
+        echo "===================================="
+        echo "Date: $(date -Iseconds)"
+        echo "Mode: ${PURGE_MODE:+PURGE }${KEEP_DATA:+KEEP-DATA }STANDARD"
+        echo ""
+        echo "Removed Items:"
+    } > "$manifest_file"
 
     # Stop service
     log_info "Stopping service..."
     if command -v systemctl >/dev/null 2>&1; then
-        systemctl stop water-controller.service 2>/dev/null || true
-        systemctl disable water-controller.service 2>/dev/null || true
+        sudo systemctl stop water-controller.service 2>/dev/null || true
+        sudo systemctl disable water-controller.service 2>/dev/null || true
+        UNINSTALL_REMOVED_ITEMS+=("Service: water-controller.service (stopped and disabled)")
     fi
 
     # Remove service file
     log_info "Removing service file..."
-    rm -f /etc/systemd/system/water-controller.service
-    systemctl daemon-reload 2>/dev/null || true
+    if [ -f /etc/systemd/system/water-controller.service ]; then
+        sudo rm -f /etc/systemd/system/water-controller.service
+        UNINSTALL_REMOVED_ITEMS+=("File: /etc/systemd/system/water-controller.service")
+    fi
+    sudo systemctl daemon-reload 2>/dev/null || true
 
     # Remove installation directory
     log_info "Removing installation directory..."
     if [ -d "$INSTALL_DIR" ]; then
-        rm -rf "$INSTALL_DIR" || ((errors++))
+        sudo rm -rf "$INSTALL_DIR" || ((errors++))
+        UNINSTALL_REMOVED_ITEMS+=("Directory: $INSTALL_DIR")
     fi
 
-    # Ask about configuration
+    # Handle configuration based on --keep-data flag
     if [ -d "$CONFIG_DIR" ]; then
-        if confirm "Remove configuration directory ($CONFIG_DIR)?" "n"; then
-            rm -rf "$CONFIG_DIR" || ((errors++))
+        if [ $KEEP_DATA -eq 1 ]; then
+            log_info "Configuration preserved at $CONFIG_DIR (--keep-data)"
+            UNINSTALL_PRESERVED_ITEMS+=("Directory: $CONFIG_DIR")
+        elif confirm "Remove configuration directory ($CONFIG_DIR)?" "n"; then
+            sudo rm -rf "$CONFIG_DIR" || ((errors++))
+            UNINSTALL_REMOVED_ITEMS+=("Directory: $CONFIG_DIR")
         else
             log_info "Configuration preserved at $CONFIG_DIR"
+            UNINSTALL_PRESERVED_ITEMS+=("Directory: $CONFIG_DIR")
         fi
     fi
 
-    # Ask about data
+    # Handle data directory based on --keep-data flag
     if [ -d "$DATA_DIR" ]; then
-        if confirm "Remove data directory ($DATA_DIR)? This includes the database!" "n"; then
-            rm -rf "$DATA_DIR" || ((errors++))
+        if [ $KEEP_DATA -eq 1 ]; then
+            log_info "Data preserved at $DATA_DIR (--keep-data)"
+            UNINSTALL_PRESERVED_ITEMS+=("Directory: $DATA_DIR")
+        elif confirm "Remove data directory ($DATA_DIR)? This includes the database!" "n"; then
+            sudo rm -rf "$DATA_DIR" || ((errors++))
+            UNINSTALL_REMOVED_ITEMS+=("Directory: $DATA_DIR")
         else
             log_info "Data preserved at $DATA_DIR"
+            UNINSTALL_PRESERVED_ITEMS+=("Directory: $DATA_DIR")
         fi
     fi
 
-    # Ask about logs
+    # Handle logs based on --keep-data flag
     if [ -d "$LOG_DIR" ]; then
-        if confirm "Remove log directory ($LOG_DIR)?" "n"; then
-            rm -rf "$LOG_DIR" || ((errors++))
+        if [ $KEEP_DATA -eq 1 ]; then
+            log_info "Logs preserved at $LOG_DIR (--keep-data)"
+            UNINSTALL_PRESERVED_ITEMS+=("Directory: $LOG_DIR")
+        elif confirm "Remove log directory ($LOG_DIR)?" "n"; then
+            sudo rm -rf "$LOG_DIR" || ((errors++))
+            UNINSTALL_REMOVED_ITEMS+=("Directory: $LOG_DIR")
         else
             log_info "Logs preserved at $LOG_DIR"
+            UNINSTALL_PRESERVED_ITEMS+=("Directory: $LOG_DIR")
         fi
     fi
 
-    # Ask about backups
+    # Handle backups based on --keep-data flag
     if [ -d "$BACKUP_DIR" ]; then
-        if confirm "Remove backup directory ($BACKUP_DIR)?" "n"; then
-            rm -rf "$BACKUP_DIR" || ((errors++))
+        if [ $KEEP_DATA -eq 1 ]; then
+            log_info "Backups preserved at $BACKUP_DIR (--keep-data)"
+            UNINSTALL_PRESERVED_ITEMS+=("Directory: $BACKUP_DIR")
+        elif confirm "Remove backup directory ($BACKUP_DIR)?" "n"; then
+            sudo rm -rf "$BACKUP_DIR" || ((errors++))
+            UNINSTALL_REMOVED_ITEMS+=("Directory: $BACKUP_DIR")
         else
             log_info "Backups preserved at $BACKUP_DIR"
+            UNINSTALL_PRESERVED_ITEMS+=("Directory: $BACKUP_DIR")
         fi
     fi
 
-    # Ask about service user
-    if id water-controller >/dev/null 2>&1; then
-        if confirm "Remove service user (water-controller)?" "n"; then
-            userdel water-controller 2>/dev/null || ((errors++))
-        else
-            log_info "Service user preserved"
+    # Ask about service user (only if not keeping data)
+    if [ $KEEP_DATA -eq 0 ]; then
+        if id water-controller >/dev/null 2>&1; then
+            if confirm "Remove service user (water-controller)?" "n"; then
+                sudo userdel water-controller 2>/dev/null || ((errors++))
+                UNINSTALL_REMOVED_ITEMS+=("User: water-controller")
+            else
+                log_info "Service user preserved"
+                UNINSTALL_PRESERVED_ITEMS+=("User: water-controller")
+            fi
         fi
     fi
 
     # Remove logrotate config
-    rm -f /etc/logrotate.d/water-controller 2>/dev/null || true
+    if [ -f /etc/logrotate.d/water-controller ]; then
+        sudo rm -f /etc/logrotate.d/water-controller 2>/dev/null || true
+        UNINSTALL_REMOVED_ITEMS+=("File: /etc/logrotate.d/water-controller")
+    fi
 
-    # Remove tmpfs mount
+    # Remove tmpfs mount from fstab
     if grep -q "water-controller" /etc/fstab 2>/dev/null; then
         log_info "Removing tmpfs mount from fstab..."
-        sed -i '/water-controller/d' /etc/fstab 2>/dev/null || true
+        sudo sed -i '/water-controller/d' /etc/fstab 2>/dev/null || true
+        UNINSTALL_REMOVED_ITEMS+=("Fstab entry: water-controller tmpfs")
     fi
+
+    # Unmount tmpfs if mounted
+    if mountpoint -q /run/water-controller 2>/dev/null; then
+        sudo umount /run/water-controller 2>/dev/null || true
+        UNINSTALL_REMOVED_ITEMS+=("Mount: /run/water-controller")
+    fi
+
+    # =========================================================================
+    # PURGE MODE: Remove P-Net, firewall rules, udev rules, network config
+    # =========================================================================
+    if [ $PURGE_MODE -eq 1 ]; then
+        log_info "PURGE MODE: Removing additional components..."
+
+        # Remove P-Net libraries
+        _uninstall_pnet_libraries || ((errors++))
+
+        # Remove firewall rules
+        _uninstall_firewall_rules || ((errors++))
+
+        # Remove udev rules
+        _uninstall_udev_rules || ((errors++))
+
+        # Remove network configuration (optional, with confirmation)
+        if confirm "Remove Water Controller network configuration (static IP, etc.)?" "n"; then
+            _uninstall_network_config || ((errors++))
+        else
+            UNINSTALL_PRESERVED_ITEMS+=("Network configuration")
+        fi
+    fi
+
+    # Write manifest
+    for item in "${UNINSTALL_REMOVED_ITEMS[@]}"; do
+        echo "  - $item" >> "$manifest_file"
+    done
+
+    if [ ${#UNINSTALL_PRESERVED_ITEMS[@]} -gt 0 ]; then
+        echo "" >> "$manifest_file"
+        echo "Preserved Items:" >> "$manifest_file"
+        for item in "${UNINSTALL_PRESERVED_ITEMS[@]}"; do
+            echo "  - $item" >> "$manifest_file"
+        done
+    fi
+
+    echo "" >> "$manifest_file"
+    echo "Errors: $errors" >> "$manifest_file"
+    echo "Manifest saved to: $manifest_file" >> "$manifest_file"
+
+    log_info "Uninstall manifest saved to: $manifest_file"
 
     if [ $errors -eq 0 ]; then
         log_info "Uninstallation completed successfully"
@@ -1089,6 +1440,252 @@ do_uninstall() {
         log_warn "Uninstallation completed with $errors errors"
     fi
 
+    return 0
+}
+
+# =============================================================================
+# Uninstall Helper Functions
+# =============================================================================
+
+# Remove P-Net libraries and related files
+_uninstall_pnet_libraries() {
+    log_info "Removing P-Net libraries..."
+    local removed=0
+
+    # P-Net library locations
+    local pnet_lib_paths=(
+        "/usr/local/lib/libpnet.so"
+        "/usr/local/lib/libpnet.so.*"
+        "/usr/local/lib/libpnet.a"
+        "/usr/lib/libpnet.so"
+        "/usr/lib/libpnet.so.*"
+        "/usr/lib/libpnet.a"
+    )
+
+    # Remove library files
+    for pattern in "${pnet_lib_paths[@]}"; do
+        # shellcheck disable=SC2086
+        for lib_file in $pattern; do
+            if [ -f "$lib_file" ]; then
+                sudo rm -f "$lib_file" 2>/dev/null && {
+                    log_info "  Removed: $lib_file"
+                    UNINSTALL_REMOVED_ITEMS+=("P-Net: $lib_file")
+                    ((removed++))
+                }
+            fi
+        done
+    done
+
+    # Remove P-Net headers
+    local pnet_include_paths=(
+        "/usr/local/include/pnet"
+        "/usr/local/include/pnet_api.h"
+        "/usr/include/pnet"
+        "/usr/include/pnet_api.h"
+    )
+
+    for path in "${pnet_include_paths[@]}"; do
+        if [ -e "$path" ]; then
+            sudo rm -rf "$path" 2>/dev/null && {
+                log_info "  Removed: $path"
+                UNINSTALL_REMOVED_ITEMS+=("P-Net: $path")
+                ((removed++))
+            }
+        fi
+    done
+
+    # Remove P-Net config directory
+    if [ -d "/etc/pnet" ]; then
+        sudo rm -rf /etc/pnet 2>/dev/null && {
+            log_info "  Removed: /etc/pnet"
+            UNINSTALL_REMOVED_ITEMS+=("P-Net: /etc/pnet")
+            ((removed++))
+        }
+    fi
+
+    # Remove P-Net sample application
+    if [ -d "/opt/pnet-sample" ]; then
+        sudo rm -rf /opt/pnet-sample 2>/dev/null && {
+            log_info "  Removed: /opt/pnet-sample"
+            UNINSTALL_REMOVED_ITEMS+=("P-Net: /opt/pnet-sample")
+            ((removed++))
+        }
+    fi
+
+    # Remove P-Net pkg-config file
+    local pkgconfig_paths=(
+        "/usr/local/lib/pkgconfig/pnet.pc"
+        "/usr/lib/pkgconfig/pnet.pc"
+    )
+
+    for pc_file in "${pkgconfig_paths[@]}"; do
+        if [ -f "$pc_file" ]; then
+            sudo rm -f "$pc_file" 2>/dev/null && {
+                log_info "  Removed: $pc_file"
+                UNINSTALL_REMOVED_ITEMS+=("P-Net: $pc_file")
+                ((removed++))
+            }
+        fi
+    done
+
+    # Update library cache
+    if [ $removed -gt 0 ]; then
+        sudo ldconfig 2>/dev/null || true
+        log_info "  Updated library cache (ldconfig)"
+    fi
+
+    log_info "P-Net cleanup complete ($removed items removed)"
+    return 0
+}
+
+# Remove firewall rules added by Water Controller
+_uninstall_firewall_rules() {
+    log_info "Removing firewall rules..."
+
+    # Detect and clean up based on firewall system
+    if command -v ufw >/dev/null 2>&1 && sudo ufw status 2>/dev/null | grep -q "Status: active"; then
+        log_info "  Cleaning UFW rules..."
+        sudo ufw delete allow 8000/tcp 2>/dev/null || true
+        sudo ufw delete allow 34964/udp 2>/dev/null || true
+        sudo ufw delete allow 34962:34963/tcp 2>/dev/null || true
+        UNINSTALL_REMOVED_ITEMS+=("Firewall: UFW rules (ports 8000, 34962-34964)")
+        log_info "  UFW rules removed"
+
+    elif command -v firewall-cmd >/dev/null 2>&1 && systemctl is-active firewalld >/dev/null 2>&1; then
+        log_info "  Cleaning firewalld rules..."
+        sudo firewall-cmd --permanent --remove-port=8000/tcp 2>/dev/null || true
+        sudo firewall-cmd --permanent --remove-port=34964/udp 2>/dev/null || true
+        sudo firewall-cmd --permanent --remove-port=34962-34963/tcp 2>/dev/null || true
+        sudo firewall-cmd --reload 2>/dev/null || true
+        UNINSTALL_REMOVED_ITEMS+=("Firewall: firewalld rules (ports 8000, 34962-34964)")
+        log_info "  firewalld rules removed"
+
+    elif command -v nft >/dev/null 2>&1; then
+        log_info "  Cleaning nftables rules..."
+        sudo nft delete table inet water_controller 2>/dev/null || true
+        if [ -f /etc/nftables.d/water-controller.nft ]; then
+            sudo rm -f /etc/nftables.d/water-controller.nft 2>/dev/null || true
+            UNINSTALL_REMOVED_ITEMS+=("Firewall: /etc/nftables.d/water-controller.nft")
+            log_info "  Removed: /etc/nftables.d/water-controller.nft"
+        fi
+        UNINSTALL_REMOVED_ITEMS+=("Firewall: nftables table water_controller")
+        log_info "  nftables rules removed"
+
+    elif command -v iptables >/dev/null 2>&1; then
+        log_info "  Cleaning iptables rules..."
+        sudo iptables -D INPUT -p tcp --dport 8000 -j ACCEPT 2>/dev/null || true
+        sudo iptables -D INPUT -p udp --dport 34964 -j ACCEPT 2>/dev/null || true
+        sudo iptables -D INPUT -p tcp --dport 34962:34963 -j ACCEPT 2>/dev/null || true
+        if command -v iptables-save >/dev/null 2>&1; then
+            if [ -d /etc/iptables ]; then
+                sudo iptables-save | sudo tee /etc/iptables/rules.v4 > /dev/null 2>/dev/null
+            elif command -v netfilter-persistent >/dev/null 2>&1; then
+                sudo netfilter-persistent save 2>/dev/null || true
+            fi
+        fi
+        UNINSTALL_REMOVED_ITEMS+=("Firewall: iptables rules (ports 8000, 34962-34964)")
+        log_info "  iptables rules removed"
+    else
+        log_info "  No active firewall detected, skipping"
+    fi
+
+    return 0
+}
+
+# Remove udev rules added by Water Controller
+_uninstall_udev_rules() {
+    log_info "Removing udev rules..."
+
+    local udev_rules=(
+        "/etc/udev/rules.d/99-water-controller-network.rules"
+        "/etc/udev/rules.d/99-water-controller.rules"
+        "/etc/udev/rules.d/99-pnet.rules"
+    )
+
+    local removed=0
+    for rule_file in "${udev_rules[@]}"; do
+        if [ -f "$rule_file" ]; then
+            sudo rm -f "$rule_file" 2>/dev/null && {
+                log_info "  Removed: $rule_file"
+                UNINSTALL_REMOVED_ITEMS+=("udev: $rule_file")
+                ((removed++))
+            }
+        fi
+    done
+
+    # Reload udev rules if any were removed
+    if [ $removed -gt 0 ]; then
+        sudo udevadm control --reload-rules 2>/dev/null || true
+        sudo udevadm trigger 2>/dev/null || true
+        log_info "  Reloaded udev rules"
+    fi
+
+    log_info "udev cleanup complete ($removed rules removed)"
+    return 0
+}
+
+# Remove network configuration added by Water Controller
+_uninstall_network_config() {
+    log_info "Removing network configuration..."
+
+    # Remove systemd-networkd config
+    local networkd_configs=(
+        "/etc/systemd/network/10-water-controller-*.network"
+    )
+    for pattern in "${networkd_configs[@]}"; do
+        # shellcheck disable=SC2086
+        for config_file in $pattern; do
+            if [ -f "$config_file" ]; then
+                sudo rm -f "$config_file" 2>/dev/null && {
+                    log_info "  Removed: $config_file"
+                    UNINSTALL_REMOVED_ITEMS+=("Network: $config_file")
+                }
+            fi
+        done
+    done
+
+    # Remove NetworkManager connections
+    if command -v nmcli >/dev/null 2>&1; then
+        local nm_connections
+        nm_connections=$(nmcli -t -f NAME connection show 2>/dev/null | grep "water-controller")
+        while IFS= read -r conn; do
+            if [ -n "$conn" ]; then
+                sudo nmcli connection delete "$conn" 2>/dev/null && {
+                    log_info "  Removed NetworkManager connection: $conn"
+                    UNINSTALL_REMOVED_ITEMS+=("Network: NetworkManager connection $conn")
+                }
+            fi
+        done <<< "$nm_connections"
+    fi
+
+    # Remove dhcpcd configuration entries
+    if [ -f /etc/dhcpcd.conf ]; then
+        if grep -q "Water-Controller" /etc/dhcpcd.conf 2>/dev/null; then
+            log_info "  Cleaning dhcpcd.conf..."
+            sudo cp /etc/dhcpcd.conf /etc/dhcpcd.conf.pre-uninstall 2>/dev/null
+            sudo sed -i '/# Water-Controller/,/^interface\|^$/d' /etc/dhcpcd.conf 2>/dev/null || true
+            UNINSTALL_REMOVED_ITEMS+=("Network: dhcpcd.conf entries (backup saved)")
+            log_info "  Cleaned dhcpcd.conf (backup: /etc/dhcpcd.conf.pre-uninstall)"
+        fi
+    fi
+
+    # Remove interfaces.d config
+    local interfaces_d_configs=(
+        "/etc/network/interfaces.d/water-controller-*"
+    )
+    for pattern in "${interfaces_d_configs[@]}"; do
+        # shellcheck disable=SC2086
+        for config_file in $pattern; do
+            if [ -f "$config_file" ]; then
+                sudo rm -f "$config_file" 2>/dev/null && {
+                    log_info "  Removed: $config_file"
+                    UNINSTALL_REMOVED_ITEMS+=("Network: $config_file")
+                }
+            fi
+        done
+    done
+
+    log_info "Network configuration cleanup complete"
     return 0
 }
 
@@ -1266,7 +1863,9 @@ main() {
 
     # Execute appropriate mode
     local result=0
-    if [ $UNINSTALL_MODE -eq 1 ]; then
+    if [ $SELECTIVE_ROLLBACK_MODE -eq 1 ]; then
+        selective_rollback || result=1
+    elif [ $UNINSTALL_MODE -eq 1 ]; then
         do_uninstall || result=1
     elif [ $UPGRADE_MODE -eq 1 ]; then
         do_upgrade || result=1
