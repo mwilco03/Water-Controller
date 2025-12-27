@@ -998,28 +998,16 @@ do_upgrade() {
     log_info "Checking version compatibility..."
     compare_versions || log_warn "Could not compare versions"
 
-    # Verify network connectivity for downloads
+    # Verify network connectivity for downloads (informational only, non-blocking)
     log_info "Verifying network connectivity..."
     if ! verify_network_connectivity; then
-        log_warn "Network connectivity issues detected"
-        if [ $UNATTENDED_MODE -eq 1 ]; then
-            log_error "Aborting unattended upgrade - network required"
-            return 1
-        elif ! confirm "Continue without verified network?"; then
-            return 1
-        fi
+        log_warn "Network connectivity issues detected - continuing anyway"
     fi
 
-    # Pre-upgrade health check
+    # Pre-upgrade health check (informational only, non-blocking)
     log_info "Running pre-upgrade health check..."
     if ! pre_upgrade_health_check; then
-        log_warn "Pre-upgrade health check found issues"
-        if [ $UNATTENDED_MODE -eq 1 ]; then
-            log_error "Aborting unattended upgrade due to health check failure"
-            return 1
-        elif ! confirm "Continue with upgrade despite issues?"; then
-            return 1
-        fi
+        log_warn "Pre-upgrade health check found issues - continuing anyway"
     fi
 
     # Check disk space
@@ -1029,15 +1017,9 @@ do_upgrade() {
         return 1
     fi
 
-    # Check for running processes
+    # Check for running processes (informational only, non-blocking)
     if ! check_running_processes; then
-        log_warn "Critical operations may be in progress"
-        if [ $UNATTENDED_MODE -eq 1 ]; then
-            log_error "Aborting unattended upgrade - critical operations in progress"
-            return 1
-        elif ! confirm "Continue anyway?"; then
-            return 1
-        fi
+        log_warn "Critical operations may be in progress - continuing anyway"
     fi
 
     # Generate upgrade plan
@@ -1052,26 +1034,16 @@ do_upgrade() {
     log_info "Creating database snapshot..."
     snapshot_database_state || log_warn "Database snapshot not available"
 
-    # Create rollback point before upgrade
+    # Create rollback point before upgrade (best effort, non-blocking)
     log_info "Creating rollback point..."
     ROLLBACK_POINT=$(create_rollback_point "Pre-upgrade backup")
     if [ -z "$ROLLBACK_POINT" ]; then
-        log_error "Failed to create rollback point"
-        if [ $UNATTENDED_MODE -eq 1 ]; then
-            log_error "Aborting unattended upgrade - rollback point required"
-            return 1
-        elif ! confirm "Continue without rollback capability?"; then
-            return 1
-        fi
+        log_warn "Failed to create rollback point - continuing without rollback capability"
     else
         log_info "Rollback point created: $ROLLBACK_POINT"
         # Verify the rollback point is valid
         if ! verify_rollback_point "$ROLLBACK_POINT"; then
-            log_warn "Rollback point verification failed"
-            if [ $UNATTENDED_MODE -eq 1 ]; then
-                log_error "Aborting - rollback point not reliable"
-                return 1
-            fi
+            log_warn "Rollback point verification failed - rollback may not work"
         fi
     fi
 
