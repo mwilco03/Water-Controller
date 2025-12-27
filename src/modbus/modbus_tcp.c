@@ -426,8 +426,6 @@ wtc_result_t modbus_tcp_connect(modbus_tcp_t *ctx, const char *host, uint16_t po
         return WTC_ERROR_IO;
     }
 
-    configure_socket(ctx->client_fd);
-
     struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
@@ -440,12 +438,66 @@ wtc_result_t modbus_tcp_connect(modbus_tcp_t *ctx, const char *host, uint16_t po
         return WTC_ERROR_INVALID_PARAM;
     }
 
-    if (connect(ctx->client_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-        LOG_ERROR(LOG_TAG, "Failed to connect to %s:%d", host, port);
+    /* MB-H1 fix: Non-blocking connect with configurable timeout */
+    set_nonblocking(ctx->client_fd);
+
+    int res = connect(ctx->client_fd, (struct sockaddr *)&addr, sizeof(addr));
+    if (res < 0 && errno != EINPROGRESS) {
+        LOG_ERROR(LOG_TAG, "Failed to connect to %s:%d: %s", host, port, strerror(errno));
         close(ctx->client_fd);
         ctx->client_fd = -1;
         return WTC_ERROR_IO;
     }
+
+    if (res < 0) {
+        /* Connection in progress - wait with timeout */
+        fd_set write_fds, error_fds;
+        FD_ZERO(&write_fds);
+        FD_ZERO(&error_fds);
+        FD_SET(ctx->client_fd, &write_fds);
+        FD_SET(ctx->client_fd, &error_fds);
+
+        struct timeval tv;
+        uint32_t timeout_ms = ctx->config.timeout_ms > 0 ? ctx->config.timeout_ms : 5000;
+        tv.tv_sec = timeout_ms / 1000;
+        tv.tv_usec = (timeout_ms % 1000) * 1000;
+
+        int sel_res = select(ctx->client_fd + 1, NULL, &write_fds, &error_fds, &tv);
+
+        if (sel_res <= 0) {
+            LOG_ERROR(LOG_TAG, "Connection timeout to %s:%d", host, port);
+            close(ctx->client_fd);
+            ctx->client_fd = -1;
+            return WTC_ERROR_TIMEOUT;
+        }
+
+        if (FD_ISSET(ctx->client_fd, &error_fds)) {
+            int error = 0;
+            socklen_t len = sizeof(error);
+            getsockopt(ctx->client_fd, SOL_SOCKET, SO_ERROR, &error, &len);
+            LOG_ERROR(LOG_TAG, "Connection error to %s:%d: %s", host, port, strerror(error));
+            close(ctx->client_fd);
+            ctx->client_fd = -1;
+            return WTC_ERROR_IO;
+        }
+
+        /* Check if connection succeeded */
+        int error = 0;
+        socklen_t len = sizeof(error);
+        if (getsockopt(ctx->client_fd, SOL_SOCKET, SO_ERROR, &error, &len) < 0 || error != 0) {
+            LOG_ERROR(LOG_TAG, "Connection failed to %s:%d: %s", host, port, strerror(error));
+            close(ctx->client_fd);
+            ctx->client_fd = -1;
+            return WTC_ERROR_IO;
+        }
+    }
+
+    /* Restore blocking mode and configure socket */
+    int flags = fcntl(ctx->client_fd, F_GETFL, 0);
+    if (flags >= 0) {
+        fcntl(ctx->client_fd, F_SETFL, flags & ~O_NONBLOCK);
+    }
+    configure_socket(ctx->client_fd);
 
     LOG_INFO(LOG_TAG, "Connected to %s:%d", host, port);
     return WTC_OK;

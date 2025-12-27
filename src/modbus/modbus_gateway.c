@@ -633,10 +633,72 @@ wtc_result_t modbus_gateway_stop(modbus_gateway_t *gw) {
     return WTC_OK;
 }
 
+/* MB-C2 fix: Cache for downstream polled values */
+#define DOWNSTREAM_CACHE_SIZE 256
+
+typedef struct {
+    uint16_t start_addr;
+    uint16_t count;
+    uint16_t values[128];
+    uint64_t last_update_ms;
+    bool valid;
+} downstream_cache_entry_t;
+
+static downstream_cache_entry_t downstream_cache[MAX_MODBUS_CLIENTS];
+
+/* Poll a single downstream client */
+static void poll_downstream_client(modbus_gateway_t *gw, int client_idx) {
+    downstream_client_t *cli = &gw->clients[client_idx];
+
+    /* Find registers mapped to this downstream client */
+    register_map_t *rm = gw->register_map;
+    if (!rm) return;
+
+    /* Poll holding registers in configured ranges */
+    uint16_t start_addr = 0;
+    uint16_t quantity = 10; /* Default poll 10 registers at a time */
+
+    uint16_t values[128];
+    wtc_result_t res = WTC_ERROR_NOT_FOUND;
+
+    if (cli->tcp && cli->connected) {
+        res = modbus_tcp_read_holding_registers(
+            cli->tcp, cli->config.slave_addr, start_addr, quantity, values);
+    } else if (cli->rtu && cli->connected) {
+        res = modbus_rtu_read_holding_registers(
+            cli->rtu, cli->config.slave_addr, start_addr, quantity, values);
+    }
+
+    if (res == WTC_OK) {
+        /* Update cache */
+        downstream_cache[client_idx].start_addr = start_addr;
+        downstream_cache[client_idx].count = quantity;
+        memcpy(downstream_cache[client_idx].values, values, quantity * sizeof(uint16_t));
+        downstream_cache[client_idx].last_update_ms = time_get_ms();
+        downstream_cache[client_idx].valid = true;
+
+        cli->consecutive_errors = 0;
+    } else {
+        cli->consecutive_errors++;
+        cli->last_error_ms = time_get_ms();
+
+        /* Mark client as disconnected after 3 consecutive errors */
+        if (cli->consecutive_errors >= 3) {
+            cli->connected = false;
+            downstream_cache[client_idx].valid = false;
+            LOG_WARN(LOG_TAG, "Downstream %s marked offline after %d errors",
+                     cli->config.name, cli->consecutive_errors);
+        }
+    }
+}
+
 wtc_result_t modbus_gateway_process(modbus_gateway_t *gw) {
     if (!gw || !gw->running) return WTC_ERROR_INVALID_PARAM;
 
     uint64_t now = time_get_ms();
+
+    /* MB-H2 fix: Take lock for entire iteration to prevent race conditions */
+    pthread_mutex_lock(&gw->lock);
 
     /* Poll downstream devices */
     for (int i = 0; i < gw->client_count; i++) {
@@ -647,7 +709,9 @@ wtc_result_t modbus_gateway_process(modbus_gateway_t *gw) {
         /* Reconnect if disconnected */
         if (!cli->connected) {
             if (now - cli->last_error_ms > 5000) { /* 5 second reconnect delay */
+                pthread_mutex_unlock(&gw->lock);
                 connect_downstream_clients(gw);
+                pthread_mutex_lock(&gw->lock);
             }
             continue;
         }
@@ -658,10 +722,14 @@ wtc_result_t modbus_gateway_process(modbus_gateway_t *gw) {
 
             cli->last_poll_ms = now;
 
-            /* Poll logic would go here - read configured registers
-             * and store in internal cache for serving to Modbus masters */
+            /* MB-C2 fix: Actually poll the downstream device */
+            pthread_mutex_unlock(&gw->lock);
+            poll_downstream_client(gw, i);
+            pthread_mutex_lock(&gw->lock);
         }
     }
+
+    pthread_mutex_unlock(&gw->lock);
 
     return WTC_OK;
 }
