@@ -274,7 +274,7 @@ install_service() {
     if [ -f "$SERVICE_FILE" ]; then
         log_info "Backing up existing service file..."
         local backup_file="${SERVICE_FILE}.backup.$(date +%Y%m%d_%H%M%S)"
-        cp "$SERVICE_FILE" "$backup_file" || {
+        sudo cp "$SERVICE_FILE" "$backup_file" || {
             log_error "Failed to backup existing service file"
             return 4
         }
@@ -292,7 +292,7 @@ install_service() {
     }
 
     # Install service file
-    cp "$temp_file" "$SERVICE_FILE" || {
+    sudo cp "$temp_file" "$SERVICE_FILE" || {
         log_error "Failed to install service file"
         rm -f "$temp_file"
         return 4
