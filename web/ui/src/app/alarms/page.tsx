@@ -127,17 +127,23 @@ export default function AlarmsPage() {
   const [activeTab, setActiveTab] = useState<'active' | 'shelved' | 'history'>('active');
   const [loading, setLoading] = useState(true);
   const [shelveDialog, setShelveDialog] = useState<ShelveDialogState>({ isOpen: false, alarm: null });
+  const [error, setError] = useState<string | null>(null);
+  const [visibleHistoryCount, setVisibleHistoryCount] = useState(50); /* UI-M2: Simple virtualization */
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   const fetchAlarms = useCallback(async () => {
     try {
+      setError(null);
       const [activeRes, historyRes, shelvedRes] = await Promise.all([
         fetch('/api/v1/alarms'),
         fetch('/api/v1/alarms/history?limit=100'),
         fetch('/api/v1/alarms/shelved'),
       ]);
 
-      if (activeRes.ok) {
+      /* UI-M1: Better error state handling */
+      if (!activeRes.ok) {
+        setError(`Failed to fetch active alarms: ${activeRes.status}`);
+      } else {
         const data = await activeRes.json();
         setAlarms(data.alarms || []);
       }
@@ -151,8 +157,10 @@ export default function AlarmsPage() {
         const data = await shelvedRes.json();
         setShelvedAlarms(data.shelved_alarms || []);
       }
-    } catch (error) {
-      console.error('Error fetching alarms:', error);
+    } catch (err) {
+      /* UI-M1: Show user-facing error message */
+      setError(err instanceof Error ? err.message : 'Network error - unable to fetch alarms');
+      console.error('Error fetching alarms:', err);
     } finally {
       setLoading(false);
     }
@@ -339,10 +347,32 @@ export default function AlarmsPage() {
           </button>
         </div>
 
+        {/* UI-M1: Error state display */}
+        {error && (
+          <div className="bg-red-900/30 border border-red-500/50 rounded-lg p-4 flex items-center gap-3">
+            <svg className="w-6 h-6 text-red-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <div className="flex-1">
+              <p className="text-red-300 font-medium">Error Loading Alarms</p>
+              <p className="text-red-400 text-sm">{error}</p>
+            </div>
+            <button
+              onClick={fetchAlarms}
+              className="px-3 py-1 bg-red-600 hover:bg-red-500 text-white text-sm rounded transition-colors"
+            >
+              Retry
+            </button>
+          </div>
+        )}
+
         {/* Alarm List */}
         <div className="scada-panel p-4">
           {loading ? (
-            <div className="text-center text-gray-400 py-8">Loading...</div>
+            <div className="text-center text-gray-400 py-8">
+              <div className="inline-block animate-spin rounded-full h-8 w-8 border-4 border-gray-600 border-t-blue-500 mb-2"></div>
+              <p>Loading alarms...</p>
+            </div>
           ) : activeTab === 'active' ? (
             <div>
               {/* Shelve instruction */}
@@ -411,6 +441,7 @@ export default function AlarmsPage() {
             </div>
           ) : (
             <div className="overflow-x-auto">
+              {/* UI-M2: Simple virtualization with pagination */}
               <table className="w-full">
                 <thead>
                   <tr className="text-left text-gray-400 text-sm border-b border-scada-accent">
@@ -423,7 +454,7 @@ export default function AlarmsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {history.map((alarm) => (
+                  {history.slice(0, visibleHistoryCount).map((alarm) => (
                     <tr key={alarm.alarm_id} className="border-b border-scada-accent/50">
                       <td className="py-2 text-sm text-gray-400">
                         {new Date(alarm.timestamp).toLocaleString()}
@@ -451,6 +482,17 @@ export default function AlarmsPage() {
                   ))}
                 </tbody>
               </table>
+              {/* UI-M2: Load more button for virtualization */}
+              {history.length > visibleHistoryCount && (
+                <div className="text-center mt-4">
+                  <button
+                    onClick={() => setVisibleHistoryCount((prev) => prev + 50)}
+                    className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white text-sm rounded transition-colors"
+                  >
+                    Load More ({history.length - visibleHistoryCount} remaining)
+                  </button>
+                </div>
+              )}
             </div>
           )}
         </div>
