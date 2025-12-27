@@ -49,6 +49,51 @@ readonly NPM_INSTALL_TIMEOUT=600
 readonly NPM_BUILD_TIMEOUT=900
 
 # =============================================================================
+# Temp Directory Selection
+# =============================================================================
+
+# Select appropriate temp directory (avoid small tmpfs)
+# Returns: path to temp directory with sufficient space
+_select_temp_dir() {
+    local min_space_mb=1024  # Require at least 1GB for npm builds
+
+    # Check /tmp first - if it's a large enough tmpfs or real disk
+    local tmp_avail_mb
+    tmp_avail_mb=$(df -m /tmp 2>/dev/null | awk 'NR==2 {print $4}')
+
+    if [ -n "$tmp_avail_mb" ] && [ "$tmp_avail_mb" -ge "$min_space_mb" ]; then
+        echo "/tmp"
+        return 0
+    fi
+
+    # /tmp is too small (likely a small tmpfs), try /var/tmp
+    local var_tmp_avail_mb
+    var_tmp_avail_mb=$(df -m /var/tmp 2>/dev/null | awk 'NR==2 {print $4}')
+
+    if [ -n "$var_tmp_avail_mb" ] && [ "$var_tmp_avail_mb" -ge "$min_space_mb" ]; then
+        echo "/var/tmp"
+        return 0
+    fi
+
+    # Fall back to install directory parent
+    local install_parent
+    install_parent="$(dirname "$INSTALL_BASE")"
+    local install_avail_mb
+    install_avail_mb=$(df -m "$install_parent" 2>/dev/null | awk 'NR==2 {print $4}')
+
+    if [ -n "$install_avail_mb" ] && [ "$install_avail_mb" -ge "$min_space_mb" ]; then
+        mkdir -p "${install_parent}/.water-controller-build" 2>/dev/null
+        echo "${install_parent}/.water-controller-build"
+        return 0
+    fi
+
+    # Last resort - use /tmp anyway and hope for the best
+    log_warn "All temp directories have less than ${min_space_mb}MB available"
+    echo "/tmp"
+    return 0
+}
+
+# =============================================================================
 # Source Acquisition
 # =============================================================================
 
@@ -112,9 +157,13 @@ acquire_source() {
             return 1
         fi
 
-        # Create temporary clone directory
+        # Create temporary clone directory (use appropriate temp dir to avoid small tmpfs)
+        local temp_base
+        temp_base="$(_select_temp_dir)"
+        log_debug "Using temp directory base: $temp_base"
+
         local clone_dir
-        clone_dir="$(mktemp -d /tmp/water-controller-src.XXXXXX)"
+        clone_dir="$(mktemp -d "${temp_base}/water-controller-src.XXXXXX")"
 
         if [ -z "$clone_dir" ] || [ ! -d "$clone_dir" ]; then
             log_error "Failed to create temporary directory for git clone"
@@ -518,6 +567,18 @@ build_react_frontend() {
     if [ -d "node_modules" ] && [ ! -f "node_modules/.package-lock.json" ]; then
         log_warn "node_modules appears incomplete, removing..."
         rm -rf node_modules
+    fi
+
+    # Configure npm to use appropriate temp directory (avoid small tmpfs)
+    local npm_temp_base
+    npm_temp_base="$(_select_temp_dir)"
+
+    if [ "$npm_temp_base" != "/tmp" ]; then
+        log_info "Configuring npm to use $npm_temp_base (avoiding small /tmp tmpfs)"
+        mkdir -p "${npm_temp_base}/npm-cache" "${npm_temp_base}/npm-tmp"
+        export TMPDIR="${npm_temp_base}/npm-tmp"
+        export npm_config_cache="${npm_temp_base}/npm-cache"
+        export npm_config_tmp="${npm_temp_base}/npm-tmp"
     fi
 
     # Install dependencies
