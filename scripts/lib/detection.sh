@@ -670,17 +670,6 @@ check_dependencies() {
         log_debug "cmake: $(cmake --version | head -n1)"
     fi
 
-    # Rust
-    log_debug "Checking Rust..."
-    if ! command -v rustc >/dev/null 2>&1; then
-        missing+=("rust")
-        log_debug "rust: MISSING"
-    else
-        local rust_version
-        rust_version="$(rustc --version 2>/dev/null | awk '{print $2}')"
-        log_debug "rust: $rust_version"
-    fi
-
     # Python 3.9+
     log_debug "Checking Python..."
     if ! command -v python3 >/dev/null 2>&1; then
@@ -710,6 +699,15 @@ check_dependencies() {
         else
             log_debug "python3-venv: OK"
         fi
+    fi
+
+    # Check for pip3
+    log_debug "Checking pip3..."
+    if ! command -v pip3 >/dev/null 2>&1; then
+        missing+=("pip3")
+        log_debug "pip3: MISSING"
+    else
+        log_debug "pip3: $(pip3 --version 2>/dev/null | awk '{print $2}')"
     fi
 
     # Node.js 18+
@@ -841,46 +839,55 @@ detect_existing_installation() {
     local install_status="not_installed"
     local installed_version=""
     local service_status=""
-    local binary_path="/opt/water-controller/bin/water-controller"
-    local alt_binary_path="/opt/water-controller/bin/water_treat_controller"
     local service_name="water-controller.service"
 
-    # Check for binary
-    local actual_binary=""
-    if [ -x "$binary_path" ]; then
-        actual_binary="$binary_path"
-    elif [ -x "$alt_binary_path" ]; then
-        actual_binary="$alt_binary_path"
+    # Check for Python virtual environment with uvicorn/gunicorn
+    local venv_path="/opt/water-controller/venv"
+    local uvicorn_path="$venv_path/bin/uvicorn"
+    local gunicorn_path="$venv_path/bin/gunicorn"
+    local app_path="/opt/water-controller/web/api"
+
+    local server_found=""
+    if [ -x "$uvicorn_path" ]; then
+        server_found="uvicorn"
+        log_debug "Uvicorn found at: $uvicorn_path"
+    elif [ -x "$gunicorn_path" ]; then
+        server_found="gunicorn"
+        log_debug "Gunicorn found at: $gunicorn_path"
     fi
 
-    if [ -n "$actual_binary" ]; then
-        log_debug "Binary found at: $actual_binary"
+    if [ -n "$server_found" ]; then
+        # Try to get version from Python app
+        if [ -f "$app_path/main.py" ]; then
+            # Try to extract __version__ from Python code
+            installed_version="$(grep -E "^__version__\s*=" "$app_path/main.py" 2>/dev/null | sed "s/.*['\"]\\([^'\"]*\\)['\"].*/\\1/" || echo "")"
 
-        # Try to get version
-        installed_version="$("$actual_binary" --version 2>/dev/null | head -n1 || echo "")"
-        if [ -z "$installed_version" ]; then
-            installed_version="$("$actual_binary" -v 2>/dev/null | head -n1 || echo "")"
-        fi
-        if [ -z "$installed_version" ]; then
-            installed_version="$("$actual_binary" version 2>/dev/null | head -n1 || echo "")"
-        fi
+            # Try version.py if main.py doesn't have version
+            if [ -z "$installed_version" ] && [ -f "$app_path/version.py" ]; then
+                installed_version="$(grep -E "^__version__\s*=" "$app_path/version.py" 2>/dev/null | sed "s/.*['\"]\\([^'\"]*\\)['\"].*/\\1/" || echo "")"
+            fi
 
-        if [ -n "$installed_version" ]; then
-            install_status="installed"
-            log_debug "Installed version: $installed_version"
-        else
-            # Binary exists but can't get version - might be corrupted
-            if "$actual_binary" --help >/dev/null 2>&1 || "$actual_binary" -h >/dev/null 2>&1; then
+            # Try __init__.py
+            if [ -z "$installed_version" ] && [ -f "$app_path/__init__.py" ]; then
+                installed_version="$(grep -E "^__version__\s*=" "$app_path/__init__.py" 2>/dev/null | sed "s/.*['\"]\\([^'\"]*\\)['\"].*/\\1/" || echo "")"
+            fi
+
+            if [ -n "$installed_version" ]; then
+                install_status="installed"
+                log_debug "Installed version: $installed_version (from Python code)"
+            else
+                # App files exist but no version found
                 install_status="installed"
                 installed_version="unknown"
-                log_debug "Binary functional but version unknown"
-            else
-                install_status="corrupted"
-                log_debug "Binary exists but appears corrupted"
+                log_debug "App found but version unknown"
             fi
+        else
+            # Server binary exists but no app files - corrupted
+            install_status="corrupted"
+            log_debug "Server ($server_found) exists but app files missing - corrupted"
         fi
     else
-        log_debug "No binary found at $binary_path or $alt_binary_path"
+        log_debug "No uvicorn or gunicorn found in venv"
     fi
 
     # Check for systemd service
@@ -899,28 +906,31 @@ detect_existing_installation() {
 
         log_debug "Service status: $service_status"
 
-        # If service exists but no binary, installation is corrupted
+        # If service exists but no server binary, installation is corrupted
         if [ "$install_status" = "not_installed" ]; then
             install_status="corrupted"
-            log_debug "Service exists but binary missing - corrupted installation"
+            log_debug "Service exists but server missing - corrupted installation"
         fi
     else
         log_debug "No systemd service found: $service_name"
         service_status="not_found"
     fi
 
-    # Check for installation directory
+    # Check for installation directory structure
     local install_dir_status="not_found"
     if [ -d "/opt/water-controller" ]; then
         install_dir_status="exists"
-        if [ -d "/opt/water-controller/web" ] && [ -d "/opt/water-controller/bin" ]; then
+        # Check for Python-based installation structure
+        if [ -d "/opt/water-controller/web" ] && [ -d "/opt/water-controller/venv" ]; then
             install_dir_status="complete"
-        else
+        elif [ -d "/opt/water-controller/web/api" ] || [ -d "/opt/water-controller/venv" ]; then
             install_dir_status="partial"
             if [ "$install_status" = "not_installed" ]; then
                 install_status="corrupted"
                 log_debug "Partial installation directory - corrupted"
             fi
+        else
+            install_dir_status="partial"
         fi
     fi
 
