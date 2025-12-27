@@ -322,17 +322,12 @@ verify_network_connectivity() {
 
     log_info "Verifying network connectivity to $source..."
 
-    # Extract host from URL
+    # Extract host from URL (for diagnostic messages)
     local host
     host=$(echo "$source" | sed -E 's|^https?://([^/]+).*|\1|')
 
-    # Try DNS resolution
-    if ! host "$host" >/dev/null 2>&1 && ! nslookup "$host" >/dev/null 2>&1; then
-        log_error "DNS resolution failed for $host"
-        return 1
-    fi
-
-    # Try HTTP connection
+    # Try HTTP connection first - this is the primary test
+    # curl/wget handle DNS resolution internally, so this tests both DNS and connectivity
     if command -v curl >/dev/null 2>&1; then
         if curl -s --connect-timeout 10 --max-time 30 -o /dev/null -w "%{http_code}" "$source" | grep -qE "^[23]"; then
             log_info "Network connectivity verified"
@@ -345,7 +340,27 @@ verify_network_connectivity() {
         fi
     fi
 
-    log_error "Network connectivity check failed"
+    # HTTP connection failed - try to diagnose why
+    # Check if DNS resolution works (optional diagnostic, not a gate)
+    if command -v host >/dev/null 2>&1; then
+        if ! host "$host" >/dev/null 2>&1; then
+            log_error "DNS resolution failed for $host"
+            return 1
+        fi
+    elif command -v nslookup >/dev/null 2>&1; then
+        if ! nslookup "$host" >/dev/null 2>&1; then
+            log_error "DNS resolution failed for $host"
+            return 1
+        fi
+    elif command -v getent >/dev/null 2>&1; then
+        if ! getent hosts "$host" >/dev/null 2>&1; then
+            log_error "DNS resolution failed for $host"
+            return 1
+        fi
+    fi
+
+    # DNS worked but HTTP failed - likely firewall or service issue
+    log_error "HTTP connection to $source failed (DNS OK)"
     return 1
 }
 
