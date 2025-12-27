@@ -2,6 +2,10 @@
 Water Treatment Controller - Alarm Management Endpoints
 Copyright (C) 2024
 SPDX-License-Identifier: GPL-3.0-or-later
+
+Access Model:
+- GET endpoints: View access (no authentication required)
+- POST/PUT/DELETE endpoints: Control access (authentication required)
 """
 
 from datetime import datetime, timezone, timedelta
@@ -12,6 +16,7 @@ from sqlalchemy.orm import Session
 
 from ...core.exceptions import AlarmNotFoundError, RtuNotFoundError
 from ...core.errors import build_success_response
+from ...core.auth import require_control_access, log_control_action
 from ...models.base import get_db
 from ...models.rtu import RTU
 from ...models.alarm import AlarmRule, AlarmEvent, AlarmState, AlarmPriority
@@ -170,11 +175,17 @@ async def alarm_history(
 async def acknowledge_alarm(
     alarm_id: int = Path(..., description="Alarm event ID"),
     request: Optional[AlarmAcknowledgeRequest] = None,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    session: dict = Depends(require_control_access)
 ) -> Dict[str, Any]:
     """
     Acknowledge an alarm.
+
+    **Authentication Required**: This is a control action requiring
+    operator or admin role.
     """
+    username = session.get("username", "unknown")
+
     event = db.query(AlarmEvent).filter(AlarmEvent.id == alarm_id).first()
     if not event:
         raise AlarmNotFoundError(alarm_id)
@@ -187,12 +198,20 @@ async def acknowledge_alarm(
             "message": "Alarm already cleared"
         })
 
-    # Acknowledge
+    # Acknowledge with authenticated user
     event.acknowledge(
-        user="system",  # Would come from auth context
+        user=username,
         note=request.note if request else None
     )
     db.commit()
+
+    # Log control action
+    log_control_action(
+        session=session,
+        action="ALARM_ACK",
+        target=f"alarm/{alarm_id}",
+        details=request.note if request else None,
+    )
 
     return build_success_response({
         "id": alarm_id,
@@ -206,11 +225,17 @@ async def acknowledge_alarm(
 async def acknowledge_all_alarms(
     rtu: Optional[str] = Query(None, description="Filter by RTU"),
     request: Optional[AlarmAcknowledgeRequest] = None,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    session: dict = Depends(require_control_access)
 ) -> Dict[str, Any]:
     """
     Acknowledge all active alarms.
+
+    **Authentication Required**: This is a control action requiring
+    operator or admin role.
     """
+    username = session.get("username", "unknown")
+
     query = db.query(AlarmEvent).filter(AlarmEvent.state == AlarmState.ACTIVE)
 
     if rtu:
@@ -223,12 +248,20 @@ async def acknowledge_all_alarms(
 
     for event in events:
         event.acknowledge(
-            user="system",  # Would come from auth context
+            user=username,
             note=request.note if request else None
         )
         count += 1
 
     db.commit()
+
+    # Log control action
+    log_control_action(
+        session=session,
+        action="ALARM_ACK_ALL",
+        target=f"alarms{'/'+rtu if rtu else ''}",
+        details=f"Acknowledged {count} alarms",
+    )
 
     return build_success_response({
         "acknowledged_count": count,

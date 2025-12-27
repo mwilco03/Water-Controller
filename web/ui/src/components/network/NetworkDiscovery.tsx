@@ -79,6 +79,7 @@ export default function NetworkDiscovery({ onDeviceSelect, onAddDevice }: Props)
     arp: false,
   });
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   const startScan = useCallback(async () => {
     setScanning(true);
     setDevices([]);

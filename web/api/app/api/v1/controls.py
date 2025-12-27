@@ -2,6 +2,10 @@
 Water Treatment Controller - Control/Actuator Endpoints
 Copyright (C) 2024
 SPDX-License-Identifier: GPL-3.0-or-later
+
+Access Model:
+- GET endpoints: View access (no authentication required)
+- POST/PUT/DELETE endpoints: Control access (authentication required)
 """
 
 from datetime import datetime, timezone
@@ -18,6 +22,7 @@ from ...core.exceptions import (
 )
 from ...core.errors import build_success_response
 from ...core.rtu_utils import get_rtu_or_404, get_data_quality
+from ...core.auth import require_control_access, log_control_action
 from ...models.base import get_db
 from ...models.rtu import RTU, Control, RtuState, ControlType
 from ...models.audit import CommandAudit, CommandResult
@@ -107,16 +112,23 @@ async def send_command(
     name: str = Path(..., description="RTU station name"),
     tag: str = Path(..., description="Control tag"),
     command: ControlCommand = None,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    session: dict = Depends(require_control_access)
 ) -> Dict[str, Any]:
     """
     Issue command to a control.
 
     Commands are routed THROUGH the RTU - never direct to actuator.
     RTU applies local interlocks.
+
+    **Authentication Required**: This is a control action requiring
+    operator or admin role.
     """
     rtu = get_rtu_or_404(db, name)
     control = get_control_or_404(db, rtu, tag)
+
+    # Get username from authenticated session for audit trail
+    username = session.get("username", "unknown")
 
     # Check RTU is connected
     if rtu.state != RtuState.RUNNING:
@@ -148,9 +160,17 @@ async def send_command(
         command=cmd_value,
         value=command.value if not is_discrete else None,
         result=CommandResult.SUCCESS,  # Will update on failure
-        user="system",  # Would come from auth context
+        user=username,  # From authenticated session
     )
     db.add(audit)
+
+    # Log control action for audit trail
+    log_control_action(
+        session=session,
+        action="CONTROL_COMMAND",
+        target=f"{rtu.station_name}/{tag}",
+        details=f"{cmd_value}" + (f" value={command.value}" if not is_discrete else ""),
+    )
 
     # In a real implementation, send command via IPC to C controller
     # For now, simulate success
