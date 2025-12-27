@@ -1275,7 +1275,7 @@ main() {
     fi
 
     # Show completion message
-    if [ $result -eq 0 ]; then
+    if [ "$result" -eq 0 ]; then
         show_completion_message
     else
         log_error "Installation failed. Check log file: $LOG_FILE"
