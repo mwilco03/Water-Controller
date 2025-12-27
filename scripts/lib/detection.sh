@@ -87,7 +87,7 @@ _log_write() {
     fi
 }
 
-# Log info message - logs to file and optionally to stdout
+# Log info message - logs to file and optionally to stderr
 log_info() {
     local message="$1"
     local silent="${2:-false}"
@@ -95,7 +95,7 @@ log_info() {
     _log_write "INFO" "$message"
 
     if [ "$silent" != "true" ]; then
-        echo -e "\033[0;32m[INFO]\033[0m $message"
+        echo -e "\033[0;32m[INFO]\033[0m $message" >&2
     fi
 }
 
@@ -130,7 +130,7 @@ log_debug() {
     _log_write "DEBUG" "$message"
 
     if [ "${DEBUG:-0}" = "1" ]; then
-        echo -e "\033[0;36m[DEBUG]\033[0m $message"
+        echo -e "\033[0;36m[DEBUG]\033[0m $message" >&2
     fi
 }
 
