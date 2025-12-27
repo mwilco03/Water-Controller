@@ -37,18 +37,17 @@ run_test() {
     local test_name="$1"
     local test_func="$2"
 
-    ((TESTS_RUN++))
+    ((TESTS_RUN++)) || true
     log_test "Running: $test_name"
 
     if $test_func; then
         log_pass "$test_name"
-        ((TESTS_PASSED++))
-        return 0
+        ((TESTS_PASSED++)) || true
     else
         log_fail "$test_name"
-        ((TESTS_FAILED++))
-        return 1
+        ((TESTS_FAILED++)) || true
     fi
+    return 0  # Always return success to prevent set -e from exiting
 }
 
 setup_test_environment() {

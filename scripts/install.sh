@@ -64,6 +64,11 @@ UNINSTALL_MODE=0
 PURGE_MODE=0
 KEEP_DATA=0
 
+# Upgrade sub-modes
+UNATTENDED_MODE=0
+CANARY_MODE=0
+STAGED_MODE=0
+
 # Network configuration
 CONFIGURE_NETWORK=0
 STATIC_IP=""
@@ -149,10 +154,15 @@ USAGE:
 
 INSTALLATION MODES:
     (default)           Fresh installation
-    --upgrade           Upgrade existing installation
+    --upgrade           Upgrade existing installation (interactive)
     --uninstall         Remove installation completely
     --uninstall --purge Remove everything including P-Net, firewall rules, udev rules
     --uninstall --keep-data  Remove application but preserve data/config
+
+UPGRADE MODES (use with --upgrade):
+    --unattended        Fully automated, no prompts, auto-rollback on failure
+    --canary            Run extended tests after upgrade, auto-rollback if fail
+    --staged            Pause at each major step for confirmation
 
 OPTIONS:
     -h, --help          Show this help message
@@ -249,6 +259,19 @@ parse_arguments() {
                 ;;
             --keep-data)
                 KEEP_DATA=1
+                shift
+                ;;
+            --unattended)
+                UNATTENDED_MODE=1
+                INTERACTIVE=0
+                shift
+                ;;
+            --canary)
+                CANARY_MODE=1
+                shift
+                ;;
+            --staged)
+                STAGED_MODE=1
                 shift
                 ;;
             --install-dir)
@@ -407,7 +430,8 @@ confirm() {
     local message="$1"
     local default="${2:-n}"
 
-    if [ $INTERACTIVE -eq 0 ] || [ $FORCE -eq 1 ]; then
+    # Auto-accept in non-interactive, force, or dry-run mode
+    if [ $INTERACTIVE -eq 0 ] || [ $FORCE -eq 1 ] || [ $DRY_RUN -eq 1 ]; then
         return 0
     fi
 
@@ -954,11 +978,25 @@ do_upgrade() {
     local upgrade_start
     upgrade_start=$(date -Iseconds)
 
+    # Log upgrade mode
+    if [ $UNATTENDED_MODE -eq 1 ]; then
+        log_info "Mode: UNATTENDED (no prompts, auto-rollback on failure)"
+    elif [ $CANARY_MODE -eq 1 ]; then
+        log_info "Mode: CANARY (extended testing, auto-rollback if tests fail)"
+    elif [ $STAGED_MODE -eq 1 ]; then
+        log_info "Mode: STAGED (pause at each step for confirmation)"
+    else
+        log_info "Mode: INTERACTIVE"
+    fi
+
     # Pre-upgrade health check
     log_info "Running pre-upgrade health check..."
     if ! pre_upgrade_health_check; then
         log_warn "Pre-upgrade health check found issues"
-        if ! confirm "Continue with upgrade despite issues?"; then
+        if [ $UNATTENDED_MODE -eq 1 ]; then
+            log_error "Aborting unattended upgrade due to health check failure"
+            return 1
+        elif ! confirm "Continue with upgrade despite issues?"; then
             return 1
         fi
     fi
@@ -973,7 +1011,10 @@ do_upgrade() {
     # Check for running processes
     if ! check_running_processes; then
         log_warn "Critical operations may be in progress"
-        if ! confirm "Continue anyway?"; then
+        if [ $UNATTENDED_MODE -eq 1 ]; then
+            log_error "Aborting unattended upgrade - critical operations in progress"
+            return 1
+        elif ! confirm "Continue anyway?"; then
             return 1
         fi
     fi
@@ -987,27 +1028,38 @@ do_upgrade() {
     ROLLBACK_POINT=$(create_rollback_point "Pre-upgrade backup")
     if [ -z "$ROLLBACK_POINT" ]; then
         log_error "Failed to create rollback point"
-        if ! confirm "Continue without rollback capability?"; then
+        if [ $UNATTENDED_MODE -eq 1 ]; then
+            log_error "Aborting unattended upgrade - rollback point required"
+            return 1
+        elif ! confirm "Continue without rollback capability?"; then
             return 1
         fi
     else
         log_info "Rollback point created: $ROLLBACK_POINT"
     fi
 
+    # Staged mode: confirm before stopping service
+    if [ $STAGED_MODE -eq 1 ]; then
+        if ! confirm "Ready to stop service and begin upgrade?"; then
+            log_info "Upgrade cancelled by user"
+            return 1
+        fi
+    fi
+
     # Stop existing service
     log_info "Stopping existing service..."
     stop_service || log_warn "Service stop failed or not running"
 
-    # Run installation steps
-    step_detect_system || { rollback_on_failure; return 1; }
-    step_install_dependencies || { rollback_on_failure; return 1; }
-    step_install_pnet || { rollback_on_failure; return 1; }
-    step_build || { rollback_on_failure; return 1; }
-    step_install_files || { rollback_on_failure; return 1; }
-    step_configure_service || { rollback_on_failure; return 1; }
-    step_configure_network_storage || { rollback_on_failure; return 1; }
-    step_start_service || { rollback_on_failure; return 1; }
-    step_validate || log_warn "Validation had issues"
+    # Run installation steps with staged pauses if requested
+    _run_upgrade_step "step_detect_system" "System Detection" || { rollback_on_failure; return 1; }
+    _run_upgrade_step "step_install_dependencies" "Dependency Installation" || { rollback_on_failure; return 1; }
+    _run_upgrade_step "step_install_pnet" "P-Net Installation" || { rollback_on_failure; return 1; }
+    _run_upgrade_step "step_build" "Source Build" || { rollback_on_failure; return 1; }
+    _run_upgrade_step "step_install_files" "File Installation" || { rollback_on_failure; return 1; }
+    _run_upgrade_step "step_configure_service" "Service Configuration" || { rollback_on_failure; return 1; }
+    _run_upgrade_step "step_configure_network_storage" "Network/Storage Configuration" || { rollback_on_failure; return 1; }
+    _run_upgrade_step "step_start_service" "Service Startup" || { rollback_on_failure; return 1; }
+    _run_upgrade_step "step_validate" "Validation" || log_warn "Validation had issues"
     step_generate_docs
 
     # Clean up build directory
@@ -1017,7 +1069,37 @@ do_upgrade() {
     log_info "Running post-upgrade validation..."
     if ! post_upgrade_validation; then
         log_warn "Post-upgrade validation found issues"
+        if [ $UNATTENDED_MODE -eq 1 ] || [ $CANARY_MODE -eq 1 ]; then
+            log_error "Auto-rollback triggered due to validation failure"
+            rollback_on_failure
+            return 1
+        fi
         log_warn "Consider rolling back if problems persist"
+    fi
+
+    # Canary mode: Extended testing with stability monitoring
+    if [ $CANARY_MODE -eq 1 ]; then
+        log_info "CANARY MODE: Running extended tests..."
+
+        # Test API endpoints
+        if ! test_upgrade_api_endpoints; then
+            log_error "API endpoint test failed - initiating rollback"
+            rollback_on_failure
+            return 1
+        fi
+
+        # Test PROFINET connectivity
+        test_profinet_connectivity || log_warn "PROFINET test had issues"
+
+        # Monitor service stability for 60 seconds
+        log_info "Monitoring service stability (60 seconds)..."
+        if ! verify_service_stability 60; then
+            log_error "Service stability check failed - initiating rollback"
+            rollback_on_failure
+            return 1
+        fi
+
+        log_info "CANARY MODE: All extended tests passed"
     fi
 
     # Compare configuration changes
@@ -1038,6 +1120,22 @@ do_upgrade() {
 
     log_info "Upgrade completed successfully"
     return 0
+}
+
+# Helper function to run upgrade steps with optional staging
+_run_upgrade_step() {
+    local step_func="$1"
+    local step_name="$2"
+
+    if [ $STAGED_MODE -eq 1 ]; then
+        log_info "=== STAGED: $step_name ==="
+        if ! confirm "Proceed with $step_name?"; then
+            log_info "Upgrade cancelled at: $step_name"
+            return 1
+        fi
+    fi
+
+    $step_func
 }
 
 # Rollback on failure during upgrade

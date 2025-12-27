@@ -13,7 +13,7 @@
 #
 
 # Prevent multiple sourcing
-if [ -n "$_WTC_UPGRADE_LOADED" ]; then
+if [ -n "${_WTC_UPGRADE_LOADED:-}" ]; then
     return 0
 fi
 _WTC_UPGRADE_LOADED=1
@@ -39,9 +39,9 @@ readonly UPGRADE_MODULE_VERSION="1.0.0"
 : "${BACKUP_DIR:=/var/backups/water-controller}"
 : "${ROLLBACK_DIR:=$BACKUP_DIR/rollback}"
 
-# Upgrade requirements
-readonly MIN_DISK_SPACE_MB=512
-readonly MIN_MEMORY_MB=256
+# Upgrade requirements (use different names to avoid conflicts with detection.sh)
+readonly UPGRADE_MIN_DISK_SPACE_MB=512
+readonly UPGRADE_MIN_MEMORY_MB=256
 readonly SERVICE_STABILITY_CHECK_SECONDS=60
 
 # API endpoints for testing
@@ -125,7 +125,7 @@ pre_upgrade_health_check() {
     log_info "  Checking memory..."
     local avail_mem
     avail_mem=$(free -m 2>/dev/null | awk '/^Mem:/{print $7}')
-    if [ -n "$avail_mem" ] && [ "$avail_mem" -ge "$MIN_MEMORY_MB" ]; then
+    if [ -n "$avail_mem" ] && [ "$avail_mem" -ge "$UPGRADE_MIN_MEMORY_MB" ]; then
         echo "[PASS] Available memory: ${avail_mem}MB" >> "$report_file"
     else
         echo "[WARN] Low memory: ${avail_mem:-unknown}MB available" >> "$report_file"
@@ -169,7 +169,7 @@ check_disk_space_for_upgrade() {
     fi
 
     # Need: current size (backup) + new install + buffer
-    local required_space=$((install_size + config_size + data_size + MIN_DISK_SPACE_MB))
+    local required_space=$((install_size + config_size + data_size + UPGRADE_MIN_DISK_SPACE_MB))
 
     # Check available space on relevant partitions
     local avail_space
