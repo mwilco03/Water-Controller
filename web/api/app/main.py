@@ -19,7 +19,14 @@ from fastapi.responses import JSONResponse
 
 from .core.exceptions import ScadaException
 from .core.errors import scada_exception_handler, generic_exception_handler
-from .core.logging import setup_logging, get_logger
+from .core.logging import (
+    setup_logging,
+    get_logger,
+    set_correlation_id,
+    get_correlation_id,
+    start_operation,
+    end_operation,
+)
 from .models.base import Base, engine, get_db
 from .api.v1 import api_router
 from .api.websocket import router as websocket_router
@@ -80,17 +87,42 @@ app.add_middleware(
 )
 
 
-# Request ID middleware
+# Correlation ID middleware
 @app.middleware("http")
-async def add_request_id(request: Request, call_next):
-    """Add request ID to each request for tracing."""
-    request_id = request.headers.get("X-Request-ID", str(uuid4()))
-    request.state.request_id = request_id
+async def add_correlation_id(request: Request, call_next):
+    """Add correlation ID to each request for distributed tracing."""
+    # Check for incoming correlation ID from client or upstream service
+    # Support both X-Correlation-ID (preferred) and X-Request-ID (legacy)
+    correlation_id = (
+        request.headers.get("X-Correlation-ID") or
+        request.headers.get("X-Request-ID") or
+        str(uuid4())
+    )
 
-    response = await call_next(request)
-    response.headers["X-Request-ID"] = request_id
+    # Store in request state for access in route handlers
+    request.state.correlation_id = correlation_id
+    request.state.request_id = correlation_id  # Legacy compatibility
 
-    return response
+    # Set correlation ID for logging context
+    set_correlation_id(correlation_id)
+
+    # Log request start
+    logger.debug(
+        f"Request started: {request.method} {request.url.path}",
+        extra={"correlation_id": correlation_id}
+    )
+
+    try:
+        response = await call_next(request)
+
+        # Add correlation ID to response headers
+        response.headers["X-Correlation-ID"] = correlation_id
+        response.headers["X-Request-ID"] = correlation_id  # Legacy compatibility
+
+        return response
+    finally:
+        # Clear correlation ID after request completes
+        set_correlation_id(None)
 
 
 # Exception handlers

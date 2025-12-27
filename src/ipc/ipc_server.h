@@ -17,11 +17,22 @@ extern "C" {
 
 /* IPC shared memory key */
 #define WTC_SHM_KEY         0x57544301  /* "WTC\1" */
-#define WTC_SHM_VERSION     1
+#define WTC_SHM_VERSION     3           /* Increment on breaking changes - v3 adds correlation_id */
 #define WTC_MAX_SHM_RTUS    64
 #define WTC_MAX_SHM_ALARMS  256
 #define WTC_MAX_SHM_SENSORS 32
 #define WTC_MAX_SHM_ACTUATORS 32
+
+/* Protocol version for compatibility checking */
+#define WTC_PROTOCOL_VERSION_MAJOR 1
+#define WTC_PROTOCOL_VERSION_MINOR 0
+#define WTC_PROTOCOL_VERSION ((WTC_PROTOCOL_VERSION_MAJOR << 8) | WTC_PROTOCOL_VERSION_MINOR)
+
+/* Capability flags */
+#define WTC_CAP_AUTHORITY_HANDOFF   (1 << 0)
+#define WTC_CAP_STATE_RECONCILE     (1 << 1)
+#define WTC_CAP_5BYTE_SENSOR        (1 << 2)
+#define WTC_CAP_ALARM_ISA18         (1 << 3)
 
 /* Shared memory RTU data (simplified for IPC) */
 typedef struct {
@@ -113,10 +124,14 @@ typedef struct {
 /* User sync constants - must be defined before use in structs */
 #define USER_SYNC_MAX_USERS     32
 
+/* Correlation ID for distributed tracing */
+#define WTC_CORRELATION_ID_LEN 37  /* UUID format + null terminator */
+
 /* Command structure for write operations */
 typedef struct {
     uint32_t sequence;
     int command_type;
+    char correlation_id[WTC_CORRELATION_ID_LEN];  /* For distributed tracing */
     union {
         struct {
             char rtu_station[64];

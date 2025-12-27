@@ -47,6 +47,9 @@ int time_compare(const struct timespec *a, const struct timespec *b);
 /* Format timestamp as ISO 8601 string */
 void time_format_iso8601(uint64_t ms, char *buf, size_t buf_size);
 
+/* Format timestamp as date only (YYYY-MM-DD) */
+void time_format_date(uint64_t ms, char *buf, size_t buf_size);
+
 /* Parse ISO 8601 string to milliseconds */
 uint64_t time_parse_iso8601(const char *str);
 

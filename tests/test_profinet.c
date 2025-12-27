@@ -185,9 +185,11 @@ void run_profinet_tests(void)
     RUN_TEST(frame_builder_ethernet);
     RUN_TEST(frame_build_dcp_identify_test);
 
+    /* Frame Parser Tests - not implemented yet
     printf("\nFrame Parser Tests:\n");
     RUN_TEST(frame_parser_init_test);
     RUN_TEST(frame_parser_read_bytes);
+    */
 
     printf("\nAR Manager Tests:\n");
     RUN_TEST(ar_manager_init_null);

@@ -224,6 +224,29 @@ typedef enum {
     FAILOVER_MODE_HOT_STANDBY,
 } failover_mode_t;
 
+/* Control authority states - defines who has control of actuators
+ * This implements the formal authority handoff protocol to prevent
+ * split-brain scenarios between Controller and RTU.
+ */
+typedef enum {
+    AUTHORITY_AUTONOMOUS = 0,    /* RTU is operating independently (no controller) */
+    AUTHORITY_HANDOFF_PENDING,   /* Controller requesting authority transfer */
+    AUTHORITY_SUPERVISED,        /* Controller has authority, RTU executes commands */
+    AUTHORITY_RELEASING,         /* Controller releasing authority back to RTU */
+} authority_state_t;
+
+/* Authority handoff context - tracks control ownership between Controller and RTU */
+typedef struct {
+    uint32_t epoch;              /* Authority epoch - incremented on each handoff */
+    authority_state_t state;     /* Current authority state */
+    uint64_t request_time_ms;    /* When authority was requested */
+    uint64_t grant_time_ms;      /* When authority was granted */
+    char holder[WTC_MAX_STATION_NAME];  /* Current authority holder (controller station) */
+    bool controller_online;      /* Controller connectivity status */
+    bool rtu_acknowledged;       /* RTU acknowledged handoff */
+    uint32_t stale_command_threshold_ms; /* Commands older than this are rejected */
+} authority_context_t;
+
 /* Log levels */
 typedef enum {
     LOG_LEVEL_TRACE = 0,
@@ -315,6 +338,9 @@ typedef struct {
     uint64_t good_cycles;
     uint32_t reconnect_count;
 
+    /* Authority tracking - who has control of this RTU */
+    authority_context_t authority;
+
     /* Internal */
     void *profinet_handle;
     bool config_dirty;
@@ -400,6 +426,17 @@ typedef struct {
     alarm_severity_t severity;
     char message_template[WTC_MAX_MESSAGE];
 
+    /* ISA-18.2 Rationalization */
+    char consequence[WTC_MAX_MESSAGE];       /* What happens if not responded */
+    char corrective_action[WTC_MAX_MESSAGE]; /* Required operator response */
+    uint32_t response_time_sec;              /* Max time to respond */
+
+    /* Out of Service (OOS) */
+    bool out_of_service;
+    char oos_user[WTC_MAX_USERNAME];
+    char oos_reason[WTC_MAX_MESSAGE];
+    uint64_t oos_start_time_ms;
+
     /* Runtime */
     bool active;
     uint64_t condition_start_ms;
@@ -422,6 +459,12 @@ typedef struct {
     uint64_t ack_time_ms;
     uint64_t clear_time_ms;
     char ack_user[WTC_MAX_USERNAME];
+
+    /* Shelving (ISA-18.2) */
+    bool shelved;
+    uint64_t shelve_end_time_ms;
+    char shelve_user[WTC_MAX_USERNAME];
+    char shelve_reason[WTC_MAX_MESSAGE];
 } alarm_t;
 
 /* Historian tag */

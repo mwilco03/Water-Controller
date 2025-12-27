@@ -599,9 +599,9 @@ wtc_result_t rtu_registry_save_topology(rtu_registry_t *registry) {
                 pos += snprintf(buffer + pos, 65536 - pos, ",");
             }
             pos += snprintf(buffer + pos, 65536 - pos,
-                "{\"number\":%u,\"type\":%d,\"subslot\":%u,\"module_id\":%u}",
-                dev->slots[j].slot_number, dev->slots[j].type,
-                dev->slots[j].subslot, dev->slots[j].module_id);
+                "{\"number\":%d,\"type\":%d,\"subslot\":%d,\"name\":\"%s\"}",
+                dev->slots[j].slot, dev->slots[j].type,
+                dev->slots[j].subslot, dev->slots[j].name);
         }
 
         pos += snprintf(buffer + pos, 65536 - pos, "]}");

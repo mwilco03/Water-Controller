@@ -45,6 +45,7 @@ endif()
 # Include directories
 include_directories(
     ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/core
     ${CMAKE_SOURCE_DIR}/src/profinet
     ${CMAKE_SOURCE_DIR}/src/registry
     ${CMAKE_SOURCE_DIR}/src/control
@@ -56,6 +57,7 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/src/ipc
     ${CMAKE_SOURCE_DIR}/src/modbus
     ${CMAKE_SOURCE_DIR}/src/utils
+    ${CMAKE_SOURCE_DIR}/shared/include
 )
 
 # Core library sources
@@ -66,6 +68,8 @@ set(CORE_SOURCES
     src/utils/crc.c
     src/db/database.c
     src/config/config_manager.c
+    src/core/component_health.c
+    shared/src/version_negotiation.c
 )
 
 # PROFINET module sources
@@ -110,6 +114,8 @@ set(COORDINATION_SOURCES
     src/coordination/load_balance.c
     src/coordination/failover.c
     src/coordination/coordination.c
+    src/coordination/authority_manager.c
+    src/coordination/state_reconciliation.c
 )
 
 # IPC module sources
