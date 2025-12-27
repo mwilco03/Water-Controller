@@ -26,6 +26,9 @@ static const uint8_t DCP_MULTICAST_ADDR[6] = {0x01, 0x0E, 0xCF, 0x00, 0x00, 0x00
 /* Maximum discovered devices */
 #define MAX_DISCOVERED_DEVICES 256
 
+/* Default discovery timeout (PN-H3 fix) */
+#define DCP_DEFAULT_TIMEOUT_MS 1280
+
 /* DCP discovery context */
 struct dcp_discovery {
     char interface_name[32];
@@ -45,6 +48,9 @@ struct dcp_discovery {
 
     /* Transaction ID */
     uint32_t xid_counter;
+
+    /* Configurable discovery timeout in milliseconds (PN-H3 fix) */
+    uint32_t discovery_timeout_ms;
 };
 
 /* Get interface info */
@@ -204,6 +210,7 @@ wtc_result_t dcp_discovery_init(dcp_discovery_t **discovery,
 
     strncpy(dcp->interface_name, interface_name, sizeof(dcp->interface_name) - 1);
     pthread_mutex_init(&dcp->lock, NULL);
+    dcp->discovery_timeout_ms = DCP_DEFAULT_TIMEOUT_MS; /* PN-H3 fix */
 
     /* Create raw socket */
     dcp->socket_fd = socket(AF_PACKET, SOCK_RAW, htons(PROFINET_ETHERTYPE));
@@ -615,4 +622,39 @@ void dcp_clear_cache(dcp_discovery_t *discovery) {
     pthread_mutex_unlock(&discovery->lock);
 
     LOG_DEBUG("DCP device cache cleared");
+}
+
+/* Set discovery timeout (PN-H3 fix) */
+wtc_result_t dcp_set_discovery_timeout(dcp_discovery_t *discovery,
+                                        uint32_t timeout_ms) {
+    if (!discovery) {
+        return WTC_ERROR_INVALID_PARAM;
+    }
+
+    /* Clamp to valid range: 100ms - 10000ms */
+    if (timeout_ms < 100) {
+        timeout_ms = 100;
+    } else if (timeout_ms > 10000) {
+        timeout_ms = 10000;
+    }
+
+    pthread_mutex_lock(&discovery->lock);
+    discovery->discovery_timeout_ms = timeout_ms;
+    pthread_mutex_unlock(&discovery->lock);
+
+    LOG_INFO("DCP discovery timeout set to %u ms", timeout_ms);
+    return WTC_OK;
+}
+
+/* Get current discovery timeout (PN-H3 fix) */
+uint32_t dcp_get_discovery_timeout(dcp_discovery_t *discovery) {
+    if (!discovery) {
+        return DCP_DEFAULT_TIMEOUT_MS;
+    }
+
+    pthread_mutex_lock(&discovery->lock);
+    uint32_t timeout = discovery->discovery_timeout_ms;
+    pthread_mutex_unlock(&discovery->lock);
+
+    return timeout;
 }

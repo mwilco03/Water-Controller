@@ -14,6 +14,12 @@
 #include <pthread.h>
 #include <math.h>
 
+/* Watchdog timeout in milliseconds (CE-C1 fix) */
+#define CONTROL_WATCHDOG_TIMEOUT_MS 5000
+
+/* Communication loss timeout in milliseconds (CE-H2 fix) */
+#define COMM_LOSS_TIMEOUT_MS 10000
+
 /* Control engine structure */
 struct control_engine {
     control_engine_config_t config;
@@ -41,6 +47,14 @@ struct control_engine {
     pthread_t control_thread;
     volatile bool running;
     pthread_mutex_t lock;
+
+    /* Watchdog (CE-C1 fix) */
+    uint64_t last_scan_time_ms;
+    bool watchdog_tripped;
+
+    /* Communication tracking (CE-H2 fix) */
+    uint64_t last_input_time_ms[WTC_MAX_PID_LOOPS];
+    bool comm_loss[WTC_MAX_PID_LOOPS];
 
     /* Statistics */
     control_stats_t stats;
@@ -160,11 +174,39 @@ static float calculate_pid(pid_loop_t *loop, float pv, float dt_ms) {
     return output;
 }
 
+/* Check for runaway PID output (CE-C1 fix) */
+static bool check_pid_watchdog(control_engine_t *engine, pid_loop_t *loop, float output) {
+    /* Watchdog triggers if output is at limit for extended period */
+    static uint64_t at_limit_start[WTC_MAX_PID_LOOPS] = {0};
+    int idx = loop - engine->pid_loops;
+
+    if (idx < 0 || idx >= WTC_MAX_PID_LOOPS) return false;
+
+    bool at_limit = (output >= loop->output_max || output <= loop->output_min);
+
+    if (at_limit) {
+        if (at_limit_start[idx] == 0) {
+            at_limit_start[idx] = time_get_ms();
+        } else if (time_get_ms() - at_limit_start[idx] > CONTROL_WATCHDOG_TIMEOUT_MS) {
+            LOG_WARN("PID loop %d watchdog: output at limit for >%d ms",
+                     loop->loop_id, CONTROL_WATCHDOG_TIMEOUT_MS);
+            return true;
+        }
+    } else {
+        at_limit_start[idx] = 0;
+    }
+
+    return false;
+}
+
 /* Process all PID loops */
 static void process_pid_loops(control_engine_t *engine) {
     if (!engine || !engine->registry) return;
 
     uint64_t now_ms = time_get_ms();
+
+    /* CE-C1 fix: Update watchdog timestamp */
+    engine->last_scan_time_ms = now_ms;
 
     for (int i = 0; i < engine->pid_loop_count; i++) {
         pid_loop_t *loop = &engine->pid_loops[i];
@@ -176,8 +218,32 @@ static void process_pid_loops(control_engine_t *engine) {
                                                     loop->input_rtu,
                                                     loop->input_slot,
                                                     &sensor);
-        if (res != WTC_OK || sensor.status != IOPS_GOOD) {
-            /* Input fault - hold last output or go to safe state */
+
+        /* CE-H2 fix: Track communication status */
+        if (res == WTC_OK && sensor.status == IOPS_GOOD) {
+            engine->last_input_time_ms[i] = now_ms;
+            if (engine->comm_loss[i]) {
+                LOG_INFO("PID loop %d: communication restored", loop->loop_id);
+                engine->comm_loss[i] = false;
+            }
+        } else {
+            /* Check for communication loss timeout */
+            if (engine->last_input_time_ms[i] > 0 &&
+                now_ms - engine->last_input_time_ms[i] > COMM_LOSS_TIMEOUT_MS) {
+                if (!engine->comm_loss[i]) {
+                    LOG_ERROR("PID loop %d: communication loss detected", loop->loop_id);
+                    engine->comm_loss[i] = true;
+                }
+                /* CE-H2 fix: Go to safe state on comm loss */
+                actuator_output_t safe_out = {0};
+                safe_out.command = ACTUATOR_CMD_OFF;
+                rtu_registry_update_actuator(engine->registry,
+                                             loop->output_rtu,
+                                             loop->output_slot,
+                                             &safe_out);
+                continue;
+            }
+            /* Input fault - hold last output for now */
             LOG_WARN("PID loop %d: input fault from %s slot %d",
                      loop->loop_id, loop->input_rtu, loop->input_slot);
             continue;
@@ -192,6 +258,13 @@ static void process_pid_loops(control_engine_t *engine) {
 
         /* Calculate PID output */
         float output = calculate_pid(loop, sensor.value, dt_ms);
+
+        /* CE-C1 fix: Check watchdog */
+        if (check_pid_watchdog(engine, loop, output)) {
+            engine->watchdog_tripped = true;
+            /* Reduce output to prevent runaway */
+            output = (loop->output_max + loop->output_min) / 2.0f;
+        }
 
         /* Write output to RTU */
         actuator_output_t actuator_out;
@@ -539,13 +612,24 @@ wtc_result_t control_engine_set_pid_mode(control_engine_t *engine,
 
     for (int i = 0; i < engine->pid_loop_count; i++) {
         if (engine->pid_loops[i].loop_id == loop_id) {
-            engine->pid_loops[i].mode = mode;
-            if (mode == PID_MODE_AUTO) {
-                /* Reset integral on mode change */
-                engine->pid_loops[i].integral = 0;
+            pid_loop_t *loop = &engine->pid_loops[i];
+            pid_mode_t old_mode = loop->mode;
+
+            /* CE-H1 fix: Bumpless transfer - preserve integral term and set output to current CV */
+            if (old_mode == PID_MODE_MANUAL && mode == PID_MODE_AUTO) {
+                /* Manual to Auto: Initialize integral to current output for bumpless transfer */
+                loop->integral = loop->cv;
+                loop->last_error = 0;
+                LOG_DEBUG("PID loop %d bumpless transfer: integral set to %.2f", loop_id, loop->cv);
+            } else if (old_mode == PID_MODE_AUTO && mode == PID_MODE_MANUAL) {
+                /* Auto to Manual: Preserve current output */
+                /* cv is already the current output, nothing to do */
+                LOG_DEBUG("PID loop %d switched to manual, output preserved at %.2f", loop_id, loop->cv);
             }
+
+            loop->mode = mode;
             pthread_mutex_unlock(&engine->lock);
-            LOG_INFO("PID loop %d mode changed to %d", loop_id, mode);
+            LOG_INFO("PID loop %d mode changed from %d to %d", loop_id, old_mode, mode);
             return WTC_OK;
         }
     }
@@ -709,9 +793,22 @@ wtc_result_t control_engine_enable_interlock(control_engine_t *engine,
 
     for (int i = 0; i < engine->interlock_count; i++) {
         if (engine->interlocks[i].interlock_id == interlock_id) {
-            engine->interlocks[i].enabled = enabled;
+            interlock_t *interlock = &engine->interlocks[i];
+            bool was_enabled = interlock->enabled;
+            interlock->enabled = enabled;
             pthread_mutex_unlock(&engine->lock);
-            LOG_INFO("Interlock %d %s", interlock_id, enabled ? "enabled" : "disabled");
+
+            /* CE-H3 fix: Log interlock bypass to audit trail */
+            if (was_enabled && !enabled) {
+                LOG_WARN("SECURITY: Interlock %d (%s) BYPASSED - safety protection disabled",
+                         interlock_id, interlock->name);
+                /* In production, this should also write to a tamper-proof audit log */
+            } else if (!was_enabled && enabled) {
+                LOG_INFO("Interlock %d (%s) enabled - safety protection restored",
+                         interlock_id, interlock->name);
+            } else {
+                LOG_INFO("Interlock %d %s", interlock_id, enabled ? "enabled" : "disabled");
+            }
             return WTC_OK;
         }
     }

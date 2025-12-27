@@ -62,11 +62,14 @@ rtu_device_t *rtu_registry_get_device(rtu_registry_t *registry,
 rtu_device_t *rtu_registry_get_device_by_index(rtu_registry_t *registry,
                                                 int index);
 
-/* List all devices */
+/* List all devices (deep copy - caller must free with rtu_registry_free_device_list) */
 wtc_result_t rtu_registry_list_devices(rtu_registry_t *registry,
                                         rtu_device_t **devices,
                                         int *count,
                                         int max_count);
+
+/* Free device list returned by rtu_registry_list_devices */
+void rtu_registry_free_device_list(rtu_device_t *devices, int count);
 
 /* Get device count */
 int rtu_registry_get_device_count(rtu_registry_t *registry);

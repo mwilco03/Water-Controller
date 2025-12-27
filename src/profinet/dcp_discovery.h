@@ -135,6 +135,16 @@ wtc_result_t dcp_get_devices(dcp_discovery_t *discovery,
 /* Clear discovered devices cache */
 void dcp_clear_cache(dcp_discovery_t *discovery);
 
+/* Set discovery timeout in milliseconds (PN-H3 fix)
+ * Default is 1280ms (response_delay 0x80 * 10ms)
+ * Range: 100ms - 10000ms
+ */
+wtc_result_t dcp_set_discovery_timeout(dcp_discovery_t *discovery,
+                                        uint32_t timeout_ms);
+
+/* Get current discovery timeout */
+uint32_t dcp_get_discovery_timeout(dcp_discovery_t *discovery);
+
 #ifdef __cplusplus
 }
 #endif
