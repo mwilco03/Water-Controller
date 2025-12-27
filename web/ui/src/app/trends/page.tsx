@@ -125,9 +125,8 @@ function TrendsContent() {
 
     const startTime = new Date(now.getTime() - ranges[timeRange]);
 
-    const newData: { [tagId: number]: TrendSample[] } = {};
-
-    for (const tagId of selectedTags) {
+    // Fetch all tags in parallel for efficiency
+    const fetchPromises = selectedTags.map(async (tagId) => {
       try {
         const res = await fetch(
           `/api/v1/trends/${tagId}?` +
@@ -138,11 +137,20 @@ function TrendsContent() {
         );
         if (res.ok) {
           const data = await res.json();
-          newData[tagId] = data.samples || [];
+          return { tagId, samples: data.samples || [] };
         }
+        return { tagId, samples: [] };
       } catch (error) {
-        console.error('Failed to fetch trend data:', error);
+        console.error(`Failed to fetch trend data for tag ${tagId}:`, error);
+        return { tagId, samples: [] };
       }
+    });
+
+    const results = await Promise.all(fetchPromises);
+
+    const newData: { [tagId: number]: TrendSample[] } = {};
+    for (const { tagId, samples } of results) {
+      newData[tagId] = samples;
     }
 
     setTrendData(newData);
