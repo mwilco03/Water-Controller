@@ -811,6 +811,105 @@ test_python_deps() {
     return 0
 }
 
+# Test P-Net PROFINET installation (cornerstone of the project)
+# Returns: 0 if pass, 5 if fail
+test_pnet() {
+    log_info "Running P-Net PROFINET tests..."
+
+    local failed=0
+
+    # Check for p-net library
+    local lib_found=0
+    for lib_path in "/usr/local/lib" "/usr/lib" "/usr/lib64"; do
+        if ls "${lib_path}"/libpnet.so* >/dev/null 2>&1; then
+            lib_found=1
+            _record_result "PASS" "P-Net library" "$lib_path"
+            break
+        fi
+    done
+
+    if [ $lib_found -eq 0 ]; then
+        _record_result "FAIL" "P-Net library" "Not found - CRITICAL"
+        failed=1
+    fi
+
+    # Check for p-net headers
+    local header_found=0
+    for inc_path in "/usr/local/include" "/usr/include"; do
+        if [ -f "${inc_path}/pnet_api.h" ] || [ -d "${inc_path}/pnet" ]; then
+            header_found=1
+            _record_result "PASS" "P-Net headers" "$inc_path"
+            break
+        fi
+    done
+
+    if [ $header_found -eq 0 ]; then
+        _record_result "FAIL" "P-Net headers" "Not found"
+        failed=1
+    fi
+
+    # Check ldconfig registration
+    if ldconfig -p 2>/dev/null | grep -q "libpnet"; then
+        _record_result "PASS" "P-Net ldconfig" "Registered"
+    else
+        _record_result "WARN" "P-Net ldconfig" "Not in cache"
+    fi
+
+    # Check p-net configuration
+    if [ -f "/etc/pnet/pnet.conf" ]; then
+        _record_result "PASS" "P-Net config" "/etc/pnet/pnet.conf"
+    else
+        _record_result "INFO" "P-Net config" "Not configured"
+    fi
+
+    # Check PROFINET ports
+    local profinet_ports_ok=1
+    for port in 34962 34963; do
+        if ss -tln 2>/dev/null | grep -q ":${port} "; then
+            _record_result "PASS" "PROFINET TCP $port" "Listening"
+        else
+            _record_result "INFO" "PROFINET TCP $port" "Not listening (may be normal)"
+        fi
+    done
+
+    if ss -uln 2>/dev/null | grep -q ":34964 "; then
+        _record_result "PASS" "PROFINET UDP 34964" "Listening"
+    else
+        _record_result "INFO" "PROFINET UDP 34964" "Not listening"
+    fi
+
+    # Check for ethernet interface
+    local eth_iface
+    eth_iface=$(ip -brief link show 2>/dev/null | grep -E '^(eth|en)' | awk '{print $1}' | head -1)
+    if [ -n "$eth_iface" ]; then
+        _record_result "PASS" "Ethernet interface" "$eth_iface"
+    else
+        _record_result "WARN" "Ethernet interface" "None found (required for PROFINET)"
+    fi
+
+    # Check kernel modules
+    if lsmod 2>/dev/null | grep -q "^8021q"; then
+        _record_result "PASS" "802.1Q module" "Loaded"
+    else
+        _record_result "WARN" "802.1Q module" "Not loaded"
+    fi
+
+    # Check for real-time kernel
+    if uname -r | grep -qiE "rt|preempt"; then
+        _record_result "PASS" "Real-time kernel" "$(uname -r)"
+    else
+        _record_result "INFO" "Real-time kernel" "Standard kernel (RT recommended)"
+    fi
+
+    if [ $failed -ne 0 ]; then
+        log_error "P-Net validation FAILED - PROFINET will not work"
+        return 5
+    fi
+
+    log_info "P-Net validation passed"
+    return 0
+}
+
 # =============================================================================
 # Full Validation Suite
 # =============================================================================
@@ -880,6 +979,11 @@ run_validation_suite() {
     echo "10. Python Dependencies Tests"
     echo "------------------------------"
     test_python_deps || suite_failed=1
+    echo ""
+
+    echo "11. P-Net PROFINET Tests (CRITICAL)"
+    echo "------------------------------------"
+    test_pnet || suite_failed=1
     echo ""
 
     # Print summary

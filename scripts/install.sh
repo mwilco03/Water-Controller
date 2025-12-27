@@ -98,6 +98,7 @@ load_modules() {
     local modules=(
         "detection.sh"
         "dependencies.sh"
+        "pnet.sh"
         "build.sh"
         "install-files.sh"
         "service.sh"
@@ -578,9 +579,76 @@ step_install_dependencies() {
     return 0
 }
 
-# Step 3: Acquire and Build Source
+# Step 3: P-Net PROFINET Installation (Cornerstone of the project)
+step_install_pnet() {
+    log_info "=== Step 3: P-Net PROFINET Installation ==="
+    log_info "P-Net is the cornerstone of industrial communication"
+
+    if [ $DRY_RUN -eq 1 ]; then
+        log_info "[DRY RUN] Would install p-net PROFINET stack:"
+        log_info "  - Clone from: https://github.com/rtlabs-com/p-net.git"
+        log_info "  - Build with cmake"
+        log_info "  - Install to /usr/local"
+        return 0
+    fi
+
+    # Check if p-net is already installed
+    if verify_pnet_installation 2>/dev/null; then
+        log_info "P-Net already installed, verifying..."
+        if diagnose_pnet >/dev/null 2>&1; then
+            log_info "Existing p-net installation verified"
+            return 0
+        fi
+        log_warn "Existing installation has issues, reinstalling..."
+    fi
+
+    # Full p-net installation from source
+    log_info "Installing p-net from source (not available in repositories)..."
+
+    if ! install_pnet_full; then
+        log_error "P-Net installation failed"
+        log_error "This is critical - PROFINET communication will not work"
+        return 1
+    fi
+
+    # Configure p-net
+    local pnet_interface="${NETWORK_INTERFACE:-}"
+    if [ -z "$pnet_interface" ]; then
+        # Auto-detect first ethernet interface
+        pnet_interface=$(ip -brief link show 2>/dev/null | grep -E '^(eth|en)' | awk '{print $1}' | head -1)
+    fi
+
+    if [ -n "$pnet_interface" ]; then
+        log_info "Configuring p-net for interface: $pnet_interface"
+        create_pnet_config "$pnet_interface" "water-controller" "${STATIC_IP:-}" || {
+            log_warn "P-Net configuration creation failed"
+        }
+        configure_pnet_interface "$pnet_interface" || {
+            log_warn "P-Net interface configuration failed"
+        }
+    else
+        log_warn "No ethernet interface detected for p-net configuration"
+    fi
+
+    # Load kernel modules
+    load_pnet_modules || log_warn "Some kernel modules could not be loaded"
+
+    # Install sample application for testing
+    install_pnet_sample || log_warn "Sample application installation failed"
+
+    # Final verification
+    if ! verify_pnet_installation; then
+        log_error "P-Net installation verification failed"
+        return 1
+    fi
+
+    log_info "P-Net PROFINET installation complete"
+    return 0
+}
+
+# Step 4: Acquire and Build Source
 step_build() {
-    log_info "=== Step 3: Source Acquisition and Build ==="
+    log_info "=== Step 4: Source Acquisition and Build ==="
 
     if [ $SKIP_BUILD -eq 1 ]; then
         log_info "Skipping build (--skip-build)"
@@ -652,9 +720,9 @@ step_build() {
     return 0
 }
 
-# Step 4: Install Files
+# Step 5: Install Files
 step_install_files() {
-    log_info "=== Step 4: File Installation ==="
+    log_info "=== Step 5: File Installation ==="
 
     if [ $DRY_RUN -eq 1 ]; then
         log_info "[DRY RUN] Would install files to:"
@@ -704,9 +772,9 @@ step_install_files() {
     return 0
 }
 
-# Step 5: Configure Service
+# Step 6: Configure Service
 step_configure_service() {
-    log_info "=== Step 5: Service Configuration ==="
+    log_info "=== Step 6: Service Configuration ==="
 
     if [ $DRY_RUN -eq 1 ]; then
         log_info "[DRY RUN] Would configure systemd service"
@@ -737,9 +805,9 @@ step_configure_service() {
     return 0
 }
 
-# Step 6: Network and Storage Configuration
+# Step 7: Network and Storage Configuration
 step_configure_network_storage() {
-    log_info "=== Step 6: Network and Storage Configuration ==="
+    log_info "=== Step 7: Network and Storage Configuration ==="
 
     if [ $SKIP_NETWORK -eq 1 ] && [ $CONFIGURE_NETWORK -eq 0 ]; then
         log_info "Skipping network configuration"
@@ -797,9 +865,9 @@ step_configure_network_storage() {
     return 0
 }
 
-# Step 7: Start Service
+# Step 8: Start Service
 step_start_service() {
-    log_info "=== Step 7: Starting Service ==="
+    log_info "=== Step 8: Starting Service ==="
 
     if [ $DRY_RUN -eq 1 ]; then
         log_info "[DRY RUN] Would start water-controller service"
@@ -825,9 +893,9 @@ step_start_service() {
     return 0
 }
 
-# Step 8: Validation
+# Step 9: Validation
 step_validate() {
-    log_info "=== Step 8: Post-Installation Validation ==="
+    log_info "=== Step 9: Post-Installation Validation ==="
 
     if [ $SKIP_VALIDATION -eq 1 ]; then
         log_info "Skipping validation (--skip-validation)"
@@ -850,9 +918,9 @@ step_validate() {
     return 0
 }
 
-# Step 9: Documentation
+# Step 10: Documentation
 step_generate_docs() {
-    log_info "=== Step 9: Generating Documentation ==="
+    log_info "=== Step 10: Generating Documentation ==="
 
     if [ $DRY_RUN -eq 1 ]; then
         log_info "[DRY RUN] Would generate documentation"
@@ -899,6 +967,7 @@ do_upgrade() {
     # Run installation steps
     step_detect_system || { rollback_on_failure; return 1; }
     step_install_dependencies || { rollback_on_failure; return 1; }
+    step_install_pnet || { rollback_on_failure; return 1; }
     step_build || { rollback_on_failure; return 1; }
     step_install_files || { rollback_on_failure; return 1; }
     step_configure_service || { rollback_on_failure; return 1; }
@@ -1044,6 +1113,7 @@ do_install() {
     # Run all installation steps
     step_detect_system || return 1
     step_install_dependencies || return 1
+    step_install_pnet || return 1
     step_build || return 1
     step_install_files || return 1
     step_configure_service || return 1
