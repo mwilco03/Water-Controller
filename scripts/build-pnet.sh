@@ -17,8 +17,9 @@ set -euo pipefail
 PNET_REPO="https://github.com/rtlabs-com/p-net.git"
 
 # Pin to a COMMIT, not a tag or branch
-# (example commit – replace with the one you have validated)
-PNET_COMMIT="6d2c3c0e4e9e8c7b0c9d9bfae8c0a6f4a1b2c3d4"
+# v0.2.0 tag - last version with root-level CMakeLists.txt
+# Newer versions (public/v1.0.x) have restructured build system
+PNET_COMMIT="3e650720850e1f31f8a419c8aa135a2e81b44ddb"
 
 PREFIX="/usr/local"
 BUILD_ROOT="/opt/water-controller/deps"
@@ -47,6 +48,7 @@ log "Architecture: ${ARCH}"
 log "Install prefix: ${PREFIX}"
 
 command -v git >/dev/null || fail "git not installed"
+command -v cmake >/dev/null || fail "cmake not installed"
 command -v make >/dev/null || fail "make not installed"
 command -v gcc >/dev/null || fail "gcc not installed"
 
@@ -70,6 +72,10 @@ cd "${SRC_DIR}"
 log "Checking out pinned commit ${PNET_COMMIT}"
 git fetch --all --tags
 git checkout --detach "${PNET_COMMIT}" || fail "Failed to checkout pinned commit"
+
+# Initialize submodules (required by p-net)
+log "Initializing submodules"
+git submodule update --init --recursive || fail "Failed to initialize submodules"
 
 # -------------------------
 # Verify build system
