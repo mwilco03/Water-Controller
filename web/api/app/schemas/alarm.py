@@ -174,6 +174,10 @@ class AlarmType(str, Enum):
     DEVIATION = "DEVIATION"          # Maps to DEVIATION
     BAD_QUALITY = "BAD_QUALITY"      # Maps to BAD_QUALITY (sensor fault)
     FAULT = "FAULT"                  # Alias for BAD_QUALITY
+    # System alarms (not sensor-based)
+    VERSION_MISMATCH = "VERSION_MISMATCH"  # Controller/RTU version mismatch
+    RTU_OFFLINE = "RTU_OFFLINE"            # RTU communication lost
+    RTU_RECONNECTED = "RTU_RECONNECTED"    # RTU communication restored
 
     @classmethod
     def from_condition(cls, condition: AlarmCondition) -> "AlarmType":
@@ -299,6 +303,45 @@ class AlarmListResponse(BaseModel):
 
     data: List[AlarmEvent]
     meta: AlarmListMeta
+
+
+# ============== Shelving Schemas (ISA-18.2) ==============
+
+class AlarmShelveRequest(BaseModel):
+    """Request to shelve an alarm."""
+
+    duration_minutes: int = Field(
+        ...,
+        ge=1,
+        le=1440,  # Max 24 hours
+        description="Shelve duration in minutes (1-1440)"
+    )
+    reason: Optional[str] = Field(
+        None,
+        max_length=256,
+        description="Reason for shelving (required for audit trail)"
+    )
+
+
+class ShelvedAlarm(BaseModel):
+    """A shelved alarm entry."""
+
+    id: int = Field(description="Shelf entry ID")
+    rtu_station: str = Field(description="RTU station name")
+    slot: int = Field(description="Slot number")
+    shelved_by: str = Field(description="User who shelved the alarm")
+    shelved_at: datetime = Field(description="When the alarm was shelved")
+    duration_minutes: int = Field(description="Original shelf duration")
+    expires_at: datetime = Field(description="When the shelf expires")
+    reason: Optional[str] = Field(None, description="Reason for shelving")
+    active: bool = Field(description="Whether shelf is currently active")
+
+
+class ShelvedAlarmListResponse(BaseModel):
+    """Response for shelved alarm list."""
+
+    data: List[ShelvedAlarm]
+    meta: Dict[str, Any] = Field(default_factory=dict)
 
 
 # ============== Mapping Functions ==============

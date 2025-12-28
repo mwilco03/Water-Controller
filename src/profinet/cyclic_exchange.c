@@ -214,13 +214,28 @@ bool check_frame_timeout(profinet_ar_t *ar, uint32_t timeout_us) {
     return false;
 }
 
-/* Sensor data size: 5 bytes (Float32 + Quality byte) */
+/* Sensor data size: 5 bytes (Float32 + Quality byte) - current format */
 #define SENSOR_SLOT_SIZE 5
+/* Legacy sensor format: 4 bytes (Float32 only, no quality) */
+#define SENSOR_SLOT_SIZE_LEGACY 4
 
-/* Unpack sensor data from 5-byte PROFINET format
- * Format per IEC-61158-6 Section 4.10.3.3:
- * Bytes 0-3: Float32 value (big-endian, IEEE 754)
- * Byte 4:    Quality indicator (OPC UA compatible)
+/* Track format mismatch for logging (avoid spam) */
+static bool legacy_format_logged = false;
+
+/* Unpack sensor data from PROFINET format with backwards compatibility
+ *
+ * Current format (5-byte) per IEC-61158-6 Section 4.10.3.3:
+ *   Bytes 0-3: Float32 value (big-endian, IEEE 754)
+ *   Byte 4:    Quality indicator (OPC UA compatible)
+ *
+ * Legacy format (4-byte) for backwards compatibility:
+ *   Bytes 0-3: Float32 value (big-endian, IEEE 754)
+ *   Quality:   Assumed UNCERTAIN (0x40) since no quality byte present
+ *
+ * Per HARMONIOUS_SYSTEM_DESIGN.md Field Deployment Reality:
+ * - MUST accept older format variants
+ * - MUST NOT refuse connection based on format mismatch
+ * - Log mismatch but continue operation
  */
 wtc_result_t unpack_sensor_from_profinet(const uint8_t *data,
                                           size_t len,
@@ -229,7 +244,8 @@ wtc_result_t unpack_sensor_from_profinet(const uint8_t *data,
         return WTC_ERROR_INVALID_PARAM;
     }
 
-    if (len < SENSOR_SLOT_SIZE) {
+    /* Accept both 4-byte (legacy) and 5-byte (current) formats */
+    if (len < SENSOR_SLOT_SIZE_LEGACY) {
         return WTC_ERROR_INVALID_PARAM;
     }
 
@@ -239,11 +255,49 @@ wtc_result_t unpack_sensor_from_profinet(const uint8_t *data,
     uint32_t raw = ntohl(be);
     memcpy(&reading->value, &raw, sizeof(float));
 
-    /* Extract quality byte */
-    reading->quality = (data_quality_t)data[4];
+    /* Extract quality byte if present (5-byte format) */
+    if (len >= SENSOR_SLOT_SIZE) {
+        reading->quality = (data_quality_t)data[4];
+    } else {
+        /* Legacy 4-byte format - no quality byte
+         * Per HARMONIOUS_SYSTEM_DESIGN.md: treat as UNCERTAIN
+         * Log once to avoid spam, but continue operating
+         */
+        reading->quality = QUALITY_UNCERTAIN;
+
+        if (!legacy_format_logged) {
+            LOG_WARN("Legacy 4-byte sensor format detected (no quality byte). "
+                     "Treating as UNCERTAIN. Consider upgrading RTU firmware. "
+                     "System continues normal operation.");
+            legacy_format_logged = true;
+        }
+    }
+
     reading->timestamp_us = time_get_monotonic_us();
 
     return WTC_OK;
+}
+
+/* Unpack sensor with explicit format detection
+ * Returns detected format size for diagnostics
+ */
+wtc_result_t unpack_sensor_with_format_detect(const uint8_t *data,
+                                               size_t len,
+                                               sensor_reading_t *reading,
+                                               int *detected_format_size) {
+    wtc_result_t result = unpack_sensor_from_profinet(data, len, reading);
+
+    if (detected_format_size) {
+        if (len >= SENSOR_SLOT_SIZE) {
+            *detected_format_size = SENSOR_SLOT_SIZE;
+        } else if (len >= SENSOR_SLOT_SIZE_LEGACY) {
+            *detected_format_size = SENSOR_SLOT_SIZE_LEGACY;
+        } else {
+            *detected_format_size = 0;
+        }
+    }
+
+    return result;
 }
 
 /* Get input slot data (float) with quality - dynamic slot support

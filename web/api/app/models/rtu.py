@@ -136,7 +136,12 @@ class RTU(Base):
     # State tracking
     state = Column(String(20), nullable=False, default=RtuState.OFFLINE)
     state_since = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    transition_reason = Column(String(256), nullable=True)  # Why the last state change occurred
     last_error = Column(Text, nullable=True)
+
+    # Version tracking (for version mismatch detection)
+    rtu_version = Column(String(32), nullable=True)  # Reported RTU firmware version
+    version_mismatch = Column(Boolean, default=False)  # True if version mismatch detected
 
     # Timestamps
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
@@ -153,14 +158,48 @@ class RTU(Base):
     alarm_rules = relationship("AlarmRule", back_populates="rtu", cascade="all, delete-orphan")
     alarm_events = relationship("AlarmEvent", back_populates="rtu", cascade="all, delete-orphan")
 
-    def update_state(self, new_state: str, error: Optional[str] = None):
-        """Update RTU state with timestamp."""
+    def update_state(self, new_state: str, error: Optional[str] = None,
+                     reason: Optional[str] = None):
+        """Update RTU state with timestamp and transition reason.
+
+        Per HARMONIOUS_SYSTEM_DESIGN.md Principle 4:
+        Every state transition is logged with context explaining WHY.
+
+        Args:
+            new_state: The new state to transition to
+            error: Optional error message (stored in last_error)
+            reason: Why this transition occurred (stored in transition_reason)
+                   Examples: "PROFINET AR established", "Watchdog timeout",
+                            "Operator requested disconnect", "Network cable unplugged"
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+
+        old_state = self.state
         self.state = new_state
         self.state_since = datetime.now(timezone.utc)
+
+        # Store transition reason
+        if reason:
+            self.transition_reason = reason
+        elif error:
+            self.transition_reason = f"Error: {error}"
+        else:
+            # Generate default reason based on transition
+            self.transition_reason = f"Transition from {old_state}"
+
+        # Handle error state
         if error:
             self.last_error = error
         elif new_state == RtuState.RUNNING:
             self.last_error = None
+
+        # Log state transition with context (Principle 4)
+        if old_state != new_state:
+            logger.info(
+                f"RTU {self.station_name}: {old_state} → {new_state} "
+                f"(reason: {self.transition_reason})"
+            )
 
 
 class Slot(Base):
