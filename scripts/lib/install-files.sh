@@ -941,8 +941,8 @@ verify_file_installation() {
     echo ""
     echo "FILE INSTALLATION VERIFICATION:"
     echo "================================"
-    for result in "${results[@]}"; do
-        echo "  $result"
+    for check_result in "${results[@]}"; do
+        echo "  $check_result"
     done
     echo "================================"
     echo ""

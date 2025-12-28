@@ -621,8 +621,8 @@ check_service_health() {
     echo ""
     echo "SERVICE HEALTH CHECK:"
     echo "====================="
-    for result in "${results[@]}"; do
-        echo "  $result"
+    for check_result in "${results[@]}"; do
+        echo "  $check_result"
     done
     echo "====================="
     echo ""
