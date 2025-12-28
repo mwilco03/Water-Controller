@@ -1,25 +1,28 @@
 # Water Treatment Controller - Python Dependencies
 # FastAPI Web Backend
+#
+# IMPORTANT: All versions are pinned for reproducible builds.
+# Update with: pip-compile requirements.in > requirements.txt
 
-fastapi>=0.104.0
-uvicorn[standard]>=0.24.0
-pydantic>=2.5.0
-python-multipart>=0.0.6
-websockets>=12.0
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+pydantic==2.10.4
+python-multipart==0.0.20
+websockets==14.1
 
 # Database (SQLite default, PostgreSQL for production)
-sqlalchemy>=2.0.0
+sqlalchemy==2.0.36
 
 # PostgreSQL driver (required for production with PostgreSQL/TimescaleDB)
-psycopg2-binary>=2.9.0
+psycopg2-binary==2.9.10
 
 # Utilities
-python-dotenv>=1.0.0
-httpx>=0.25.0
+python-dotenv==1.0.1
+httpx==0.28.1
 
 # Monitoring & System
-psutil>=5.9.0
+psutil==6.1.1
 
 # Testing
-pytest>=7.4.0
-pytest-asyncio>=0.21.0
+pytest==8.3.4
+pytest-asyncio==0.25.2

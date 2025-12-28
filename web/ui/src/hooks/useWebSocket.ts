@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState, useCallback } from 'react';
+import { wsLogger as logger } from '@/lib/logger';
 
 type MessageHandler = (event: string, data: any) => void;
 
@@ -101,14 +102,14 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
       const ws = new WebSocket(wsUrl);
 
       ws.onopen = () => {
-        console.log('WebSocket connected');
+        logger.info('WebSocket connected');
         reconnectAttemptsRef.current = 0;
         setState(prev => ({ ...prev, connected: true }));
         onConnect?.();
       };
 
       ws.onclose = () => {
-        console.log('WebSocket disconnected');
+        logger.info('WebSocket disconnected');
         setState(prev => ({ ...prev, connected: false }));
         onDisconnect?.();
         wsRef.current = null;
@@ -116,13 +117,13 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
         // Attempt reconnection
         if (reconnectAttemptsRef.current < maxReconnectAttempts) {
           reconnectAttemptsRef.current++;
-          console.log(`Reconnecting in ${reconnectInterval}ms (attempt ${reconnectAttemptsRef.current}/${maxReconnectAttempts})`);
+          logger.info(`Reconnecting in ${reconnectInterval}ms (attempt ${reconnectAttemptsRef.current}/${maxReconnectAttempts})`);
           reconnectTimeoutRef.current = setTimeout(connect, reconnectInterval);
         }
       };
 
       ws.onerror = (error) => {
-        console.error('WebSocket error:', error);
+        logger.error('WebSocket error:', error);
       };
 
       ws.onmessage = (event) => {
@@ -146,7 +147,7 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
             try {
               handler(type, data);
             } catch (e) {
-              console.error(`Error in WebSocket handler for ${type}:`, e);
+              logger.error(`Error in WebSocket handler for ${type}:`, e);
             }
           });
 
@@ -155,18 +156,18 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
             try {
               handler(type, data);
             } catch (e) {
-              console.error(`Error in WebSocket wildcard handler:`, e);
+              logger.error('Error in WebSocket wildcard handler:', e);
             }
           });
 
         } catch (e) {
-          console.error('Failed to parse WebSocket message:', e);
+          logger.error('Failed to parse WebSocket message:', e);
         }
       };
 
       wsRef.current = ws;
     } catch (e) {
-      console.error('Failed to create WebSocket:', e);
+      logger.error('Failed to create WebSocket:', e);
     }
   }, [onConnect, onDisconnect, onMessage, reconnectInterval, maxReconnectAttempts]);
 

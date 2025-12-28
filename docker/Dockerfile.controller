@@ -1,7 +1,42 @@
 # Water Treatment Controller - C Controller Dockerfile
 # Copyright (C) 2024
 # SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Multi-stage build with layer caching for p-net library
 
+# =============================================================================
+# Stage 1: Build p-net library (cached layer)
+# =============================================================================
+FROM debian:bookworm-slim AS pnet-builder
+
+# Install p-net build dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    cmake \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Pin p-net to specific commit for reproducibility
+# v0.2.0 tag - last version with root-level CMakeLists.txt
+ARG PNET_COMMIT=3e650720850e1f31f8a419c8aa135a2e81b44ddb
+
+# Clone and build p-net (this layer is cached if PNET_COMMIT doesn't change)
+WORKDIR /deps
+RUN git clone https://github.com/rtlabs-com/p-net.git pnet-src && \
+    cd pnet-src && \
+    git checkout --detach ${PNET_COMMIT} && \
+    git submodule update --init --recursive
+
+WORKDIR /deps/pnet-build
+RUN cmake /deps/pnet-src \
+        -DCMAKE_INSTALL_PREFIX=/usr/local \
+        -DCMAKE_BUILD_TYPE=Release && \
+    make -j$(nproc) && \
+    make install
+
+# =============================================================================
+# Stage 2: Build Water Controller
+# =============================================================================
 FROM debian:bookworm-slim AS builder
 
 # Install build dependencies
@@ -13,38 +48,62 @@ RUN apt-get update && apt-get install -y \
     libjson-c-dev \
     && rm -rf /var/lib/apt/lists/*
 
+# Copy p-net from previous stage
+COPY --from=pnet-builder /usr/local/include/pnet /usr/local/include/pnet
+COPY --from=pnet-builder /usr/local/lib/libpnet* /usr/local/lib/
+
+# Update library cache
+RUN ldconfig
+
 # Copy source
 WORKDIR /app
 COPY CMakeLists.txt .
 COPY src/ src/
 
-# Build
+# Build controller
 RUN mkdir build && cd build && \
     cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=OFF .. && \
     make -j$(nproc)
 
-# Runtime image
+# =============================================================================
+# Stage 3: Runtime image (minimal)
+# =============================================================================
 FROM debian:bookworm-slim
 
-# Install runtime dependencies
+# Install runtime dependencies only
 RUN apt-get update && apt-get install -y \
     libpq5 \
     libjson-c5 \
+    procps \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy binary
+# Copy p-net shared library
+COPY --from=pnet-builder /usr/local/lib/libpnet* /usr/local/lib/
+
+# Copy controller binary
 COPY --from=builder /app/build/water_treat_controller /usr/local/bin/
 
-# Create config directory
+# Update library cache
+RUN ldconfig
+
+# Create config and log directories
 RUN mkdir -p /etc/water-controller /var/log/water-controller
+
+# Create non-root user for security
+RUN groupadd -r wtc && useradd -r -g wtc wtc
+RUN chown -R wtc:wtc /var/log/water-controller
 
 # Set default environment
 ENV WT_INTERFACE=eth0
 ENV WT_CYCLE_TIME=1000
 ENV WT_LOG_LEVEL=INFO
 
-# Expose for debugging
+# Expose OPC UA port for debugging
 EXPOSE 4840/tcp
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD pgrep water_treat_controller || exit 1
 
 # Run with capabilities for raw sockets
 # docker run --cap-add=NET_ADMIN --cap-add=NET_RAW
