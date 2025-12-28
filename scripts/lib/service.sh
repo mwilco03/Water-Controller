@@ -446,6 +446,44 @@ install_frontend_service() {
     return 0
 }
 
+# Clean up old/conflicting services
+# This ensures a clean installation when upgrading
+_cleanup_old_services() {
+    log_debug "Checking for old/conflicting services..."
+
+    # List of old service names that may conflict
+    local old_services=(
+        "water-controller-api"
+        "water-controller-hmi"
+        "water-controller-modbus"
+    )
+
+    for svc in "${old_services[@]}"; do
+        if systemctl list-unit-files "${svc}.service" >/dev/null 2>&1; then
+            log_info "Cleaning up old service: ${svc}"
+
+            # Stop if running
+            if systemctl is-active "${svc}.service" >/dev/null 2>&1; then
+                sudo systemctl stop "${svc}.service" 2>/dev/null || true
+            fi
+
+            # Disable if enabled
+            if systemctl is-enabled "${svc}.service" >/dev/null 2>&1; then
+                sudo systemctl disable "${svc}.service" 2>/dev/null || true
+            fi
+
+            # Remove old service file
+            if [ -f "/etc/systemd/system/${svc}.service" ]; then
+                sudo rm -f "/etc/systemd/system/${svc}.service" 2>/dev/null || true
+                log_debug "Removed: /etc/systemd/system/${svc}.service"
+            fi
+        fi
+    done
+
+    # Reload daemon after cleanup
+    sudo systemctl daemon-reload 2>/dev/null || true
+}
+
 # Install systemd service
 # Returns: 0 on success, 4 on failure
 install_service() {
@@ -459,6 +497,9 @@ install_service() {
         log_error "systemctl not found - systemd is required"
         return 4
     fi
+
+    # Clean up old/conflicting services first
+    _cleanup_old_services
 
     # Backup existing service if present
     if [ -f "$SERVICE_FILE" ]; then

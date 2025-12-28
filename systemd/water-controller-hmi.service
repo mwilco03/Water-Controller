@@ -1,12 +1,16 @@
 [Unit]
-Description=Water Treatment Controller HMI
+Description=Water Treatment Controller HMI (Combined API + UI)
 Documentation=https://github.com/mwilco03/Water-Controller
 After=network.target
 
+# Note: This service runs both API and UI via the wrapper script.
+# For production, prefer using water-controller-api.service and
+# water-controller-ui.service separately.
+
 [Service]
 Type=simple
-User=wtc
-Group=wtc
+User=water-controller
+Group=water-controller
 WorkingDirectory=/opt/water-controller
 ExecStart=/usr/local/bin/water-controller --web-only
 ExecReload=/bin/kill -HUP $MAINPID
@@ -23,9 +27,10 @@ ProtectHome=true
 PrivateTmp=true
 ReadWritePaths=/var/lib/water-controller /var/log/water-controller
 
-# Environment
+# Environment - API on 8000, UI on 8080
 Environment=DATA_DIR=/var/lib/water-controller
-Environment=WEB_PORT=8080
+Environment=WEB_PORT=8000
+Environment=UI_PORT=8080
 Environment=PYTHONUNBUFFERED=1
 Environment=NODE_ENV=production
 EnvironmentFile=-/etc/water-controller/environment

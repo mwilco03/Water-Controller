@@ -1,14 +1,15 @@
 [Unit]
-Description=Water Treatment Controller Web UI
+Description=Water Treatment Controller Web UI (Next.js)
 Documentation=https://github.com/mwilco03/Water-Controller
-After=network.target water-controller-api.service
+After=network.target water-controller.service
+Wants=water-controller.service
 
 [Service]
 Type=simple
-User=wtc
-Group=wtc
-WorkingDirectory=/opt/water-controller/web/ui
-ExecStart=/usr/bin/node server.js
+User=water-controller
+Group=water-controller
+WorkingDirectory=/opt/water-controller/web
+ExecStart=/usr/bin/node /opt/water-controller/web/node_modules/.bin/next start -p 8080 -H 0.0.0.0
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=5
@@ -21,12 +22,19 @@ NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
-ReadWritePaths=/var/lib/water-controller
+ReadWritePaths=/var/lib/water-controller /var/log/water-controller
 
 # Environment
 Environment=NODE_ENV=production
-Environment=PORT=3000
+Environment=PORT=8080
+Environment=HOSTNAME=0.0.0.0
+Environment=NEXT_TELEMETRY_DISABLED=1
 EnvironmentFile=-/etc/water-controller/environment
+
+# Resource limits
+MemoryMax=256M
+MemoryHigh=200M
+TasksMax=64
 
 [Install]
 WantedBy=multi-user.target
