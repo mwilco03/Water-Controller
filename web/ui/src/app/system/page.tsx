@@ -47,7 +47,7 @@ export default function SystemPage() {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [services, setServices] = useState<ServiceStatus[]>([]);
   const [auditLog, setAuditLog] = useState<AuditEntry[]>([]);
-  const [activeTab, setActiveTab] = useState<'overview' | 'logs' | 'audit' | 'services'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'logs' | 'audit' | 'services' | 'support'>('overview');
   const [logFilter, setLogFilter] = useState<string>('all');
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [loading, setLoading] = useState(false);
@@ -325,6 +325,7 @@ export default function SystemPage() {
           { id: 'services', label: 'Services' },
           { id: 'logs', label: 'System Logs' },
           { id: 'audit', label: 'Audit Log' },
+          { id: 'support', label: 'Support' },
         ].map((tab) => (
           <button
             key={tab.id}
@@ -535,6 +536,186 @@ export default function SystemPage() {
           {auditLog.length === 0 && (
             <p className="text-gray-400 text-center py-8">No audit entries</p>
           )}
+        </div>
+      )}
+
+      {/* Support Tab */}
+      {activeTab === 'support' && (
+        <div className="space-y-6">
+          {/* Support Information */}
+          <div className="scada-panel p-6">
+            <h2 className="text-lg font-semibold text-white mb-4">Support & Documentation</h2>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* Contact Information */}
+              <div className="space-y-4">
+                <h3 className="text-sm font-medium text-gray-400 uppercase">Contact Support</h3>
+                <div className="space-y-3">
+                  <div className="flex items-center gap-3">
+                    <svg className="w-5 h-5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                    </svg>
+                    <a href="mailto:support@water-controller.local" className="text-sky-400 hover:text-sky-300">
+                      support@water-controller.local
+                    </a>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <svg className="w-5 h-5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+                    </svg>
+                    <a href="https://github.com/mwilco03/Water-Controller/issues" target="_blank" rel="noopener noreferrer" className="text-sky-400 hover:text-sky-300">
+                      GitHub Issues
+                    </a>
+                  </div>
+                </div>
+              </div>
+
+              {/* Documentation Links */}
+              <div className="space-y-4">
+                <h3 className="text-sm font-medium text-gray-400 uppercase">Documentation</h3>
+                <div className="space-y-2">
+                  <a href="https://github.com/mwilco03/Water-Controller/blob/main/docs/TROUBLESHOOTING_GUIDE.md" target="_blank" rel="noopener noreferrer" className="block text-sky-400 hover:text-sky-300">
+                    Troubleshooting Guide →
+                  </a>
+                  <a href="https://github.com/mwilco03/Water-Controller/blob/main/docs/ALARM_RESPONSE_PROCEDURES.md" target="_blank" rel="noopener noreferrer" className="block text-sky-400 hover:text-sky-300">
+                    Alarm Response Procedures →
+                  </a>
+                  <a href="https://github.com/mwilco03/Water-Controller/blob/main/docs/COMMISSIONING_PROCEDURE.md" target="_blank" rel="noopener noreferrer" className="block text-sky-400 hover:text-sky-300">
+                    Commissioning Procedure →
+                  </a>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Diagnostic Data Export */}
+          <div className="scada-panel p-6">
+            <h2 className="text-lg font-semibold text-white mb-4">Diagnostic Data Export</h2>
+            <p className="text-gray-400 mb-4">
+              Download system logs and diagnostic information for troubleshooting or support requests.
+            </p>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {/* Download System Logs */}
+              <button
+                onClick={async () => {
+                  try {
+                    const res = await fetch('/api/v1/system/logs?limit=1000&format=text');
+                    if (res.ok) {
+                      const text = await res.text();
+                      const blob = new Blob([text], { type: 'text/plain' });
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement('a');
+                      a.href = url;
+                      a.download = `system-logs-${new Date().toISOString().split('T')[0]}.txt`;
+                      a.click();
+                      URL.revokeObjectURL(url);
+                    }
+                  } catch (error) {
+                    setMessage({ type: 'error', text: 'Failed to download logs' });
+                  }
+                }}
+                className="flex items-center justify-center gap-2 px-4 py-3 bg-sky-600 hover:bg-sky-500 text-white rounded-lg transition-colors"
+              >
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                </svg>
+                Download System Logs
+              </button>
+
+              {/* Download Audit Trail */}
+              <button
+                onClick={async () => {
+                  try {
+                    const res = await fetch('/api/v1/system/audit?limit=1000&format=csv');
+                    if (res.ok) {
+                      const text = await res.text();
+                      const blob = new Blob([text], { type: 'text/csv' });
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement('a');
+                      a.href = url;
+                      a.download = `audit-log-${new Date().toISOString().split('T')[0]}.csv`;
+                      a.click();
+                      URL.revokeObjectURL(url);
+                    }
+                  } catch (error) {
+                    setMessage({ type: 'error', text: 'Failed to download audit log' });
+                  }
+                }}
+                className="flex items-center justify-center gap-2 px-4 py-3 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors"
+              >
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+                Download Audit Trail
+              </button>
+
+              {/* Download Full Diagnostic */}
+              <button
+                onClick={async () => {
+                  try {
+                    setLoading(true);
+                    const [healthRes, logsRes, servicesRes] = await Promise.all([
+                      fetch('/api/v1/system/health'),
+                      fetch('/api/v1/system/logs?limit=500'),
+                      fetch('/api/v1/services'),
+                    ]);
+
+                    const diagnostic = {
+                      generated_at: new Date().toISOString(),
+                      version: '1.0.0',
+                      health: healthRes.ok ? await healthRes.json() : null,
+                      logs: logsRes.ok ? await logsRes.json() : [],
+                      services: servicesRes.ok ? await servicesRes.json() : [],
+                    };
+
+                    const blob = new Blob([JSON.stringify(diagnostic, null, 2)], { type: 'application/json' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `diagnostic-report-${new Date().toISOString().split('T')[0]}.json`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                    setMessage({ type: 'success', text: 'Diagnostic report downloaded' });
+                  } catch (error) {
+                    setMessage({ type: 'error', text: 'Failed to generate diagnostic report' });
+                  } finally {
+                    setLoading(false);
+                  }
+                }}
+                disabled={loading}
+                className="flex items-center justify-center gap-2 px-4 py-3 bg-purple-600 hover:bg-purple-500 disabled:bg-gray-600 text-white rounded-lg transition-colors"
+              >
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+                {loading ? 'Generating...' : 'Full Diagnostic Report'}
+              </button>
+            </div>
+          </div>
+
+          {/* System Information */}
+          <div className="scada-panel p-6">
+            <h2 className="text-lg font-semibold text-white mb-4">System Information</h2>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+              <div>
+                <span className="text-gray-400">Version</span>
+                <div className="text-white font-mono">1.0.0</div>
+              </div>
+              <div>
+                <span className="text-gray-400">Build Date</span>
+                <div className="text-white font-mono">{new Date().toISOString().split('T')[0]}</div>
+              </div>
+              <div>
+                <span className="text-gray-400">Uptime</span>
+                <div className="text-white font-mono">{health ? `${Math.floor(health.uptime_seconds / 3600)}h ${Math.floor((health.uptime_seconds % 3600) / 60)}m` : '--'}</div>
+              </div>
+              <div>
+                <span className="text-gray-400">Connected RTUs</span>
+                <div className="text-white font-mono">{health ? `${health.connected_rtus}/${health.total_rtus}` : '--'}</div>
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>

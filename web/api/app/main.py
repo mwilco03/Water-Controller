@@ -77,13 +77,27 @@ app = FastAPI(
     openapi_url="/api/openapi.json",
 )
 
-# Add CORS middleware
+# CORS configuration from environment
+# Production: Set WTC_CORS_ORIGINS to comma-separated list of allowed origins
+# Example: WTC_CORS_ORIGINS=https://scada.example.com,https://backup.example.com
+CORS_ORIGINS = os.environ.get("WTC_CORS_ORIGINS", "").strip()
+if CORS_ORIGINS:
+    allowed_origins = [origin.strip() for origin in CORS_ORIGINS.split(",") if origin.strip()]
+else:
+    # Development fallback - localhost only
+    allowed_origins = [
+        "http://localhost:3000",
+        "http://localhost:8080",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:8080",
+    ]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure appropriately for production
+    allow_origins=allowed_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Correlation-ID", "X-Request-ID"],
 )
 
 

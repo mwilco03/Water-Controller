@@ -2,6 +2,7 @@
 
 import { createContext, useContext, useState, useCallback, useEffect, useRef, ReactNode } from 'react';
 import { setAuthToken } from '@/lib/api';
+import { authLogger as logger } from '@/lib/logger';
 
 // Command mode configuration
 const COMMAND_MODE_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
@@ -86,7 +87,7 @@ export function CommandModeProvider({ children }: CommandModeProviderProps) {
       });
 
       if (!response.ok) {
-        console.error('Login failed');
+        logger.warn('Login failed');
         return false;
       }
 
@@ -94,7 +95,7 @@ export function CommandModeProvider({ children }: CommandModeProviderProps) {
 
       // Check role - must be at least operator
       if (data.role !== 'operator' && data.role !== 'admin') {
-        console.error('Insufficient role for command mode');
+        logger.warn('Insufficient role for command mode');
         return false;
       }
 
@@ -122,7 +123,7 @@ export function CommandModeProvider({ children }: CommandModeProviderProps) {
 
       return true;
     } catch (error) {
-      console.error('Error entering command mode:', error);
+      logger.error('Error entering command mode:', error);
       return false;
     }
   }, []);

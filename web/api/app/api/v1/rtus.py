@@ -98,17 +98,23 @@ async def create_rtu(
 async def list_rtus(
     state: Optional[str] = Query(None, description="Filter by state"),
     include_stats: bool = Query(False, description="Include sensor/alarm counts"),
+    limit: int = Query(100, ge=1, le=1000, description="Maximum number of RTUs to return"),
+    offset: int = Query(0, ge=0, description="Number of RTUs to skip"),
     db: Session = Depends(get_db)
 ) -> Dict[str, Any]:
     """
-    List all configured RTUs.
+    List all configured RTUs with pagination.
     """
     query = db.query(RTU)
 
     if state:
         query = query.filter(RTU.state == state.upper())
 
-    rtus = query.order_by(RTU.station_name).all()
+    # Get total count before pagination
+    total = query.count()
+
+    # Apply pagination
+    rtus = query.order_by(RTU.station_name).offset(offset).limit(limit).all()
 
     result = []
     for rtu in rtus:
@@ -122,7 +128,12 @@ async def list_rtus(
         )
         result.append(item.model_dump())
 
-    return build_success_response(result, meta={"total": len(result)})
+    return build_success_response(result, meta={
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "returned": len(result),
+    })
 
 
 @router.get("/{name}")

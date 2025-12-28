@@ -50,8 +50,8 @@ wtc_result_t ipc_server_init(ipc_server_t **server) {
         return WTC_ERROR_NO_MEMORY;
     }
 
-    /* Create shared memory */
-    srv->shm_fd = shm_open(SHM_NAME, O_CREAT | O_RDWR, 0666);
+    /* Create shared memory with restricted permissions (owner + group only) */
+    srv->shm_fd = shm_open(SHM_NAME, O_CREAT | O_RDWR, 0660);
     if (srv->shm_fd < 0) {
         LOG_ERROR(LOG_TAG, "Failed to create shared memory");
         free(srv);

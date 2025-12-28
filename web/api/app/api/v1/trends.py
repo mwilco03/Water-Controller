@@ -56,6 +56,9 @@ async def get_trends(
 ) -> Dict[str, Any]:
     """
     Get historical data for trending.
+
+    Performance: Uses single bulk query per tag + in-memory aggregation
+    instead of per-interval queries (O(tags) instead of O(tags × intervals)).
     """
     tag_list = [t.strip() for t in tags.split(",")]
 
@@ -66,14 +69,44 @@ async def get_trends(
     # Get interval in seconds
     interval_seconds = get_interval_seconds(interval)
 
-    # Build result points
+    # Pre-fetch ALL samples for ALL tags in the time range (single query per tag)
+    # This converts O(intervals × tags) queries to O(tags) queries
+    samples_by_sensor = {}
+    for tag in tag_list:
+        sensor = sensor_map.get(tag)
+        if sensor:
+            samples = db.query(HistorianSample).filter(
+                HistorianSample.sensor_id == sensor.id,
+                HistorianSample.timestamp >= start,
+                HistorianSample.timestamp < end
+            ).order_by(HistorianSample.timestamp).all()
+            samples_by_sensor[sensor.id] = samples
+
+    # Build index for O(1) bucket assignment
+    # bucket_key = floor(timestamp / interval_seconds) * interval_seconds
+    def get_bucket_start(ts: datetime) -> datetime:
+        ts_epoch = ts.timestamp()
+        bucket_epoch = (int(ts_epoch) // interval_seconds) * interval_seconds
+        return datetime.fromtimestamp(bucket_epoch, tz=ts.tzinfo or timezone.utc)
+
+    # Pre-aggregate samples into buckets (O(n) where n = total samples)
+    bucket_samples = {}  # (tag, bucket_start) -> list of samples
+    for tag in tag_list:
+        sensor = sensor_map.get(tag)
+        if not sensor:
+            continue
+        for sample in samples_by_sensor.get(sensor.id, []):
+            bucket = get_bucket_start(sample.timestamp)
+            key = (tag, bucket)
+            if key not in bucket_samples:
+                bucket_samples[key] = []
+            bucket_samples[key].append(sample)
+
+    # Build result points using pre-aggregated buckets
     points = []
     current = start
 
     while current < end:
-        next_time = current + timedelta(seconds=interval_seconds)
-
-        # Query for each tag
         values = {}
         for tag in tag_list:
             sensor = sensor_map.get(tag)
@@ -84,14 +117,8 @@ async def get_trends(
                 ).model_dump()
                 continue
 
-            # Query samples in this interval
-            query = db.query(HistorianSample).filter(
-                HistorianSample.sensor_id == sensor.id,
-                HistorianSample.timestamp >= current,
-                HistorianSample.timestamp < next_time
-            )
-
-            samples = query.all()
+            # O(1) lookup for bucket samples
+            samples = bucket_samples.get((tag, current), [])
 
             if samples:
                 # Apply aggregation
@@ -137,7 +164,7 @@ async def get_trends(
             values=values,
         ).model_dump())
 
-        current = next_time
+        current = current + timedelta(seconds=interval_seconds)
 
     data = TrendData(
         tags=tag_list,

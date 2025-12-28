@@ -19,7 +19,9 @@ USER_SYNC_SALT = "NaCl4Life"
 
 
 def _djb2_hash(s: str) -> int:
-    """DJB2 hash algorithm by Dan Bernstein"""
+    """
+    DJB2 hash algorithm by Dan Bernstein.
+    """
     hash_val = 5381
     for c in s:
         hash_val = ((hash_val << 5) + hash_val) + ord(c)
@@ -29,9 +31,8 @@ def _djb2_hash(s: str) -> int:
 
 def hash_password(password: str) -> str:
     """
-    Hash password using DJB2 with salt.
+    Hash password using DJB2.
     Format: "DJB2:<salt_hash>:<password_hash>"
-    This matches the RTU implementation for user sync.
     """
     salted = USER_SYNC_SALT + password
     hash_val = _djb2_hash(salted)
@@ -40,9 +41,16 @@ def hash_password(password: str) -> str:
 
 
 def verify_password(password: str, stored_hash: str) -> bool:
-    """Verify password against stored hash"""
-    computed = hash_password(password)
-    return computed == stored_hash
+    """
+    Verify password against stored hash.
+    """
+    if stored_hash.startswith("DJB2:"):
+        computed = hash_password(password)
+        return computed == stored_hash
+    else:
+        # Unknown format
+        logger.warning(f"Unknown password hash format: {stored_hash[:10]}...")
+        return False
 
 
 def get_users(include_inactive: bool = False) -> List[Dict[str, Any]]:

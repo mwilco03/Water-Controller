@@ -1,12 +1,13 @@
 'use client';
 
 import './globals.css';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { usePathname } from 'next/navigation';
 import { CommandModeProvider, useCommandMode } from '@/contexts/CommandModeContext';
 import CommandModeBanner from '@/components/CommandModeBanner';
 import { ToastProvider } from '@/components/ui/Toast';
-import { SessionIndicator, AuthenticationModal } from '@/components/hmi';
+import { SessionIndicator, AuthenticationModal, DegradedModeBanner } from '@/components/hmi';
+import { useWebSocket } from '@/hooks/useWebSocket';
 
 export default function RootLayout({
   children,
@@ -40,7 +41,14 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const [showConfigMenu, setShowConfigMenu] = useState(false);
   const [showLoginModal, setShowLoginModal] = useState(false);
+  const [degradedSince, setDegradedSince] = useState<Date | null>(null);
   const { mode, user } = useCommandMode();
+
+  // Track WebSocket connection status for degraded mode banner
+  const { connected } = useWebSocket({
+    onConnect: () => setDegradedSince(null),
+    onDisconnect: () => setDegradedSince(new Date()),
+  });
 
   const isActive = (path: string) => pathname === path;
   const isConfigActive = ['/settings', '/io-tags', '/network', '/users'].some(p => pathname.startsWith(p));
@@ -49,12 +57,23 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
   // Other pages use the standard dark theme layout with navigation
   const isLandingPage = pathname === '/';
 
+  // Degraded mode info for banner
+  const degradedInfo = !connected ? {
+    reason: 'websocket_disconnected' as const,
+    message: 'Falling back to polling mode. Data updates may be delayed.',
+    details: 'Attempting to reconnect...',
+    since: degradedSince || undefined,
+  } : null;
+
   // For landing page, render children directly (it has its own layout)
   if (isLandingPage) {
     return (
       <div className="min-h-screen flex flex-col bg-hmi-bg">
         {/* Command Mode Banner */}
         <CommandModeBanner />
+
+        {/* Degraded Mode Banner - shows when WebSocket disconnected */}
+        {degradedInfo && <DegradedModeBanner degradedInfo={degradedInfo} />}
 
         {/* Minimal header for landing page */}
         <header className="sticky top-0 z-50 bg-hmi-panel border-b border-hmi-border px-6 py-3">
@@ -112,6 +131,8 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
     <div className="min-h-screen flex flex-col">
       {/* Command Mode Banner - shows when authenticated in command mode */}
       <CommandModeBanner />
+      {/* Degraded Mode Banner - shows when WebSocket disconnected */}
+      {degradedInfo && <DegradedModeBanner degradedInfo={degradedInfo} />}
       <header className="sticky top-0 z-50 bg-slate-900/95 backdrop-blur-lg border-b border-sky-500/20 px-6 py-3">
         <div className="flex items-center justify-between max-w-[1800px] mx-auto">
           <div className="flex items-center gap-4">
