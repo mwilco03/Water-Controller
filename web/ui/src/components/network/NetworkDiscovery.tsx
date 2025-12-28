@@ -105,12 +105,32 @@ export default function NetworkDiscovery({ onDeviceSelect, onAddDevice }: Props)
           message: `Scan complete. Found ${data.devices?.length || 0} devices.`,
         });
       } else {
-        // Use mock data
-        await simulateScan();
+        // Use mock data only in development
+        if (process.env.NODE_ENV === 'development') {
+          console.warn('[DEV] Network discovery API unavailable, using mock data');
+          await simulateScan();
+        } else {
+          setScanProgress({
+            phase: 'complete',
+            progress: 100,
+            devices_found: 0,
+            message: 'Scan failed. Check network connection.',
+          });
+        }
       }
     } catch (err) {
-      // Use mock data
-      await simulateScan();
+      // Use mock data only in development
+      if (process.env.NODE_ENV === 'development') {
+        console.warn('[DEV] Network discovery API unavailable, using mock data');
+        await simulateScan();
+      } else {
+        setScanProgress({
+          phase: 'complete',
+          progress: 100,
+          devices_found: 0,
+          message: 'Scan failed. Check network connection.',
+        });
+      }
     } finally {
       setScanning(false);
     }

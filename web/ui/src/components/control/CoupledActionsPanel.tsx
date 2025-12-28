@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 
 interface CoupledAction {
   coupling_id: number;
@@ -87,38 +87,66 @@ export default function CoupledActionsPanel({ rtuStation, showAll = false }: Pro
   const [expandedIds, setExpandedIds] = useState<number[]>([]);
   const [filterActive, setFilterActive] = useState<'all' | 'active' | 'inactive'>('all');
 
-  const fetchCouplings = useCallback(async () => {
+  const abortControllerRef = useRef<AbortController | null>(null);
+
+  const fetchCouplings = useCallback(async (signal?: AbortSignal) => {
     try {
       const url = rtuStation
         ? `/api/v1/control/couplings?rtu=${encodeURIComponent(rtuStation)}`
         : '/api/v1/control/couplings';
 
-      const res = await fetch(url);
+      const res = await fetch(url, { signal });
+
+      if (signal?.aborted) return;
 
       if (res.ok) {
         const data = await res.json();
         setCouplings(data.couplings || []);
         setError(null);
       } else if (res.status === 404) {
-        // No couplings endpoint - use mock data for demonstration
-        setCouplings(getMockCouplings());
-        setError(null);
+        // No couplings endpoint - use mock data only in development
+        if (process.env.NODE_ENV === 'development') {
+          console.warn('[DEV] Couplings API unavailable, using mock data');
+          setCouplings(getMockCouplings());
+          setError(null);
+        } else {
+          setCouplings([]);
+          setError(null);
+        }
       } else {
         setError('Failed to load coupled actions');
       }
     } catch (err) {
-      // Use mock data if API not available
-      setCouplings(getMockCouplings());
-      setError(null);
+      // Ignore abort errors
+      if (err instanceof Error && err.name === 'AbortError') return;
+
+      // Use mock data only in development
+      if (process.env.NODE_ENV === 'development') {
+        console.warn('[DEV] Couplings API unavailable, using mock data');
+        setCouplings(getMockCouplings());
+        setError(null);
+      } else {
+        setError('Failed to load coupled actions. Check network connection.');
+        setCouplings([]);
+      }
     } finally {
       setLoading(false);
     }
   }, [rtuStation]);
 
   useEffect(() => {
-    fetchCouplings();
-    const interval = setInterval(fetchCouplings, 5000);
-    return () => clearInterval(interval);
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
+    fetchCouplings(controller.signal);
+    const interval = setInterval(() => {
+      fetchCouplings(controller.signal);
+    }, 5000);
+
+    return () => {
+      controller.abort();
+      clearInterval(interval);
+    };
   }, [fetchCouplings]);
 
   const toggleExpanded = (id: number) => {
@@ -170,7 +198,7 @@ export default function CoupledActionsPanel({ rtuStation, showAll = false }: Pro
       <div className="space-y-4">
         <div className="flex items-center justify-between">
           <h3 className="text-lg font-semibold text-white">Coupled Actions</h3>
-          <button onClick={fetchCouplings} className="text-sm text-blue-400 hover:text-blue-300">
+          <button onClick={() => fetchCouplings()} className="text-sm text-blue-400 hover:text-blue-300">
             Retry
           </button>
         </div>
@@ -197,7 +225,7 @@ export default function CoupledActionsPanel({ rtuStation, showAll = false }: Pro
             <option value="inactive">Inactive Only</option>
           </select>
           <button
-            onClick={fetchCouplings}
+            onClick={() => fetchCouplings()}
             className="text-sm text-blue-400 hover:text-blue-300 flex items-center gap-1"
           >
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">

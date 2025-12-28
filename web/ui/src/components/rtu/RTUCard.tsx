@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import type { RTUSensor, RTUControl } from '@/lib/api';
+import { getStateColor, getRtuStateLabel, isActiveState } from '@/constants';
 
 // Minimal RTU info needed for the card
 interface RTUInfo {
@@ -21,43 +22,13 @@ interface Props {
 }
 
 export default function RTUCard({ rtu, sensors = [], controls = [], compact = false }: Props) {
-  const getStateColor = () => {
-    switch (rtu.state) {
-      case 'RUNNING':
-        return '#10b981'; // Green
-      case 'CONNECTING':
-      case 'DISCOVERY':
-        return '#f59e0b'; // Yellow
-      case 'ERROR':
-        return '#ef4444'; // Red
-      default:
-        return '#6b7280'; // Gray
-    }
-  };
-
-  const getStateLabel = () => {
-    switch (rtu.state) {
-      case 'RUNNING':
-        return 'Online';
-      case 'CONNECTING':
-        return 'Connecting';
-      case 'DISCOVERY':
-        return 'Discovering';
-      case 'ERROR':
-        return 'Error';
-      default:
-        return 'Offline';
-    }
-  };
-
-  const stateColor = getStateColor();
+  const stateColor = getStateColor(rtu.state);
+  const stateLabel = getRtuStateLabel(rtu.state);
   const isOnline = rtu.state === 'RUNNING';
 
   // Calculate summary stats
   const activeSensors = sensors.filter((s) => s.last_quality >= 192).length;
-  const activeControls = controls.filter((c) =>
-    ['ON', 'RUNNING', 'OPEN'].includes(c.current_state?.toUpperCase() ?? '')
-  ).length;
+  const activeControls = controls.filter((c) => isActiveState(c.current_state)).length;
 
   // Get key sensor values for quick display
   const keySensors = sensors.slice(0, 3);
@@ -120,7 +91,7 @@ export default function RTUCard({ rtu, sensors = [], controls = [], compact = fa
             color: stateColor,
           }}
         >
-          {getStateLabel()}
+          {stateLabel}
         </span>
       </div>
 

@@ -10,9 +10,10 @@ interface RTUDevice {
 
 interface Props {
   rtus: RTUDevice[];
+  onReconnect?: (stationName: string) => void;
 }
 
-export default function RTUOverview({ rtus }: Props) {
+export default function RTUOverview({ rtus, onReconnect }: Props) {
   const getStateClass = (state: string) => {
     switch (state) {
       case 'RUNNING':
@@ -85,12 +86,15 @@ export default function RTUOverview({ rtus }: Props) {
                     >
                       Details
                     </a>
-                    <button
-                      className="text-xs bg-scada-accent hover:bg-scada-highlight px-3 py-1 rounded transition-colors"
-                      onClick={() => console.log('Reconnect', rtu.station_name)}
-                    >
-                      Reconnect
-                    </button>
+                    {onReconnect && (
+                      <button
+                        className="text-xs bg-scada-accent hover:bg-scada-highlight px-3 py-1 rounded transition-colors"
+                        onClick={() => onReconnect(rtu.station_name)}
+                        aria-label={`Reconnect to ${rtu.station_name}`}
+                      >
+                        Reconnect
+                      </button>
+                    )}
                   </div>
                 </td>
               </tr>
