@@ -111,16 +111,26 @@ export default function ProfinetDiagnosticsPanel({ stationName, onClose }: Props
         setDiagnostics(data);
         setError(null);
       } else if (res.status === 404) {
-        // Use mock data for demonstration
-        setDiagnostics(getMockDiagnostics(stationName));
-        setError(null);
+        // Use mock data only in development
+        if (process.env.NODE_ENV === 'development') {
+          console.warn('[DEV] Diagnostics API unavailable, using mock data');
+          setDiagnostics(getMockDiagnostics(stationName));
+          setError(null);
+        } else {
+          setError('Diagnostics not available for this device');
+        }
       } else {
         setError('Failed to load diagnostics');
       }
     } catch (err) {
-      // Use mock data if API not available
-      setDiagnostics(getMockDiagnostics(stationName));
-      setError(null);
+      // Use mock data only in development
+      if (process.env.NODE_ENV === 'development') {
+        console.warn('[DEV] Diagnostics API unavailable, using mock data');
+        setDiagnostics(getMockDiagnostics(stationName));
+        setError(null);
+      } else {
+        setError('Failed to load diagnostics. Check network connection.');
+      }
     } finally {
       setLoading(false);
     }

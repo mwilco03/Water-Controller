@@ -1,5 +1,7 @@
 'use client';
 
+import { useState, useEffect } from 'react';
+
 interface Props {
   connected: boolean;
   rtuCount: number;
@@ -84,5 +86,3 @@ function SystemTime() {
 
   return <span>{time.toLocaleString()}</span>;
 }
-
-import { useState, useEffect } from 'react';

@@ -164,6 +164,8 @@ export default function StaleIndicator({
         className={`${styles.dot} rounded-full ${className}`}
         style={{ backgroundColor: config.color }}
         title={showTooltip ? tooltipText : undefined}
+        role="img"
+        aria-label={`Data freshness: ${config.label}. ${tooltipText}`}
       />
     );
   }
