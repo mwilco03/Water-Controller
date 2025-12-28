@@ -4,16 +4,9 @@ Copyright (C) 2024
 SPDX-License-Identifier: GPL-3.0-or-later
 
 User management and authentication operations.
-
-SECURITY NOTES:
-- Web authentication uses bcrypt (secure, slow hash)
-- RTU sync uses DJB2 (for embedded system compatibility)
-- Passwords are stored in bcrypt format, DJB2 computed on-demand for RTU sync
 """
 
 import logging
-import hashlib
-import secrets
 from typing import List, Optional, Dict, Any
 
 from .base import get_db
@@ -24,23 +17,10 @@ logger = logging.getLogger(__name__)
 # DJB2 hash constants (must match C implementation and RTU)
 USER_SYNC_SALT = "NaCl4Life"
 
-# Bcrypt settings for secure web authentication
-BCRYPT_ROUNDS = 12  # ~250ms on modern hardware
-
-# Try to import bcrypt, fall back to hashlib if not available
-try:
-    import bcrypt
-    BCRYPT_AVAILABLE = True
-except ImportError:
-    BCRYPT_AVAILABLE = False
-    logger.warning("bcrypt not installed - using PBKDF2 fallback for password hashing")
-
 
 def _djb2_hash(s: str) -> int:
     """
     DJB2 hash algorithm by Dan Bernstein.
-    SECURITY WARNING: This is NOT cryptographically secure.
-    Used ONLY for RTU sync compatibility, never for web authentication.
     """
     hash_val = 5381
     for c in s:
@@ -49,13 +29,10 @@ def _djb2_hash(s: str) -> int:
     return hash_val
 
 
-def hash_password_for_rtu_sync(password: str) -> str:
+def hash_password(password: str) -> str:
     """
-    Hash password using DJB2 for RTU synchronization ONLY.
+    Hash password using DJB2.
     Format: "DJB2:<salt_hash>:<password_hash>"
-    This matches the embedded RTU implementation.
-
-    SECURITY WARNING: Do NOT use this for web authentication.
     """
     salted = USER_SYNC_SALT + password
     hash_val = _djb2_hash(salted)
@@ -63,54 +40,13 @@ def hash_password_for_rtu_sync(password: str) -> str:
     return f"DJB2:{salt_hash:08X}:{hash_val:08X}"
 
 
-def hash_password(password: str) -> str:
-    """
-    Hash password using bcrypt (or PBKDF2 fallback) for secure storage.
-    Format: "BCRYPT:<hash>" or "PBKDF2:<salt>:<hash>"
-    """
-    if BCRYPT_AVAILABLE:
-        salt = bcrypt.gensalt(rounds=BCRYPT_ROUNDS)
-        hashed = bcrypt.hashpw(password.encode('utf-8'), salt)
-        return f"BCRYPT:{hashed.decode('utf-8')}"
-    else:
-        # PBKDF2 fallback with SHA-256
-        salt = secrets.token_hex(16)
-        dk = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt.encode('utf-8'), 100000)
-        return f"PBKDF2:{salt}:{dk.hex()}"
-
-
 def verify_password(password: str, stored_hash: str) -> bool:
     """
     Verify password against stored hash.
-    Supports multiple hash formats for backwards compatibility.
     """
-    if stored_hash.startswith("BCRYPT:"):
-        if not BCRYPT_AVAILABLE:
-            logger.error("bcrypt hash found but bcrypt not installed")
-            return False
-        hash_part = stored_hash[7:]  # Remove "BCRYPT:" prefix
-        try:
-            return bcrypt.checkpw(password.encode('utf-8'), hash_part.encode('utf-8'))
-        except Exception as e:
-            logger.error(f"bcrypt verification failed: {e}")
-            return False
-
-    elif stored_hash.startswith("PBKDF2:"):
-        parts = stored_hash.split(":")
-        if len(parts) != 3:
-            return False
-        _, salt, expected_hash = parts
-        dk = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt.encode('utf-8'), 100000)
-        return secrets.compare_digest(dk.hex(), expected_hash)
-
-    elif stored_hash.startswith("DJB2:"):
-        # Legacy DJB2 format - verify but recommend migration
-        computed = hash_password_for_rtu_sync(password)
-        if computed == stored_hash:
-            logger.warning("User authenticated with legacy DJB2 hash - migration recommended")
-            return True
-        return False
-
+    if stored_hash.startswith("DJB2:"):
+        computed = hash_password(password)
+        return computed == stored_hash
     else:
         # Unknown format
         logger.warning(f"Unknown password hash format: {stored_hash[:10]}...")
