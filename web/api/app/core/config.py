@@ -134,6 +134,128 @@ class HistorianConfig:
     MAX_SAMPLES_PER_TAG: int = _get_int_env("WTC_HISTORIAN_MAX_SAMPLES", 1000000)
 
 
+class PathConfig:
+    """
+    Path configuration for installation directories and build artifacts.
+
+    Single source of truth for all paths, matching scripts/lib/paths.sh.
+    These paths are critical for:
+    - UI build artifact validation
+    - Health check endpoints
+    - Service startup verification
+
+    All values can be overridden via environment variables.
+    """
+
+    # Base installation directory
+    INSTALL_BASE: str = os.environ.get("WTC_INSTALL_BASE", "/opt/water-controller")
+
+    # Configuration directory
+    CONFIG_DIR: str = os.environ.get("WTC_CONFIG_DIR", "/etc/water-controller")
+
+    # Runtime state directory
+    STATE_DIR: str = os.environ.get("WTC_STATE_DIR", "/var/lib/water-controller")
+
+    # Log directory
+    LOG_DIR: str = os.environ.get("WTC_LOG_DIR", "/var/log/water-controller")
+
+    # Python virtual environment
+    VENV_PATH: str = os.environ.get(
+        "WTC_VENV_PATH",
+        os.path.join(os.environ.get("WTC_INSTALL_BASE", "/opt/water-controller"), "venv")
+    )
+
+    # Backend paths
+    API_PATH: str = os.environ.get(
+        "WTC_API_PATH",
+        os.path.join(os.environ.get("WTC_INSTALL_BASE", "/opt/water-controller"), "web/api")
+    )
+
+    # Database path (SQLite)
+    DB_PATH: str = os.environ.get(
+        "WTC_DB_PATH",
+        os.path.join(os.environ.get("WTC_STATE_DIR", "/var/lib/water-controller"), "water_controller.db")
+    )
+
+    # Frontend (Next.js) paths - Critical for UI build validation
+    UI_PATH: str = os.environ.get(
+        "WTC_UI_PATH",
+        os.path.join(os.environ.get("WTC_INSTALL_BASE", "/opt/water-controller"), "web/ui")
+    )
+
+    @classmethod
+    def get_ui_next_dir(cls) -> str:
+        """Get Next.js build output directory."""
+        return os.environ.get("WTC_UI_NEXT_DIR", os.path.join(cls.UI_PATH, ".next"))
+
+    @classmethod
+    def get_ui_static_dir(cls) -> str:
+        """Get Next.js static assets directory."""
+        return os.environ.get("WTC_UI_STATIC_DIR", os.path.join(cls.get_ui_next_dir(), "static"))
+
+    @classmethod
+    def get_ui_standalone_dir(cls) -> str:
+        """Get Next.js standalone server directory."""
+        return os.environ.get("WTC_UI_STANDALONE_DIR", os.path.join(cls.get_ui_next_dir(), "standalone"))
+
+    @classmethod
+    def get_ui_server_js(cls) -> str:
+        """Get Next.js server entry point."""
+        return os.environ.get("WTC_UI_SERVER_JS", os.path.join(cls.UI_PATH, "server.js"))
+
+    @classmethod
+    def get_ui_public_dir(cls) -> str:
+        """Get UI public assets directory."""
+        return os.environ.get("WTC_UI_PUBLIC_DIR", os.path.join(cls.UI_PATH, "public"))
+
+    # Service ports
+    API_PORT: int = _get_int_env("WTC_API_PORT", 8080)
+    UI_PORT: int = _get_int_env("WTC_UI_PORT", 3000)
+    MODBUS_PORT: int = _get_int_env("WTC_MODBUS_PORT", 502)
+
+    # Minimum expected file counts for UI validation
+    MIN_STATIC_FILES: int = 10
+    MIN_STANDALONE_FILES: int = 5
+
+    @classmethod
+    def validate_ui_build(cls) -> tuple[bool, str]:
+        """
+        Validate that UI build artifacts exist and are complete.
+
+        Returns:
+            Tuple of (is_valid, message)
+        """
+        static_dir = cls.get_ui_static_dir()
+        server_js = cls.get_ui_server_js()
+
+        # Check static directory exists
+        if not os.path.isdir(static_dir):
+            return False, f"Static assets directory missing: {static_dir}"
+
+        # Check server.js exists
+        if not os.path.isfile(server_js):
+            return False, f"Server entry point missing: {server_js}"
+
+        # Count JS files in static directory
+        js_count = 0
+        try:
+            for root, _, files in os.walk(static_dir):
+                for f in files:
+                    if f.endswith('.js'):
+                        js_count += 1
+                        if js_count >= cls.MIN_STATIC_FILES:
+                            break
+                if js_count >= cls.MIN_STATIC_FILES:
+                    break
+        except OSError as e:
+            return False, f"Error reading static directory: {e}"
+
+        if js_count < cls.MIN_STATIC_FILES:
+            return False, f"Insufficient JS bundles: found {js_count}, expected at least {cls.MIN_STATIC_FILES}"
+
+        return True, f"UI build valid: {js_count}+ JS files found"
+
+
 class Settings:
     """Aggregated settings for the application."""
 
@@ -142,6 +264,7 @@ class Settings:
         self.polling = PollingConfig()
         self.circuit_breaker = CircuitBreakerConfig()
         self.historian = HistorianConfig()
+        self.paths = PathConfig()
 
         # Convenience accessors for common values
         self.command_timeout_ms = self.timeouts.COMMAND_TIMEOUT_MS
@@ -151,6 +274,10 @@ class Settings:
         # Feature flags
         self.simulation_mode = _get_bool_env("WTC_SIMULATION_MODE", False)
         self.debug_mode = _get_bool_env("WTC_DEBUG", False)
+
+    def validate_ui_build(self) -> tuple[bool, str]:
+        """Validate UI build artifacts. Convenience wrapper."""
+        return PathConfig.validate_ui_build()
 
 
 # Singleton instance

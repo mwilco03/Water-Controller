@@ -2,16 +2,33 @@
 Description=Water Treatment Controller Web UI
 Documentation=https://github.com/mwilco03/Water-Controller
 After=network.target water-controller-api.service
+# Require API service to be active (not just started)
+Requires=water-controller-api.service
+
+# Condition: UI build artifacts must exist
+# This prevents service from starting if Next.js was never built
+ConditionPathIsDirectory=/opt/water-controller/web/ui/.next/static
+ConditionPathExists=/opt/water-controller/web/ui/server.js
 
 [Service]
 Type=simple
 User=wtc
 Group=wtc
 WorkingDirectory=/opt/water-controller/web/ui
+
+# Pre-start validation: verify UI build artifacts are complete and valid
+# This catches cases where .next exists but is incomplete or corrupted
+ExecStartPre=/bin/bash -c '/opt/water-controller/scripts/lib/ui_build_check.sh --quick || (echo "UI build validation failed. Run: npm run build" && exit 1)'
+
 ExecStart=/usr/bin/node server.js
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=5
+
+# Limit restart attempts to avoid infinite loops when build is missing
+StartLimitIntervalSec=300
+StartLimitBurst=3
+
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=water-controller-ui
@@ -22,10 +39,12 @@ ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
 ReadWritePaths=/var/lib/water-controller
+ReadOnlyPaths=/opt/water-controller
 
 # Environment
 Environment=NODE_ENV=production
 Environment=PORT=3000
+Environment=WTC_UI_PATH=/opt/water-controller/web/ui
 EnvironmentFile=-/etc/water-controller/environment
 
 [Install]

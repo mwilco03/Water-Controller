@@ -27,6 +27,7 @@ from .core.logging import (
     start_operation,
     end_operation,
 )
+from .core.config import settings, PathConfig
 from .models.base import Base, engine, get_db
 from .api.v1 import api_router
 from .api.websocket import router as websocket_router
@@ -145,14 +146,17 @@ async def health_check() -> Dict[str, Any]:
     - database: SQLite/SQLAlchemy connection
     - profinet_controller: PROFINET IPC via shared memory
     - persistence: Authentication/session storage
+    - ui_build: Next.js frontend build artifacts
 
     Useful for:
     - Load balancer health checks
     - Operator diagnostics
     - Monitoring systems
+    - Detecting missing/invalid UI builds
     """
     subsystems = {}
     overall_healthy = True
+    ui_degraded = False
 
     # Check database (SQLAlchemy ORM)
     try:
@@ -194,8 +198,40 @@ async def health_check() -> Dict[str, Any]:
         subsystems["persistence"] = {"status": "uninitialized"}
         overall_healthy = False
 
+    # Check UI build artifacts (Next.js)
+    try:
+        ui_valid, ui_message = PathConfig.validate_ui_build()
+        if ui_valid:
+            subsystems["ui_build"] = {
+                "status": "ok",
+                "path": PathConfig.UI_PATH,
+                "message": ui_message
+            }
+        else:
+            subsystems["ui_build"] = {
+                "status": "missing",
+                "path": PathConfig.UI_PATH,
+                "error": ui_message,
+                "remedy": "Run 'npm run build' in the UI directory"
+            }
+            ui_degraded = True
+    except Exception as e:
+        subsystems["ui_build"] = {
+            "status": "error",
+            "error": str(e)
+        }
+        ui_degraded = True
+
+    # Determine overall status
+    if not overall_healthy:
+        status = "unhealthy"
+    elif ui_degraded:
+        status = "degraded"
+    else:
+        status = "healthy"
+
     return {
-        "status": "healthy" if overall_healthy else "degraded",
+        "status": status,
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "subsystems": subsystems,
     }

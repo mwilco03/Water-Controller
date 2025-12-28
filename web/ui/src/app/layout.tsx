@@ -4,7 +4,9 @@ import './globals.css';
 import { useState } from 'react';
 import { usePathname } from 'next/navigation';
 import { CommandModeProvider, useCommandMode } from '@/contexts/CommandModeContext';
+import { SystemHealthProvider } from '@/contexts/SystemHealthContext';
 import CommandModeBanner from '@/components/CommandModeBanner';
+import DegradedModeBanner from '@/components/DegradedModeBanner';
 import { ToastProvider } from '@/components/ui/Toast';
 import { SessionIndicator, AuthenticationModal } from '@/components/hmi';
 
@@ -26,11 +28,13 @@ export default function RootLayout({
         />
       </head>
       <body>
-        <CommandModeProvider>
-          <ToastProvider>
-            <LayoutContent>{children}</LayoutContent>
-          </ToastProvider>
-        </CommandModeProvider>
+        <SystemHealthProvider>
+          <CommandModeProvider>
+            <ToastProvider>
+              <LayoutContent>{children}</LayoutContent>
+            </ToastProvider>
+          </CommandModeProvider>
+        </SystemHealthProvider>
       </body>
     </html>
   );
@@ -53,6 +57,9 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
   if (isLandingPage) {
     return (
       <div className="min-h-screen flex flex-col bg-hmi-bg">
+        {/* Degraded Mode Banner - operator-visible warning for system issues */}
+        <DegradedModeBanner />
+
         {/* Command Mode Banner */}
         <CommandModeBanner />
 
@@ -110,6 +117,9 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
   // Standard layout for other pages (dark theme)
   return (
     <div className="min-h-screen flex flex-col">
+      {/* Degraded Mode Banner - operator-visible warning for system issues */}
+      <DegradedModeBanner />
+
       {/* Command Mode Banner - shows when authenticated in command mode */}
       <CommandModeBanner />
       <header className="sticky top-0 z-50 bg-slate-900/95 backdrop-blur-lg border-b border-sky-500/20 px-6 py-3">

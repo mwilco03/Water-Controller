@@ -24,6 +24,12 @@ if [ -f "$SCRIPT_DIR/detection.sh" ]; then
     source "$SCRIPT_DIR/detection.sh"
 fi
 
+# Source path configuration - single source of truth for all paths
+if [ -f "$SCRIPT_DIR/paths.sh" ]; then
+    # shellcheck source=paths.sh
+    source "$SCRIPT_DIR/paths.sh"
+fi
+
 # =============================================================================
 # Constants
 # =============================================================================
@@ -34,11 +40,16 @@ readonly BUILD_VERSION="1.0.0"
 readonly DEFAULT_GIT_REPO="https://github.com/mwilco03/Water-Controller.git"
 readonly DEFAULT_GIT_BRANCH="main"
 
-# Installation paths
-: "${INSTALL_BASE:=/opt/water-controller}"
-: "${VENV_PATH:=$INSTALL_BASE/venv}"
+# Installation paths (use paths.sh values if available, otherwise defaults)
+: "${INSTALL_BASE:=${WTC_INSTALL_BASE:-/opt/water-controller}}"
+: "${VENV_PATH:=${WTC_VENV_PATH:-$INSTALL_BASE/venv}}"
 : "${APP_PATH:=$INSTALL_BASE/app}"
 : "${WEB_PATH:=$INSTALL_BASE/web}"
+
+# UI-specific paths for validation
+: "${UI_PATH:=${WTC_UI_PATH:-$INSTALL_BASE/web/ui}}"
+: "${UI_STATIC_DIR:=${WTC_UI_STATIC_DIR:-$UI_PATH/.next/static}}"
+: "${UI_SERVER_JS:=${WTC_UI_SERVER_JS:-$UI_PATH/server.js}}"
 
 # Source directory (set by acquire_source)
 SOURCE_DIR=""
@@ -718,7 +729,7 @@ verify_build() {
         results+=("[WARN] Backend directory not identified")
     fi
 
-    # Check frontend build
+    # Check frontend build using standardized paths
     if _find_frontend_dir 2>/dev/null; then
         local build_dir=""
         if [ -d "$_FRONTEND_DIR/dist" ]; then
@@ -733,8 +744,27 @@ verify_build() {
             local file_count
             file_count="$(find "$build_dir" -type f | wc -l)"
             results+=("[OK] Frontend build: $build_dir ($file_count files)")
+
+            # Additional Next.js-specific checks
+            if [ -d "$_FRONTEND_DIR/.next/static" ]; then
+                local js_count
+                js_count="$(find "$_FRONTEND_DIR/.next/static" -name "*.js" -type f | wc -l)"
+                if [ "$js_count" -ge 10 ]; then
+                    results+=("[OK] Next.js static assets: $js_count JS files")
+                else
+                    results+=("[WARN] Low JS file count in .next/static: $js_count files")
+                fi
+            fi
+
+            # Check for server.js (standalone mode)
+            if [ -f "$_FRONTEND_DIR/server.js" ]; then
+                results+=("[OK] Next.js server.js found")
+            else
+                results+=("[WARN] Next.js server.js not found (may use next start)")
+            fi
         else
             results+=("[WARN] Frontend build directory not found")
+            failed=1
         fi
     else
         results+=("[INFO] No frontend to verify")
