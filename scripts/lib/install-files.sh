@@ -544,6 +544,7 @@ install_frontend() {
     # Find frontend build directory
     local frontend_build=""
     local frontend_src=""
+    local is_nextjs=0
 
     # Check for build output in various locations
     if [ -d "$SOURCE_DIR/web/ui/dist" ]; then
@@ -553,8 +554,10 @@ install_frontend() {
         frontend_build="$SOURCE_DIR/web/ui/build"
         frontend_src="$SOURCE_DIR/web/ui"
     elif [ -d "$SOURCE_DIR/web/ui/.next" ]; then
+        # Next.js build - need entire frontend directory for 'next start'
         frontend_build="$SOURCE_DIR/web/ui/.next"
         frontend_src="$SOURCE_DIR/web/ui"
+        is_nextjs=1
     elif [ -d "$SOURCE_DIR/frontend/dist" ]; then
         frontend_build="$SOURCE_DIR/frontend/dist"
         frontend_src="$SOURCE_DIR/frontend"
@@ -583,24 +586,79 @@ install_frontend() {
         return 4
     }
 
-    # Copy build output
-    log_debug "Copying frontend build files..."
+    # For Next.js, we need to copy the entire frontend directory structure
+    # including node_modules, package.json, and next.config.js for 'next start'
+    if [ "$is_nextjs" -eq 1 ] && [ -n "$frontend_src" ]; then
+        log_info "Next.js build detected - installing complete frontend for production server"
 
-    if command -v rsync >/dev/null 2>&1; then
-        sudo rsync -av --delete \
-            "$frontend_build/" "$WEB_PATH/" 2>&1 | tee -a "$INSTALL_LOG_FILE" || {
-            log_error "rsync failed"
-            return 4
-        }
+        if command -v rsync >/dev/null 2>&1; then
+            # Copy .next build output
+            sudo rsync -av --delete \
+                "$frontend_build/" "$WEB_PATH/.next/" 2>&1 | tee -a "$INSTALL_LOG_FILE" || {
+                log_error "rsync failed for .next"
+                return 4
+            }
+
+            # Copy node_modules (required for next start)
+            if [ -d "$frontend_src/node_modules" ]; then
+                log_debug "Copying node_modules for Next.js runtime..."
+                sudo rsync -av \
+                    "$frontend_src/node_modules/" "$WEB_PATH/node_modules/" 2>&1 | tee -a "$INSTALL_LOG_FILE" || {
+                    log_error "rsync failed for node_modules"
+                    return 4
+                }
+            fi
+
+            # Copy essential config files
+            for config_file in package.json next.config.js; do
+                if [ -f "$frontend_src/$config_file" ]; then
+                    sudo cp "$frontend_src/$config_file" "$WEB_PATH/" 2>&1 | tee -a "$INSTALL_LOG_FILE"
+                fi
+            done
+        else
+            # Without rsync, use cp
+            sudo find "$WEB_PATH" -mindepth 1 -delete 2>/dev/null || true
+
+            # Copy .next
+            sudo mkdir -p "$WEB_PATH/.next"
+            sudo cp -r "$frontend_build"/* "$WEB_PATH/.next/" 2>&1 | tee -a "$INSTALL_LOG_FILE" || {
+                log_error "cp failed for .next"
+                return 4
+            }
+
+            # Copy node_modules
+            if [ -d "$frontend_src/node_modules" ]; then
+                log_debug "Copying node_modules for Next.js runtime..."
+                sudo cp -r "$frontend_src/node_modules" "$WEB_PATH/" 2>&1 | tee -a "$INSTALL_LOG_FILE"
+            fi
+
+            # Copy config files
+            for config_file in package.json next.config.js; do
+                if [ -f "$frontend_src/$config_file" ]; then
+                    sudo cp "$frontend_src/$config_file" "$WEB_PATH/" 2>&1 | tee -a "$INSTALL_LOG_FILE"
+                fi
+            done
+        fi
     else
-        # Clean destination first
-        sudo find "$WEB_PATH" -mindepth 1 -delete 2>/dev/null || true
+        # Standard static build - just copy build output
+        log_debug "Copying frontend build files..."
 
-        # Copy files
-        sudo cp -r "$frontend_build"/* "$WEB_PATH/" 2>&1 | tee -a "$INSTALL_LOG_FILE" || {
-            log_error "cp failed"
-            return 4
-        }
+        if command -v rsync >/dev/null 2>&1; then
+            sudo rsync -av --delete \
+                "$frontend_build/" "$WEB_PATH/" 2>&1 | tee -a "$INSTALL_LOG_FILE" || {
+                log_error "rsync failed"
+                return 4
+            }
+        else
+            # Clean destination first
+            sudo find "$WEB_PATH" -mindepth 1 -delete 2>/dev/null || true
+
+            # Copy files
+            sudo cp -r "$frontend_build"/* "$WEB_PATH/" 2>&1 | tee -a "$INSTALL_LOG_FILE" || {
+                log_error "cp failed"
+                return 4
+            }
+        fi
     fi
 
     # Set ownership and permissions
@@ -941,8 +999,8 @@ verify_file_installation() {
     echo ""
     echo "FILE INSTALLATION VERIFICATION:"
     echo "================================"
-    for result in "${results[@]}"; do
-        echo "  $result"
+    for check_result in "${results[@]}"; do
+        echo "  $check_result"
     done
     echo "================================"
     echo ""

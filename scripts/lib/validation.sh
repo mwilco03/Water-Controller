@@ -992,8 +992,8 @@ run_validation_suite() {
     echo "=========================================="
     echo ""
 
-    for result in "${TEST_RESULTS[@]}"; do
-        echo "  $result"
+    for test_entry in "${TEST_RESULTS[@]}"; do
+        echo "  $test_entry"
     done
 
     echo ""
@@ -1061,8 +1061,8 @@ quick_health_check() {
 
     # Print results
     echo ""
-    for result in "${TEST_RESULTS[@]}"; do
-        echo "  $result"
+    for test_entry in "${TEST_RESULTS[@]}"; do
+        echo "  $test_entry"
     done
     echo ""
 

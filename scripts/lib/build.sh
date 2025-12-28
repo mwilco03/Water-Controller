@@ -753,16 +753,16 @@ verify_build() {
     echo ""
     echo "BUILD VERIFICATION RESULTS:"
     echo "==========================="
-    for result in "${results[@]}"; do
-        echo "  $result"
+    for check_result in "${results[@]}"; do
+        echo "  $check_result"
     done
     echo "==========================="
     echo ""
 
     # Log results
     _log_write "INFO" "Build verification results:"
-    for result in "${results[@]}"; do
-        _log_write "INFO" "  $result"
+    for check_result in "${results[@]}"; do
+        _log_write "INFO" "  $check_result"
     done
 
     if [ $failed -ne 0 ]; then

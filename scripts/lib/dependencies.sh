@@ -841,16 +841,16 @@ verify_all_dependencies() {
     echo ""
     echo "DEPENDENCY VERIFICATION RESULTS:"
     echo "================================="
-    for result in "${results[@]}"; do
-        echo "  $result"
+    for check_result in "${results[@]}"; do
+        echo "  $check_result"
     done
     echo "================================="
     echo ""
 
     # Log all versions to install log
     _log_write "INFO" "Dependency verification results:"
-    for result in "${results[@]}"; do
-        _log_write "INFO" "  $result"
+    for check_result in "${results[@]}"; do
+        _log_write "INFO" "  $check_result"
     done
 
     if [ $failed -ne 0 ]; then

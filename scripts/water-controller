@@ -12,8 +12,8 @@
 #
 # Environment Variables:
 #   DATA_DIR      Data directory (default: /var/lib/water-controller)
-#   WEB_PORT      API server port (default: 8080)
-#   UI_PORT       UI server port (default: 3000)
+#   WEB_PORT      API server port (default: 8000)
+#   UI_PORT       UI server port (default: 8080)
 #   LOG_LEVEL     Logging level (default: INFO)
 #
 
@@ -21,8 +21,8 @@ set -e
 
 # Default values
 DATA_DIR="${DATA_DIR:-/var/lib/water-controller}"
-WEB_PORT="${WEB_PORT:-8080}"
-UI_PORT="${UI_PORT:-3000}"
+WEB_PORT="${WEB_PORT:-8000}"
+UI_PORT="${UI_PORT:-8080}"
 LOG_LEVEL="${LOG_LEVEL:-INFO}"
 INSTALL_DIR="${INSTALL_DIR:-/opt/water-controller}"
 VENV_DIR="${VENV_DIR:-$INSTALL_DIR/venv}"

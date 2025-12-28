@@ -1,15 +1,15 @@
 [Unit]
-Description=Water Treatment Controller Web API
+Description=Water Treatment Controller API (FastAPI)
 Documentation=https://github.com/mwilco03/Water-Controller
-After=network.target water-controller.service
-BindsTo=water-controller.service
+After=network.target
+Wants=network-online.target
 
 [Service]
 Type=simple
-User=wtc
-Group=wtc
-WorkingDirectory=/opt/water-controller/web/api
-ExecStart=/opt/water-controller/venv/bin/uvicorn main:app --host 0.0.0.0 --port 8080 --workers 2
+User=water-controller
+Group=water-controller
+WorkingDirectory=/opt/water-controller/app
+ExecStart=/opt/water-controller/venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1 --proxy-headers
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=5
@@ -22,11 +22,22 @@ NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
-ReadWritePaths=/var/lib/water-controller /var/log/water-controller /dev/shm
+ReadWritePaths=/var/lib/water-controller /var/log/water-controller /run/water-controller
 
 # Environment
 Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=CONFIG_PATH=/etc/water-controller/config.yaml
+Environment=DATA_DIR=/var/lib/water-controller
+Environment=LOG_DIR=/var/log/water-controller
 EnvironmentFile=-/etc/water-controller/environment
+
+# Resource limits
+MemoryMax=512M
+MemoryHigh=400M
+CPUQuota=200%
+TasksMax=256
+LimitNOFILE=65536
 
 [Install]
 WantedBy=multi-user.target
