@@ -2,18 +2,13 @@
 
 import { useMemo } from 'react';
 import type { RTUSensor } from '@/lib/api';
+import { QUALITY_CODES, ISA101_COLORS } from '@/constants';
 
 interface Props {
   sensor: RTUSensor;
   size?: 'sm' | 'md' | 'lg';
   showDetails?: boolean;
 }
-
-// Quality code constants (OPC UA compatible - 5-byte sensor format)
-const QUALITY_GOOD = 0x00;
-const QUALITY_UNCERTAIN = 0x40;
-const QUALITY_BAD = 0x80;
-const QUALITY_NOT_CONNECTED = 0xC0;
 
 export default function SensorDisplay({ sensor, size = 'md', showDetails = false }: Props) {
   const dimensions = useMemo(() => {
@@ -25,10 +20,10 @@ export default function SensorDisplay({ sensor, size = 'md', showDetails = false
   }, [size]);
 
   /* Check quality from 5-byte sensor format */
-  const isGoodQuality = sensor.last_quality === QUALITY_GOOD;
-  const isUncertainQuality = sensor.last_quality === QUALITY_UNCERTAIN;
-  const isBadQuality = sensor.last_quality === QUALITY_BAD;
-  const isNotConnected = sensor.last_quality === QUALITY_NOT_CONNECTED;
+  const isGoodQuality = sensor.last_quality === QUALITY_CODES.GOOD;
+  const isUncertainQuality = sensor.last_quality === QUALITY_CODES.UNCERTAIN;
+  const isBadQuality = sensor.last_quality === QUALITY_CODES.BAD;
+  const isNotConnected = sensor.last_quality === QUALITY_CODES.NOT_CONNECTED;
   const value = sensor.last_value ?? null;
 
   /* Get quality indicator per ISA-101 */
@@ -42,35 +37,35 @@ export default function SensorDisplay({ sensor, size = 'md', showDetails = false
 
   // Get color based on sensor type and value
   const getColor = () => {
-    if (!isGoodQuality) return '#ef4444'; // Red for bad quality
-    if (value === null) return '#6b7280'; // Gray for no data
+    if (!isGoodQuality) return ISA101_COLORS.quality.bad; // Red for bad quality
+    if (value === null) return ISA101_COLORS.states.offline; // Gray for no data
 
     const percentage = (value - sensor.scale_min) / (sensor.scale_max - sensor.scale_min);
 
-    // Type-specific coloring
+    // Type-specific coloring using ISA-101 colors
     switch (sensor.sensor_type) {
       case 'temperature':
-        if (percentage > 0.9) return '#ef4444';
-        if (percentage > 0.7) return '#f59e0b';
-        return '#10b981';
+        if (percentage > 0.9) return ISA101_COLORS.alarms.critical;
+        if (percentage > 0.7) return ISA101_COLORS.alarms.medium;
+        return ISA101_COLORS.quality.good;
       case 'ph':
         // pH: 6.5-8.5 is good (green), outside is warning/danger
-        if (value < 6.0 || value > 9.0) return '#ef4444';
-        if (value < 6.5 || value > 8.5) return '#f59e0b';
-        return '#10b981';
+        if (value < 6.0 || value > 9.0) return ISA101_COLORS.alarms.critical;
+        if (value < 6.5 || value > 8.5) return ISA101_COLORS.alarms.medium;
+        return ISA101_COLORS.quality.good;
       case 'level':
-        if (percentage > 0.95 || percentage < 0.05) return '#ef4444';
-        if (percentage > 0.85 || percentage < 0.15) return '#f59e0b';
-        return '#10b981';
+        if (percentage > 0.95 || percentage < 0.05) return ISA101_COLORS.alarms.critical;
+        if (percentage > 0.85 || percentage < 0.15) return ISA101_COLORS.alarms.medium;
+        return ISA101_COLORS.quality.good;
       case 'pressure':
-        if (percentage > 0.9) return '#ef4444';
-        if (percentage > 0.8) return '#f59e0b';
-        return '#10b981';
+        if (percentage > 0.9) return ISA101_COLORS.alarms.critical;
+        if (percentage > 0.8) return ISA101_COLORS.alarms.medium;
+        return ISA101_COLORS.quality.good;
       case 'flow':
-        if (percentage < 0.05) return '#f59e0b'; // Low flow warning
-        return '#10b981';
+        if (percentage < 0.05) return ISA101_COLORS.alarms.medium; // Low flow warning
+        return ISA101_COLORS.quality.good;
       default:
-        return '#3b82f6'; // Blue for unknown types
+        return ISA101_COLORS.ui.primary; // Blue for unknown types
     }
   };
 

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useCallback } from 'react';
+import { ISA101_COLORS } from '@/constants';
 
 export type RtuState = 'OFFLINE' | 'CONNECTING' | 'DISCOVERY' | 'RUNNING' | 'ERROR';
 
@@ -13,46 +14,54 @@ interface RtuStateConfig {
   glowColor: string;
 }
 
+// Helper to create rgba color with opacity
+const withOpacity = (hex: string, opacity: number): string => {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return `rgba(${r}, ${g}, ${b}, ${opacity})`;
+};
+
 const STATE_CONFIG: Record<RtuState, RtuStateConfig> = {
   OFFLINE: {
-    color: '#6b7280',
-    bgColor: 'rgba(107, 114, 128, 0.2)',
-    borderColor: 'rgba(107, 114, 128, 0.4)',
+    color: ISA101_COLORS.states.offline,
+    bgColor: withOpacity(ISA101_COLORS.states.offline, 0.2),
+    borderColor: withOpacity(ISA101_COLORS.states.offline, 0.4),
     label: 'Offline',
     icon: 'circle',
-    glowColor: 'rgba(107, 114, 128, 0.3)',
+    glowColor: withOpacity(ISA101_COLORS.states.offline, 0.3),
   },
   CONNECTING: {
-    color: '#f59e0b',
-    bgColor: 'rgba(245, 158, 11, 0.2)',
-    borderColor: 'rgba(245, 158, 11, 0.4)',
+    color: ISA101_COLORS.states.connecting,
+    bgColor: withOpacity(ISA101_COLORS.states.connecting, 0.2),
+    borderColor: withOpacity(ISA101_COLORS.states.connecting, 0.4),
     label: 'Connecting',
     icon: 'pulse',
-    glowColor: 'rgba(245, 158, 11, 0.4)',
+    glowColor: withOpacity(ISA101_COLORS.states.connecting, 0.4),
   },
   DISCOVERY: {
-    color: '#3b82f6',
-    bgColor: 'rgba(59, 130, 246, 0.2)',
-    borderColor: 'rgba(59, 130, 246, 0.4)',
+    color: ISA101_COLORS.states.discovery,
+    bgColor: withOpacity(ISA101_COLORS.states.discovery, 0.2),
+    borderColor: withOpacity(ISA101_COLORS.states.discovery, 0.4),
     label: 'Discovering',
     icon: 'pulse',
-    glowColor: 'rgba(59, 130, 246, 0.4)',
+    glowColor: withOpacity(ISA101_COLORS.states.discovery, 0.4),
   },
   RUNNING: {
-    color: '#10b981',
-    bgColor: 'rgba(16, 185, 129, 0.2)',
-    borderColor: 'rgba(16, 185, 129, 0.4)',
+    color: ISA101_COLORS.states.running,
+    bgColor: withOpacity(ISA101_COLORS.states.running, 0.2),
+    borderColor: withOpacity(ISA101_COLORS.states.running, 0.4),
     label: 'Running',
     icon: 'circle',
-    glowColor: 'rgba(16, 185, 129, 0.4)',
+    glowColor: withOpacity(ISA101_COLORS.states.running, 0.4),
   },
   ERROR: {
-    color: '#ef4444',
-    bgColor: 'rgba(239, 68, 68, 0.2)',
-    borderColor: 'rgba(239, 68, 68, 0.4)',
+    color: ISA101_COLORS.states.error,
+    bgColor: withOpacity(ISA101_COLORS.states.error, 0.2),
+    borderColor: withOpacity(ISA101_COLORS.states.error, 0.4),
     label: 'Error',
     icon: 'error',
-    glowColor: 'rgba(239, 68, 68, 0.4)',
+    glowColor: withOpacity(ISA101_COLORS.states.error, 0.4),
   },
 };
 

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 
 interface DiagnosticAlarm {
   code: number;
@@ -101,10 +101,16 @@ export default function ProfinetDiagnosticsPanel({ stationName, onClose }: Props
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'overview' | 'modules' | 'alarms' | 'stats'>('overview');
   const [autoRefresh, setAutoRefresh] = useState(true);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
-  const fetchDiagnostics = useCallback(async () => {
+  const fetchDiagnostics = useCallback(async (signal?: AbortSignal) => {
     try {
-      const res = await fetch(`/api/v1/rtus/${encodeURIComponent(stationName)}/profinet/diagnostics`);
+      const res = await fetch(
+        `/api/v1/rtus/${encodeURIComponent(stationName)}/profinet/diagnostics`,
+        { signal }
+      );
+
+      if (signal?.aborted) return;
 
       if (res.ok) {
         const data = await res.json();
@@ -123,6 +129,9 @@ export default function ProfinetDiagnosticsPanel({ stationName, onClose }: Props
         setError('Failed to load diagnostics');
       }
     } catch (err) {
+      // Ignore abort errors
+      if (err instanceof Error && err.name === 'AbortError') return;
+
       // Use mock data only in development
       if (process.env.NODE_ENV === 'development') {
         console.warn('[DEV] Diagnostics API unavailable, using mock data');
@@ -137,12 +146,22 @@ export default function ProfinetDiagnosticsPanel({ stationName, onClose }: Props
   }, [stationName]);
 
   useEffect(() => {
-    fetchDiagnostics();
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
 
+    fetchDiagnostics(controller.signal);
+
+    let interval: NodeJS.Timeout | undefined;
     if (autoRefresh) {
-      const interval = setInterval(fetchDiagnostics, 2000);
-      return () => clearInterval(interval);
+      interval = setInterval(() => {
+        fetchDiagnostics(controller.signal);
+      }, 2000);
     }
+
+    return () => {
+      controller.abort();
+      if (interval) clearInterval(interval);
+    };
   }, [fetchDiagnostics, autoRefresh]);
 
   const formatUptime = (startTime: string): string => {
@@ -172,7 +191,7 @@ export default function ProfinetDiagnosticsPanel({ stationName, onClose }: Props
     return (
       <div className="p-6 text-center">
         <p className="text-red-400">{error || 'No diagnostics available'}</p>
-        <button onClick={fetchDiagnostics} className="mt-4 px-4 py-2 bg-blue-600 rounded text-white">
+        <button onClick={() => fetchDiagnostics()} className="mt-4 px-4 py-2 bg-blue-600 rounded text-white">
           Retry
         </button>
       </div>
@@ -202,8 +221,9 @@ export default function ProfinetDiagnosticsPanel({ stationName, onClose }: Props
             Auto-refresh
           </label>
           <button
-            onClick={fetchDiagnostics}
+            onClick={() => fetchDiagnostics()}
             className="p-2 rounded bg-gray-700 hover:bg-gray-600 text-gray-300"
+            aria-label="Refresh diagnostics"
           >
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
