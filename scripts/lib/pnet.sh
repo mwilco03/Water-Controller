@@ -37,8 +37,10 @@ readonly PNET_MODULE_VERSION="1.0.0"
 
 # P-Net source
 readonly PNET_REPO="https://github.com/rtlabs-com/p-net.git"
-readonly PNET_BRANCH="master"
-readonly PNET_RECOMMENDED_TAG="master"
+# Note: 'master' branch no longer exists. Use v0.2.0 tag - last version with
+# root-level CMakeLists.txt. Newer versions (public/v1.0.x) have restructured.
+readonly PNET_BRANCH="v0.2.0"
+readonly PNET_RECOMMENDED_TAG="v0.2.0"
 
 # Installation paths
 readonly PNET_BUILD_DIR="/tmp/pnet-build-$$"
