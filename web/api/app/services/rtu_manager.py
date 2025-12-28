@@ -45,9 +45,12 @@ class RtuManager:
 
         # If controller has state, update database
         if controller_state and controller_state != rtu.state:
-            rtu.update_state(controller_state)
+            old_state = rtu.state
+            rtu.update_state(
+                controller_state,
+                reason=f"Controller state sync: {old_state} → {controller_state}"
+            )
             db.commit()
-            logger.info(f"RTU {station_name} state synced: {rtu.state} -> {controller_state}")
 
         # Cache the state
         self._state_cache[station_name] = rtu.state
@@ -74,11 +77,17 @@ class RtuManager:
         """Get cached RTU state without querying controller."""
         return self._state_cache.get(station_name)
 
-    async def connect_rtu(self, db: Session, station_name: str) -> bool:
+    async def connect_rtu(self, db: Session, station_name: str,
+                          requested_by: str = "system") -> bool:
         """
         Initiate RTU connection.
 
         Updates database state and sends command to controller.
+
+        Args:
+            db: Database session
+            station_name: RTU station name
+            requested_by: Who requested the connection (for audit trail)
         """
         rtu = db.query(RTU).filter(RTU.station_name == station_name).first()
         if not rtu:
@@ -87,8 +96,11 @@ class RtuManager:
         if rtu.state != RtuState.OFFLINE:
             return False
 
-        # Update database state
-        rtu.update_state(RtuState.CONNECTING)
+        # Update database state with reason
+        rtu.update_state(
+            RtuState.CONNECTING,
+            reason=f"Connection requested by {requested_by}"
+        )
         db.commit()
 
         # Send command to controller
@@ -96,18 +108,28 @@ class RtuManager:
 
         if not success:
             # Revert state if command failed
-            rtu.update_state(RtuState.OFFLINE, error="Failed to send connect command")
+            rtu.update_state(
+                RtuState.OFFLINE,
+                error="Failed to send connect command",
+                reason="IPC command to controller failed"
+            )
             db.commit()
             return False
 
-        logger.info(f"RTU {station_name} connection initiated")
+        logger.info(f"RTU {station_name} connection initiated by {requested_by}")
         return True
 
-    async def disconnect_rtu(self, db: Session, station_name: str) -> bool:
+    async def disconnect_rtu(self, db: Session, station_name: str,
+                             requested_by: str = "system") -> bool:
         """
         Disconnect RTU.
 
         Updates database state and sends command to controller.
+
+        Args:
+            db: Database session
+            station_name: RTU station name
+            requested_by: Who requested the disconnection (for audit trail)
         """
         rtu = db.query(RTU).filter(RTU.station_name == station_name).first()
         if not rtu:
@@ -119,11 +141,14 @@ class RtuManager:
         # Send command to controller
         success = self._profinet.disconnect_rtu(station_name)
 
-        # Update database state
-        rtu.update_state(RtuState.OFFLINE)
+        # Update database state with reason
+        rtu.update_state(
+            RtuState.OFFLINE,
+            reason=f"Disconnection requested by {requested_by}"
+        )
         db.commit()
 
-        logger.info(f"RTU {station_name} disconnected")
+        logger.info(f"RTU {station_name} disconnected by {requested_by}")
         return True
 
     def get_sensor_values(self, station_name: str) -> List[Dict[str, Any]]:

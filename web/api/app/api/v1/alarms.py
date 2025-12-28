@@ -24,7 +24,10 @@ from ...schemas.alarm import (
     AlarmEvent as AlarmEventSchema,
     AlarmAcknowledgeRequest,
     AlarmListMeta,
+    AlarmShelveRequest,
+    ShelvedAlarm,
 )
+from ...persistence import alarms as alarm_persistence
 
 router = APIRouter()
 
@@ -266,4 +269,141 @@ async def acknowledge_all_alarms(
     return build_success_response({
         "acknowledged_count": count,
         "rtu_filter": rtu,
+    })
+
+
+# ============== Alarm Shelving Endpoints (ISA-18.2) ==============
+
+@router.get("/shelved")
+async def list_shelved_alarms(
+    include_expired: bool = Query(False, description="Include expired shelved alarms"),
+) -> Dict[str, Any]:
+    """
+    List all shelved alarms.
+
+    Shelved alarms are temporarily suppressed from notifications.
+    Per ISA-18.2, shelving is for known issues being worked on.
+    """
+    shelved = alarm_persistence.get_shelved_alarms(include_expired=include_expired)
+
+    result = []
+    for shelf in shelved:
+        result.append(ShelvedAlarm(
+            id=shelf["id"],
+            rtu_station=shelf["rtu_station"],
+            slot=shelf["slot"],
+            shelved_by=shelf["shelved_by"],
+            shelved_at=shelf["shelved_at"],
+            duration_minutes=shelf["shelf_duration_minutes"],
+            expires_at=shelf["expires_at"],
+            reason=shelf.get("reason"),
+            active=bool(shelf["active"]),
+        ).model_dump())
+
+    return {
+        "data": result,
+        "meta": {
+            "total": len(result),
+            "include_expired": include_expired,
+        },
+    }
+
+
+@router.post("/shelve/{rtu_station}/{slot}")
+async def shelve_alarm(
+    rtu_station: str = Path(..., description="RTU station name"),
+    slot: int = Path(..., ge=0, description="Slot number"),
+    request: AlarmShelveRequest = ...,
+    session: dict = Depends(require_control_access)
+) -> Dict[str, Any]:
+    """
+    Shelve an alarm for a specified duration.
+
+    Shelved alarms will not generate notifications until the shelf expires
+    or is manually removed. Per HARMONIOUS_SYSTEM_DESIGN.md, version mismatch
+    alarms and other known-issue alarms should be shelve-able.
+
+    **Authentication Required**: This is a control action requiring
+    operator or admin role.
+
+    Duration: 1 to 1440 minutes (24 hours max)
+    """
+    username = session.get("username", "unknown")
+
+    shelf_id = alarm_persistence.shelve_alarm(
+        rtu_station=rtu_station,
+        slot=slot,
+        username=username,
+        duration_minutes=request.duration_minutes,
+        reason=request.reason,
+    )
+
+    log_control_action(
+        session=session,
+        action="ALARM_SHELVE",
+        target=f"{rtu_station}/{slot}",
+        details=f"Shelved for {request.duration_minutes} min: {request.reason or 'No reason'}",
+    )
+
+    return build_success_response({
+        "shelf_id": shelf_id,
+        "rtu_station": rtu_station,
+        "slot": slot,
+        "duration_minutes": request.duration_minutes,
+        "message": f"Alarm shelved for {request.duration_minutes} minutes",
+    })
+
+
+@router.delete("/shelve/{shelf_id}")
+async def unshelve_alarm(
+    shelf_id: int = Path(..., description="Shelf entry ID"),
+    session: dict = Depends(require_control_access)
+) -> Dict[str, Any]:
+    """
+    Remove an alarm from shelf before expiration.
+
+    **Authentication Required**: This is a control action requiring
+    operator or admin role.
+    """
+    username = session.get("username", "unknown")
+
+    # Get shelf info before removing
+    shelf = alarm_persistence.get_shelved_alarm(shelf_id)
+    if not shelf:
+        return build_success_response({
+            "success": False,
+            "message": f"Shelf entry {shelf_id} not found",
+        })
+
+    success = alarm_persistence.unshelve_alarm(shelf_id, username)
+
+    if success:
+        log_control_action(
+            session=session,
+            action="ALARM_UNSHELVE",
+            target=f"{shelf['rtu_station']}/{shelf['slot']}",
+            details=f"Manually unshelved shelf_id={shelf_id}",
+        )
+
+    return build_success_response({
+        "success": success,
+        "shelf_id": shelf_id,
+        "message": "Alarm unshelved" if success else "Failed to unshelve alarm",
+    })
+
+
+@router.get("/shelved/check/{rtu_station}/{slot}")
+async def check_alarm_shelved(
+    rtu_station: str = Path(..., description="RTU station name"),
+    slot: int = Path(..., ge=0, description="Slot number"),
+) -> Dict[str, Any]:
+    """
+    Check if a specific alarm is currently shelved.
+    """
+    is_shelved = alarm_persistence.is_alarm_shelved(rtu_station, slot)
+
+    return build_success_response({
+        "rtu_station": rtu_station,
+        "slot": slot,
+        "is_shelved": is_shelved,
     })
