@@ -222,19 +222,34 @@ class PathConfig:
         """
         Validate that UI build artifacts exist and are complete.
 
+        This is informational - reports state without blocking.
+        Handles development mode (no build) vs production gracefully.
+
         Returns:
             Tuple of (is_valid, message)
         """
+        ui_path = cls.UI_PATH
         static_dir = cls.get_ui_static_dir()
         server_js = cls.get_ui_server_js()
+
+        # Check if UI path exists at all (might be dev environment)
+        if not os.path.isdir(ui_path):
+            return False, f"UI directory not found: {ui_path} (may be development mode)"
+
+        # Check for .next directory (indicates build was run)
+        next_dir = cls.get_ui_next_dir()
+        if not os.path.isdir(next_dir):
+            # Check if this looks like a dev environment (has package.json but no build)
+            if os.path.isfile(os.path.join(ui_path, "package.json")):
+                return False, "UI not built yet - run 'npm run build' or 'npm run dev'"
+            return False, f"Next.js build directory missing: {next_dir}"
 
         # Check static directory exists
         if not os.path.isdir(static_dir):
             return False, f"Static assets directory missing: {static_dir}"
 
-        # Check server.js exists
-        if not os.path.isfile(server_js):
-            return False, f"Server entry point missing: {server_js}"
+        # Check server.js exists (optional for dev mode)
+        has_server_js = os.path.isfile(server_js)
 
         # Count JS files in static directory
         js_count = 0
@@ -253,7 +268,11 @@ class PathConfig:
         if js_count < cls.MIN_STATIC_FILES:
             return False, f"Insufficient JS bundles: found {js_count}, expected at least {cls.MIN_STATIC_FILES}"
 
-        return True, f"UI build valid: {js_count}+ JS files found"
+        # Build is valid
+        if has_server_js:
+            return True, f"UI build valid: {js_count}+ JS files, server.js present"
+        else:
+            return True, f"UI build valid: {js_count}+ JS files (dev mode - no server.js)"
 
 
 class Settings:
