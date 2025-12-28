@@ -28,6 +28,123 @@ The system must be:
 
 ---
 
+## Field Deployment Reality
+
+> **Connectivity is more important than conformity.**
+
+This system operates in austere field environments where:
+
+- **Internet may be unavailable for months** at a time
+- **RTUs and Controllers may drift in version** during extended isolation
+- **Physical access may be difficult** or impossible for updates
+- **The process must continue running** regardless of software mismatches
+
+### The Governing Principle
+
+**A working connection with a version mismatch is infinitely more valuable than a refused connection with perfect version alignment.**
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                    CONNECTIVITY HIERARCHY                            │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                      │
+│  PRIORITY 1: MAINTAIN CONNECTIVITY                                   │
+│  ─────────────────────────────────                                   │
+│  • Never refuse connection due to version mismatch                  │
+│  • Never drop existing connection due to detected incompatibility   │
+│  • Always prefer degraded operation over no operation               │
+│                                                                      │
+│  PRIORITY 2: ALERT ON MISMATCHES                                     │
+│  ───────────────────────────────                                     │
+│  • Log version mismatch at connection establishment                 │
+│  • Raise LOW severity alarm (not EMERGENCY)                         │
+│  • Alarm is shelve-able (operator can acknowledge and suppress)     │
+│  • Include both versions in alarm details for field notes           │
+│                                                                      │
+│  PRIORITY 3: DOCUMENT FOR LATER                                      │
+│  ──────────────────────────────                                      │
+│  • Record mismatch in historian for trend analysis                  │
+│  • Mark data with "version-degraded" quality annotation             │
+│  • When connectivity restored, operator can plan coordinated update │
+│                                                                      │
+│  NEVER:                                                              │
+│  • Refuse connection based on version check                         │
+│  • Force disconnect to trigger "upgrade required"                   │
+│  • Block operation pending version alignment                        │
+│  • Make version enforcement a startup gate                          │
+│                                                                      │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### Version Mismatch Handling
+
+When controller and RTU versions differ:
+
+```c
+// PROHIBITED: Refuse connection on mismatch
+if (controller_version != rtu_version) {
+    log_error("Version mismatch - refusing connection");
+    return CONN_REFUSED;  // NEVER DO THIS
+}
+
+// REQUIRED: Connect anyway, alarm, and continue
+if (controller_version != rtu_version) {
+    log_warn("Version mismatch detected: controller=%s, rtu=%s",
+             controller_version, rtu_version);
+
+    raise_alarm(ALARM_VERSION_MISMATCH, SEVERITY_LOW,
+                "Controller/RTU version mismatch - operation continues");
+
+    // Mark the connection as version-degraded for logging
+    connection->flags |= CONN_FLAG_VERSION_MISMATCH;
+
+    // CONTINUE WITH CONNECTION
+}
+return establish_connection(rtu);  // Always try to connect
+```
+
+### Backwards Compatibility Requirements
+
+| Component | Requirement |
+|-----------|-------------|
+| **Wire Protocol** | MUST accept older format variants; MUST NOT require newest features |
+| **GSDML** | MUST work with RTUs using older GSDML versions |
+| **Data Format** | MUST handle 4-byte (legacy) AND 5-byte (current) sensor formats |
+| **Commands** | MUST gracefully handle unknown command types from newer controllers |
+| **Quality Codes** | MUST treat unknown quality values as UNCERTAIN, not BAD |
+
+### Alarm for Version Mismatch
+
+```json
+{
+  "alarm_type": "VERSION_MISMATCH",
+  "severity": "LOW",
+  "shelve_allowed": true,
+  "auto_clear": false,
+  "message": "Controller v1.2.0 connected to RTU v1.1.0 - operation continues with potential feature limitations",
+  "details": {
+    "controller_version": "1.2.0",
+    "rtu_version": "1.1.0",
+    "rtu_name": "tank-level-01",
+    "features_unavailable": ["state_reconciliation", "command_idempotency"]
+  },
+  "operator_action": "System continues normal operation. Schedule coordinated update when field access available. This alarm can be shelved."
+}
+```
+
+### Why This Matters
+
+In a water treatment plant 200 miles from the nearest technician:
+
+- If the controller updates but RTU doesn't → **system must keep running**
+- If RTU updates but controller doesn't → **system must keep running**
+- If versions drift for 6 months → **system must keep running**
+- If new features aren't available → **log it, alarm it, but keep running**
+
+The alternative—a system that refuses to operate due to version mismatch—is a system that has failed its primary mission: **keeping the water treatment process operational**.
+
+---
+
 ## Principle 0: Always Begin With Documentation
 
 ### The Non-Negotiable Rule
@@ -419,6 +536,44 @@ void transition_to_phase(operational_phase_t new_phase) {
     current_phase = new_phase;
 }
 ```
+
+### Determinism Does NOT Mean Version Enforcement
+
+**CRITICAL DISTINCTION:**
+
+Determinism applies to:
+- ✅ Build reproducibility (same source → same binary)
+- ✅ Local configuration (explicit settings, no hidden defaults)
+- ✅ Behavioral predictability (same inputs → same outputs)
+
+Determinism does NOT mean:
+- ❌ Refusing to connect to mismatched versions
+- ❌ Requiring coordinated upgrades across air-gapped systems
+- ❌ Blocking operation when remote component versions differ
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                    DETERMINISM SCOPE                                 │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                      │
+│  WITHIN A COMPONENT (determinism applies):                           │
+│  • Same config + same code = same behavior                          │
+│  • Builds are reproducible offline                                  │
+│  • No magic environment sniffing                                    │
+│                                                                      │
+│  ACROSS COMPONENTS (flexibility required):                           │
+│  • Accept older wire format versions                                │
+│  • Gracefully handle unknown fields (ignore, don't fail)            │
+│  • Connect first, negotiate capabilities second                     │
+│  • Never refuse service due to version difference                   │
+│                                                                      │
+│  WHY: A field site may not have connectivity for 6 months.          │
+│  Components WILL drift. The system MUST continue operating.         │
+│                                                                      │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+See [Field Deployment Reality](#field-deployment-reality) for version mismatch handling requirements.
 
 ---
 

@@ -155,6 +155,29 @@ If an alarm is known and being worked on, you can shelve it temporarily:
 
 **WARNING:** Shelving is for known issues only. Never shelve an alarm you don't understand.
 
+### Version Mismatch Alarms
+
+You may see a **VERSION_MISMATCH** alarm (LOW severity). This means:
+
+- The controller and RTU software versions are different
+- **This is normal** in field deployments where updates happen at different times
+- **The system continues operating normally**
+- Some newer features may not be available until versions are aligned
+
+**What to do:**
+
+1. **Acknowledge** the alarm - it's informational
+2. **Shelve** the alarm if it's expected (e.g., you know updates are pending)
+3. **Document** the versions for your next maintenance window
+4. **Schedule** a coordinated update when convenient - NOT urgent
+
+**This alarm will NOT:**
+- Prevent the system from operating
+- Cause data loss
+- Require immediate action
+
+The system is designed to work across version mismatches. This alarm is simply informing you that versions differ so you can plan updates when field access is available.
+
 ---
 
 ## Viewing Trends
