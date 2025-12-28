@@ -1,6 +1,18 @@
-# Water Treatment Controller - Docker Compose
+# Water Treatment Controller - Docker Compose (Development)
 # Copyright (C) 2024
 # SPDX-License-Identifier: GPL-3.0-or-later
+#
+# This compose file BUILDS images locally from source.
+# For production deployments with pre-built images, use:
+#   docker-compose -f docker-compose.prod.yml up -d
+#
+# Development usage:
+#   docker-compose up -d              # Start all services (builds if needed)
+#   docker-compose up -d --build      # Force rebuild
+#   docker-compose logs -f            # View logs
+#   docker-compose down               # Stop all services
+#
+# Note: PROFINET controller requires --profile profinet flag
 
 version: "3.9"
 
