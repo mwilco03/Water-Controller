@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
 
-from sqlalchemy import func
+from sqlalchemy import func, text
 
 from ...core.errors import build_success_response
 from ...models.base import get_db
@@ -237,7 +237,7 @@ async def health_ready(db: Session = Depends(get_db)) -> Response:
 
     # Check database connection
     try:
-        db.execute("SELECT 1")
+        db.execute(text("SELECT 1"))
         checks["database"] = {"status": "ok"}
     except SQLAlchemyError as e:
         checks["database"] = {"status": "error", "message": str(e)}
@@ -299,12 +299,18 @@ async def health_functional(db: Session = Depends(get_db)) -> Response:
     degraded_components = []
     critical_failure = False
 
-    # UI assets check - operators need the interface to work
+    # UI assets check - operators need the interface to work (unless API-only mode)
+    api_only_mode = os.environ.get("WTC_API_ONLY", "").lower() in ("true", "1")
     ui_status = get_ui_asset_status()
     if ui_status["available"]:
         checks["ui_assets"] = {
             "status": "ok",
             "build_time": ui_status["build_time"],
+        }
+    elif api_only_mode:
+        checks["ui_assets"] = {
+            "status": "skipped",
+            "reason": "API-only mode enabled",
         }
     else:
         checks["ui_assets"] = {
@@ -319,7 +325,7 @@ async def health_functional(db: Session = Depends(get_db)) -> Response:
     # Database health
     try:
         start = datetime.now(timezone.utc)
-        db.execute("SELECT 1")
+        db.execute(text("SELECT 1"))
         latency_ms = (datetime.now(timezone.utc) - start).total_seconds() * 1000
         checks["database"] = {
             "status": "ok",
