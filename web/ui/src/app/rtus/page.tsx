@@ -6,6 +6,7 @@ import { useWebSocket } from '@/hooks/useWebSocket';
 import { DiscoveryPanel, RtuStateBadge, AddRtuModal, DeleteRtuModal, StaleIndicator } from '@/components/rtu';
 import { useToast } from '@/components/ui/Toast';
 import type { DiscoveredDevice } from '@/lib/api';
+import { wsLogger, rtuLogger } from '@/lib/logger';
 
 interface RTUDevice {
   station_name: string;
@@ -61,7 +62,7 @@ export default function RTUsPage() {
         }
       }
     } catch (error) {
-      console.error('Failed to fetch RTUs:', error);
+      rtuLogger.error('Failed to fetch RTUs', error);
     }
   }, []);
 
@@ -71,13 +72,13 @@ export default function RTUsPage() {
       if (pollIntervalRef.current) {
         clearInterval(pollIntervalRef.current);
         pollIntervalRef.current = null;
-        console.log('WebSocket connected - RTU polling disabled');
+        wsLogger.info('WebSocket connected - RTU polling disabled');
       }
     },
     onDisconnect: () => {
       if (!pollIntervalRef.current) {
         pollIntervalRef.current = setInterval(fetchRtus, 5000);
-        console.log('WebSocket disconnected - RTU polling enabled');
+        wsLogger.info('WebSocket disconnected - RTU polling enabled');
       }
     },
   });

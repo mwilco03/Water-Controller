@@ -5,6 +5,7 @@ import { useWebSocket } from '@/hooks/useWebSocket';
 import { useCommandMode } from '@/contexts/CommandModeContext';
 import CommandModeLogin from '@/components/CommandModeLogin';
 import CoupledActionsPanel from '@/components/control/CoupledActionsPanel';
+import { wsLogger, logger } from '@/lib/logger';
 
 interface PIDLoop {
   loop_id: number;
@@ -120,7 +121,7 @@ export default function ControlPage() {
         setInterlocks(data.interlocks || []);
       }
     } catch (error) {
-      console.error('Error fetching control data:', error);
+      logger.error('Error fetching control data', error);
     } finally {
       setLoading(false);
     }
@@ -132,13 +133,13 @@ export default function ControlPage() {
       if (pollIntervalRef.current) {
         clearInterval(pollIntervalRef.current);
         pollIntervalRef.current = null;
-        console.log('WebSocket connected - control polling disabled');
+        wsLogger.info('WebSocket connected - control polling disabled');
       }
     },
     onDisconnect: () => {
       if (!pollIntervalRef.current) {
         pollIntervalRef.current = setInterval(fetchControlData, 2000);
-        console.log('WebSocket disconnected - control polling enabled');
+        wsLogger.info('WebSocket disconnected - control polling enabled');
       }
     },
   });
@@ -198,7 +199,7 @@ export default function ControlPage() {
       });
       fetchControlData();
     } catch (error) {
-      console.error('Error updating setpoint:', error);
+      logger.error('Error updating setpoint', error);
     }
   };
 
@@ -225,7 +226,7 @@ export default function ControlPage() {
       });
       fetchControlData();
     } catch (error) {
-      console.error('Error updating mode:', error);
+      logger.error('Error updating mode', error);
     }
   };
 
@@ -246,7 +247,7 @@ export default function ControlPage() {
       });
       fetchControlData();
     } catch (error) {
-      console.error('Error resetting interlock:', error);
+      logger.error('Error resetting interlock', error);
     }
   };
 

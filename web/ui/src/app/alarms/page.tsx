@@ -5,6 +5,7 @@ import AlarmSummary from '@/components/AlarmSummary';
 import { useWebSocket } from '@/hooks/useWebSocket';
 import { useCommandMode } from '@/contexts/CommandModeContext';
 import CommandModeLogin from '@/components/CommandModeLogin';
+import { wsLogger, alarmLogger } from '@/lib/logger';
 
 interface Alarm {
   alarm_id: number;
@@ -160,7 +161,7 @@ export default function AlarmsPage() {
     } catch (err) {
       /* UI-M1: Show user-facing error message */
       setError(err instanceof Error ? err.message : 'Network error - unable to fetch alarms');
-      console.error('Error fetching alarms:', err);
+      alarmLogger.error('Error fetching alarms', err);
     } finally {
       setLoading(false);
     }
@@ -172,13 +173,13 @@ export default function AlarmsPage() {
       if (pollIntervalRef.current) {
         clearInterval(pollIntervalRef.current);
         pollIntervalRef.current = null;
-        console.log('WebSocket connected - alarm polling disabled');
+        wsLogger.info('WebSocket connected - alarm polling disabled');
       }
     },
     onDisconnect: () => {
       if (!pollIntervalRef.current) {
         pollIntervalRef.current = setInterval(fetchAlarms, 5000);
-        console.log('WebSocket disconnected - alarm polling enabled');
+        wsLogger.info('WebSocket disconnected - alarm polling enabled');
       }
     },
   });
@@ -248,7 +249,7 @@ export default function AlarmsPage() {
         setShelveDialog({ isOpen: false, alarm: null });
       }
     } catch (error) {
-      console.error('Error shelving alarm:', error);
+      alarmLogger.error('Error shelving alarm', error);
     }
   };
 
@@ -261,7 +262,7 @@ export default function AlarmsPage() {
         fetchAlarms();
       }
     } catch (error) {
-      console.error('Error unshelving alarm:', error);
+      alarmLogger.error('Error unshelving alarm', error);
     }
   };
 
