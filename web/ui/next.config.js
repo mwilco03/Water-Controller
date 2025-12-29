@@ -1,6 +1,8 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: false,
+  // Required for Docker standalone builds
+  output: 'standalone',
   experimental: {
     serverComponentsExternalPackages: ['react-server-components'],
   },
