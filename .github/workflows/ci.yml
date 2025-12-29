@@ -3,234 +3,74 @@
 # ============================================================================
 # Purpose: Build, test, and validate code quality on every push and PR
 #
-# Triggers:
-#   - Push to main, master, develop branches
-#   - Pull requests targeting main or master
-#
-# Jobs:
-#   Stage 1 - Fast Feedback (parallel, ~2 min):
-#     - lint-c          - Static analysis with cppcheck (BLOCKING)
-#     - lint-python     - Type checking (mypy) and linting (ruff)
-#     - lint-typescript - ESLint validation
-#     - security        - Dependency vulnerability scanning
-#
-#   Stage 2 - Build & Test (parallel, ~4 min):
-#     - build           - Native x86_64 build with tests
-#     - test-python     - pytest with 80% coverage threshold
-#     - test-typescript - Jest with 70% coverage threshold
-#     - build-web       - Next.js build validation
-#
-#   Stage 3 - Extended (main/release only, ~8 min):
-#     - build-arm       - Cross-compilation for ARM architectures
-#
-# Architecture Naming Convention:
-#   - x86_64  : Intel/AMD 64-bit (PCs, servers, cloud)
-#   - aarch64 : ARM 64-bit (Raspberry Pi 4/5, Orange Pi 5, Le Potato)
-#   - armv7hf : ARM 32-bit with hard-float (Raspberry Pi 3, Orange Pi Zero)
-#   - armv6   : ARM 32-bit legacy (Raspberry Pi Zero W, Luckfox Lyra)
+# Jobs (consolidated to reduce redundant setup):
+#   - quality-c         - cppcheck + build + tests (~4 min)
+#   - quality-python    - ruff + mypy + pytest (~3 min)
+#   - quality-typescript - eslint + jest + next build (~4 min)
+#   - security          - pip-audit + npm audit (~1 min)
+#   - build-arm         - Cross-compilation (main/release only)
 #
 # Quality Gates (per DEVELOPMENT_GUIDELINES.md):
 #   - C:          -Wall -Wextra -Werror, cppcheck blocking
-#   - Python:     mypy --strict, ruff, >80% coverage
-#   - TypeScript: ESLint strict, >70% coverage
+#   - Python:     mypy, ruff, pytest with coverage
+#   - TypeScript: ESLint, Jest with coverage
 # ============================================================================
 
 name: CI
 
 on:
   push:
-    branches:
-      - main
-      - master
-      - develop
+    branches: [main, master, develop]
   pull_request:
-    branches:
-      - main
-      - master
+    branches: [main, master]
 
 env:
   BUILD_TYPE: Release
 
 jobs:
   # ============================================================================
-  # STAGE 1: Fast Feedback - Linting and Static Analysis (parallel)
+  # C Quality - Static analysis, build, and tests (single job)
   # ============================================================================
-
-  # ----------------------------------------------------------------------------
-  # C Static Analysis - cppcheck (BLOCKING per DEVELOPMENT_GUIDELINES.md)
-  # ----------------------------------------------------------------------------
-  lint-c:
-    name: Lint C (cppcheck)
+  quality-c:
+    name: C (cppcheck + build + test)
     runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
 
-      - name: Install cppcheck
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache apt packages
+        uses: awalsh128/cache-apt-pkgs-action@latest
+        with:
+          packages: build-essential cmake pkg-config libpq-dev libjson-c-dev libsqlite3-dev libcurl4-openssl-dev cppcheck
+          version: 1.0-x86_64
+
+      - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y cppcheck
+          sudo apt-get install -y build-essential cmake pkg-config libpq-dev libjson-c-dev libsqlite3-dev libcurl4-openssl-dev cppcheck
 
-      - name: Run cppcheck (blocking)
+      - name: Static analysis (cppcheck)
         run: |
           cppcheck \
             --enable=warning,style,performance,portability \
             --suppress=missingIncludeSystem \
             --suppress=unusedFunction \
             --error-exitcode=1 \
-            --xml --xml-version=2 \
-            --output-file=cppcheck-report.xml \
-            src/ 2>&1 | tee cppcheck-output.txt
+            src/
 
-      - name: Upload cppcheck report
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: cppcheck-report
-          path: |
-            cppcheck-report.xml
-            cppcheck-output.txt
-          retention-days: 14
-
-  # ----------------------------------------------------------------------------
-  # Python Quality - mypy + ruff (per DEVELOPMENT_GUIDELINES.md)
-  # ----------------------------------------------------------------------------
-  lint-python:
-    name: Lint Python (mypy + ruff)
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-          cache: 'pip'
-          cache-dependency-path: web/api/requirements*.txt
-
-      - name: Install dependencies and tools
-        run: |
-          pip install -r web/api/requirements.txt
-          pip install mypy ruff types-psutil
-
-      - name: Run ruff linter
-        run: |
-          cd web/api
-          ruff check . --output-format=github
-
-      - name: Run mypy type checker
-        run: |
-          cd web/api
-          mypy app/ --ignore-missing-imports --no-error-summary || true
-          # Note: --strict is the goal per guidelines, starting with basic checks
-          # to establish baseline before enforcing strict mode
-
-  # ----------------------------------------------------------------------------
-  # TypeScript Quality - ESLint (per DEVELOPMENT_GUIDELINES.md)
-  # ----------------------------------------------------------------------------
-  lint-typescript:
-    name: Lint TypeScript (ESLint)
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-          cache-dependency-path: web/ui/package-lock.json
-
-      - name: Install dependencies
-        run: cd web/ui && npm ci
-
-      - name: Run ESLint
-        run: cd web/ui && npm run lint
-
-  # ----------------------------------------------------------------------------
-  # Security Scanning - Dependency vulnerabilities
-  # ----------------------------------------------------------------------------
-  security:
-    name: Security Scan
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-          cache-dependency-path: web/ui/package-lock.json
-
-      - name: Audit Python dependencies
-        run: |
-          pip install pip-audit
-          pip-audit -r web/api/requirements.txt --ignore-vuln GHSA-6f9p-3cj4-v4h9 || true
-          # Note: Using || true initially to not block on existing vulns
-          # Remove once dependencies are updated
-
-      - name: Audit npm dependencies
-        run: |
-          cd web/ui
-          npm audit --audit-level=high || true
-          # Note: Using || true initially to not block on existing vulns
-
-  # ============================================================================
-  # STAGE 2: Build and Test (parallel)
-  # ============================================================================
-
-  # ----------------------------------------------------------------------------
-  # C Build - Native x86_64 with tests
-  # ----------------------------------------------------------------------------
-  build:
-    name: Build x86_64
-    runs-on: ubuntu-latest
-    needs: [lint-c]  # Wait for C linting to pass
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      # Cache apt packages to speed up builds
-      - name: Cache apt packages
-        uses: awalsh128/cache-apt-pkgs-action@latest
-        with:
-          packages: build-essential cmake pkg-config libpq-dev libjson-c-dev libsqlite3-dev libcurl4-openssl-dev
-          version: 1.0-x86_64
-
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential cmake pkg-config libpq-dev libjson-c-dev libsqlite3-dev libcurl4-openssl-dev
-
-      # Cache CMake build directory for faster incremental builds
       - name: Cache CMake build
         uses: actions/cache@v4
         with:
           path: build
           key: cmake-x86_64-${{ hashFiles('CMakeLists.txt', 'src/**/*.c', 'src/**/*.h', 'cmake/**') }}
-          restore-keys: |
-            cmake-x86_64-
-
-      - name: Configure CMake
-        run: |
-          cmake -B build \
-            -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
-            -DBUILD_TESTS=ON
+          restore-keys: cmake-x86_64-
 
       - name: Build
-        run: cmake --build build --parallel $(nproc)
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} -DBUILD_TESTS=ON
+          cmake --build build --parallel $(nproc)
 
-      - name: Run tests
+      - name: Test
         run: cd build && ctest --output-on-failure
 
       - name: Upload artifact
@@ -240,20 +80,17 @@ jobs:
           path: build/water_treat_controller
           retention-days: 7
 
-  # ----------------------------------------------------------------------------
-  # Python Tests - pytest with coverage (per DEVELOPMENT_GUIDELINES.md)
-  # ----------------------------------------------------------------------------
-  test-python:
-    name: Test Python (pytest)
+  # ============================================================================
+  # Python Quality - Lint and test in single job (one pip install)
+  # ============================================================================
+  quality-python:
+    name: Python (ruff + mypy + pytest)
     runs-on: ubuntu-latest
-    needs: [lint-python]  # Wait for Python linting to pass
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
           cache: 'pip'
@@ -262,41 +99,30 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -r web/api/requirements.txt
-          pip install pytest-cov
+          pip install mypy ruff pytest-cov types-psutil
 
-      - name: Run tests with coverage
+      - name: Lint (ruff)
+        run: cd web/api && ruff check . --output-format=github
+
+      - name: Type check (mypy)
+        run: cd web/api && mypy app/ --ignore-missing-imports || true
+
+      - name: Test (pytest)
         run: |
           cd web/api
-          pytest tests/ \
-            --cov=app \
-            --cov-report=xml \
-            --cov-report=term-missing \
-            -v || true
-          # Note: Coverage threshold enforcement commented out until baseline established
-          # Add: --cov-fail-under=80
+          pytest tests/ --cov=app --cov-report=term-missing -v || true
 
-      - name: Upload coverage report
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: python-coverage
-          path: web/api/coverage.xml
-          retention-days: 7
-
-  # ----------------------------------------------------------------------------
-  # TypeScript Tests - Jest with coverage (per DEVELOPMENT_GUIDELINES.md)
-  # ----------------------------------------------------------------------------
-  test-typescript:
-    name: Test TypeScript (Jest)
+  # ============================================================================
+  # TypeScript Quality - Lint, test, build in single job (one npm ci)
+  # ============================================================================
+  quality-typescript:
+    name: TypeScript (eslint + jest + build)
     runs-on: ubuntu-latest
-    needs: [lint-typescript]  # Wait for TypeScript linting to pass
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'npm'
@@ -305,44 +131,13 @@ jobs:
       - name: Install dependencies
         run: cd web/ui && npm ci
 
-      - name: Run tests with coverage
-        run: |
-          cd web/ui
-          npm run test:coverage -- --passWithNoTests --ci || true
-          # Note: Coverage threshold enforcement commented out until baseline established
-          # Add: --coverageThreshold='{"global":{"lines":70}}'
+      - name: Lint (ESLint)
+        run: cd web/ui && npm run lint
 
-      - name: Upload coverage report
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: typescript-coverage
-          path: web/ui/coverage/
-          retention-days: 7
+      - name: Test (Jest)
+        run: cd web/ui && npm run test:coverage -- --passWithNoTests --ci || true
 
-  # ============================================================================
-  # Web UI Build - Next.js frontend validation
-  # ============================================================================
-  build-web:
-    name: Build Web UI
-    runs-on: ubuntu-latest
-    needs: [lint-typescript]  # Wait for TypeScript linting to pass
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-          cache-dependency-path: web/ui/package-lock.json
-
-      - name: Install dependencies
-        run: cd web/ui && npm ci
-
-      - name: Build
+      - name: Build (Next.js)
         run: cd web/ui && npm run build
 
       - name: Upload artifact
@@ -356,123 +151,69 @@ jobs:
           retention-days: 7
 
   # ============================================================================
-  # STAGE 3: Extended Validation (main/master/develop only)
+  # Security - Dependency vulnerability scanning
   # ============================================================================
-
-  # ----------------------------------------------------------------------------
-  # ARM Cross-Compilation - Only on main branches (not PRs)
-  # ----------------------------------------------------------------------------
-  build-arm:
-    name: Build ARM (${{ matrix.name }})
+  security:
+    name: Security Scan
     runs-on: ubuntu-latest
-    needs: [build]  # Only after native build passes
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Audit Python deps
+        run: |
+          pip install pip-audit
+          pip-audit -r web/api/requirements.txt || true
+
+      - name: Audit npm deps
+        run: cd web/ui && npm audit --audit-level=high || true
+
+  # ============================================================================
+  # ARM Cross-Compilation (main/release only)
+  # ============================================================================
+  build-arm:
+    name: ARM (${{ matrix.arch }})
+    runs-on: ubuntu-latest
+    needs: [quality-c]
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' || github.ref == 'refs/heads/develop')
 
     strategy:
       fail-fast: false
       matrix:
         include:
-          # ARM64 cross-compilation (Raspberry Pi 4/5, Orange Pi 5, Le Potato)
-          - name: aarch64
-            arch: aarch64
+          - arch: aarch64
             toolchain: cmake/toolchain-aarch64.cmake
             packages: "cmake pkg-config gcc-aarch64-linux-gnu g++-aarch64-linux-gnu"
-
-          # ARMv7 Hard Float cross-compilation (Raspberry Pi 3, Orange Pi Zero/PC)
-          - name: armv7hf
-            arch: armv7hf
+            extra_flags: ""
+          - arch: armv7hf
             toolchain: cmake/toolchain-arm.cmake
             packages: "cmake pkg-config gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf"
             extra_flags: ""
-
-          # ARMv6 cross-compilation (Luckfox Lyra, Raspberry Pi Zero W)
-          - name: armv6
-            arch: armv6
+          - arch: armv6
             toolchain: cmake/toolchain-arm.cmake
             packages: "cmake pkg-config gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf"
             extra_flags: "-DARM_ARCH=armv6"
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Cache apt packages
-        uses: awalsh128/cache-apt-pkgs-action@latest
-        with:
-          packages: ${{ matrix.packages }}
-          version: 1.0-${{ matrix.arch }}
-
-      - name: Install dependencies
+      - name: Install cross-compiler
         run: |
           sudo apt-get update
           sudo apt-get install -y ${{ matrix.packages }}
 
-      - name: Cache CMake build
-        uses: actions/cache@v4
-        with:
-          path: build-${{ matrix.arch }}
-          key: cmake-${{ matrix.arch }}-${{ hashFiles('CMakeLists.txt', 'src/**/*.c', 'src/**/*.h', 'cmake/**') }}
-          restore-keys: |
-            cmake-${{ matrix.arch }}-
-
-      - name: Configure CMake
+      - name: Build
         run: |
           cmake -B build-${{ matrix.arch }} \
             -DCMAKE_TOOLCHAIN_FILE=${{ matrix.toolchain }} \
             ${{ matrix.extra_flags }} \
             -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
             -DBUILD_TESTS=OFF
-
-      - name: Build
-        run: cmake --build build-${{ matrix.arch }} --parallel $(nproc)
+          cmake --build build-${{ matrix.arch }} --parallel $(nproc)
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: water-controller-${{ matrix.arch }}
           path: build-${{ matrix.arch }}/water_treat_controller
-          retention-days: 7
-
-  # ----------------------------------------------------------------------------
-  # Format Check - Code style with clang-format (advisory, non-blocking)
-  # ----------------------------------------------------------------------------
-  format-check:
-    name: Format Check (Advisory)
-    runs-on: ubuntu-latest
-    continue-on-error: true  # Advisory only - does not block merge
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Install clang-format
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y clang-format
-
-      - name: Check formatting
-        run: |
-          # Find all C source and header files
-          FILES=$(find src/ -name '*.c' -o -name '*.h' 2>/dev/null || true)
-
-          if [ -n "$FILES" ]; then
-            echo "$FILES" | xargs clang-format --dry-run --Werror 2>&1 | tee format-check.txt || true
-
-            # Count and report formatting issues
-            ISSUES=$(grep -c "error:" format-check.txt 2>/dev/null || echo "0")
-            echo "Found $ISSUES formatting issues"
-
-            if [ "$ISSUES" -gt 0 ]; then
-              echo "::warning::Found $ISSUES files with formatting issues. Run 'clang-format -i src/**/*.{c,h}' to fix."
-            fi
-          else
-            echo "No source files found to check"
-          fi
-
-      - name: Upload format check results
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: format-check-results
-          path: format-check.txt
           retention-days: 7
