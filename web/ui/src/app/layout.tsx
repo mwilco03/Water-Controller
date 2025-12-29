@@ -19,6 +19,7 @@ export default function RootLayout({
       <head>
         <title>Water Treatment Controller - HMI</title>
         <meta name="description" content="SCADA HMI for Water Treatment RTU Network" />
+        <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link
@@ -42,7 +43,7 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
   const [showConfigMenu, setShowConfigMenu] = useState(false);
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [degradedSince, setDegradedSince] = useState<Date | null>(null);
-  const { mode, user } = useCommandMode();
+  useCommandMode(); // Context provider needed for child components
 
   // Track WebSocket connection status for degraded mode banner
   const { connected } = useWebSocket({
@@ -53,10 +54,6 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
   const isActive = (path: string) => pathname === path;
   const isConfigActive = ['/settings', '/io-tags', '/network', '/users'].some(p => pathname.startsWith(p));
 
-  // The landing page (/) uses its own full-page layout with ISA-101 colors
-  // Other pages use the standard dark theme layout with navigation
-  const isLandingPage = pathname === '/';
-
   // Degraded mode info for banner
   const degradedInfo = !connected ? {
     reason: 'websocket_disconnected' as const,
@@ -65,70 +62,16 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
     since: degradedSince || undefined,
   } : null;
 
-  // For landing page, render children directly (it has its own layout)
-  if (isLandingPage) {
-    return (
-      <div className="min-h-screen flex flex-col bg-hmi-bg">
-        {/* Command Mode Banner */}
-        <CommandModeBanner />
-
-        {/* Degraded Mode Banner - shows when WebSocket disconnected */}
-        {degradedInfo && <DegradedModeBanner degradedInfo={degradedInfo} />}
-
-        {/* Minimal header for landing page */}
-        <header className="sticky top-0 z-50 bg-hmi-panel border-b border-hmi-border px-6 py-3">
-          <div className="flex items-center justify-between max-w-[1800px] mx-auto">
-            <div className="flex items-center gap-4">
-              {/* Logo */}
-              <a href="/" className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-lg bg-alarm-blue flex items-center justify-center">
-                  <svg className="w-6 h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
-                  </svg>
-                </div>
-                <div>
-                  <h1 className="text-lg font-bold text-hmi-text leading-tight">
-                    Water Treatment Controller
-                  </h1>
-                  <span className="text-xs text-hmi-text-secondary font-medium">SCADA/HMI v1.0.0</span>
-                </div>
-              </a>
-            </div>
-
-            {/* Navigation for landing page */}
-            <nav className="flex items-center gap-1">
-              <NavLinkLight href="/" active={true}>RTUs</NavLinkLight>
-              <NavLinkLight href="/alarms" active={false}>Alarms</NavLinkLight>
-              <NavLinkLight href="/trends" active={false}>Trends</NavLinkLight>
-              <NavLinkLight href="/control" active={false}>Control</NavLinkLight>
-              <NavLinkLight href="/settings" active={false}>Settings</NavLinkLight>
-
-              {/* Divider */}
-              <div className="w-px h-6 bg-hmi-border mx-2" />
-
-              {/* Session Indicator */}
-              <SessionIndicator onLoginClick={() => setShowLoginModal(true)} />
-            </nav>
-          </div>
-        </header>
-
-        {/* Main content */}
-        {children}
-
-        {/* Login Modal */}
-        <AuthenticationModal
-          isOpen={showLoginModal}
-          actionDescription="Access Command Mode"
-          onClose={() => setShowLoginModal(false)}
-          onSuccess={() => setShowLoginModal(false)}
-        />
-      </div>
-    );
-  }
-
-  // Standard layout for other pages (dark theme)
+  // Unified layout for all pages
   return (
     <div className="min-h-screen flex flex-col">
+      {/* Skip link for keyboard navigation accessibility */}
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:absolute focus:z-[100] focus:top-4 focus:left-4 focus:px-4 focus:py-2 focus:bg-sky-600 focus:text-white focus:rounded-lg focus:outline-none"
+      >
+        Skip to main content
+      </a>
       {/* Command Mode Banner - shows when authenticated in command mode */}
       <CommandModeBanner />
       {/* Degraded Mode Banner - shows when WebSocket disconnected */}
@@ -251,7 +194,7 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
         />
       )}
 
-      <main className="flex-1 p-6 max-w-[1800px] mx-auto w-full">
+      <main id="main-content" className="flex-1 p-6 max-w-[1800px] mx-auto w-full">
         {children}
       </main>
 
@@ -296,25 +239,3 @@ function NavLink({
   );
 }
 
-function NavLinkLight({
-  href,
-  children,
-  active = false,
-}: {
-  href: string;
-  children: React.ReactNode;
-  active?: boolean;
-}) {
-  return (
-    <a
-      href={href}
-      className={`px-3 py-2 text-sm font-medium transition-all ${
-        active
-          ? 'text-hmi-text border-b-2 border-alarm-blue'
-          : 'text-hmi-text-secondary hover:text-hmi-text'
-      }`}
-    >
-      {children}
-    </a>
-  );
-}

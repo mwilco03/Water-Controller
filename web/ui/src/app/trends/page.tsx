@@ -2,6 +2,8 @@
 
 import { Suspense, useEffect, useState, useRef, useCallback } from 'react';
 import { useSearchParams } from 'next/navigation';
+
+const PAGE_TITLE = 'Trends - Water Treatment Controller';
 import { useWebSocket } from '@/hooks/useWebSocket';
 import { exportTrendToCSV, exportTrendToJSON, exportTrendToExcel, TrendExportData } from '@/lib/exportUtils';
 import { wsLogger, logger } from '@/lib/logger';
@@ -64,6 +66,11 @@ function TrendsContent() {
   const [loading, setLoading] = useState(false);
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [showExportMenu, setShowExportMenu] = useState(false);
+
+  // Set page title
+  useEffect(() => {
+    document.title = PAGE_TITLE;
+  }, []);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
 

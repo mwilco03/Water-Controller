@@ -2,6 +2,8 @@
 
 import { useEffect, useState, useCallback, useRef } from 'react';
 import Link from 'next/link';
+
+const PAGE_TITLE = 'RTU Management - Water Treatment Controller';
 import { useWebSocket } from '@/hooks/useWebSocket';
 import { DiscoveryPanel, RtuStateBadge, AddRtuModal, DeleteRtuModal, StaleIndicator } from '@/components/rtu';
 import { useToast } from '@/components/ui/Toast';
@@ -45,6 +47,11 @@ export default function RTUsPage() {
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const toast = useToast();
+
+  // Set page title
+  useEffect(() => {
+    document.title = PAGE_TITLE;
+  }, []);
 
   // Prefill data for add modal (used when selecting from discovery)
   const [addPrefill, setAddPrefill] = useState<AddRtuPrefill | undefined>(undefined);

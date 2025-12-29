@@ -2,6 +2,8 @@
 
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useWebSocket } from '@/hooks/useWebSocket';
+
+const PAGE_TITLE = 'Control - Water Treatment Controller';
 import { useCommandMode } from '@/contexts/CommandModeContext';
 import CommandModeLogin from '@/components/CommandModeLogin';
 import CoupledActionsPanel from '@/components/control/CoupledActionsPanel';
@@ -103,6 +105,11 @@ export default function ControlPage() {
   const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null);
   const [pendingSetpoint, setPendingSetpoint] = useState<number | null>(null);
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Set page title
+  useEffect(() => {
+    document.title = PAGE_TITLE;
+  }, []);
 
   const fetchControlData = useCallback(async () => {
     try {

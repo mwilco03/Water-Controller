@@ -2,6 +2,8 @@
 
 import { useEffect, useState, useCallback } from 'react';
 
+const PAGE_TITLE = 'System Status - Water Treatment Controller';
+
 interface SystemHealth {
   status: string;
   uptime_seconds: number;
@@ -52,6 +54,11 @@ export default function SystemPage() {
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  // Set page title
+  useEffect(() => {
+    document.title = PAGE_TITLE;
+  }, []);
 
   const fetchHealth = useCallback(async () => {
     try {
