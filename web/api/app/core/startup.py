@@ -208,8 +208,12 @@ def check_ui_assets() -> tuple:
     status = get_ui_asset_status()
 
     if not status["available"]:
+        # UI missing is DEGRADED, not FAILED, because:
+        # 1. The API service doesn't serve UI - that's water-controller-ui
+        # 2. API can function fully without UI assets
+        # 3. Operators may intentionally run API-only
         return (
-            ReadinessState.FAILED,
+            ReadinessState.DEGRADED,
             status["message"],
             {"missing": status["missing_assets"]},
             "Build UI: cd /opt/water-controller/web/ui && npm run build",

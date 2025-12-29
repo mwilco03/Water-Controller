@@ -123,9 +123,12 @@ if not ui_status["available"]:
 **Problem:** System allowed to start without built UI, leaving operators with no interface.
 
 **Solution:**
-- UI service has `ConditionPathExists` for build artifacts
-- Health checks treat missing UI as **critical failure**
+- UI service (`water-controller-ui`) has `ConditionPathExists` for build artifacts
+- API service treats missing UI as **degraded** (not failed) because API can work independently
+- Health checks report UI status with actionable guidance
 - Clear error messages guide operator to fix
+
+**Note:** The API and UI are separate services. The API can function fully without UI assets - it's the UI service that needs them.
 
 **Critical paths for UI:**
 ```
