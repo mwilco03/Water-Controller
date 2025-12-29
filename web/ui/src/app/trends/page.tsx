@@ -4,6 +4,7 @@ import { Suspense, useEffect, useState, useRef, useCallback } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useWebSocket } from '@/hooks/useWebSocket';
 import { exportTrendToCSV, exportTrendToJSON, exportTrendToExcel, TrendExportData } from '@/lib/exportUtils';
+import { wsLogger, logger } from '@/lib/logger';
 
 interface HistorianTag {
   tag_id: number;
@@ -106,7 +107,7 @@ function TrendsContent() {
         setTags(data);
       }
     } catch (error) {
-      console.error('Failed to fetch tags:', error);
+      logger.error('Failed to fetch tags', error);
     }
   }, [rtuFilter]);
 
@@ -141,7 +142,7 @@ function TrendsContent() {
         }
         return { tagId, samples: [] };
       } catch (error) {
-        console.error(`Failed to fetch trend data for tag ${tagId}:`, error);
+        logger.error(`Failed to fetch trend data for tag ${tagId}`, error);
         return { tagId, samples: [] };
       }
     });
@@ -164,14 +165,14 @@ function TrendsContent() {
       if (pollIntervalRef.current && autoRefresh) {
         clearInterval(pollIntervalRef.current);
         pollIntervalRef.current = null;
-        console.log('WebSocket connected - trend polling disabled');
+        wsLogger.info('WebSocket connected - trend polling disabled');
       }
     },
     onDisconnect: () => {
       // Restart polling when WebSocket disconnects
       if (!pollIntervalRef.current && autoRefresh && selectedTags.length > 0) {
         pollIntervalRef.current = setInterval(fetchTrendData, 5000);
-        console.log('WebSocket disconnected - trend polling enabled');
+        wsLogger.info('WebSocket disconnected - trend polling enabled');
       }
     },
   });
