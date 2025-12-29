@@ -95,7 +95,7 @@ sudo apt install -y \
 - [ ] PROFINET network segment isolated from IT traffic
 - [ ] Static IP addressing for controller and all RTUs
 - [ ] Network time synchronization (NTP or PTP) configured
-- [ ] Firewall rules defined for HMI access (port 3000, 8080)
+- [ ] Firewall rules defined for HMI access (port 8000, 8080)
 - [ ] No DHCP on PROFINET segment
 
 ### Pre-Flight Checklist
@@ -385,8 +385,8 @@ sudo ufw default allow outgoing
 
 # Allow HMI access (restrict to operator network)
 sudo ufw allow from 10.0.0.0/8 to any port 443   # HTTPS
-sudo ufw allow from 10.0.0.0/8 to any port 3000  # Web UI
-sudo ufw allow from 10.0.0.0/8 to any port 8080  # API
+sudo ufw allow from 10.0.0.0/8 to any port 8000  # API
+sudo ufw allow from 10.0.0.0/8 to any port 8080  # Web UI
 
 # PROFINET requires raw socket access - no firewall on that interface
 # Instead, use separate network segment
@@ -550,13 +550,13 @@ sudo systemctl status water-controller water-controller-api water-controller-ui
 sudo journalctl -u water-controller -p err --since "1 hour ago"
 
 # Verify PROFINET connectivity
-curl -s http://localhost:8080/api/v1/rtus | jq '.[] | {name, status}'
+curl -s http://localhost:8000/api/v1/rtus | jq '.[] | {name, status}'
 
 # Verify historian writing
-curl -s http://localhost:8080/api/v1/trends/tags | jq 'length'
+curl -s http://localhost:8000/api/v1/trends/tags | jq 'length'
 
 # Verify alarm system
-curl -s http://localhost:8080/api/v1/alarms | jq 'length'
+curl -s http://localhost:8000/api/v1/alarms | jq 'length'
 ```
 
 ---
@@ -602,15 +602,15 @@ include_user_preferences = true
 
 ```bash
 # Create backup
-curl -X POST http://localhost:8080/api/v1/backups \
+curl -X POST http://localhost:8000/api/v1/backups \
   -H "Content-Type: application/json" \
   -d '{"description": "Pre-upgrade backup", "include_historian": false}'
 
 # List backups
-curl http://localhost:8080/api/v1/backups
+curl http://localhost:8000/api/v1/backups
 
 # Download backup
-curl -O http://localhost:8080/api/v1/backups/wtc_config_20240101_120000/download
+curl -O http://localhost:8000/api/v1/backups/wtc_config_20240101_120000/download
 ```
 
 #### Via Command Line
@@ -631,7 +631,7 @@ sudo wtc-ctl backup
 #### Via API
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/backups/wtc_config_20240101_120000/restore
+curl -X POST http://localhost:8000/api/v1/backups/wtc_config_20240101_120000/restore
 ```
 
 #### Via Command Line
@@ -645,13 +645,13 @@ sudo wtc-ctl restore /var/lib/water-controller/backups/wtc_backup_20240101_12000
 #### Export
 
 ```bash
-curl http://localhost:8080/api/v1/system/config > config_backup.json
+curl http://localhost:8000/api/v1/system/config > config_backup.json
 ```
 
 #### Import
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/system/config \
+curl -X POST http://localhost:8000/api/v1/system/config \
   -H "Content-Type: application/json" \
   -d @config_backup.json
 ```
@@ -682,7 +682,7 @@ Default mapping scheme:
 Add Modbus slave devices that the gateway will poll:
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/modbus/downstream \
+curl -X POST http://localhost:8000/api/v1/modbus/downstream \
   -H "Content-Type: application/json" \
   -d '{
     "name": "Energy Meter",
@@ -698,7 +698,7 @@ curl -X POST http://localhost:8080/api/v1/modbus/downstream \
 ### Custom Register Mapping
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/modbus/mappings \
+curl -X POST http://localhost:8000/api/v1/modbus/mappings \
   -H "Content-Type: application/json" \
   -d '{
     "modbus_addr": 100,
@@ -762,7 +762,7 @@ curl -X POST http://localhost:8080/api/v1/modbus/mappings \
 
 ```bash
 # Capture baseline metrics
-curl -s http://localhost:8080/api/v1/system/diagnostics | jq > baseline.json
+curl -s http://localhost:8000/api/v1/system/diagnostics | jq > baseline.json
 
 # Should include:
 # - Memory usage (should be stable, not growing)
@@ -872,7 +872,7 @@ curl -s http://localhost:8080/api/v1/system/diagnostics | jq > baseline.json
 4. Check browser console for JavaScript errors
 5. Verify API service responding:
    ```bash
-   curl http://localhost:8080/api/v1/health
+   curl http://localhost:8000/api/v1/health
    ```
 
 ### API Not Responding
@@ -954,7 +954,7 @@ curl -s http://localhost:8080/api/v1/system/diagnostics | jq > baseline.json
 
 2. Monitor cycle time:
    ```bash
-   curl http://localhost:8080/api/v1/system/health
+   curl http://localhost:8000/api/v1/system/health
    ```
 
 3. Reduce historian sample rate if needed
@@ -1009,7 +1009,7 @@ sudo wtc-ctl restore /path/to/backup.tar.gz
 sudo systemctl start water-controller water-controller-api water-controller-ui
 
 # 4. Verify RTU connectivity
-curl -s http://localhost:8080/api/v1/rtus | jq '.[] | {name, status}'
+curl -s http://localhost:8000/api/v1/rtus | jq '.[] | {name, status}'
 ```
 
 ---

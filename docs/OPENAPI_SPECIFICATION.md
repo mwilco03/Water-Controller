@@ -10,7 +10,7 @@
 
 This document provides the OpenAPI 3.0 specification for the Water Treatment Controller REST API. The API provides programmatic access to RTU management, sensor data, actuator control, alarms, historian, and system configuration.
 
-**Base URL:** `http://<controller-ip>:8080/api/v1`
+**Base URL:** `http://<controller-ip>:8000/api/v1`
 
 ---
 
@@ -76,7 +76,7 @@ info:
     url: https://github.com/mwilco03/Water-Controller
 
 servers:
-  - url: http://localhost:8080/api/v1
+  - url: http://localhost:8000/api/v1
     description: Local development server
   - url: http://{controller_ip}:8080/api/v1
     description: Production controller
@@ -1477,12 +1477,12 @@ security:
 
 ## WebSocket API
 
-Real-time updates are available via WebSocket at `ws://<controller-ip>:8080/ws`.
+Real-time updates are available via WebSocket at `ws://<controller-ip>:8000/ws`.
 
 ### Connection
 
 ```javascript
-const ws = new WebSocket('ws://localhost:8080/ws');
+const ws = new WebSocket('ws://localhost:8000/ws');
 
 ws.onmessage = (event) => {
   const message = JSON.parse(event.data);

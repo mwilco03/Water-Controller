@@ -55,10 +55,10 @@ export WT_CYCLE_TIME=1000
 
 ```bash
 # Check actual cycle time
-curl -s http://localhost:8080/api/v1/system/health | jq '.cycle_time_ms'
+curl -s http://localhost:8000/api/v1/system/health | jq '.cycle_time_ms'
 
 # Monitor over time
-watch -n 5 'curl -s http://localhost:8080/api/v1/system/health | jq ".cycle_time_ms"'
+watch -n 5 'curl -s http://localhost:8000/api/v1/system/health | jq ".cycle_time_ms"'
 
 # Look for cycle overruns in logs
 sudo journalctl -u water-controller | grep -i "overrun\|cycle"
@@ -99,7 +99,7 @@ Only record values when they change by more than the deadband:
 
 ```python
 # Via API - set deadband on historian tag
-curl -X PUT http://localhost:8080/api/v1/trends/tags/1 \
+curl -X PUT http://localhost:8000/api/v1/trends/tags/1 \
   -H "Content-Type: application/json" \
   -d '{"deadband": 0.1}'
 ```
@@ -386,7 +386,7 @@ Poorly tuned PID loops can cause:
 
 ```bash
 # Look for rapid PV changes
-curl -s "http://localhost:8080/api/v1/trends/1?start=$(date -d '-1 hour' -Iseconds)&end=$(date -Iseconds)" | jq '.data | length'
+curl -s "http://localhost:8000/api/v1/trends/1?start=$(date -d '-1 hour' -Iseconds)&end=$(date -Iseconds)" | jq '.data | length'
 ```
 
 ### Recommended Starting Points
@@ -484,13 +484,13 @@ free -m
 df -h /var/lib/water-controller
 
 echo "=== Controller Health ==="
-curl -s http://localhost:8080/api/v1/system/health | jq
+curl -s http://localhost:8000/api/v1/system/health | jq
 
 echo "=== CPU Usage (5 second sample) ==="
 top -b -n 2 -d 5 -p $(pgrep water_treat) | tail -1
 
 echo "=== Network Latency to RTUs ==="
-for ip in $(curl -s http://localhost:8080/api/v1/rtus | jq -r '.[].ip_address'); do
+for ip in $(curl -s http://localhost:8000/api/v1/rtus | jq -r '.[].ip_address'); do
   echo -n "$ip: "
   ping -c 3 -q $ip | tail -1
 done

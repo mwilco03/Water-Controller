@@ -10,7 +10,7 @@
 
 ```bash
 # System health check
-curl http://localhost:8080/api/v1/system/health
+curl http://localhost:8000/api/v1/system/health
 
 # Service status
 sudo systemctl status water-controller water-controller-api water-controller-ui
@@ -24,8 +24,8 @@ sudo journalctl -u water-controller -f
 # Network interfaces
 ip addr show
 
-# PROFINET ports
-sudo netstat -tulnp | grep -E ':(34962|34963|34964|8080|3000|502)'
+# PROFINET and service ports
+sudo netstat -tulnp | grep -E ':(34962|34963|34964|8000|8080|502)'
 
 # Process check
 pgrep -a water_treat
@@ -187,13 +187,13 @@ wireshark /tmp/profinet.pcap
 
 ```bash
 # Check API for sensor data
-curl http://localhost:8080/api/v1/rtus/{station_name}/sensors
+curl http://localhost:8000/api/v1/rtus/{station_name}/sensors
 
 # Monitor in real-time
-watch -n 1 'curl -s http://localhost:8080/api/v1/rtus/{station_name}/sensors | jq'
+watch -n 1 'curl -s http://localhost:8000/api/v1/rtus/{station_name}/sensors | jq'
 
 # Check cycle time
-curl http://localhost:8080/api/v1/system/health | jq .cycle_time_ms
+curl http://localhost:8000/api/v1/system/health | jq .cycle_time_ms
 ```
 
 **Common Causes & Solutions:**
@@ -209,10 +209,10 @@ curl http://localhost:8080/api/v1/system/health | jq .cycle_time_ms
 
 ### 3. API/Web Interface Issues
 
-#### API Not Responding (Port 8080)
+#### API Not Responding (Port 8000)
 
 **Symptoms:**
-- `curl http://localhost:8080/api/v1/system/health` fails
+- `curl http://localhost:8000/api/v1/system/health` fails
 - Web UI shows "Connection Error"
 
 **Diagnostic Steps:**
@@ -222,7 +222,7 @@ curl http://localhost:8080/api/v1/system/health | jq .cycle_time_ms
 sudo systemctl status water-controller-api
 
 # Check port binding
-sudo netstat -tlnp | grep 8080
+sudo netstat -tlnp | grep 8000
 
 # Check Python environment
 /opt/water-controller/venv/bin/python --version
@@ -241,10 +241,10 @@ sudo journalctl -u water-controller-api -n 50
 | Port conflict | Change port in config or stop conflicting service |
 | Shared memory not available | Start controller first |
 
-#### Web UI Not Loading (Port 3000)
+#### Web UI Not Loading (Port 8080)
 
 **Symptoms:**
-- Browser shows connection refused on port 3000
+- Browser shows connection refused on port 8080
 - API works but UI doesn't
 
 **Diagnostic Steps:**
@@ -284,10 +284,10 @@ sudo journalctl -u water-controller-ui -n 50
 ```bash
 # Test WebSocket with wscat
 npm install -g wscat
-wscat -c ws://localhost:8080/ws
+wscat -c ws://localhost:8000/ws
 
 # Check for proxy interference
-curl -v http://localhost:8080/ws
+curl -v http://localhost:8000/ws
 ```
 
 **Common Causes & Solutions:**
@@ -345,7 +345,7 @@ sudo setcap 'cap_net_bind_service=+ep' /opt/water-controller/bin/water_treat_con
 
 ```bash
 # Check mapping configuration
-curl http://localhost:8080/api/v1/modbus/mappings | jq
+curl http://localhost:8000/api/v1/modbus/mappings | jq
 
 # Verify register directly
 modpoll -m tcp -t 4:float -r 100 -c 1 localhost
@@ -381,7 +381,7 @@ psql -U wtc -d water_controller -c "SELECT COUNT(*) FROM historian_data;"
 sqlite3 /var/lib/water-controller/controller.db "SELECT COUNT(*) FROM historian_data;"
 
 # Check tag configuration
-curl http://localhost:8080/api/v1/trends/tags | jq
+curl http://localhost:8000/api/v1/trends/tags | jq
 ```
 
 **Common Causes & Solutions:**
@@ -472,7 +472,7 @@ sqlite3 /var/lib/water-controller/controller.db "
 ldapsearch -H ldap://your-ad-server -x -b "dc=example,dc=com" "(sAMAccountName=testuser)"
 
 # Check AD config
-curl http://localhost:8080/api/v1/auth/ad-config
+curl http://localhost:8000/api/v1/auth/ad-config
 ```
 
 **Common Causes & Solutions:**
@@ -501,7 +501,7 @@ curl http://localhost:8080/api/v1/auth/ad-config
 top -p $(pgrep water_treat)
 
 # Check cycle time
-curl http://localhost:8080/api/v1/system/health | jq .cycle_time_ms
+curl http://localhost:8000/api/v1/system/health | jq .cycle_time_ms
 
 # Profile (if compiled with debug)
 perf top -p $(pgrep water_treat)
@@ -531,7 +531,7 @@ free -m
 ps aux --sort=-%mem | head
 
 # Check historian cache
-curl http://localhost:8080/api/v1/trends/stats | jq
+curl http://localhost:8000/api/v1/trends/stats | jq
 ```
 
 **Solutions:**
@@ -552,8 +552,8 @@ curl http://localhost:8080/api/v1/trends/stats | jq
 ```bash
 # From remote machine
 ping <controller-ip>
-nc -zv <controller-ip> 8080
-curl http://<controller-ip>:8080/api/v1/system/health
+nc -zv <controller-ip> 8000
+curl http://<controller-ip>:8000/api/v1/system/health
 
 # On controller
 sudo iptables -L -n
@@ -564,7 +564,7 @@ ip route show
 
 | Cause | Solution |
 |-------|----------|
-| Firewall blocking | Open ports 3000, 8080 |
+| Firewall blocking | Open ports 8000, 8080 |
 | Binding to localhost only | Configure to bind 0.0.0.0 |
 | Wrong network/subnet | Check IP configuration |
 | No route to host | Verify routing and gateway |

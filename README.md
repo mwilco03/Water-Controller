@@ -171,7 +171,7 @@ sudo ./scripts/install.sh
 sudo systemctl start water-controller
 
 # Access web UI
-open http://localhost:3000
+open http://localhost:8080
 ```
 
 For detailed deployment instructions, see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
@@ -226,15 +226,15 @@ docker-compose --profile profinet up -d
 | `WT_CYCLE_TIME` | Cycle time in milliseconds | `1000` |
 | `WT_LOG_LEVEL` | Logging level (DEBUG, INFO, WARN, ERROR) | `INFO` |
 | `DATABASE_URL` | PostgreSQL connection string | SQLite default |
-| `WEB_PORT` | API server port | `8080` |
-| `UI_PORT` | Web UI server port | `3000` |
+| `API_PORT` | API server port | `8000` |
+| `UI_PORT` | Web UI server port | `8080` |
 
 ### Network Ports
 
 | Port | Service | Description |
 |------|---------|-------------|
-| 3000 | Web UI | Next.js frontend application |
-| 8080 | API | FastAPI backend REST/WebSocket |
+| 8000 | API | FastAPI backend REST/WebSocket |
+| 8080 | Web UI | Next.js frontend application |
 | 502 | Modbus | Modbus TCP gateway |
 | 34962-34964 | PROFINET | PROFINET RT communication |
 

@@ -54,10 +54,10 @@ The Water Treatment Controller includes a Modbus gateway that bridges PROFINET s
 
 ```bash
 # Check current configuration
-curl http://localhost:8080/api/v1/modbus/config
+curl http://localhost:8000/api/v1/modbus/config
 
 # Enable TCP server
-curl -X PUT http://localhost:8080/api/v1/modbus/server \
+curl -X PUT http://localhost:8000/api/v1/modbus/server \
   -H "Content-Type: application/json" \
   -d '{
     "tcp_enabled": true,
@@ -70,7 +70,7 @@ curl -X PUT http://localhost:8080/api/v1/modbus/server \
 
 ```bash
 # Map pH sensor (RTU slot 1) to Holding Register 100
-curl -X POST http://localhost:8080/api/v1/modbus/mappings \
+curl -X POST http://localhost:8000/api/v1/modbus/mappings \
   -H "Content-Type: application/json" \
   -d '{
     "modbus_addr": 100,
@@ -194,7 +194,7 @@ Configure per-mapping:
 Map a pH sensor to Input Register 0:
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/modbus/mappings \
+curl -X POST http://localhost:8000/api/v1/modbus/mappings \
   -H "Content-Type: application/json" \
   -d '{
     "modbus_addr": 0,
@@ -213,7 +213,7 @@ curl -X POST http://localhost:8080/api/v1/modbus/mappings \
 Map a pump control to Coil 0:
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/modbus/mappings \
+curl -X POST http://localhost:8000/api/v1/modbus/mappings \
   -H "Content-Type: application/json" \
   -d '{
     "modbus_addr": 0,
@@ -231,7 +231,7 @@ curl -X POST http://localhost:8080/api/v1/modbus/mappings \
 Map a 4-20mA level transmitter (0-100%) to integer register:
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/modbus/mappings \
+curl -X POST http://localhost:8000/api/v1/modbus/mappings \
   -H "Content-Type: application/json" \
   -d '{
     "modbus_addr": 10,
@@ -257,7 +257,7 @@ Map PID setpoint and process value:
 
 ```bash
 # Process Variable (read-only)
-curl -X POST http://localhost:8080/api/v1/modbus/mappings \
+curl -X POST http://localhost:8000/api/v1/modbus/mappings \
   -H "Content-Type: application/json" \
   -d '{
     "modbus_addr": 200,
@@ -270,7 +270,7 @@ curl -X POST http://localhost:8080/api/v1/modbus/mappings \
   }'
 
 # Setpoint (read-write)
-curl -X POST http://localhost:8080/api/v1/modbus/mappings \
+curl -X POST http://localhost:8000/api/v1/modbus/mappings \
   -H "Content-Type: application/json" \
   -d '{
     "modbus_addr": 202,
@@ -283,7 +283,7 @@ curl -X POST http://localhost:8080/api/v1/modbus/mappings \
   }'
 
 # Control Variable (read-only)
-curl -X POST http://localhost:8080/api/v1/modbus/mappings \
+curl -X POST http://localhost:8000/api/v1/modbus/mappings \
   -H "Content-Type: application/json" \
   -d '{
     "modbus_addr": 204,
@@ -351,7 +351,7 @@ The gateway can poll external Modbus devices and integrate their data:
 
 ```bash
 # Add energy meter
-curl -X POST http://localhost:8080/api/v1/modbus/downstream \
+curl -X POST http://localhost:8000/api/v1/modbus/downstream \
   -H "Content-Type: application/json" \
   -d '{
     "name": "Energy Meter",
@@ -403,7 +403,7 @@ curl -X POST http://localhost:8080/api/v1/modbus/downstream \
 
 ```bash
 # Get gateway statistics
-curl http://localhost:8080/api/v1/modbus/stats
+curl http://localhost:8000/api/v1/modbus/stats
 ```
 
 Response:
@@ -470,7 +470,7 @@ modpoll -m tcp -t 4:float -r 100 -c 1 localhost
 
 **Check mapping:**
 ```bash
-curl http://localhost:8080/api/v1/modbus/mappings | jq '.[] | select(.modbus_addr == 100)'
+curl http://localhost:8000/api/v1/modbus/mappings | jq '.[] | select(.modbus_addr == 100)'
 ```
 
 #### 4. Downstream Device Timeout

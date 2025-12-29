@@ -56,7 +56,7 @@ journalctl -u water-controller -f
 
 ```bash
 # Check controller state
-curl http://localhost:8080/api/v1/rtus/$RTU_STATION/status
+curl http://localhost:8000/api/v1/rtus/$RTU_STATION/status
 
 # Expected: connection_state = "OFFLINE" or "ERROR"
 ```
@@ -125,7 +125,7 @@ sudo tc qdisc del dev $INTERFACE root
 
 ```bash
 # Check packet loss stats
-curl http://localhost:8080/api/v1/rtus/$RTU_STATION/stats
+curl http://localhost:8000/api/v1/rtus/$RTU_STATION/stats
 ```
 
 ---
@@ -266,7 +266,7 @@ sudo systemctl start postgresql
 
 ```bash
 # Check health endpoint
-curl http://localhost:8080/api/v1/health
+curl http://localhost:8000/api/v1/health
 
 # Expected: database component shows UNHEALTHY
 ```
@@ -321,12 +321,12 @@ stress-ng --vm 2 --vm-bytes 80% --timeout 60s
 1. Ensure Controller is connected and controlling
 2. Issue authority release via API:
    ```bash
-   curl -X POST http://localhost:8080/api/v1/rtus/$RTU_STATION/authority/release
+   curl -X POST http://localhost:8000/api/v1/rtus/$RTU_STATION/authority/release
    ```
 3. Observe RTU behavior
 4. Re-request authority:
    ```bash
-   curl -X POST http://localhost:8080/api/v1/rtus/$RTU_STATION/authority/request
+   curl -X POST http://localhost:8000/api/v1/rtus/$RTU_STATION/authority/request
    ```
 
 **Expected Behavior:**
@@ -442,7 +442,7 @@ stress-ng --vm 2 --vm-bytes 80% --timeout 60s
 
 RTU_IP=${1:-192.168.1.50}
 RTU_STATION=${2:-water-treat-rtu-01}
-API_BASE="http://localhost:8080/api/v1"
+API_BASE="http://localhost:8000/api/v1"
 
 log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"
