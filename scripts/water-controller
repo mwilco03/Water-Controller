@@ -128,13 +128,13 @@ echo "Starting API server on port $WEB_PORT..."
 cd "$API_DIR"
 
 if [ -f "$UVICORN" ]; then
-    "$UVICORN" main:app \
+    "$UVICORN" app.main:app \
         --host 0.0.0.0 \
         --port "$WEB_PORT" \
         --workers 2 \
         --log-level "${LOG_LEVEL,,}" &
 else
-    "$PYTHON" -m uvicorn main:app \
+    "$PYTHON" -m uvicorn app.main:app \
         --host 0.0.0.0 \
         --port "$WEB_PORT" \
         --workers 2 \
