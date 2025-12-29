@@ -102,8 +102,8 @@ This directory contains comprehensive documentation for the Water Treatment Cont
 
 | Port | Service | Description |
 |------|---------|-------------|
-| 3000 | Web UI | Next.js frontend application |
-| 8080 | API | FastAPI backend REST/WebSocket |
+| 8000 | API | FastAPI backend REST/WebSocket |
+| 8080 | HMI | Web frontend application |
 | 502 | Modbus | Modbus TCP gateway |
 | 34962-34964 | PROFINET | PROFINET RT communication |
 
