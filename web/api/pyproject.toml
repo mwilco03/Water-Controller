@@ -1,0 +1,104 @@
+# Water-Controller API - Python Project Configuration
+# Defines mypy, ruff, and pytest settings per DEVELOPMENT_GUIDELINES.md
+
+[project]
+name = "water-controller-api"
+version = "1.2.0"
+description = "Water Treatment Controller REST/WebSocket API"
+requires-python = ">=3.11"
+
+[tool.mypy]
+# Type checking configuration
+# Goal: --strict per DEVELOPMENT_GUIDELINES.md
+# Currently: Relaxed to establish baseline
+python_version = "3.11"
+warn_return_any = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+disallow_untyped_defs = false  # TODO: Enable for strict mode
+disallow_incomplete_defs = true
+check_untyped_defs = true
+ignore_missing_imports = true
+show_error_codes = true
+show_column_numbers = true
+
+# Per-module overrides for gradual adoption
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false
+
+[tool.ruff]
+# Linting configuration per DEVELOPMENT_GUIDELINES.md
+target-version = "py311"
+line-length = 120
+src = ["app", "tests"]
+
+[tool.ruff.lint]
+# Start with reasonable defaults, expand toward ALL
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # Pyflakes
+    "I",      # isort
+    "B",      # flake8-bugbear
+    "C4",     # flake8-comprehensions
+    "UP",     # pyupgrade
+    "ARG",    # flake8-unused-arguments
+    "SIM",    # flake8-simplify
+    "TCH",    # flake8-type-checking
+    "PTH",    # flake8-use-pathlib
+    "PL",     # Pylint
+    "RUF",    # Ruff-specific rules
+]
+ignore = [
+    "E501",   # Line too long (handled by formatter)
+    "PLR0913", # Too many arguments (common in FastAPI)
+    "PLR2004", # Magic value comparison
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["ARG", "PLR2004"]
+"__init__.py" = ["F401"]
+
+[tool.ruff.format]
+# Formatting configuration (if using ruff format)
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+
+[tool.pytest.ini_options]
+# Testing configuration per DEVELOPMENT_GUIDELINES.md
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = [
+    "-v",
+    "--strict-markers",
+    "--tb=short",
+]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks tests as integration tests",
+]
+
+[tool.coverage.run]
+# Coverage configuration
+source = ["app"]
+branch = true
+omit = [
+    "tests/*",
+    "*/__pycache__/*",
+]
+
+[tool.coverage.report]
+# Coverage reporting per DEVELOPMENT_GUIDELINES.md (>80% target)
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+]
+fail_under = 0  # TODO: Set to 80 when baseline established
+show_missing = true

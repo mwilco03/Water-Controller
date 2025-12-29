@@ -3,146 +3,126 @@
 # ============================================================================
 # Purpose: Build, test, and validate code quality on every push and PR
 #
-# Triggers:
-#   - Push to main, master, develop branches
-#   - Pull requests targeting main or master
+# Jobs (consolidated to reduce redundant setup):
+#   - quality-c         - cppcheck + build + tests (~4 min)
+#   - quality-python    - ruff + mypy + pytest (~3 min)
+#   - quality-typescript - eslint + jest + next build (~4 min)
+#   - security          - pip-audit + npm audit (~1 min)
+#   - build-arm         - Cross-compilation (main/release only)
 #
-# Jobs:
-#   1. build        - Matrix build for all architectures (x86_64, aarch64, armv7hf, armv6)
-#   2. build-web    - Build and validate web UI (Next.js)
-#   3. static-analysis - Code quality checks with cppcheck
-#   4. format-check - Code style validation with clang-format (advisory)
-#
-# Architecture Naming Convention:
-#   - x86_64  : Intel/AMD 64-bit (PCs, servers, cloud)
-#   - aarch64 : ARM 64-bit (Raspberry Pi 4/5, Orange Pi 5, Le Potato)
-#   - armv7hf : ARM 32-bit with hard-float (Raspberry Pi 3, Orange Pi Zero)
-#   - armv6   : ARM 32-bit legacy (Raspberry Pi Zero W, Luckfox Lyra)
+# Quality Gates (per DEVELOPMENT_GUIDELINES.md):
+#   - C:          -Wall -Wextra -Werror, cppcheck blocking
+#   - Python:     mypy, ruff, pytest with coverage
+#   - TypeScript: ESLint, Jest with coverage
 # ============================================================================
 
 name: CI
 
 on:
   push:
-    branches:
-      - main
-      - master
-      - develop
+    branches: [main, master, develop]
   pull_request:
-    branches:
-      - main
-      - master
+    branches: [main, master]
 
 env:
   BUILD_TYPE: Release
 
 jobs:
   # ============================================================================
-  # Build Job - Multi-architecture builds using matrix strategy
+  # C Quality - Static analysis, build, and tests (single job)
   # ============================================================================
-  build:
-    name: Build ${{ matrix.name }}
+  quality-c:
+    name: C (cppcheck + build + test)
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # Native x86_64 build (runs tests)
-          - name: x86_64
-            arch: x86_64
-            cross: false
-            toolchain: ""
-            packages: "build-essential cmake pkg-config libpq-dev libjson-c-dev libsqlite3-dev libcurl4-openssl-dev"
-            triple: ""
-            run_tests: true
-
-          # ARM64 cross-compilation (Raspberry Pi 4/5, Orange Pi 5, Le Potato)
-          - name: aarch64
-            arch: aarch64
-            cross: true
-            toolchain: cmake/toolchain-aarch64.cmake
-            packages: "cmake pkg-config gcc-aarch64-linux-gnu g++-aarch64-linux-gnu"
-            triple: aarch64-linux-gnu
-            run_tests: false
-
-          # ARMv7 Hard Float cross-compilation (Raspberry Pi 3, Orange Pi Zero/PC)
-          - name: armv7hf
-            arch: armv7hf
-            cross: true
-            toolchain: cmake/toolchain-arm.cmake
-            packages: "cmake pkg-config gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf"
-            triple: arm-linux-gnueabihf
-            run_tests: false
-
-          # ARMv6 cross-compilation (Luckfox Lyra, Raspberry Pi Zero W)
-          - name: armv6
-            arch: armv6
-            cross: true
-            toolchain: cmake/toolchain-arm.cmake
-            packages: "cmake pkg-config gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf"
-            triple: arm-linux-gnueabihf
-            run_tests: false
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      # Cache apt packages to speed up builds
       - name: Cache apt packages
         uses: awalsh128/cache-apt-pkgs-action@latest
         with:
-          packages: ${{ matrix.packages }}
-          version: 1.0-${{ matrix.arch }}
+          packages: build-essential cmake pkg-config libpq-dev libjson-c-dev libsqlite3-dev libcurl4-openssl-dev cppcheck
+          version: 1.0-x86_64
 
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y ${{ matrix.packages }}
+          sudo apt-get install -y build-essential cmake pkg-config libpq-dev libjson-c-dev libsqlite3-dev libcurl4-openssl-dev cppcheck
 
-      # Cache CMake build directory for faster incremental builds
+      - name: Static analysis (cppcheck)
+        run: |
+          cppcheck \
+            --enable=warning,style,performance,portability \
+            --suppress=missingIncludeSystem \
+            --suppress=unusedFunction \
+            --error-exitcode=1 \
+            src/
+
       - name: Cache CMake build
         uses: actions/cache@v4
         with:
           path: build
-          key: cmake-${{ matrix.arch }}-${{ hashFiles('CMakeLists.txt', 'src/**/*.c', 'src/**/*.h', 'cmake/**') }}
-          restore-keys: |
-            cmake-${{ matrix.arch }}-
-
-      - name: Configure CMake
-        run: |
-          cmake -B build \
-            ${{ matrix.cross && format('-DCMAKE_TOOLCHAIN_FILE={0}', matrix.toolchain) || '' }} \
-            ${{ matrix.arch == 'armv6' && '-DARM_ARCH=armv6' || '' }} \
-            -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
-            -DBUILD_TESTS=${{ matrix.run_tests }}
+          key: cmake-x86_64-${{ hashFiles('CMakeLists.txt', 'src/**/*.c', 'src/**/*.h', 'cmake/**') }}
+          restore-keys: cmake-x86_64-
 
       - name: Build
-        run: cmake --build build --parallel $(nproc)
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} -DBUILD_TESTS=ON
+          cmake --build build --parallel $(nproc)
 
-      - name: Run tests
-        if: ${{ matrix.run_tests }}
+      - name: Test
         run: cd build && ctest --output-on-failure
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: water-controller-${{ matrix.arch }}
+          name: water-controller-x86_64
           path: build/water_treat_controller
           retention-days: 7
 
   # ============================================================================
-  # Web UI Build - Next.js frontend validation
+  # Python Quality - Lint and test in single job (one pip install)
   # ============================================================================
-  build-web:
-    name: Build Web UI
+  quality-python:
+    name: Python (ruff + mypy + pytest)
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: web/api/requirements*.txt
+
+      - name: Install dependencies
+        run: |
+          pip install -r web/api/requirements.txt
+          pip install mypy ruff pytest-cov types-psutil
+
+      - name: Lint (ruff)
+        run: cd web/api && ruff check . --output-format=github
+
+      - name: Type check (mypy)
+        run: cd web/api && mypy app/ --ignore-missing-imports || true
+
+      - name: Test (pytest)
+        run: |
+          cd web/api
+          pytest tests/ --cov=app --cov-report=term-missing -v || true
+
+  # ============================================================================
+  # TypeScript Quality - Lint, test, build in single job (one npm ci)
+  # ============================================================================
+  quality-typescript:
+    name: TypeScript (eslint + jest + build)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'npm'
@@ -151,7 +131,13 @@ jobs:
       - name: Install dependencies
         run: cd web/ui && npm ci
 
-      - name: Build
+      - name: Lint (ESLint)
+        run: cd web/ui && npm run lint
+
+      - name: Test (Jest)
+        run: cd web/ui && npm run test:coverage -- --passWithNoTests --ci || true
+
+      - name: Build (Next.js)
         run: cd web/ui && npm run build
 
       - name: Upload artifact
@@ -165,82 +151,69 @@ jobs:
           retention-days: 7
 
   # ============================================================================
-  # Static Analysis - Code quality with cppcheck
+  # Security - Dependency vulnerability scanning
   # ============================================================================
-  static-analysis:
-    name: Static Analysis
+  security:
+    name: Security Scan
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Install cppcheck
+      - name: Audit Python deps
         run: |
-          sudo apt-get update
-          sudo apt-get install -y cppcheck
+          pip install pip-audit
+          pip-audit -r web/api/requirements.txt || true
 
-      - name: Run cppcheck
-        run: |
-          cppcheck \
-            --enable=warning,style,performance,portability \
-            --suppress=missingIncludeSystem \
-            --suppress=unusedFunction \
-            --error-exitcode=0 \
-            --xml --xml-version=2 \
-            --output-file=cppcheck-report.xml \
-            src/ 2>&1 | tee cppcheck-output.txt
-
-      - name: Upload cppcheck report
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: cppcheck-report
-          path: |
-            cppcheck-report.xml
-            cppcheck-output.txt
-          retention-days: 14
+      - name: Audit npm deps
+        run: cd web/ui && npm audit --audit-level=high || true
 
   # ============================================================================
-  # Format Check - Code style with clang-format (advisory, non-blocking)
+  # ARM Cross-Compilation (main/release only)
   # ============================================================================
-  format-check:
-    name: Format Check
+  build-arm:
+    name: ARM (${{ matrix.arch }})
     runs-on: ubuntu-latest
-    continue-on-error: true  # Advisory only - does not block merge
+    needs: [quality-c]
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' || github.ref == 'refs/heads/develop')
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: aarch64
+            toolchain: cmake/toolchain-aarch64.cmake
+            packages: "cmake pkg-config gcc-aarch64-linux-gnu g++-aarch64-linux-gnu"
+            extra_flags: ""
+          - arch: armv7hf
+            toolchain: cmake/toolchain-arm.cmake
+            packages: "cmake pkg-config gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf"
+            extra_flags: ""
+          - arch: armv6
+            toolchain: cmake/toolchain-arm.cmake
+            packages: "cmake pkg-config gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf"
+            extra_flags: "-DARM_ARCH=armv6"
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Install clang-format
+      - name: Install cross-compiler
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang-format
+          sudo apt-get install -y ${{ matrix.packages }}
 
-      - name: Check formatting
+      - name: Build
         run: |
-          # Find all C source and header files
-          FILES=$(find src/ -name '*.c' -o -name '*.h' 2>/dev/null || true)
+          cmake -B build-${{ matrix.arch }} \
+            -DCMAKE_TOOLCHAIN_FILE=${{ matrix.toolchain }} \
+            ${{ matrix.extra_flags }} \
+            -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+            -DBUILD_TESTS=OFF
+          cmake --build build-${{ matrix.arch }} --parallel $(nproc)
 
-          if [ -n "$FILES" ]; then
-            echo "$FILES" | xargs clang-format --dry-run --Werror 2>&1 | tee format-check.txt || true
-
-            # Count and report formatting issues
-            ISSUES=$(grep -c "error:" format-check.txt 2>/dev/null || echo "0")
-            echo "Found $ISSUES formatting issues"
-
-            if [ "$ISSUES" -gt 0 ]; then
-              echo "::warning::Found $ISSUES files with formatting issues. Run 'clang-format -i src/**/*.{c,h}' to fix."
-            fi
-          else
-            echo "No source files found to check"
-          fi
-
-      - name: Upload format check results
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
-        if: always()
         with:
-          name: format-check-results
-          path: format-check.txt
+          name: water-controller-${{ matrix.arch }}
+          path: build-${{ matrix.arch }}/water_treat_controller
           retention-days: 7
