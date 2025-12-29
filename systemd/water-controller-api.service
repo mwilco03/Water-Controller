@@ -7,13 +7,13 @@ Wants=network-online.target
 # Readiness gate: Ensure critical dependencies are available
 # Anti-pattern addressed: "Process-alive ≠ System-ready"
 ConditionPathExists=/opt/water-controller/venv/bin/uvicorn
-ConditionPathExists=/opt/water-controller/app/app/main.py
+ConditionPathExists=/opt/water-controller/web/api/app/main.py
 
 [Service]
 Type=simple
-User=water-controller
-Group=water-controller
-WorkingDirectory=/opt/water-controller/app
+User=wtc
+Group=wtc
+WorkingDirectory=/opt/water-controller/web/api
 
 # Startup validation: Verify system is usable before starting
 # These checks fail the service if critical paths are missing
@@ -43,6 +43,10 @@ ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
 ReadWritePaths=/var/lib/water-controller /var/log/water-controller /run/water-controller
+
+# Runtime directory (auto-created by systemd)
+RuntimeDirectory=water-controller
+RuntimeDirectoryMode=0755
 
 # Environment
 Environment=PYTHONUNBUFFERED=1

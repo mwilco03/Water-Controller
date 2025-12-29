@@ -176,8 +176,13 @@ def _timed_check(
 
 
 def check_paths() -> tuple:
-    """Validate all required paths exist."""
-    result = validate_paths(check_ui=True, check_database=True)
+    """Validate all required paths exist.
+
+    Note: check_ui=False because UI assets are validated separately by
+    check_ui_assets(). This separation of concerns allows the ui_assets
+    check to be skipped in API-only mode via skip_ui_check parameter.
+    """
+    result = validate_paths(check_ui=False, check_database=True)
 
     if result.has_critical_failures:
         critical = [i for i in result.issues if i.severity == PathSeverity.CRITICAL]
