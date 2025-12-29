@@ -39,7 +39,7 @@ This command:
 ### Network
 
 - Internet access required for installation
-- Ports 8000 (API) and 8080 (HMI) used by default
+- Ports 3000 (Web UI) and 8080 (API) used by default
 
 ## Pre-Installation
 
@@ -168,18 +168,18 @@ After installation, files are located at:
 sudo systemctl status water-controller
 
 # Run health check
-curl http://localhost:8000/health
+curl http://localhost:8080/health
 
 # View recent logs
 journalctl -u water-controller --since "10 minutes ago"
 ```
 
-### Access the HMI
+### Access the Web Interface
 
 Open a web browser and navigate to:
 
-- **HMI Interface**: http://YOUR_IP:8080
-- **API Documentation**: http://YOUR_IP:8000/docs
+- **Web UI (HMI)**: http://YOUR_IP:3000
+- **API Documentation**: http://YOUR_IP:8080/docs
 
 ### Enable Service at Boot
 
@@ -208,11 +208,11 @@ sudo nano /etc/water-controller/config.yaml
 Create or edit `/etc/water-controller/environment`:
 
 ```bash
-# API port (default: 8000)
-API_PORT=8000
+# API port (default: 8080)
+WEB_PORT=8080
 
-# HMI port (default: 8080)
-UI_PORT=8080
+# Web UI port (default: 3000)
+UI_PORT=3000
 
 # Log level
 LOG_LEVEL=INFO
@@ -259,7 +259,7 @@ journalctl -u water-controller -n 50
 
 **Check for port conflicts:**
 ```bash
-sudo ss -tlnp | grep -E ':(8000|8080)'
+sudo ss -tlnp | grep -E ':(3000|8080)'
 ```
 
 **Check file permissions:**
@@ -312,8 +312,9 @@ curl -fsSL .../bootstrap.sh | bash -s -- remove --keep-config
 ## Next Steps
 
 - [Upgrade Guide](UPGRADE.md) - How to upgrade to newer versions
-- [Configuration Reference](CONFIGURATION.md) - Detailed configuration options
-- [Troubleshooting Guide](TROUBLESHOOTING.md) - Common issues and solutions
+- [Deployment Guide](DEPLOYMENT.md) - Detailed configuration and deployment options
+- [Troubleshooting Guide](TROUBLESHOOTING_GUIDE.md) - Common issues and solutions
+- [Operator Guide](OPERATOR.md) - Quick reference for operators
 
 ## Getting Help
 
