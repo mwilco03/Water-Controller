@@ -1,0 +1,51 @@
+{
+  "$schema": "./versions.schema.json",
+  "_comment": "Pinned versions for reproducible builds. Update with care.",
+  "_updated": "2024-12-29",
+
+  "controller": {
+    "version": "1.2.0",
+    "min_python": "3.9",
+    "min_node": "18.0.0"
+  },
+
+  "python": {
+    "_comment": "Core Python dependencies - must match requirements.txt",
+    "fastapi": "0.115.6",
+    "uvicorn": "0.34.0",
+    "pydantic": "2.10.4",
+    "sqlalchemy": "2.0.36",
+    "websockets": "14.1"
+  },
+
+  "node": {
+    "_comment": "Core Node.js dependencies - must match package.json",
+    "next": "14.0.0",
+    "react": "18.2.0",
+    "react-dom": "18.2.0"
+  },
+
+  "system": {
+    "_comment": "External dependencies with pinned versions",
+    "p_net": {
+      "repo": "https://github.com/rtlabs-com/p-net.git",
+      "commit": "v1.0.1",
+      "_fallback_branch": "master",
+      "_reason": "PROFINET stack - pinned to stable release"
+    },
+    "cmake_minimum": "3.14"
+  },
+
+  "build": {
+    "_comment": "Build tool versions for reproducibility",
+    "node_lts": "20.x",
+    "python_recommended": "3.11",
+    "gcc_minimum": "9.0"
+  },
+
+  "validation": {
+    "_comment": "Checksums for binary verification (future use)",
+    "enabled": false,
+    "algorithm": "sha256"
+  }
+}

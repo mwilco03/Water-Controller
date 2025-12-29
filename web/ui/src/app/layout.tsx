@@ -6,7 +6,7 @@ import { usePathname } from 'next/navigation';
 import { CommandModeProvider, useCommandMode } from '@/contexts/CommandModeContext';
 import CommandModeBanner from '@/components/CommandModeBanner';
 import { ToastProvider } from '@/components/ui/Toast';
-import { SessionIndicator, AuthenticationModal, DegradedModeBanner } from '@/components/hmi';
+import { SessionIndicator, AuthenticationModal, DegradedModeBanner, SystemStatusIndicator } from '@/components/hmi';
 import { useWebSocket } from '@/hooks/useWebSocket';
 
 export default function RootLayout({
@@ -176,6 +176,12 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
               </svg>
               System
             </NavLink>
+
+            {/* Divider */}
+            <div className="w-px h-6 bg-slate-700 mx-2" />
+
+            {/* System Status - Shows health and data freshness */}
+            <SystemStatusIndicator compact />
 
             {/* Divider */}
             <div className="w-px h-6 bg-slate-700 mx-2" />

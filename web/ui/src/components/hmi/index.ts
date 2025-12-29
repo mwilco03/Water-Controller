@@ -25,3 +25,6 @@ export { default as ControlGuard } from './ControlGuard';
 
 export { default as DegradedModeBanner, useDegradedMode } from './DegradedModeBanner';
 export type { DegradedReason } from './DegradedModeBanner';
+
+export { default as SystemStatusIndicator, DataFreshnessIndicator } from './SystemStatusIndicator';
+export type { SystemState } from './SystemStatusIndicator';

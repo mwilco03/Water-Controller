@@ -4,13 +4,27 @@ Documentation=https://github.com/mwilco03/Water-Controller
 After=network.target water-controller.service
 Wants=water-controller.service
 
+# Readiness gate: Ensure UI has been built
+# Anti-pattern addressed: "UI treated as optional"
+# The UI is critical - operators cannot function without it
+ConditionPathExists=/opt/water-controller/web/ui/.next/build-manifest.json
+ConditionPathIsDirectory=/opt/water-controller/web/ui/.next/static
+
 [Service]
 Type=simple
 User=water-controller
 Group=water-controller
-WorkingDirectory=/opt/water-controller/web
-ExecStart=/usr/bin/node /opt/water-controller/web/node_modules/.bin/next start -p 8080 -H 0.0.0.0
+WorkingDirectory=/opt/water-controller/web/ui
+
+# Startup validation: Verify UI build is complete
+ExecStartPre=/bin/bash -c 'test -f /opt/water-controller/web/ui/.next/build-manifest.json || (echo "ERROR: UI not built - run npm run build" && exit 1)'
+ExecStartPre=/bin/bash -c 'test -d /opt/water-controller/web/ui/.next/static || (echo "ERROR: UI static assets missing" && exit 1)'
+ExecStartPre=/bin/bash -c 'test -d /opt/water-controller/web/ui/.next/server || (echo "ERROR: UI server build missing" && exit 1)'
+
+# Main service
+ExecStart=/usr/bin/node /opt/water-controller/web/ui/node_modules/.bin/next start -p 8080 -H 0.0.0.0
 ExecReload=/bin/kill -HUP $MAINPID
+
 Restart=on-failure
 RestartSec=5
 StandardOutput=journal

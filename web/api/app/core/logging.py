@@ -203,3 +203,170 @@ def setup_logging(
 def get_logger(name: str) -> logging.Logger:
     """Get a logger with the specified name."""
     return logging.getLogger(name)
+
+
+# =============================================================================
+# Operator-Focused Logging
+# =============================================================================
+# Anti-pattern addressed: "Logs as developer artifacts"
+#
+# Standard logs describe *what happened*.
+# Operator logs must answer:
+#   - What failed
+#   - Why it matters
+#   - What still works
+#   - What the operator should do
+
+
+class OperatorLogEntry:
+    """
+    Structured log entry for operator-actionable events.
+
+    Usage:
+        from app.core.logging import operator_log
+
+        operator_log.error(
+            what="Database connection failed",
+            impact="Cannot store new sensor readings. Historical data unavailable.",
+            still_works="RTU monitoring and alarm detection continue",
+            action="Check database server status: systemctl status postgresql"
+        )
+    """
+
+    def __init__(self, logger: logging.Logger):
+        self._logger = logger
+
+    def _format_operator_message(
+        self,
+        what: str,
+        impact: str = "",
+        still_works: str = "",
+        action: str = "",
+    ) -> str:
+        """Format a message with operator guidance."""
+        parts = [f"WHAT: {what}"]
+        if impact:
+            parts.append(f"IMPACT: {impact}")
+        if still_works:
+            parts.append(f"STILL WORKS: {still_works}")
+        if action:
+            parts.append(f"ACTION: {action}")
+        return " | ".join(parts)
+
+    def info(
+        self,
+        what: str,
+        impact: str = "",
+        still_works: str = "",
+        action: str = "",
+        **extra
+    ) -> None:
+        """Log informational operator message."""
+        msg = self._format_operator_message(what, impact, still_works, action)
+        self._logger.info(msg, extra=extra)
+
+    def warning(
+        self,
+        what: str,
+        impact: str,
+        still_works: str = "",
+        action: str = "",
+        **extra
+    ) -> None:
+        """Log warning with impact and recommended action."""
+        msg = self._format_operator_message(what, impact, still_works, action)
+        self._logger.warning(msg, extra=extra)
+
+    def error(
+        self,
+        what: str,
+        impact: str,
+        still_works: str = "",
+        action: str = "",
+        **extra
+    ) -> None:
+        """Log error with impact and required action."""
+        msg = self._format_operator_message(what, impact, still_works, action)
+        self._logger.error(msg, extra=extra)
+
+    def critical(
+        self,
+        what: str,
+        impact: str,
+        action: str,
+        **extra
+    ) -> None:
+        """Log critical error requiring immediate action."""
+        msg = self._format_operator_message(what, impact, "", action)
+        self._logger.critical(msg, extra=extra)
+
+
+# Pre-configured operator logger
+operator_log = OperatorLogEntry(logging.getLogger("operator"))
+
+
+# =============================================================================
+# Common Operator Log Messages
+# =============================================================================
+# Pre-defined messages for common failure scenarios with guidance.
+
+def log_database_failure(error: Exception) -> None:
+    """Log database connection failure with operator guidance."""
+    operator_log.error(
+        what=f"Database connection failed: {error}",
+        impact="Cannot store sensor readings or historian data. Configuration changes will not persist.",
+        still_works="RTU monitoring, alarm detection, and PROFINET communication continue.",
+        action="Check database status: sqlite3 /var/lib/water-controller/wtc.db '.tables'",
+    )
+
+
+def log_profinet_failure(error: str, rtu_name: str = "") -> None:
+    """Log PROFINET communication failure with operator guidance."""
+    rtu_info = f" for RTU '{rtu_name}'" if rtu_name else ""
+    operator_log.error(
+        what=f"PROFINET communication lost{rtu_info}: {error}",
+        impact=f"Cannot read sensors or control actuators{rtu_info}. Data will show as stale.",
+        still_works="Other RTUs, alarm history, and web interface remain operational.",
+        action="Check network connectivity and RTU power. Verify PROFINET interface: ip link show eth0",
+        rtu=rtu_name,
+    )
+
+
+def log_ipc_failure(error: str) -> None:
+    """Log IPC/shared memory failure with operator guidance."""
+    operator_log.error(
+        what=f"IPC connection to controller failed: {error}",
+        impact="API cannot communicate with PROFINET controller. Operating in simulation mode.",
+        still_works="Web interface, historical data viewing, and configuration management.",
+        action="Check controller service: systemctl status water-controller",
+    )
+
+
+def log_ui_build_missing() -> None:
+    """Log missing UI build with operator guidance."""
+    operator_log.critical(
+        what="UI assets not found - web interface will not load",
+        impact="Operators cannot access the HMI. System is effectively headless.",
+        action="Build UI: cd /opt/water-controller/web/ui && npm install && npm run build",
+    )
+
+
+def log_startup_degraded(components: list) -> None:
+    """Log degraded startup with operator guidance."""
+    operator_log.warning(
+        what=f"System started in degraded mode",
+        impact=f"Some features may not work correctly. Degraded: {', '.join(components)}",
+        still_works="Core monitoring and basic operations remain available.",
+        action="Review startup logs for specific issues: journalctl -u water-controller-api -n 100",
+    )
+
+
+def log_data_stale(rtu_name: str, age_seconds: int) -> None:
+    """Log stale data with operator guidance."""
+    operator_log.warning(
+        what=f"Data from RTU '{rtu_name}' is stale ({age_seconds}s old)",
+        impact="Displayed values may not reflect current conditions.",
+        still_works="Alarm thresholds based on last known values. Manual refresh may help.",
+        action=f"Check RTU connectivity: ping <rtu-ip>. Check PROFINET status in System page.",
+        rtu=rtu_name,
+    )

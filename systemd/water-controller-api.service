@@ -4,18 +4,38 @@ Documentation=https://github.com/mwilco03/Water-Controller
 After=network.target
 Wants=network-online.target
 
+# Readiness gate: Ensure critical dependencies are available
+# Anti-pattern addressed: "Process-alive ≠ System-ready"
+ConditionPathExists=/opt/water-controller/venv/bin/uvicorn
+ConditionPathExists=/opt/water-controller/app/app/main.py
+
 [Service]
 Type=simple
 User=water-controller
 Group=water-controller
 WorkingDirectory=/opt/water-controller/app
+
+# Startup validation: Verify system is usable before starting
+# These checks fail the service if critical paths are missing
+ExecStartPre=/bin/bash -c 'test -d /var/lib/water-controller || (echo "ERROR: Data directory missing" && exit 1)'
+ExecStartPre=/bin/bash -c 'test -w /var/lib/water-controller || (echo "ERROR: Data directory not writable" && exit 1)'
+ExecStartPre=/bin/bash -c '/opt/water-controller/venv/bin/python3 -c "import fastapi, uvicorn, pydantic, sqlalchemy" || (echo "ERROR: Python dependencies missing" && exit 1)'
+
+# Main service
 ExecStart=/opt/water-controller/venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1 --proxy-headers
 ExecReload=/bin/kill -HUP $MAINPID
+
+# Graceful restart with health check validation
 Restart=on-failure
 RestartSec=5
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=water-controller-api
+
+# Watchdog: Systemd will restart service if health check fails
+# The application must call sd_notify("WATCHDOG=1") periodically
+# Uncomment when sd_notify integration is implemented:
+# WatchdogSec=30
 
 # Security hardening
 NoNewPrivileges=true
@@ -30,6 +50,7 @@ Environment=PYTHONDONTWRITEBYTECODE=1
 Environment=CONFIG_PATH=/etc/water-controller/config.yaml
 Environment=DATA_DIR=/var/lib/water-controller
 Environment=LOG_DIR=/var/log/water-controller
+Environment=WTC_STARTUP_MODE=production
 EnvironmentFile=-/etc/water-controller/environment
 
 # Resource limits

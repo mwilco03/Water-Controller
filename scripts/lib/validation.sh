@@ -1073,6 +1073,231 @@ quick_health_check() {
 }
 
 # =============================================================================
+# Install Verification (Post-Install Gate)
+# =============================================================================
+# Anti-pattern addressed: "Install succeeds ≠ system usable"
+# This validates that installation actually produced a usable system.
+
+# Verify installation is complete and system can function
+# Returns: 0 if usable, non-zero with specific error codes
+verify_install_complete() {
+    log_info "Verifying installation completeness..."
+
+    _reset_results
+    local critical_failures=0
+
+    echo ""
+    echo "=========================================="
+    echo "  POST-INSTALL VERIFICATION"
+    echo "  Anti-pattern: 'Install succeeds ≠ system usable'"
+    echo "=========================================="
+    echo ""
+
+    # 1. Critical: Binaries exist where services expect them
+    echo "1. Checking required binaries..."
+    local binaries=(
+        "$VENV_PATH/bin/python3:Python interpreter"
+        "$VENV_PATH/bin/uvicorn:ASGI server"
+    )
+    for entry in "${binaries[@]}"; do
+        local binary="${entry%%:*}"
+        local desc="${entry#*:}"
+        if [ -x "$binary" ]; then
+            _record_result "PASS" "$desc" "$binary"
+        else
+            _record_result "FAIL" "$desc" "Not found at $binary"
+            ((critical_failures++))
+        fi
+    done
+
+    # 2. Critical: UI assets exist where FastAPI serves them
+    echo "2. Checking UI assets..."
+    local ui_next_dir="$WEB_PATH/.next"
+    if [ -d "$ui_next_dir" ]; then
+        # Check for build manifest (indicates successful build)
+        if [ -f "$ui_next_dir/build-manifest.json" ]; then
+            _record_result "PASS" "UI build manifest"
+        else
+            _record_result "FAIL" "UI build manifest" "Missing - UI incomplete"
+            ((critical_failures++))
+        fi
+        # Check for static assets
+        if [ -d "$ui_next_dir/static" ]; then
+            _record_result "PASS" "UI static assets"
+        else
+            _record_result "FAIL" "UI static assets" "Missing - UI will not render"
+            ((critical_failures++))
+        fi
+    else
+        _record_result "FAIL" "UI build directory" "Not found at $ui_next_dir"
+        ((critical_failures++))
+        log_error ""
+        log_error "ACTION REQUIRED: Build the UI with:"
+        log_error "  cd $WEB_PATH && npm install && npm run build"
+        log_error ""
+    fi
+
+    # 3. Critical: Database directory writable
+    echo "3. Checking database accessibility..."
+    if [ -d "$DATA_DIR" ]; then
+        if [ -w "$DATA_DIR" ]; then
+            _record_result "PASS" "Data directory writable"
+        else
+            _record_result "FAIL" "Data directory" "Not writable"
+            log_error "ACTION REQUIRED: Fix permissions with:"
+            log_error "  chown -R $SERVICE_USER:$SERVICE_USER $DATA_DIR"
+            ((critical_failures++))
+        fi
+    else
+        _record_result "FAIL" "Data directory" "Does not exist"
+        ((critical_failures++))
+    fi
+
+    # 4. Warning: Configuration files exist
+    echo "4. Checking configuration..."
+    if [ -f "$CONFIG_DIR/controller.conf" ]; then
+        _record_result "PASS" "Controller config"
+    else
+        _record_result "WARN" "Controller config" "Using defaults"
+    fi
+
+    # 5. Critical: Python can import required modules
+    echo "5. Checking Python dependencies..."
+    if [ -x "$VENV_PATH/bin/python3" ]; then
+        local import_test
+        import_test=$("$VENV_PATH/bin/python3" -c "
+import sys
+try:
+    import fastapi
+    import uvicorn
+    import pydantic
+    import sqlalchemy
+    print('OK')
+except ImportError as e:
+    print(f'FAIL:{e}')
+" 2>&1)
+        if [ "$import_test" = "OK" ]; then
+            _record_result "PASS" "Python imports"
+        else
+            _record_result "FAIL" "Python imports" "${import_test#FAIL:}"
+            log_error "ACTION REQUIRED: Install Python dependencies:"
+            log_error "  $VENV_PATH/bin/pip install -r $APP_PATH/requirements.txt"
+            ((critical_failures++))
+        fi
+    fi
+
+    # 6. P-Net library check
+    echo "6. Checking P-Net PROFINET stack..."
+    test_pnet
+
+    # Print summary
+    echo ""
+    echo "=========================================="
+    echo "  VERIFICATION RESULTS"
+    echo "=========================================="
+    for test_entry in "${TEST_RESULTS[@]}"; do
+        echo "  $test_entry"
+    done
+    echo ""
+
+    if [ $critical_failures -gt 0 ]; then
+        echo "=========================================="
+        echo "  ❌ INSTALLATION INCOMPLETE"
+        echo "=========================================="
+        echo ""
+        echo "  Critical failures: $critical_failures"
+        echo "  The system CANNOT function correctly."
+        echo ""
+        echo "  Review the FAIL entries above and take"
+        echo "  the recommended actions before proceeding."
+        echo ""
+        echo "=========================================="
+        log_error "Installation verification FAILED with $critical_failures critical issue(s)"
+        return 5
+    elif [ $TESTS_WARNED -gt 0 ]; then
+        echo "=========================================="
+        echo "  ⚠️  INSTALLATION COMPLETE WITH WARNINGS"
+        echo "=========================================="
+        echo ""
+        echo "  Warnings: $TESTS_WARNED"
+        echo "  System should function but may be degraded."
+        echo ""
+        echo "=========================================="
+        log_warn "Installation complete with $TESTS_WARNED warning(s)"
+        return 0
+    else
+        echo "=========================================="
+        echo "  ✅ INSTALLATION VERIFIED"
+        echo "=========================================="
+        echo ""
+        echo "  All checks passed. System is ready."
+        echo ""
+        echo "=========================================="
+        log_info "Installation verification passed"
+        return 0
+    fi
+}
+
+# Test that services can actually start and function
+# Returns: 0 if services work, 5 if they fail
+test_service_functionality() {
+    log_info "Testing service functionality..."
+
+    _reset_results
+
+    # Start API service if not running
+    local was_running=0
+    if systemctl is-active "$SERVICE_NAME-api.service" >/dev/null 2>&1; then
+        was_running=1
+    else
+        log_info "Starting API service for testing..."
+        systemctl start "$SERVICE_NAME-api.service" 2>/dev/null || true
+        sleep 3
+    fi
+
+    # Test API health endpoint
+    if command -v curl >/dev/null 2>&1; then
+        local response
+        response=$(curl -s --connect-timeout 5 --max-time 10 \
+            "http://localhost:${DEFAULT_API_PORT}/health" 2>/dev/null)
+
+        if [ -n "$response" ]; then
+            # Check if response contains healthy status
+            if echo "$response" | grep -q '"status"'; then
+                local status
+                status=$(echo "$response" | grep -o '"status":"[^"]*"' | cut -d'"' -f4)
+                if [ "$status" = "healthy" ]; then
+                    _record_result "PASS" "API health" "Status: healthy"
+                elif [ "$status" = "degraded" ]; then
+                    _record_result "WARN" "API health" "Status: degraded"
+                else
+                    _record_result "WARN" "API health" "Status: $status"
+                fi
+            else
+                _record_result "WARN" "API health" "Unexpected response format"
+            fi
+        else
+            _record_result "FAIL" "API health" "No response from health endpoint"
+        fi
+    fi
+
+    # Stop service if we started it
+    if [ $was_running -eq 0 ]; then
+        systemctl stop "$SERVICE_NAME-api.service" 2>/dev/null || true
+    fi
+
+    # Print results
+    for test_entry in "${TEST_RESULTS[@]}"; do
+        echo "  $test_entry"
+    done
+
+    if [ $TESTS_FAILED -gt 0 ]; then
+        return 5
+    fi
+    return 0
+}
+
+# =============================================================================
 # Main Entry Point
 # =============================================================================
 
