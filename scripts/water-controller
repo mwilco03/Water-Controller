@@ -51,8 +51,8 @@ for arg in "$@"; do
             echo ""
             echo "Environment Variables:"
             echo "  DATA_DIR      Data directory (default: /var/lib/water-controller)"
-            echo "  WEB_PORT      API server port (default: 8080)"
-            echo "  UI_PORT       UI server port (default: 3000)"
+            echo "  WEB_PORT      API server port (default: 8000)"
+            echo "  UI_PORT       UI server port (default: 8080)"
             echo "  LOG_LEVEL     Logging level (default: INFO)"
             exit 0
             ;;

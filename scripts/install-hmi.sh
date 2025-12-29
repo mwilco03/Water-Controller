@@ -69,8 +69,8 @@ if [ ! -f "$CONFIG_DIR/environment" ]; then
     cat > "$CONFIG_DIR/environment" << EOF
 # Water Treatment Controller HMI Configuration
 DATA_DIR=$DATA_DIR
-WEB_PORT=8080
-UI_PORT=3000
+API_PORT=8000
+UI_PORT=8080
 LOG_LEVEL=INFO
 WT_LOG_LEVEL=INFO
 WT_CONFIG_DIR=$CONFIG_DIR
@@ -97,6 +97,19 @@ echo "  Installed: $SYSTEMD_DIR/water-controller-hmi.service"
 log_step "Step 9: Enabling service..."
 systemctl enable water-controller-hmi
 echo "  Enabled: water-controller-hmi.service"
+
+# Start service
+log_step "Step 10: Starting service..."
+systemctl start water-controller-hmi
+sleep 3
+
+# Verify service is running
+if systemctl is-active --quiet water-controller-hmi; then
+    echo "  Started: water-controller-hmi.service"
+    echo "  Status: RUNNING"
+else
+    log_warn "Service may not have started correctly. Check: journalctl -u water-controller-hmi -n 50"
+fi
 
 # Print completion message
 print_hmi_completion_message
