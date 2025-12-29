@@ -12,6 +12,9 @@
  */
 
 import { useEffect, useState, useCallback, useRef } from 'react';
+
+// Set page title
+const PAGE_TITLE = 'RTU Status - Water Treatment Controller';
 import { useWebSocket } from '@/hooks/useWebSocket';
 import { getRTUs, getAlarms, getRTUInventory } from '@/lib/api';
 import {
@@ -42,6 +45,11 @@ export default function RTUStatusPage() {
   });
   const [isVisible, setIsVisible] = useState(true); // Track tab visibility for power efficiency
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Set page title
+  useEffect(() => {
+    document.title = PAGE_TITLE;
+  }, []);
 
   // Fetch RTU and alarm data
   const fetchData = useCallback(async () => {

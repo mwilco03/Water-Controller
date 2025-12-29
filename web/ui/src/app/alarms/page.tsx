@@ -2,6 +2,8 @@
 
 import { useEffect, useState, useCallback, useRef } from 'react';
 import AlarmSummary from '@/components/AlarmSummary';
+
+const PAGE_TITLE = 'Alarms - Water Treatment Controller';
 import { useWebSocket } from '@/hooks/useWebSocket';
 import { useCommandMode } from '@/contexts/CommandModeContext';
 import CommandModeLogin from '@/components/CommandModeLogin';
@@ -131,6 +133,11 @@ export default function AlarmsPage() {
   const [error, setError] = useState<string | null>(null);
   const [visibleHistoryCount, setVisibleHistoryCount] = useState(50); /* UI-M2: Simple virtualization */
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Set page title
+  useEffect(() => {
+    document.title = PAGE_TITLE;
+  }, []);
 
   const fetchAlarms = useCallback(async () => {
     try {

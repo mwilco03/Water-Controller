@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from 'react';
 
+const PAGE_TITLE = 'Settings - Water Treatment Controller';
+
 interface Backup {
   backup_id: string;
   filename: string;
@@ -78,6 +80,11 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [newBackupDesc, setNewBackupDesc] = useState('');
+
+  // Set page title
+  useEffect(() => {
+    document.title = PAGE_TITLE;
+  }, []);
   const [includeHistorian, setIncludeHistorian] = useState(false);
 
   useEffect(() => {
