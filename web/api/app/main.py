@@ -20,6 +20,7 @@ from uuid import uuid4
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from sqlalchemy import text
 
 from .core.exceptions import ScadaException
 from .core.errors import scada_exception_handler, generic_exception_handler
@@ -259,7 +260,7 @@ async def health_check() -> Dict[str, Any]:
     try:
         start = time.perf_counter()
         db = next(get_db())
-        db.execute("SELECT 1")
+        db.execute(text("SELECT 1"))
         db.close()
         latency_ms = round((time.perf_counter() - start) * 1000, 2)
         subsystems["database"] = {"status": "ok", "latency_ms": latency_ms}

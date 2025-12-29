@@ -64,6 +64,12 @@ for arg in "$@"; do
     esac
 done
 
+# Export API-only mode for Python startup validation
+if [ "$API_ONLY" = true ]; then
+    export WTC_API_ONLY=true
+    export WTC_SIMULATION_MODE=true
+fi
+
 # Ensure data directory exists
 mkdir -p "$DATA_DIR"
 mkdir -p "$DATA_DIR/historian"
@@ -74,7 +80,8 @@ export DATA_DIR
 export WEB_PORT
 export UI_PORT
 export LOG_LEVEL
-export DATABASE_PATH="$DATA_DIR/water-controller.db"
+export DATABASE_PATH="$DATA_DIR/wtc.db"
+export WTC_DB_PATH="$DATA_DIR/wtc.db"
 export HISTORIAN_PATH="$DATA_DIR/historian"
 export BACKUP_PATH="$DATA_DIR/backups"
 

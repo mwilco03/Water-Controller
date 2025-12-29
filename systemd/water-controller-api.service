@@ -44,6 +44,10 @@ ProtectHome=true
 PrivateTmp=true
 ReadWritePaths=/var/lib/water-controller /var/log/water-controller /run/water-controller
 
+# Runtime directory (auto-created by systemd)
+RuntimeDirectory=water-controller
+RuntimeDirectoryMode=0755
+
 # Environment
 Environment=PYTHONUNBUFFERED=1
 Environment=PYTHONDONTWRITEBYTECODE=1
