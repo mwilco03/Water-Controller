@@ -141,7 +141,10 @@ get_remote_ref() {
 
     # Normalize ref
     case "$ref" in
-        HEAD|main|master)
+        HEAD)
+            # HEAD stays as HEAD - special ref
+            ;;
+        main|master)
             ref="refs/heads/$ref"
             ;;
         v*)
@@ -481,6 +484,41 @@ diff_manifests() {
 # Rollback Management
 # =============================================================================
 
+# Lock file for rollback operations
+readonly ROLLBACK_LOCK_FILE="${ROLLBACK_DIR}/.lock"
+
+# Acquire rollback lock (with timeout)
+_acquire_rollback_lock() {
+    local max_wait=30
+    local waited=0
+
+    mkdir -p "$ROLLBACK_DIR"
+
+    while [[ -f "$ROLLBACK_LOCK_FILE" ]] && [[ $waited -lt $max_wait ]]; do
+        sleep 1
+        ((waited++))
+    done
+
+    if [[ $waited -ge $max_wait ]]; then
+        log_warn "Could not acquire rollback lock after ${max_wait}s"
+        return 1
+    fi
+
+    echo "$$" > "$ROLLBACK_LOCK_FILE"
+    return 0
+}
+
+# Release rollback lock
+_release_rollback_lock() {
+    if [[ -f "$ROLLBACK_LOCK_FILE" ]]; then
+        local lock_pid
+        lock_pid=$(cat "$ROLLBACK_LOCK_FILE" 2>/dev/null)
+        if [[ "$lock_pid" == "$$" ]]; then
+            rm -f "$ROLLBACK_LOCK_FILE"
+        fi
+    fi
+}
+
 # Create rollback snapshot
 # Usage: create_rollback_snapshot
 # Returns: path to rollback directory
@@ -490,6 +528,15 @@ create_rollback_snapshot() {
     local rollback_path="$ROLLBACK_DIR/$timestamp"
 
     log_info "Creating rollback snapshot..."
+
+    # Acquire lock to prevent race conditions
+    if ! _acquire_rollback_lock; then
+        log_error "Failed to acquire rollback lock"
+        return 1
+    fi
+
+    # Ensure lock is released on exit
+    trap '_release_rollback_lock' RETURN
 
     # Create rollback directory
     mkdir -p "$rollback_path"
@@ -659,6 +706,7 @@ restore_rollback() {
 # Compare semantic versions
 # Usage: compare_versions <version1> <version2>
 # Returns: -1 if v1 < v2, 0 if equal, 1 if v1 > v2
+# Handles pre-release versions: 1.0.0-alpha < 1.0.0-beta < 1.0.0
 compare_versions() {
     local v1="$1"
     local v2="$2"
@@ -666,6 +714,17 @@ compare_versions() {
     # Remove 'v' prefix if present
     v1="${v1#v}"
     v2="${v2#v}"
+
+    # Extract pre-release suffix
+    local v1_prerelease="" v2_prerelease=""
+    if [[ "$v1" == *-* ]]; then
+        v1_prerelease="${v1#*-}"
+        v1="${v1%%-*}"
+    fi
+    if [[ "$v2" == *-* ]]; then
+        v2_prerelease="${v2#*-}"
+        v2="${v2%%-*}"
+    fi
 
     # Split into components
     IFS='.' read -ra v1_parts <<< "$v1"
@@ -679,9 +738,13 @@ compare_versions() {
         local p1="${v1_parts[$i]:-0}"
         local p2="${v2_parts[$i]:-0}"
 
-        # Remove non-numeric suffixes for comparison
+        # Extract numeric part only
         p1="${p1%%[^0-9]*}"
         p2="${p2%%[^0-9]*}"
+
+        # Default to 0 if empty
+        p1="${p1:-0}"
+        p2="${p2:-0}"
 
         if [[ "$p1" -lt "$p2" ]]; then
             echo "-1"
@@ -691,6 +754,25 @@ compare_versions() {
             return 0
         fi
     done
+
+    # Base versions are equal, compare pre-release
+    # No pre-release is greater than any pre-release (1.0.0 > 1.0.0-alpha)
+    if [[ -z "$v1_prerelease" ]] && [[ -n "$v2_prerelease" ]]; then
+        echo "1"
+        return 0
+    elif [[ -n "$v1_prerelease" ]] && [[ -z "$v2_prerelease" ]]; then
+        echo "-1"
+        return 0
+    elif [[ -n "$v1_prerelease" ]] && [[ -n "$v2_prerelease" ]]; then
+        # Simple string comparison for pre-release (alpha < beta < rc)
+        if [[ "$v1_prerelease" < "$v2_prerelease" ]]; then
+            echo "-1"
+            return 0
+        elif [[ "$v1_prerelease" > "$v2_prerelease" ]]; then
+            echo "1"
+            return 0
+        fi
+    fi
 
     echo "0"
     return 0

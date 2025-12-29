@@ -137,11 +137,12 @@ get_installed_sha() {
 # Check if running as root or with sudo capability
 check_root() {
     if [[ $EUID -ne 0 ]]; then
-        if command -v sudo &>/dev/null && sudo -v &>/dev/null; then
+        if command -v sudo &>/dev/null && sudo -n true 2>/dev/null; then
             log_info "Will use sudo for privileged operations"
             return 0
         else
             log_error "This script must be run as root or with sudo capability"
+            log_info "Run with: sudo bash -c 'curl -fsSL ... | bash'"
             return 1
         fi
     fi
@@ -254,8 +255,8 @@ preflight_version_check() {
     # Get remote version using git ls-remote (no clone needed)
     remote_sha=$(get_remote_sha "$target_branch")
     if [[ -z "$remote_sha" ]]; then
-        log_warn "Could not fetch remote version. Proceeding with upgrade."
-        return 0
+        log_error "Could not fetch remote version - network error or invalid branch"
+        return 2
     fi
 
     log_info "Remote commit:    ${remote_sha:0:12}"
@@ -437,10 +438,19 @@ do_upgrade() {
 
     # Pre-flight check (no disk writes yet)
     if [[ "$force" != "true" ]]; then
-        if ! preflight_version_check "$branch"; then
+        local preflight_result
+        preflight_version_check "$branch"
+        preflight_result=$?
+
+        if [[ $preflight_result -eq 1 ]]; then
             # Already at latest version
             return 0
+        elif [[ $preflight_result -eq 2 ]]; then
+            # Network error - abort unless forced
+            log_error "Pre-flight check failed. Use --force to skip version check."
+            return 1
         fi
+        # preflight_result=0 means update available, continue
     fi
 
     if [[ "$dry_run" == "true" ]]; then
@@ -630,7 +640,7 @@ do_remove() {
 
     log_info "Removal completed"
 
-    if [[ "$keep_config" == "true" ]]; then
+    if [[ "$keep_config" == "true" ]] && [[ -n "${backup_dir:-}" ]]; then
         log_info "Configuration preserved in: $backup_dir"
     fi
 
@@ -858,15 +868,19 @@ main() {
     fi
 
     # Execute action
+    local exit_code=0
     case "$action" in
         install)
             do_install "$branch" "$force"
+            exit_code=$?
             ;;
         upgrade)
             do_upgrade "$branch" "$force" "$dry_run"
+            exit_code=$?
             ;;
         remove)
             do_remove "$keep_config" "$yes"
+            exit_code=$?
             ;;
         *)
             log_error "Unknown action: $action"
@@ -874,6 +888,8 @@ main() {
             exit 1
             ;;
     esac
+
+    exit $exit_code
 }
 
 # Run main if executed directly (not sourced)

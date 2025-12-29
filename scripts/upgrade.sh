@@ -78,10 +78,9 @@ else
     _log_write() { :; }
 fi
 
-# Source version module
-if [[ -f "$SCRIPT_DIR/lib/version.sh" ]]; then
-    source "$SCRIPT_DIR/lib/version.sh"
-fi
+# Note: version.sh provides functions like preflight_check, create_rollback_snapshot, etc.
+# These are available but upgrade.sh implements its own versions for better control.
+# The module can be sourced if needed for future enhancements.
 
 # =============================================================================
 # Global Variables
@@ -469,10 +468,11 @@ phase_apply() {
         local venv_path="$INSTALL_BASE/venv"
 
         if [[ -d "$venv_path" ]] && [[ -f "$SOURCE_DIR/web/api/requirements.txt" ]]; then
-            "$venv_path/bin/pip" install -r "$SOURCE_DIR/web/api/requirements.txt" 2>&1 | \
-                tee -a "$INSTALL_LOG_FILE" || {
-                log_warn "Some Python dependencies may have failed"
-            }
+            if ! "$venv_path/bin/pip" install -r "$SOURCE_DIR/web/api/requirements.txt" 2>&1 | \
+                tee -a "$INSTALL_LOG_FILE"; then
+                log_error "Python dependency installation failed"
+                return 1
+            fi
         fi
 
         # Copy updated Python source
@@ -503,12 +503,13 @@ phase_apply() {
         # Install npm dependencies if package.json changed
         if [[ -f "$web_path/package.json" ]]; then
             log_info "Installing npm dependencies..."
-            (cd "$web_path" && npm ci 2>&1) | tee -a "$INSTALL_LOG_FILE" || {
+            if ! (cd "$web_path" && npm ci 2>&1) | tee -a "$INSTALL_LOG_FILE"; then
                 log_warn "npm ci failed, trying npm install..."
-                (cd "$web_path" && npm install 2>&1) | tee -a "$INSTALL_LOG_FILE" || {
-                    log_warn "npm install failed"
-                }
-            }
+                if ! (cd "$web_path" && npm install 2>&1) | tee -a "$INSTALL_LOG_FILE"; then
+                    log_error "npm dependency installation failed"
+                    return 1
+                fi
+            fi
         fi
 
         # Copy source files
@@ -524,11 +525,11 @@ phase_apply() {
 
         # Build frontend
         log_info "Building frontend..."
-        if (cd "$web_path" && npm run build 2>&1) | tee -a "$INSTALL_LOG_FILE"; then
-            log_info "Frontend build successful"
-        else
-            log_warn "Frontend build failed"
+        if ! (cd "$web_path" && npm run build 2>&1) | tee -a "$INSTALL_LOG_FILE"; then
+            log_error "Frontend build failed"
+            return 1
         fi
+        log_info "Frontend build successful"
     fi
 
     # Copy scripts

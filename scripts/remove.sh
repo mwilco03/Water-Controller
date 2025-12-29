@@ -219,8 +219,8 @@ phase_backup_config() {
             log_info "Backed up: $DATA_DIR"
         fi
 
-        # Record what was backed up
-        cat > "$backup_path/backup_info.txt" <<EOF
+        # Record what was backed up (using sudo tee for permission)
+        sudo tee "$backup_path/backup_info.txt" > /dev/null <<EOF
 Water-Controller Backup
 =======================
 Created: $(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -373,8 +373,12 @@ do_remove() {
 
     # Check if installed
     if ! is_installed; then
-        log_info "Water-Controller is not installed"
-        return 0
+        if [[ "$FORCE" == "true" ]]; then
+            log_warn "No installation detected, but --force specified. Continuing."
+        else
+            log_info "Water-Controller is not installed"
+            return 0
+        fi
     fi
 
     local installed_version
@@ -417,7 +421,14 @@ do_remove() {
     phase_remove_logs
 
     if [[ "$DRY_RUN" != "true" ]]; then
-        phase_verify
+        if ! phase_verify; then
+            if [[ "$FORCE" == "true" ]]; then
+                log_warn "Verification failed but --force specified. Continuing."
+            else
+                log_error "Verification failed. Use --force to ignore."
+                return 1
+            fi
+        fi
     fi
 
     # Final message
