@@ -54,11 +54,11 @@ export WT_CYCLE_TIME=1000
 ### Measuring Performance
 
 ```bash
-# Check actual cycle time
-curl -s http://localhost:8000/api/v1/system/health | jq '.cycle_time_ms'
+# Check system health
+curl -s http://localhost:8000/health | jq
 
-# Monitor over time
-watch -n 5 'curl -s http://localhost:8000/api/v1/system/health | jq ".cycle_time_ms"'
+# Check RTU-specific PROFINET stats (includes cycle time)
+curl -s http://localhost:8000/api/v1/rtus/{station_name}/profinet/status | jq '.cycle_time'
 
 # Look for cycle overruns in logs
 sudo journalctl -u water-controller | grep -i "overrun\|cycle"
@@ -484,7 +484,7 @@ free -m
 df -h /var/lib/water-controller
 
 echo "=== Controller Health ==="
-curl -s http://localhost:8000/api/v1/system/health | jq
+curl -s http://localhost:8000/health | jq
 
 echo "=== CPU Usage (5 second sample) ==="
 top -b -n 2 -d 5 -p $(pgrep water_treat) | tail -1

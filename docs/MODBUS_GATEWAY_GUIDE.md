@@ -48,6 +48,13 @@ The Water Treatment Controller includes a Modbus gateway that bridges PROFINET s
 
 ---
 
+> **Note:** The Modbus API endpoints (`/api/v1/modbus/*`) are available when the
+> `water-controller-modbus` service is running. These endpoints are provided by
+> the modbus gateway module. Ensure the modbus service is enabled and running
+> before using these endpoints.
+
+---
+
 ## Quick Start
 
 ### 1. Enable Modbus Server

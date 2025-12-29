@@ -546,7 +546,7 @@ curl -X POST http://localhost:8000/api/v1/trends/tags \
 
 ```bash
 # Full system health
-curl http://localhost:8000/api/v1/system/health | jq
+curl http://localhost:8000/health | jq
 
 # All RTUs connected
 curl http://localhost:8000/api/v1/rtus | jq '.[].connection_state'

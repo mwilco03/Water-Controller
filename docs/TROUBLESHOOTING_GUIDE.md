@@ -10,7 +10,7 @@
 
 ```bash
 # System health check
-curl http://localhost:8000/api/v1/system/health
+curl http://localhost:8000/health
 
 # Service status
 sudo systemctl status water-controller water-controller-api water-controller-ui
@@ -192,8 +192,8 @@ curl http://localhost:8000/api/v1/rtus/{station_name}/sensors
 # Monitor in real-time
 watch -n 1 'curl -s http://localhost:8000/api/v1/rtus/{station_name}/sensors | jq'
 
-# Check cycle time
-curl http://localhost:8000/api/v1/system/health | jq .cycle_time_ms
+# Check system health
+curl http://localhost:8000/health | jq
 ```
 
 **Common Causes & Solutions:**
@@ -212,7 +212,7 @@ curl http://localhost:8000/api/v1/system/health | jq .cycle_time_ms
 #### API Not Responding (Port 8000)
 
 **Symptoms:**
-- `curl http://localhost:8000/api/v1/system/health` fails
+- `curl http://localhost:8000/health` fails
 - Web UI shows "Connection Error"
 
 **Diagnostic Steps:**
@@ -500,8 +500,8 @@ curl http://localhost:8000/api/v1/auth/ad-config
 # Check process CPU
 top -p $(pgrep water_treat)
 
-# Check cycle time
-curl http://localhost:8000/api/v1/system/health | jq .cycle_time_ms
+# Check system health
+curl http://localhost:8000/health | jq
 
 # Profile (if compiled with debug)
 perf top -p $(pgrep water_treat)

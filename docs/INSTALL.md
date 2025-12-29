@@ -179,7 +179,7 @@ journalctl -u water-controller --since "10 minutes ago"
 Open a web browser and navigate to:
 
 - **HMI Interface**: http://YOUR_IP:8080
-- **API Documentation**: http://YOUR_IP:8000/docs
+- **API Documentation**: http://YOUR_IP:8000/api/docs
 
 ### Enable Service at Boot
 
