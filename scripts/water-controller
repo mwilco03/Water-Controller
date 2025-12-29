@@ -12,7 +12,7 @@
 #
 # Environment Variables:
 #   DATA_DIR      Data directory (default: /var/lib/water-controller)
-#   WEB_PORT      API server port (default: 8000)
+#   API_PORT      API server port (default: 8000)
 #   UI_PORT       UI server port (default: 8080)
 #   LOG_LEVEL     Logging level (default: INFO)
 #
@@ -21,7 +21,8 @@ set -e
 
 # Default values
 DATA_DIR="${DATA_DIR:-/var/lib/water-controller}"
-WEB_PORT="${WEB_PORT:-8000}"
+# Support both API_PORT and legacy WEB_PORT
+API_PORT="${API_PORT:-${WEB_PORT:-8000}}"
 UI_PORT="${UI_PORT:-8080}"
 LOG_LEVEL="${LOG_LEVEL:-INFO}"
 INSTALL_DIR="${INSTALL_DIR:-/opt/water-controller}"
@@ -51,8 +52,8 @@ for arg in "$@"; do
             echo ""
             echo "Environment Variables:"
             echo "  DATA_DIR      Data directory (default: /var/lib/water-controller)"
-            echo "  WEB_PORT      API server port (default: 8080)"
-            echo "  UI_PORT       UI server port (default: 3000)"
+            echo "  API_PORT      API server port (default: 8000)"
+            echo "  UI_PORT       UI server port (default: 8080)"
             echo "  LOG_LEVEL     Logging level (default: INFO)"
             exit 0
             ;;
@@ -71,7 +72,7 @@ mkdir -p "$DATA_DIR/backups"
 
 # Export environment for child processes
 export DATA_DIR
-export WEB_PORT
+export API_PORT
 export UI_PORT
 export LOG_LEVEL
 export DATABASE_PATH="$DATA_DIR/water-controller.db"
@@ -94,7 +95,7 @@ echo "  Water Treatment Controller HMI"
 echo "=========================================="
 echo ""
 echo "Data Directory: $DATA_DIR"
-echo "API Port: $WEB_PORT"
+echo "API Port: $API_PORT"
 echo "UI Port: $UI_PORT"
 echo ""
 
@@ -124,19 +125,19 @@ else
 fi
 
 # Start API server
-echo "Starting API server on port $WEB_PORT..."
+echo "Starting API server on port $API_PORT..."
 cd "$API_DIR"
 
 if [ -f "$UVICORN" ]; then
-    "$UVICORN" main:app \
+    "$UVICORN" app.main:app \
         --host 0.0.0.0 \
-        --port "$WEB_PORT" \
+        --port "$API_PORT" \
         --workers 2 \
         --log-level "${LOG_LEVEL,,}" &
 else
-    "$PYTHON" -m uvicorn main:app \
+    "$PYTHON" -m uvicorn app.main:app \
         --host 0.0.0.0 \
-        --port "$WEB_PORT" \
+        --port "$API_PORT" \
         --workers 2 \
         --log-level "${LOG_LEVEL,,}" &
 fi
@@ -173,7 +174,7 @@ echo "  HMI Ready"
 echo "=========================================="
 echo ""
 echo "Access the HMI at:"
-echo "  API:    http://localhost:$WEB_PORT"
+echo "  API:    http://localhost:$API_PORT"
 if [ "$API_ONLY" = false ]; then
     echo "  UI:     http://localhost:$UI_PORT"
 fi
