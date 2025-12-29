@@ -239,12 +239,19 @@ async def health_check() -> Dict[str, Any]:
     else:
         subsystems["startup"] = {"status": "not_run"}
 
-    # Check UI assets - critical for operator interface
+    # Check UI assets - critical for operator interface (unless API-only mode)
+    api_only_mode = os.environ.get("WTC_API_ONLY", "").lower() in ("true", "1")
     ui_status = get_ui_asset_status()
     if ui_status["available"]:
         subsystems["ui_assets"] = {
             "status": "ok",
             "build_time": ui_status["build_time"],
+        }
+    elif api_only_mode:
+        # In API-only mode, UI not available is expected, not an error
+        subsystems["ui_assets"] = {
+            "status": "skipped",
+            "reason": "API-only mode enabled",
         }
     else:
         subsystems["ui_assets"] = {
