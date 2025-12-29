@@ -274,6 +274,7 @@ async def health_functional(db: Session = Depends(get_db)) -> Response:
     Functional health check - Is the system working correctly?
 
     Comprehensive check including:
+    - UI assets availability (critical for operator interface)
     - Database connection and query performance
     - PROFINET controller status
     - RTU connectivity
@@ -283,15 +284,37 @@ async def health_functional(db: Session = Depends(get_db)) -> Response:
     Use for monitoring dashboards and alerting.
     Check interval: 30 seconds recommended.
 
+    Anti-pattern addressed: "Port open ≠ application usable"
+    The system is only functional if operators can actually use it.
+
     Returns:
         200: All systems functional
         200 with degraded status: Some systems degraded but operational
         503: Critical systems failed
     """
+    from ...core.paths import get_ui_asset_status
+
     now = datetime.now(timezone.utc)
     checks = {}
     degraded_components = []
     critical_failure = False
+
+    # UI assets check - operators need the interface to work
+    ui_status = get_ui_asset_status()
+    if ui_status["available"]:
+        checks["ui_assets"] = {
+            "status": "ok",
+            "build_time": ui_status["build_time"],
+        }
+    else:
+        checks["ui_assets"] = {
+            "status": "error",
+            "message": ui_status["message"],
+            "missing": ui_status["missing_assets"],
+            "action": "Build UI: cd /opt/water-controller/web/ui && npm run build",
+        }
+        critical_failure = True
+        logger.error(f"Functional check: UI assets missing - {ui_status['message']}")
 
     # Database health
     try:
