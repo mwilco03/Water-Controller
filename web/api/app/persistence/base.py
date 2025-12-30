@@ -17,8 +17,26 @@ logger = logging.getLogger(__name__)
 # Database path
 DB_PATH = os.environ.get('WTC_DB_PATH', '/var/lib/water-controller/wtc.db')
 
-# Initialization state
-_initialized = False
+
+class _DatabaseState:
+    """
+    Encapsulated database initialization state.
+    Avoids module-level mutable global per Section 1.6.
+    """
+    __slots__ = ('_initialized',)
+
+    def __init__(self) -> None:
+        self._initialized = False
+
+    @property
+    def initialized(self) -> bool:
+        return self._initialized
+
+    def mark_initialized(self) -> None:
+        self._initialized = True
+
+
+_db_state = _DatabaseState()
 
 
 @contextmanager
@@ -421,8 +439,7 @@ def initialize() -> bool:
     Explicitly initialize the database.
     Call this from application startup, not at import time.
     """
-    global _initialized
-    if _initialized:
+    if _db_state.initialized:
         return True
 
     try:
@@ -431,14 +448,19 @@ def initialize() -> bool:
             db_path.parent.mkdir(parents=True, exist_ok=True)
 
         init_database()
-        _initialized = True
+        _db_state.mark_initialized()
         logger.info("Database initialized successfully")
         return True
     except Exception as e:
-        logger.critical(f"Database initialization failed: {e}")
+        # [CONDITION] + [CONSEQUENCE] + [ACTION] per Section 1.9
+        logger.critical(
+            f"Database initialization failed: {e}. "
+            "Application cannot persist data. "
+            "Check database path permissions and disk space, then restart."
+        )
         return False
 
 
 def is_initialized() -> bool:
     """Check if database has been initialized"""
-    return _initialized
+    return _db_state.initialized

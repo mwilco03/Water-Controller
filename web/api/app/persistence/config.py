@@ -182,7 +182,12 @@ def import_configuration(config: dict[str, Any], user: str = "system") -> dict[s
                     create_rtu_device(rtu_data)
                 imported["rtus"] += 1
             except Exception as e:
-                logger.warning(f"Failed to import RTU {rtu_data.get('station_name')}: {e}")
+                # [CONDITION] + [CONSEQUENCE] + [ACTION] per Section 1.9
+                logger.warning(
+                    f"RTU import failed for {rtu_data.get('station_name')}: {e}. "
+                    "RTU not restored from backup. "
+                    "Manually add RTU or fix import file and retry."
+                )
 
     # Import slot configs
     if "slot_configs" in config:
@@ -191,7 +196,11 @@ def import_configuration(config: dict[str, Any], user: str = "system") -> dict[s
                 upsert_slot_config(slot_data)
                 imported["slot_configs"] += 1
             except Exception as e:
-                logger.warning(f"Failed to import slot config: {e}")
+                logger.warning(
+                    f"Slot config import failed: {e}. "
+                    "Slot configuration not restored. "
+                    "Manually configure slot or fix import file."
+                )
 
     # Import alarm rules
     if "alarm_rules" in config:
@@ -208,7 +217,11 @@ def import_configuration(config: dict[str, Any], user: str = "system") -> dict[s
                     create_alarm_rule(rule_data)
                 imported["alarm_rules"] += 1
             except Exception as e:
-                logger.warning(f"Failed to import alarm rule: {e}")
+                logger.warning(
+                    f"Alarm rule import failed: {e}. "
+                    "Alarm monitoring may be incomplete. "
+                    "Manually configure alarm rule or fix import file."
+                )
 
     # Import PID loops
     if "pid_loops" in config:
@@ -225,7 +238,11 @@ def import_configuration(config: dict[str, Any], user: str = "system") -> dict[s
                     create_pid_loop(pid_data)
                 imported["pid_loops"] += 1
             except Exception as e:
-                logger.warning(f"Failed to import PID loop: {e}")
+                logger.warning(
+                    f"PID loop import failed: {e}. "
+                    "Control loop not restored. "
+                    "Manually configure PID loop or fix import file."
+                )
 
     # Import historian tags
     if "historian_tags" in config:
@@ -234,7 +251,11 @@ def import_configuration(config: dict[str, Any], user: str = "system") -> dict[s
                 upsert_historian_tag(tag_data)
                 imported["historian_tags"] += 1
             except Exception as e:
-                logger.warning(f"Failed to import historian tag: {e}")
+                logger.warning(
+                    f"Historian tag import failed: {e}. "
+                    "Data trending may be incomplete. "
+                    "Manually configure historian tag or fix import file."
+                )
 
     # Import modbus downstream devices
     if "modbus_devices" in config:
@@ -243,7 +264,11 @@ def import_configuration(config: dict[str, Any], user: str = "system") -> dict[s
                 create_modbus_downstream_device(device_data)
                 imported["modbus_devices"] += 1
             except Exception as e:
-                logger.warning(f"Failed to import modbus device: {e}")
+                logger.warning(
+                    f"Modbus device import failed: {e}. "
+                    "Downstream device not restored. "
+                    "Manually configure modbus device or fix import file."
+                )
 
     # Import modbus register mappings
     if "modbus_mappings" in config:
@@ -252,28 +277,44 @@ def import_configuration(config: dict[str, Any], user: str = "system") -> dict[s
                 create_modbus_register_mapping(mapping_data)
                 imported["modbus_mappings"] += 1
             except Exception as e:
-                logger.warning(f"Failed to import modbus mapping: {e}")
+                logger.warning(
+                    f"Modbus mapping import failed: {e}. "
+                    "Register mapping not restored. "
+                    "Manually configure mapping or fix import file."
+                )
 
     # Import modbus server config (singleton)
     if "modbus_server" in config:
         try:
             update_modbus_server_config(config["modbus_server"])
         except Exception as e:
-            logger.warning(f"Failed to import modbus server config: {e}")
+            logger.warning(
+                f"Modbus server config import failed: {e}. "
+                "Server config not restored. "
+                "Manually configure modbus server settings."
+            )
 
     # Import log forwarding config (singleton)
     if "log_forwarding" in config:
         try:
             update_log_forwarding_config(config["log_forwarding"])
         except Exception as e:
-            logger.warning(f"Failed to import log forwarding config: {e}")
+            logger.warning(
+                f"Log forwarding config import failed: {e}. "
+                "Log forwarding not restored. "
+                "Manually configure log forwarding settings."
+            )
 
     # Import AD config (singleton)
     if "ad_config" in config:
         try:
             update_ad_config(config["ad_config"])
         except Exception as e:
-            logger.warning(f"Failed to import AD config: {e}")
+            logger.warning(
+                f"AD config import failed: {e}. "
+                "Directory integration not restored. "
+                "Manually configure AD settings."
+            )
 
     # Import users (without passwords - they must be reset)
     if "users" in config:
@@ -290,7 +331,11 @@ def import_configuration(config: dict[str, Any], user: str = "system") -> dict[s
                     })
                     imported["users"] += 1
             except Exception as e:
-                logger.warning(f"Failed to import user {user_data.get('username')}: {e}")
+                logger.warning(
+                    f"User import failed for {user_data.get('username')}: {e}. "
+                    "User account not restored. "
+                    "Manually create user or fix import file."
+                )
 
     log_audit(user, 'import', 'configuration', None, f"Imported: {imported}")
     return imported

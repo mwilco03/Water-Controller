@@ -26,7 +26,12 @@ def log_audit(user: str, action: str, resource_type: str, resource_id: str,
             ''', (user, action, resource_type, resource_id, details, ip_address))
             conn.commit()
     except Exception as e:
-        logger.error(f"Failed to log audit event: {e}")
+        # [CONDITION] + [CONSEQUENCE] + [ACTION] per Section 1.9
+        logger.error(
+            f"Audit log write failed: {e}. "
+            "Event not recorded for compliance. "
+            "Check database connectivity and retry operation."
+        )
 
 
 def get_audit_log(limit: int = 100, offset: int = 0) -> list[dict[str, Any]]:

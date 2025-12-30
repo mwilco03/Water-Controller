@@ -35,7 +35,12 @@ def create_session(token: str, username: str, role: str, groups: list[str],
                       f"User {username} logged in", ip_address)
             return True
         except Exception as e:
-            logger.error(f"Failed to create session: {e}")
+            # [CONDITION] + [CONSEQUENCE] + [ACTION] per Section 1.9
+            logger.error(
+                f"Session creation failed: {e}. "
+                "User login not persisted. "
+                "Check database connectivity and have user retry login."
+            )
             return False
 
 

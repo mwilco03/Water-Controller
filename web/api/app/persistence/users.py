@@ -48,8 +48,12 @@ def verify_password(password: str, stored_hash: str) -> bool:
         computed = hash_password(password)
         return computed == stored_hash
     else:
-        # Unknown format
-        logger.warning(f"Unknown password hash format: {stored_hash[:10]}...")
+        # [CONDITION] + [CONSEQUENCE] + [ACTION] per Section 1.9
+        logger.warning(
+            f"Unknown password hash format: {stored_hash[:10]}... "
+            "Authentication cannot proceed. "
+            "Reset user password via admin interface."
+        )
         return False
 
 
