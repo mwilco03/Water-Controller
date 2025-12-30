@@ -8,15 +8,15 @@
 #   - linux/arm64  (Raspberry Pi 4/5, ARM servers)
 #   - linux/arm/v7 (Raspberry Pi 3, older ARM)
 
+# Global build arguments (available in all stages when redeclared)
+ARG BUILD_DATE
+ARG VCS_REF
+ARG VERSION
+
 # =============================================================================
 # Base stage - Common Node.js image
 # =============================================================================
 FROM node:18-alpine AS base
-
-# Build arguments for OCI labels
-ARG BUILD_DATE
-ARG VCS_REF
-ARG VERSION
 
 # =============================================================================
 # Dependencies stage - Install npm packages
@@ -51,6 +51,11 @@ RUN npm run build
 # =============================================================================
 FROM base AS runner
 WORKDIR /app
+
+# Redeclare ARGs to use in this stage (required for multi-stage builds)
+ARG BUILD_DATE
+ARG VCS_REF
+ARG VERSION
 
 # OCI Image Labels
 LABEL org.opencontainers.image.created="${BUILD_DATE}" \

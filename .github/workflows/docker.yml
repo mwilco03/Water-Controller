@@ -83,6 +83,10 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
             type=raw,value=${{ inputs.tag }},enable=${{ inputs.tag != '' }}
 
+      - name: Get build timestamp
+        id: timestamp
+        run: echo "date=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> $GITHUB_OUTPUT
+
       - name: Build and push API image
         uses: docker/build-push-action@v5
         with:
@@ -95,7 +99,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           build-args: |
-            BUILD_DATE=${{ github.event.head_commit.timestamp }}
+            BUILD_DATE=${{ steps.timestamp.outputs.date }}
             VCS_REF=${{ github.sha }}
             VERSION=${{ steps.meta.outputs.version }}
 
@@ -155,6 +159,10 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
             type=raw,value=${{ inputs.tag }},enable=${{ inputs.tag != '' }}
 
+      - name: Get build timestamp
+        id: timestamp
+        run: echo "date=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> $GITHUB_OUTPUT
+
       - name: Build and push UI image
         uses: docker/build-push-action@v5
         with:
@@ -167,7 +175,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           build-args: |
-            BUILD_DATE=${{ github.event.head_commit.timestamp }}
+            BUILD_DATE=${{ steps.timestamp.outputs.date }}
             VCS_REF=${{ github.sha }}
             VERSION=${{ steps.meta.outputs.version }}
 
@@ -262,34 +270,38 @@ jobs:
           echo "tag=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
 
       - name: Create release summary
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          REGISTRY: ${{ env.REGISTRY }}
+          IMAGE_PREFIX: ${{ env.IMAGE_PREFIX }}
         run: |
-          cat >> $GITHUB_STEP_SUMMARY << 'EOF'
+          cat >> $GITHUB_STEP_SUMMARY << EOF
           ## Docker Images Published
 
           | Component | Image | Tag |
           |-----------|-------|-----|
-          | API (FastAPI) | `${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/api` | `${{ steps.version.outputs.version }}` |
-          | UI (Next.js) | `${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/ui` | `${{ steps.version.outputs.version }}` |
+          | API (FastAPI) | \`${REGISTRY}/${IMAGE_PREFIX}/api\` | \`${VERSION}\` |
+          | UI (Next.js) | \`${REGISTRY}/${IMAGE_PREFIX}/ui\` | \`${VERSION}\` |
 
           ### Architectures
-          - `linux/amd64` - x86_64 (PCs, servers, cloud)
-          - `linux/arm64` - ARM64 (Raspberry Pi 4/5, ARM servers)
-          - `linux/arm/v7` - ARMv7 (Raspberry Pi 3, older ARM)
+          - \`linux/amd64\` - x86_64 (PCs, servers, cloud)
+          - \`linux/arm64\` - ARM64 (Raspberry Pi 4/5, ARM servers)
+          - \`linux/arm/v7\` - ARMv7 (Raspberry Pi 3, older ARM)
 
           ### Quick Start
-          ```bash
+          \`\`\`bash
           # Set version
-          export VERSION=${{ steps.version.outputs.version }}
+          export VERSION=${VERSION}
 
           # Pull images
-          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/api:${VERSION}
-          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/ui:${VERSION}
+          docker pull ${REGISTRY}/${IMAGE_PREFIX}/api:\${VERSION}
+          docker pull ${REGISTRY}/${IMAGE_PREFIX}/ui:\${VERSION}
 
           # Or use docker-compose
           cd docker
-          VERSION=${VERSION} docker-compose -f docker-compose.prod.yml pull
-          VERSION=${VERSION} docker-compose -f docker-compose.prod.yml up -d
-          ```
+          VERSION=\${VERSION} docker-compose -f docker-compose.prod.yml pull
+          VERSION=\${VERSION} docker-compose -f docker-compose.prod.yml up -d
+          \`\`\`
 
           ### Security
           - Images scanned with Trivy for vulnerabilities

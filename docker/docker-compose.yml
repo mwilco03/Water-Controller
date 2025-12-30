@@ -149,8 +149,8 @@ services:
       dockerfile: docker/Dockerfile.ui
     container_name: wtc-ui
     restart: unless-stopped
-    # DCK-H1 fix: Run as non-root user
-    user: "1000:1000"
+    # DCK-H1 fix: Run as non-root user (matches nextjs user in Dockerfile.ui)
+    user: "1001:1001"
     environment:
       NEXT_PUBLIC_API_URL: http://api:8080
     ports:

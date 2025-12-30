@@ -134,7 +134,7 @@ services:
     image: ghcr.io/mwilco03/water-controller/ui:${VERSION:-latest}
     container_name: wtc-ui
     restart: unless-stopped
-    user: "1000:1000"
+    user: "1001:1001"  # Matches nextjs user in Dockerfile.ui
     environment:
       NEXT_PUBLIC_API_URL: ${API_URL:-http://localhost:8080}
     ports:
