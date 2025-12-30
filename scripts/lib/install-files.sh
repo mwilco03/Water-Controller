@@ -12,7 +12,7 @@
 #
 
 # Prevent multiple sourcing
-if [ -n "$_WTC_INSTALL_FILES_LOADED" ]; then
+if [ -n "${_WTC_INSTALL_FILES_LOADED:-}" ]; then
     return 0
 fi
 _WTC_INSTALL_FILES_LOADED=1

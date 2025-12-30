@@ -9,7 +9,7 @@
 #
 
 # Prevent multiple sourcing
-if [ -n "$_WTC_COMMON_LOADED" ]; then
+if [ -n "${_WTC_COMMON_LOADED:-}" ]; then
     return 0
 fi
 _WTC_COMMON_LOADED=1
