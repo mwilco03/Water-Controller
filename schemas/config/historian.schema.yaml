@@ -139,7 +139,7 @@ properties:
         maximum: 100000
         default: 1024
         description: "Maximum number of historian tags"
-        x-c-define: "WTC_MAX_HISTORIAN_TAGS"
+        # Note: C define WTC_MAX_HISTORIAN_TAGS is in controller.schema.yaml
 
       buffer_size:
         type: integer

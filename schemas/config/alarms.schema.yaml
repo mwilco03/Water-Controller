@@ -46,7 +46,7 @@ properties:
         maximum: 10000
         default: 512
         description: "Maximum alarm rules"
-        x-c-define: "WTC_MAX_ALARM_RULES"
+        # Note: C define WTC_MAX_ALARM_RULES is in controller.schema.yaml
 
   isa_18_2:
     type: object

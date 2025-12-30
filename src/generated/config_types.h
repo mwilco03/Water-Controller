@@ -2,7 +2,7 @@
  * AUTO-GENERATED FILE - DO NOT EDIT MANUALLY
  *
  * Generated from: schemas/config/*.schema.yaml
- * Generated at: 2025-12-30 15:31:12 UTC
+ * Generated at: 2025-12-30 17:51:56 UTC
  * Generator: scripts/generate_c_types.py
  *
  * To update this file, modify the source schemas and run:
@@ -21,9 +21,6 @@ extern "C" {
 #endif
 
 /* Configuration limits and constants */
-
-/** Maximum alarm rules */
-#define WTC_MAX_ALARM_RULES 512
 
 /** Maximum number of RTU devices */
 #define WTC_MAX_RTUS 256
@@ -48,9 +45,6 @@ extern "C" {
 
 /** Maximum slots per RTU for fixed arrays */
 #define WTC_MAX_SLOTS 256
-
-/** Maximum number of historian tags */
-#define WTC_MAX_HISTORIAN_TAGS 1024
 
 /** Maximum downstream devices */
 #define MAX_MODBUS_CLIENTS 16

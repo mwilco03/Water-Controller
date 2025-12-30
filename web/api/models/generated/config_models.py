@@ -2,16 +2,18 @@
 AUTO-GENERATED FILE - DO NOT EDIT MANUALLY
 
 Generated from: schemas/config/*.schema.yaml
-Generated at: 2025-12-30 15:31:13 UTC
+Generated at: 2025-12-30 17:51:56 UTC
 Generator: scripts/generate_pydantic.py
 
 To update this file, modify the source schemas and run:
     python scripts/generate_pydantic.py
 """
 
+from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional, Union
-from pydantic import BaseModel, Field, field_validator
+from ipaddress import IPv4Address
+from typing import Any, Callable, Dict, List, Optional, Union
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 
 # ========== Alarm Manager Configuration ==========
@@ -57,7 +59,7 @@ class FloodDetectionConfig(BaseModel):
 class SeverityConfig(BaseModel):
     """Severity level definitions"""
 
-    levels: List[LevelsItemConfig] = Field(default=[{'id': 1, 'name': 'Low', 'color': '#FFFF00', 'response_time_sec': 3600}, {'id': 2, 'name': 'Medium', 'color': '#FFA500', 'response_time_sec': 1800}, {'id': 3, 'name': 'High', 'color': '#FF0000', 'response_time_sec': 300}, {'id': 4, 'name': 'Emergency', 'color': '#8B0000', 'response_time_sec': 60}])
+    levels: List[LevelsItemConfig] = Field(default_factory=lambda: [{'id': 1, 'name': 'Low', 'color': '#FFFF00', 'response_time_sec': 3600}, {'id': 2, 'name': 'Medium', 'color': '#FFA500', 'response_time_sec': 1800}, {'id': 3, 'name': 'High', 'color': '#FF0000', 'response_time_sec': 300}, {'id': 4, 'name': 'Emergency', 'color': '#8B0000', 'response_time_sec': 60}])
 
     model_config = {
         "extra": "forbid",
@@ -69,7 +71,7 @@ class EmailConfig(BaseModel):
 
     enabled: bool = Field(default=False, description="Enable email notifications")
     min_severity: int = Field(default=3, ge=1, le=4, description="Minimum severity to trigger email")
-    recipients: List[str] = Field(default_factory=list, description="Email recipients for alarm notifications")
+    recipients: List[EmailStr] = Field(default_factory=list, description="Email recipients for alarm notifications")
     smtp_host: str = Field(default="", description="SMTP server hostname")
     smtp_port: int = Field(default=587, ge=1, le=65535, description="SMTP server port")
 
@@ -106,7 +108,7 @@ class SuppressionConfig(BaseModel):
 class ConditionsConfig(BaseModel):
     """Available alarm conditions"""
 
-    types: List[str] = Field(default=['HIGH', 'LOW', 'HIGH_HIGH', 'LOW_LOW', 'RATE_OF_CHANGE', 'DEVIATION', 'BAD_QUALITY'], description="Available alarm condition types")
+    types: List[str] = Field(default_factory=lambda: ['HIGH', 'LOW', 'HIGH_HIGH', 'LOW_LOW', 'RATE_OF_CHANGE', 'DEVIATION', 'BAD_QUALITY'], description="Available alarm condition types")
 
     model_config = {
         "extra": "forbid",
@@ -437,7 +439,7 @@ class HistorianConfig(BaseModel):
 class TcpConfig(BaseModel):
     """Modbus TCP server settings"""
 
-    bind_address: str = Field(default="0.0.0.0", description="TCP bind address")
+    bind_address: IPv4Address = Field(default="0.0.0.0", description="TCP bind address")
     enabled: bool = Field(default=True, description="Enable Modbus TCP server")
     max_connections: int = Field(default=10, ge=1, le=100, description="Maximum concurrent TCP connections")
     port: int = Field(default=502, ge=1, le=65535, description="Modbus TCP listen port")
@@ -540,11 +542,11 @@ class ControllerConfig(BaseModel):
     """Controller identity settings"""
 
     device_id: int = Field(default=1, ge=0, le=65535, description="PROFINET device ID")
-    gateway: str = Field(default="", description="Default gateway (optional)")
-    ip_address: str = Field(default="", description="Controller IP address (auto-detect if empty)")
+    gateway: IPv4Address = Field(default="", description="Default gateway (optional)")
+    ip_address: IPv4Address = Field(default="", description="Controller IP address (auto-detect if empty)")
     mac_address: str = Field(default="", pattern=r"^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$", description="Controller MAC address (auto-detect if empty)")
     station_name: str = Field(default="wtc-controller", max_length=64, pattern=r"^[a-z0-9][a-z0-9.-]*$", description="Controller station name (DNS compatible)")
-    subnet_mask: str = Field(default="255.255.255.0", description="Network subnet mask")
+    subnet_mask: IPv4Address = Field(default="255.255.255.0", description="Network subnet mask")
     vendor_id: int = Field(default=4660, ge=0, le=65535, description="PROFINET vendor ID (0x1234)")
 
     model_config = {
