@@ -1,0 +1,239 @@
+# Water Treatment Controller - RTU Device Schema
+# Defines RTU device structure, state, and slot configuration
+#
+# IMPORTANT: This file is the single source of truth.
+
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "water-controller/api/rtu"
+title: "RTU Device Types"
+description: |
+  Remote Terminal Unit (RTU) device definitions.
+
+  RTUs are PROFINET IO Devices that interface with physical sensors
+  and actuators. Each RTU:
+  - Maintains safe state independently
+  - Communicates via PROFINET cyclic I/O
+  - Has discoverable station name
+  - Contains sensor and actuator slots
+
+definitions:
+  profinet_state:
+    type: string
+    enum:
+      - OFFLINE
+      - DISCOVERY
+      - CONNECTING
+      - CONNECTED
+      - RUNNING
+      - ERROR
+      - DISCONNECT
+    description: "PROFINET connection state"
+    x-c-enum: "profinet_state_t"
+
+  slot_type:
+    type: string
+    enum:
+      - DAP
+      - SENSOR
+      - ACTUATOR
+    description: "Type of I/O slot"
+    x-c-enum: "slot_type_t"
+
+  slot:
+    type: object
+    description: "Generic I/O slot"
+    required:
+      - slot_id
+      - slot_type
+    properties:
+      slot_id:
+        type: integer
+        minimum: 0
+        maximum: 255
+        description: "Slot number (0 is typically DAP)"
+      subslot_id:
+        type: integer
+        minimum: 0
+        maximum: 65535
+        default: 1
+        description: "Subslot number"
+      slot_type:
+        $ref: "#/definitions/slot_type"
+      module_ident:
+        type: integer
+        description: "PROFINET module identification"
+      submodule_ident:
+        type: integer
+        description: "PROFINET submodule identification"
+      name:
+        type: string
+        maxLength: 64
+      iops:
+        type: string
+        enum: ["BAD", "GOOD"]
+        description: "IO Provider Status"
+      iocs:
+        type: string
+        enum: ["BAD", "GOOD"]
+        description: "IO Consumer Status"
+
+  rtu_device:
+    type: object
+    description: "RTU device definition"
+    required:
+      - station_name
+    properties:
+      station_name:
+        type: string
+        maxLength: 64
+        pattern: "^[a-z0-9][a-z0-9.-]*$"
+        description: "PROFINET station name (DNS compatible)"
+      ip_address:
+        type: string
+        format: ipv4
+        description: "Current IP address"
+      mac_address:
+        type: string
+        pattern: "^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$"
+        description: "MAC address"
+      state:
+        $ref: "#/definitions/profinet_state"
+      vendor_id:
+        type: integer
+        description: "PROFINET vendor ID"
+      device_id:
+        type: integer
+        description: "PROFINET device ID"
+      slot_count:
+        type: integer
+        minimum: 1
+        maximum: 256
+        description: "Number of configured slots"
+      slots:
+        type: array
+        items:
+          $ref: "#/definitions/slot"
+      sensors:
+        type: array
+        items:
+          $ref: "sensor.schema.yaml#/definitions/sensor_slot"
+      actuators:
+        type: array
+        items:
+          $ref: "actuator.schema.yaml#/definitions/actuator_slot"
+      last_seen:
+        type: string
+        format: date-time
+        description: "Last successful communication"
+      cycle_counter:
+        type: integer
+        description: "PROFINET cycle counter"
+      error_count:
+        type: integer
+        description: "Communication error count"
+      firmware_version:
+        type: string
+        description: "RTU firmware version"
+      hardware_revision:
+        type: string
+        description: "Hardware revision"
+
+  rtu_summary:
+    type: object
+    description: "Summary view of RTU for list display"
+    required:
+      - station_name
+      - state
+    properties:
+      station_name:
+        type: string
+      ip_address:
+        type: string
+      state:
+        $ref: "#/definitions/profinet_state"
+      sensor_count:
+        type: integer
+      actuator_count:
+        type: integer
+      alarm_count:
+        type: integer
+        description: "Active alarms on this RTU"
+      last_seen:
+        type: string
+        format: date-time
+
+  registry_stats:
+    type: object
+    description: "RTU registry statistics"
+    properties:
+      total_devices:
+        type: integer
+        description: "Total registered devices"
+      connected_devices:
+        type: integer
+        description: "Currently connected devices"
+      discovering_devices:
+        type: integer
+        description: "Devices in discovery state"
+      error_devices:
+        type: integer
+        description: "Devices in error state"
+      total_sensors:
+        type: integer
+        description: "Total sensor slots"
+      total_actuators:
+        type: integer
+        description: "Total actuator slots"
+
+type: object
+properties:
+  states:
+    type: array
+    items:
+      type: object
+      required:
+        - id
+        - name
+        - description
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        color:
+          type: string
+          pattern: "^#[0-9A-Fa-f]{6}$"
+    default:
+      - id: "OFFLINE"
+        name: "Offline"
+        description: "No communication with device"
+        color: "#808080"
+      - id: "DISCOVERY"
+        name: "Discovering"
+        description: "DCP discovery in progress"
+        color: "#FFFF00"
+      - id: "CONNECTING"
+        name: "Connecting"
+        description: "Establishing PROFINET AR"
+        color: "#FFA500"
+      - id: "CONNECTED"
+        name: "Connected"
+        description: "AR established, waiting for data"
+        color: "#00BFFF"
+      - id: "RUNNING"
+        name: "Running"
+        description: "Cyclic data exchange active"
+        color: "#00FF00"
+      - id: "ERROR"
+        name: "Error"
+        description: "Communication error"
+        color: "#FF0000"
+      - id: "DISCONNECT"
+        name: "Disconnecting"
+        description: "Graceful disconnect in progress"
+        color: "#FFA500"
+
+x-c-header: "rtu_types.h"
+x-doc-category: "API Types"

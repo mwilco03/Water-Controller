@@ -1,0 +1,227 @@
+# Water Treatment Controller - Engineering Units Schema
+# Standard units for all process measurements
+#
+# IMPORTANT: This file is the single source of truth for engineering units.
+
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "water-controller/meta/units"
+title: "Engineering Units"
+description: |
+  Standard engineering units for water treatment process measurements.
+
+  Units are categorized by measurement type and include:
+  - SI base units
+  - Industry-standard derived units
+  - Conversion factors
+
+definitions:
+  unit:
+    type: object
+    required:
+      - symbol
+      - name
+    properties:
+      symbol:
+        type: string
+        maxLength: 16
+        description: "Unit symbol (e.g., 'pH', 'mg/L')"
+      name:
+        type: string
+        maxLength: 64
+        description: "Full unit name"
+      category:
+        type: string
+        description: "Measurement category"
+      si_factor:
+        type: number
+        description: "Conversion factor to SI base unit"
+      si_offset:
+        type: number
+        default: 0
+        description: "Offset for conversion (e.g., Celsius to Kelvin)"
+
+type: object
+properties:
+  categories:
+    type: array
+    items:
+      type: object
+      required:
+        - name
+        - units
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        units:
+          type: array
+          items:
+            $ref: "#/definitions/unit"
+    default:
+      - name: "pH"
+        description: "Acidity/alkalinity measurement (dimensionless)"
+        units:
+          - symbol: "pH"
+            name: "pH units"
+            si_factor: 1
+
+      - name: "Temperature"
+        description: "Temperature measurements"
+        units:
+          - symbol: "C"
+            name: "degrees Celsius"
+            si_factor: 1
+            si_offset: 273.15
+          - symbol: "F"
+            name: "degrees Fahrenheit"
+            si_factor: 0.5556
+            si_offset: 255.37
+          - symbol: "K"
+            name: "Kelvin"
+            si_factor: 1
+
+      - name: "Turbidity"
+        description: "Water clarity measurement"
+        units:
+          - symbol: "NTU"
+            name: "Nephelometric Turbidity Units"
+            si_factor: 1
+          - symbol: "FNU"
+            name: "Formazin Nephelometric Units"
+            si_factor: 1
+
+      - name: "Concentration"
+        description: "Dissolved substance concentrations"
+        units:
+          - symbol: "mg/L"
+            name: "milligrams per liter"
+            si_factor: 0.001
+          - symbol: "ppm"
+            name: "parts per million"
+            si_factor: 0.001
+          - symbol: "ppb"
+            name: "parts per billion"
+            si_factor: 0.000001
+          - symbol: "g/L"
+            name: "grams per liter"
+            si_factor: 1
+
+      - name: "Conductivity"
+        description: "Electrical conductivity"
+        units:
+          - symbol: "uS/cm"
+            name: "microsiemens per centimeter"
+            si_factor: 0.0001
+          - symbol: "mS/cm"
+            name: "millisiemens per centimeter"
+            si_factor: 0.1
+          - symbol: "S/m"
+            name: "siemens per meter"
+            si_factor: 1
+
+      - name: "Flow"
+        description: "Volumetric flow rate"
+        units:
+          - symbol: "L/min"
+            name: "liters per minute"
+            si_factor: 0.0000167
+          - symbol: "L/h"
+            name: "liters per hour"
+            si_factor: 0.000000278
+          - symbol: "m3/h"
+            name: "cubic meters per hour"
+            si_factor: 0.000278
+          - symbol: "GPM"
+            name: "gallons per minute (US)"
+            si_factor: 0.0000631
+          - symbol: "MGD"
+            name: "million gallons per day"
+            si_factor: 0.0438
+
+      - name: "Pressure"
+        description: "Pressure measurements"
+        units:
+          - symbol: "Pa"
+            name: "Pascal"
+            si_factor: 1
+          - symbol: "kPa"
+            name: "kilopascal"
+            si_factor: 1000
+          - symbol: "bar"
+            name: "bar"
+            si_factor: 100000
+          - symbol: "psi"
+            name: "pounds per square inch"
+            si_factor: 6894.76
+          - symbol: "mbar"
+            name: "millibar"
+            si_factor: 100
+
+      - name: "Level"
+        description: "Liquid level measurements"
+        units:
+          - symbol: "m"
+            name: "meters"
+            si_factor: 1
+          - symbol: "cm"
+            name: "centimeters"
+            si_factor: 0.01
+          - symbol: "mm"
+            name: "millimeters"
+            si_factor: 0.001
+          - symbol: "ft"
+            name: "feet"
+            si_factor: 0.3048
+          - symbol: "in"
+            name: "inches"
+            si_factor: 0.0254
+          - symbol: "%"
+            name: "percent of range"
+            si_factor: 0.01
+
+      - name: "Dissolved Oxygen"
+        description: "Dissolved oxygen measurements"
+        units:
+          - symbol: "mg/L"
+            name: "milligrams per liter"
+            si_factor: 0.001
+          - symbol: "%sat"
+            name: "percent saturation"
+            si_factor: 0.01
+
+      - name: "ORP"
+        description: "Oxidation-Reduction Potential"
+        units:
+          - symbol: "mV"
+            name: "millivolts"
+            si_factor: 0.001
+          - symbol: "V"
+            name: "volts"
+            si_factor: 1
+
+      - name: "Time"
+        description: "Time intervals"
+        units:
+          - symbol: "ms"
+            name: "milliseconds"
+            si_factor: 0.001
+          - symbol: "s"
+            name: "seconds"
+            si_factor: 1
+          - symbol: "min"
+            name: "minutes"
+            si_factor: 60
+          - symbol: "h"
+            name: "hours"
+            si_factor: 3600
+
+      - name: "Percentage"
+        description: "Relative values"
+        units:
+          - symbol: "%"
+            name: "percent"
+            si_factor: 0.01
+
+x-c-header: "units.h"
+x-doc-category: "Core Types"

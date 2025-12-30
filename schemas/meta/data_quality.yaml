@@ -1,0 +1,126 @@
+# Water Treatment Controller - Data Quality Schema
+# OPC UA compatible quality codes for all process values
+#
+# IMPORTANT: This file is the single source of truth.
+# All sensor readings, process values, and historian data include quality.
+
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "water-controller/meta/data_quality"
+title: "Data Quality Definitions"
+description: |
+  OPC UA compatible quality codes for SCADA data.
+
+  All process values in the Water-Controller MUST include a quality indicator.
+  This schema defines the canonical quality codes used throughout the system.
+
+  Quality follows the OPC Foundation standard:
+  - GOOD (0x00): Value is reliable and within normal operating range
+  - UNCERTAIN (0x40): Value may be stale or sensor is in degraded mode
+  - BAD (0x80): Value is unreliable (sensor fault, out of range)
+  - NOT_CONNECTED (0xC0): No communication with sensor/RTU
+
+definitions:
+  quality_code:
+    type: string
+    enum:
+      - GOOD
+      - UNCERTAIN
+      - BAD
+      - NOT_CONNECTED
+    description: "OPC UA compatible quality code"
+    x-c-enum: "data_quality_t"
+
+  quality_numeric:
+    type: integer
+    enum: [0, 64, 128, 192]
+    description: "Numeric quality code (OPC bit pattern)"
+    x-value-map:
+      0: GOOD
+      64: UNCERTAIN
+      128: BAD
+      192: NOT_CONNECTED
+
+  quality_substatus:
+    type: object
+    description: "Extended quality with substatus information"
+    properties:
+      code:
+        $ref: "#/definitions/quality_code"
+      substatus:
+        type: string
+        enum:
+          - OK
+          - CONFIGURATION_ERROR
+          - NOT_CONNECTED
+          - DEVICE_FAILURE
+          - SENSOR_FAILURE
+          - LAST_USABLE_VALUE
+          - SENSOR_CALIBRATION
+          - COMM_FAILURE
+          - OUT_OF_SERVICE
+          - WAITING_FOR_INITIAL_VALUE
+        description: "Detailed substatus for diagnostics"
+      timestamp:
+        type: string
+        format: date-time
+        description: "When quality was last updated"
+
+  timestamped_value:
+    type: object
+    description: "Value with quality and timestamp (standard process value format)"
+    required:
+      - value
+      - quality
+      - timestamp
+    properties:
+      value:
+        type: number
+        description: "Process value"
+      quality:
+        $ref: "#/definitions/quality_code"
+      timestamp:
+        type: string
+        format: date-time
+        description: "Sample timestamp (ISO 8601)"
+
+type: object
+properties:
+  codes:
+    type: array
+    items:
+      type: object
+      required:
+        - name
+        - value
+        - description
+      properties:
+        name:
+          type: string
+        value:
+          type: integer
+        description:
+          type: string
+        color:
+          type: string
+          pattern: "^#[0-9A-Fa-f]{6}$"
+          description: "HMI display color"
+    default:
+      - name: GOOD
+        value: 0
+        description: "Value is reliable and current"
+        color: "#00FF00"
+      - name: UNCERTAIN
+        value: 64
+        description: "Value may be stale or sensor is degraded"
+        color: "#FFFF00"
+      - name: BAD
+        value: 128
+        description: "Value is unreliable, do not use for control"
+        color: "#FF0000"
+      - name: NOT_CONNECTED
+        value: 192
+        description: "No communication with data source"
+        color: "#808080"
+
+x-c-header: "data_quality.h"
+x-doc-category: "Core Types"

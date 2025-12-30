@@ -1,0 +1,327 @@
+# Water Treatment Controller - Modbus Register Map
+# Defines the Modbus gateway register layout
+#
+# IMPORTANT: This file documents the Modbus interface to external systems.
+
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "water-controller/protocol/modbus_registers"
+title: "Modbus Register Map"
+description: |
+  Modbus TCP/RTU register map for the Water Treatment Controller gateway.
+
+  The Modbus gateway exposes PROFINET data to legacy systems:
+  - Read sensor values via Input Registers (FC04)
+  - Read actuator states via Discrete Inputs (FC02)
+  - Control actuators via Coils (FC01, FC05)
+  - Read system status via Holding Registers (FC03)
+
+  Register layout is auto-generated from RTU configuration.
+
+definitions:
+  register_type:
+    type: string
+    enum:
+      - COIL
+      - DISCRETE_INPUT
+      - INPUT_REGISTER
+      - HOLDING_REGISTER
+    description: "Modbus register type"
+    x-function-codes:
+      COIL: [1, 5, 15]
+      DISCRETE_INPUT: [2]
+      INPUT_REGISTER: [4]
+      HOLDING_REGISTER: [3, 6, 16]
+
+  data_type:
+    type: string
+    enum:
+      - BOOL
+      - INT16
+      - UINT16
+      - INT32
+      - UINT32
+      - FLOAT32
+    description: "Data type stored in register(s)"
+    x-register-count:
+      BOOL: 1
+      INT16: 1
+      UINT16: 1
+      INT32: 2
+      UINT32: 2
+      FLOAT32: 2
+
+  register_entry:
+    type: object
+    description: "Single register or register block definition"
+    required:
+      - address
+      - name
+      - type
+      - data_type
+    properties:
+      address:
+        type: integer
+        minimum: 0
+        maximum: 65535
+        description: "Starting register address"
+      count:
+        type: integer
+        minimum: 1
+        default: 1
+        description: "Number of registers (for arrays)"
+      name:
+        type: string
+        maxLength: 64
+        description: "Register name"
+      description:
+        type: string
+        maxLength: 256
+      type:
+        $ref: "#/definitions/register_type"
+      data_type:
+        $ref: "#/definitions/data_type"
+      unit:
+        type: string
+        description: "Engineering unit"
+      scale:
+        type: number
+        default: 1
+        description: "Scaling factor (actual = raw * scale)"
+      offset:
+        type: number
+        default: 0
+        description: "Offset (actual = raw * scale + offset)"
+      source:
+        type: string
+        description: "Source RTU/slot for this register"
+      writable:
+        type: boolean
+        default: false
+        description: "True if register can be written"
+
+type: object
+properties:
+  address_ranges:
+    type: object
+    description: "Default address range allocation"
+    properties:
+      sensors:
+        type: object
+        properties:
+          base:
+            type: integer
+            default: 0
+          description:
+            type: string
+            const: "Sensor values (Input Registers)"
+      actuators:
+        type: object
+        properties:
+          base:
+            type: integer
+            default: 1000
+          description:
+            type: string
+            const: "Actuator states and commands"
+      status:
+        type: object
+        properties:
+          base:
+            type: integer
+            default: 2000
+          description:
+            type: string
+            const: "System status registers"
+      alarms:
+        type: object
+        properties:
+          base:
+            type: integer
+            default: 3000
+          description:
+            type: string
+            const: "Active alarms"
+      historian:
+        type: object
+        properties:
+          base:
+            type: integer
+            default: 4000
+          description:
+            type: string
+            const: "Historian access (if enabled)"
+
+  system_registers:
+    type: array
+    description: "Fixed system status registers"
+    items:
+      $ref: "#/definitions/register_entry"
+    default:
+      - address: 2000
+        name: "system_status"
+        type: "HOLDING_REGISTER"
+        data_type: "UINT16"
+        description: "System operational status"
+        writable: false
+      - address: 2001
+        name: "rtu_count"
+        type: "HOLDING_REGISTER"
+        data_type: "UINT16"
+        description: "Number of connected RTUs"
+        writable: false
+      - address: 2002
+        name: "active_alarms"
+        type: "HOLDING_REGISTER"
+        data_type: "UINT16"
+        description: "Count of active alarms"
+        writable: false
+      - address: 2003
+        name: "unack_alarms"
+        type: "HOLDING_REGISTER"
+        data_type: "UINT16"
+        description: "Count of unacknowledged alarms"
+        writable: false
+      - address: 2004
+        count: 2
+        name: "uptime_seconds"
+        type: "HOLDING_REGISTER"
+        data_type: "UINT32"
+        description: "System uptime in seconds"
+        writable: false
+      - address: 2006
+        count: 4
+        name: "timestamp_epoch"
+        type: "HOLDING_REGISTER"
+        data_type: "UINT32"
+        description: "Current Unix timestamp (2 registers)"
+        writable: false
+
+  sensor_register_template:
+    type: object
+    description: "Template for auto-generated sensor registers"
+    properties:
+      registers_per_sensor:
+        type: integer
+        const: 3
+        description: "3 registers per sensor: value (2) + quality (1)"
+      layout:
+        type: array
+        items:
+          type: object
+        default:
+          - offset: 0
+            name: "_value"
+            data_type: "FLOAT32"
+            description: "Sensor value (2 registers)"
+          - offset: 2
+            name: "_quality"
+            data_type: "UINT16"
+            description: "Data quality code"
+
+  actuator_register_template:
+    type: object
+    description: "Template for auto-generated actuator registers"
+    properties:
+      coils_per_actuator:
+        type: integer
+        const: 1
+        description: "1 coil per actuator for on/off control"
+      registers_per_actuator:
+        type: integer
+        const: 4
+        description: "4 registers: command, value, feedback, quality"
+      layout:
+        type: array
+        items:
+          type: object
+        default:
+          - offset: 0
+            name: "_command"
+            data_type: "UINT16"
+            type: "HOLDING_REGISTER"
+            description: "Command (0=OFF, 1=ON, 2=PWM)"
+            writable: true
+          - offset: 1
+            name: "_value"
+            data_type: "UINT16"
+            type: "HOLDING_REGISTER"
+            description: "PWM value (0-255)"
+            writable: true
+          - offset: 2
+            name: "_feedback"
+            data_type: "UINT16"
+            type: "INPUT_REGISTER"
+            description: "Actual state feedback"
+          - offset: 3
+            name: "_quality"
+            data_type: "UINT16"
+            type: "INPUT_REGISTER"
+            description: "Data quality code"
+
+  function_codes:
+    type: array
+    description: "Supported Modbus function codes"
+    items:
+      type: object
+      properties:
+        code:
+          type: integer
+        name:
+          type: string
+        supported:
+          type: boolean
+    default:
+      - code: 1
+        name: "Read Coils"
+        supported: true
+      - code: 2
+        name: "Read Discrete Inputs"
+        supported: true
+      - code: 3
+        name: "Read Holding Registers"
+        supported: true
+      - code: 4
+        name: "Read Input Registers"
+        supported: true
+      - code: 5
+        name: "Write Single Coil"
+        supported: true
+      - code: 6
+        name: "Write Single Register"
+        supported: true
+      - code: 15
+        name: "Write Multiple Coils"
+        supported: true
+      - code: 16
+        name: "Write Multiple Registers"
+        supported: true
+      - code: 22
+        name: "Mask Write Register"
+        supported: false
+      - code: 23
+        name: "Read/Write Multiple Registers"
+        supported: false
+
+  exception_codes:
+    type: array
+    description: "Modbus exception responses"
+    items:
+      type: object
+      properties:
+        code:
+          type: integer
+        name:
+          type: string
+    default:
+      - code: 1
+        name: "Illegal Function"
+      - code: 2
+        name: "Illegal Data Address"
+      - code: 3
+        name: "Illegal Data Value"
+      - code: 4
+        name: "Server Device Failure"
+      - code: 6
+        name: "Server Device Busy"
+
+x-doc-category: "Protocol"

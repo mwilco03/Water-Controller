@@ -1,0 +1,295 @@
+# Water Treatment Controller - PROFINET Frame Definitions
+# Defines cyclic I/O frame structure and DCP messages
+#
+# IMPORTANT: This file documents the wire format used by PROFINET.
+
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "water-controller/protocol/profinet_frames"
+title: "PROFINET Frame Definitions"
+description: |
+  PROFINET RT Class 1 frame formats for Water Treatment Controller.
+
+  This schema documents:
+  - Cyclic I/O frame structure
+  - Sensor data format (5-byte)
+  - Actuator command format
+  - DCP discovery protocol
+  - AR (Application Relationship) states
+
+definitions:
+  ethernet_header:
+    type: object
+    description: "Ethernet II header"
+    properties:
+      destination_mac:
+        type: string
+        pattern: "^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$"
+      source_mac:
+        type: string
+        pattern: "^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$"
+      ethertype:
+        type: string
+        enum: ["0x8892"]
+        description: "PROFINET RT EtherType"
+
+  vlan_tag:
+    type: object
+    description: "802.1Q VLAN tag (optional)"
+    properties:
+      tpid:
+        type: string
+        enum: ["0x8100"]
+      pcp:
+        type: integer
+        minimum: 0
+        maximum: 7
+        default: 6
+        description: "Priority Code Point (6 for RT)"
+      dei:
+        type: boolean
+        default: false
+      vid:
+        type: integer
+        minimum: 0
+        maximum: 4094
+        default: 0
+
+  rt_frame_header:
+    type: object
+    description: "PROFINET RT frame header"
+    properties:
+      frame_id:
+        type: integer
+        minimum: 0x0000
+        maximum: 0xFFFF
+        description: "Frame ID (identifies IO CR)"
+      cycle_counter:
+        type: integer
+        minimum: 0
+        maximum: 65535
+        description: "Increments each cycle"
+      data_status:
+        type: integer
+        description: "Data status byte"
+      transfer_status:
+        type: integer
+        description: "Transfer status byte"
+
+  sensor_data_5byte:
+    type: object
+    description: |
+      5-byte sensor data format used in cyclic I/O.
+
+      Bytes 0-3: Float32 value (big-endian IEEE 754)
+      Byte 4:    Quality indicator (OPC compatible)
+    properties:
+      value:
+        type: number
+        description: "Float32 big-endian at offset 0"
+        x-wire-offset: 0
+        x-wire-size: 4
+        x-wire-format: "float32-be"
+      quality:
+        type: integer
+        minimum: 0
+        maximum: 255
+        description: "Quality byte at offset 4"
+        x-wire-offset: 4
+        x-wire-size: 1
+    x-total-size: 5
+
+  actuator_command_2byte:
+    type: object
+    description: |
+      2-byte actuator command format.
+
+      Byte 0: Command (OFF=0x00, ON=0x01, PWM=0x02)
+      Byte 1: Value (PWM duty cycle 0-255)
+    properties:
+      command:
+        type: integer
+        enum: [0, 1, 2]
+        description: "Command byte at offset 0"
+        x-wire-offset: 0
+        x-wire-size: 1
+      value:
+        type: integer
+        minimum: 0
+        maximum: 255
+        description: "Value byte at offset 1"
+        x-wire-offset: 1
+        x-wire-size: 1
+    x-total-size: 2
+
+  actuator_feedback_2byte:
+    type: object
+    description: |
+      2-byte actuator feedback format.
+
+      Byte 0: State (OFF=0x00, ON=0x01, TRANSITIONING=0x02, FAULT=0xFF)
+      Byte 1: Quality indicator
+    properties:
+      state:
+        type: integer
+        enum: [0, 1, 2, 255]
+        description: "State byte at offset 0"
+        x-wire-offset: 0
+        x-wire-size: 1
+      quality:
+        type: integer
+        minimum: 0
+        maximum: 255
+        description: "Quality byte at offset 1"
+        x-wire-offset: 1
+        x-wire-size: 1
+    x-total-size: 2
+
+  cyclic_io_frame:
+    type: object
+    description: "Complete cyclic I/O frame structure"
+    properties:
+      header:
+        $ref: "#/definitions/rt_frame_header"
+      slot_0_dap:
+        type: object
+        description: "Slot 0: Device Access Point"
+        properties:
+          module_state:
+            type: integer
+            description: "Module operational state"
+      input_data:
+        type: array
+        description: "Sensor readings (controller perspective: inputs)"
+        items:
+          $ref: "#/definitions/sensor_data_5byte"
+      output_data:
+        type: array
+        description: "Actuator commands (controller perspective: outputs)"
+        items:
+          $ref: "#/definitions/actuator_command_2byte"
+      iops:
+        type: integer
+        description: "IO Provider Status for entire frame"
+      iocs:
+        type: integer
+        description: "IO Consumer Status for entire frame"
+
+type: object
+properties:
+  frame_ids:
+    type: object
+    description: "Reserved Frame ID ranges"
+    properties:
+      cyclic_rt_unicast:
+        type: object
+        properties:
+          min:
+            type: string
+            const: "0x8000"
+          max:
+            type: string
+            const: "0xBFFF"
+          description:
+            type: string
+            const: "RT Class 1 cyclic unicast"
+      dcp:
+        type: object
+        properties:
+          identify_multicast:
+            type: string
+            const: "0xFEFE"
+          identify_response:
+            type: string
+            const: "0xFEFF"
+          set:
+            type: string
+            const: "0xFEFD"
+          get:
+            type: string
+            const: "0xFEFC"
+
+  dcp_service_ids:
+    type: array
+    items:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+    default:
+      - id: 0x03
+        name: "Get"
+      - id: 0x04
+        name: "Set"
+      - id: 0x05
+        name: "Identify"
+
+  ar_states:
+    type: array
+    description: "Application Relationship states"
+    items:
+      type: object
+      properties:
+        id:
+          type: string
+        description:
+          type: string
+    default:
+      - id: "OFFLINE"
+        description: "No AR established"
+      - id: "STARTUP"
+        description: "AR negotiation in progress"
+      - id: "PRMED"
+        description: "Parameterized, waiting for application ready"
+      - id: "DATA"
+        description: "Data exchange active"
+      - id: "ABORT"
+        description: "AR being torn down"
+
+  timing:
+    type: object
+    description: "PROFINET timing parameters"
+    properties:
+      send_clock:
+        type: object
+        properties:
+          base_us:
+            type: integer
+            const: 31.25
+            description: "Send clock base in microseconds"
+          factor_range:
+            type: object
+            properties:
+              min:
+                type: integer
+                const: 1
+              max:
+                type: integer
+                const: 128
+      typical_cycle_times:
+        type: array
+        items:
+          type: object
+          properties:
+            factor:
+              type: integer
+            reduction:
+              type: integer
+            result_ms:
+              type: number
+        default:
+          - factor: 32
+            reduction: 1
+            result_ms: 1.0
+          - factor: 32
+            reduction: 8
+            result_ms: 8.0
+          - factor: 32
+            reduction: 32
+            result_ms: 32.0
+          - factor: 128
+            reduction: 1
+            result_ms: 4.0
+
+x-doc-category: "Protocol"
