@@ -2,7 +2,7 @@
  * AUTO-GENERATED FILE - DO NOT EDIT MANUALLY
  *
  * Generated from: schemas/config/*.schema.yaml
- * Generated at: 2025-12-30 15:12:15 UTC
+ * Generated at: 2025-12-30 15:31:12 UTC
  * Generator: scripts/generate_c_types.py
  *
  * To update this file, modify the source schemas and run:
@@ -368,21 +368,21 @@ typedef struct {
  */
 typedef struct {
     /** Default slot count per RTU */
-    uint8_t default_slots;
+    int32_t default_slots;
     /** Maximum number of alarm rules */
-    uint8_t max_alarm_rules;
+    int32_t max_alarm_rules;
     /** Maximum number of historian tags */
-    uint8_t max_historian_tags;
+    int32_t max_historian_tags;
     /** Maximum number of interlocks */
-    uint8_t max_interlocks;
+    int32_t max_interlocks;
     /** Maximum number of PID control loops */
-    uint8_t max_pid_loops;
+    int32_t max_pid_loops;
     /** Maximum number of RTU devices */
-    uint8_t max_rtus;
+    int32_t max_rtus;
     /** Maximum number of control sequences */
-    uint8_t max_sequences;
+    int32_t max_sequences;
     /** Maximum slots per RTU for fixed arrays */
-    uint8_t max_slots;
+    int32_t max_slots;
 } controller_limits_config_t;
 
 /** startup_mode enumeration */
@@ -576,9 +576,9 @@ typedef enum {
  */
 typedef struct {
     /** Serial baud rate */
-    uint8_t baud_rate;
+    int32_t baud_rate;
     /** Serial data bits */
-    uint8_t data_bits;
+    int32_t data_bits;
     /** Serial device path (e.g., /dev/ttyUSB0) */
     char device[64];
     /** Enable Modbus RTU server */
@@ -588,7 +588,7 @@ typedef struct {
     /** RTU slave address */
     uint8_t slave_address;
     /** Serial stop bits */
-    uint8_t stop_bits;
+    int32_t stop_bits;
 } modbus_server_rtu_config_t;
 
 /**
@@ -721,13 +721,13 @@ typedef struct {
  */
 typedef struct {
     /** Maximum Application Process Identifiers */
-    uint8_t max_api;
+    int32_t max_api;
     /** Maximum Application Relationships */
-    uint8_t max_ar;
+    int32_t max_ar;
     /** Maximum IO Communication Relationships per AR */
-    uint8_t max_iocr;
+    int32_t max_iocr;
     /** Minimum PROFINET cycle time */
-    uint8_t min_cycle_time_us;
+    int32_t min_cycle_time_us;
 } profinet_limits_config_t;
 
 /**

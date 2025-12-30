@@ -86,18 +86,33 @@ def to_upper_snake(name: str) -> str:
 
 
 def json_type_to_c(prop: Dict[str, Any], name: str) -> Tuple[str, Optional[int]]:
-    """Convert JSON Schema type to C type. Returns (type, array_size)."""
+    """Convert JSON Schema type to C type. Returns (type, array_size).
+
+    For integers, we only optimize to smaller types when BOTH minimum and
+    maximum constraints are explicitly specified. Without explicit bounds,
+    we default to int32_t (signed) or uint32_t (unsigned based on minimum >= 0).
+    """
     prop_type = prop.get("type", "")
 
     if prop_type == "boolean":
         return "bool", None
 
     if prop_type == "integer":
-        minimum = prop.get("minimum", 0)
-        maximum = prop.get("maximum", 0)
+        minimum = prop.get("minimum")
+        maximum = prop.get("maximum")
+        has_bounds = minimum is not None and maximum is not None
 
-        # Choose appropriate integer type
+        # Default to safe 32-bit types when bounds are not fully specified
+        if not has_bounds:
+            # If only minimum is specified and it's >= 0, use unsigned
+            if minimum is not None and minimum >= 0:
+                return "uint32_t", None
+            # Otherwise default to signed 32-bit
+            return "int32_t", None
+
+        # Both bounds specified - choose smallest type that fits
         if minimum >= 0:
+            # Unsigned types
             if maximum <= 255:
                 return "uint8_t", None
             elif maximum <= 65535:
@@ -107,6 +122,7 @@ def json_type_to_c(prop: Dict[str, Any], name: str) -> Tuple[str, Optional[int]]
             else:
                 return "uint64_t", None
         else:
+            # Signed types
             if minimum >= -128 and maximum <= 127:
                 return "int8_t", None
             elif minimum >= -32768 and maximum <= 32767:
