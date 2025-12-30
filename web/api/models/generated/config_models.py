@@ -2,16 +2,17 @@
 AUTO-GENERATED FILE - DO NOT EDIT MANUALLY
 
 Generated from: schemas/config/*.schema.yaml
-Generated at: 2025-12-30 15:12:19 UTC
+Generated at: 2025-12-30 19:17:00 UTC
 Generator: scripts/generate_pydantic.py
 
 To update this file, modify the source schemas and run:
     python scripts/generate_pydantic.py
 """
 
+from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional, Union
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 
 # ========== Alarm Manager Configuration ==========
@@ -54,10 +55,23 @@ class FloodDetectionConfig(BaseModel):
         "validate_default": True,
     }
 
+class LevelsItemConfig(BaseModel):
+    """Configuration for levels_Item."""
+
+    color: Optional[str] = Field(default=None, pattern=r"^#[0-9A-Fa-f]{6}$")
+    id: Optional[int] = Field(default=None, ge=1, le=10)
+    name: Optional[str] = Field(default=None)
+    response_time_sec: Optional[int] = Field(default=None, description="Expected response time")
+
+    model_config = {
+        "extra": "forbid",
+        "validate_default": True,
+    }
+
 class SeverityConfig(BaseModel):
     """Severity level definitions"""
 
-    levels: List[LevelsItemConfig] = Field(default=[{'id': 1, 'name': 'Low', 'color': '#FFFF00', 'response_time_sec': 3600}, {'id': 2, 'name': 'Medium', 'color': '#FFA500', 'response_time_sec': 1800}, {'id': 3, 'name': 'High', 'color': '#FF0000', 'response_time_sec': 300}, {'id': 4, 'name': 'Emergency', 'color': '#8B0000', 'response_time_sec': 60}])
+    levels: List[LevelsItemConfig] = Field(default_factory=lambda: [{'id': 1, 'name': 'Low', 'color': '#FFFF00', 'response_time_sec': 3600}, {'id': 2, 'name': 'Medium', 'color': '#FFA500', 'response_time_sec': 1800}, {'id': 3, 'name': 'High', 'color': '#FF0000', 'response_time_sec': 300}, {'id': 4, 'name': 'Emergency', 'color': '#8B0000', 'response_time_sec': 60}])
 
     model_config = {
         "extra": "forbid",
@@ -69,7 +83,7 @@ class EmailConfig(BaseModel):
 
     enabled: bool = Field(default=False, description="Enable email notifications")
     min_severity: int = Field(default=3, ge=1, le=4, description="Minimum severity to trigger email")
-    recipients: List[str] = Field(default_factory=list, description="Email recipients for alarm notifications")
+    recipients: List[EmailStr] = Field(default_factory=list, description="Email recipients for alarm notifications")
     smtp_host: str = Field(default="", description="SMTP server hostname")
     smtp_port: int = Field(default=587, ge=1, le=65535, description="SMTP server port")
 
@@ -106,7 +120,7 @@ class SuppressionConfig(BaseModel):
 class ConditionsConfig(BaseModel):
     """Available alarm conditions"""
 
-    types: List[str] = Field(default=['HIGH', 'LOW', 'HIGH_HIGH', 'LOW_LOW', 'RATE_OF_CHANGE', 'DEVIATION', 'BAD_QUALITY'], description="Available alarm condition types")
+    types: List[str] = Field(default_factory=lambda: ['HIGH', 'LOW', 'HIGH_HIGH', 'LOW_LOW', 'RATE_OF_CHANGE', 'DEVIATION', 'BAD_QUALITY'], description="Available alarm condition types")
 
     model_config = {
         "extra": "forbid",

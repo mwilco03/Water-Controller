@@ -20,6 +20,7 @@ To fix drift:
 """
 
 import hashlib
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -46,18 +47,33 @@ GENERATORS = [
 
 
 def compute_hash(path: Path) -> str:
-    """Compute SHA256 hash of a file, ignoring timestamp lines."""
+    """Compute SHA256 hash of a file, ignoring timestamp lines.
+
+    Timestamp lines are excluded from the hash to allow comparison between
+    files generated at different times. We use regex patterns to match
+    various timestamp formats that may appear in generated files.
+    """
     if not path.exists():
         return ""
 
     content = path.read_text()
 
-    # Remove timestamp lines that change on each generation
-    # These are typically in comments like "Generated at: 2024-..."
+    # Patterns that match timestamp lines in generated files.
+    # These patterns cover common formats used by generators:
+    #   - "Generated at: 2024-12-30 15:30:00 UTC"
+    #   - "Generated: 2024-12-30T15:30:00Z"
+    #   - "* Generated at: ..."  (in C comments)
+    #   - "# Generated at: ..."  (in Python comments)
+    timestamp_patterns = [
+        r'^\s*[#/*]*\s*Generated\s+(at:\s*)?\d{4}-\d{2}-\d{2}',  # ISO date format
+        r'^\s*[#/*]*\s*Generated\s+at:\s+.+$',  # Generic "Generated at:" line
+    ]
+    combined_pattern = re.compile('|'.join(timestamp_patterns), re.IGNORECASE)
+
     lines = []
     for line in content.split('\n'):
-        # Skip lines containing generation timestamps
-        if 'Generated at:' in line:
+        # Skip lines matching any timestamp pattern
+        if combined_pattern.match(line):
             continue
         lines.append(line)
 

@@ -40,9 +40,10 @@ To update this file, modify the source schemas and run:
     python scripts/generate_pydantic.py
 """
 
+from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional, Union
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 
 '''
@@ -72,8 +73,18 @@ def to_snake_case(name: str) -> str:
 
 
 def json_type_to_python(prop: Dict[str, Any], name: str) -> str:
-    """Convert JSON Schema type to Python type hint."""
+    """Convert JSON Schema type to Python type hint.
+
+    Handles JSON Schema formats:
+    - ipv4 -> str (validated separately, as IPv4Address doesn't accept empty strings)
+    - email -> EmailStr
+    - date-time -> datetime
+
+    Note: We use str for ipv4 because IPv4Address type cannot have empty string
+    defaults, which are common for optional IP address fields.
+    """
     prop_type = prop.get("type", "")
+    prop_format = prop.get("format", "")
 
     if "enum" in prop:
         return to_pascal_case(name) + "Enum"
@@ -88,10 +99,20 @@ def json_type_to_python(prop: Dict[str, Any], name: str) -> str:
         return "float"
 
     if prop_type == "string":
+        # Handle format-specific types
+        # Note: ipv4 stays as str because empty string defaults are common
+        if prop_format == "email":
+            return "EmailStr"
+        elif prop_format == "date-time":
+            return "datetime"
         return "str"
 
     if prop_type == "array":
         items = prop.get("items", {})
+        # For array of objects with properties, generate a model for the item
+        if items.get("type") == "object" and "properties" in items:
+            # Name matches what generate_model creates: to_pascal_case(name + "_Item") + "Config"
+            return f"List[{to_pascal_case(name + '_Item')}Config]"
         item_type = json_type_to_python(items, name + "_item")
         return f"List[{item_type}]"
 
@@ -127,13 +148,17 @@ def generate_enum(name: str, values: List[str]) -> str:
 
 
 def generate_field(name: str, prop: Dict[str, Any]) -> str:
-    """Generate Pydantic Field definition."""
+    """Generate Pydantic Field definition.
+
+    Handles mutable defaults correctly by using default_factory for lists.
+    Uses appropriate types for format-validated fields.
+    """
     python_type = json_type_to_python(prop, name)
     field_name = to_snake_case(name)
 
     field_args = []
 
-    # Default value
+    # Default value - handle mutable defaults with default_factory
     default = prop.get("default")
     if default is None:
         field_args.append("default=None")
@@ -145,25 +170,35 @@ def generate_field(name: str, prop: Dict[str, Any]) -> str:
     elif isinstance(default, (int, float)):
         field_args.append(f"default={default}")
     elif isinstance(default, list):
+        # Always use default_factory for lists (mutable defaults)
         if len(default) == 0:
             field_args.append("default_factory=list")
         else:
-            field_args.append(f"default={default}")
+            # Use lambda to create a factory for non-empty list defaults
+            field_args.append(f"default_factory=lambda: {default!r}")
+    elif isinstance(default, dict):
+        # Also handle dict defaults with factory
+        if len(default) == 0:
+            field_args.append("default_factory=dict")
+        else:
+            field_args.append(f"default_factory=lambda: {default!r}")
     else:
         field_args.append("default=None")
         python_type = f"Optional[{python_type}]"
 
-    # Constraints
-    if "minimum" in prop:
-        field_args.append(f"ge={prop['minimum']}")
-    if "maximum" in prop:
-        field_args.append(f"le={prop['maximum']}")
-    if "minLength" in prop:
-        field_args.append(f"min_length={prop['minLength']}")
-    if "maxLength" in prop:
-        field_args.append(f"max_length={prop['maxLength']}")
-    if "pattern" in prop:
-        field_args.append(f'pattern=r"{prop["pattern"]}"')
+    # Constraints - skip for format-validated types that handle their own validation
+    prop_format = prop.get("format", "")
+    if prop_format not in ("email", "date-time"):
+        if "minimum" in prop:
+            field_args.append(f"ge={prop['minimum']}")
+        if "maximum" in prop:
+            field_args.append(f"le={prop['maximum']}")
+        if "minLength" in prop:
+            field_args.append(f"min_length={prop['minLength']}")
+        if "maxLength" in prop:
+            field_args.append(f"max_length={prop['maxLength']}")
+        if "pattern" in prop:
+            field_args.append(f'pattern=r"{prop["pattern"]}"')
 
     # Description
     desc = prop.get("description", "")
@@ -190,9 +225,19 @@ def generate_model(name: str, schema: Dict[str, Any], collected_enums: Set[str])
 
     # First, collect any nested types
     for prop_name, prop in properties.items():
+        # Handle nested object properties
         if prop.get("type") == "object" and "properties" in prop:
             nested = generate_model(prop_name, prop, collected_enums)
             nested_models.append(nested)
+
+        # Handle array items that are objects with properties
+        if prop.get("type") == "array":
+            items = prop.get("items", {})
+            if items.get("type") == "object" and "properties" in items:
+                # Generate a model for the array item type
+                item_model_name = f"{prop_name}_Item"
+                nested = generate_model(item_model_name, items, collected_enums)
+                nested_models.append(nested)
 
         if "enum" in prop and prop.get("type") == "string":
             enum_name = to_pascal_case(prop_name) + "Enum"
