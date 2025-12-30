@@ -137,17 +137,54 @@ setup_python_venv() {
 # Build Node.js UI
 build_nodejs_ui() {
     if [ -d "$INSTALL_DIR/web/ui" ] && [ -f "$INSTALL_DIR/web/ui/package.json" ]; then
-        log_info "Installing Node.js dependencies..."
-        cd "$INSTALL_DIR/web/ui"
-        if command -v npm &> /dev/null; then
-            npm install --production=false
-            npm run build
-            log_info "Built UI application"
-        else
-            log_warn "npm not found, skipping UI build"
-            log_warn "Install Node.js and run 'npm run build' manually"
+        log_info "Building HMI user interface..."
+
+        # Check for Node.js
+        if ! command -v node &> /dev/null; then
+            log_error "Node.js is not installed. HMI build cannot proceed."
+            log_error "Install Node.js 18+ and retry: curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash - && sudo apt-get install -y nodejs"
+            return 1
         fi
+
+        # Check for npm
+        if ! command -v npm &> /dev/null; then
+            log_error "npm is not installed. HMI build cannot proceed."
+            log_error "npm should be included with Node.js. Reinstall Node.js and retry."
+            return 1
+        fi
+
+        local node_version
+        node_version=$(node --version 2>/dev/null)
+        log_info "Using Node.js $node_version"
+
+        cd "$INSTALL_DIR/web/ui"
+
+        log_info "Installing npm dependencies (this may take several minutes)..."
+        if ! npm install --production=false; then
+            log_error "npm install failed. Check network connectivity and disk space."
+            cd - > /dev/null
+            return 1
+        fi
+
+        log_info "Building production bundle..."
+        if ! npm run build; then
+            log_error "npm build failed. Check for TypeScript or bundling errors above."
+            cd - > /dev/null
+            return 1
+        fi
+
+        # Verify build output exists
+        if [ ! -d ".next" ]; then
+            log_error "Build completed but .next directory not found. Build may have failed silently."
+            cd - > /dev/null
+            return 1
+        fi
+
+        log_info "HMI build complete: $(find .next -type f | wc -l) files generated"
         cd - > /dev/null
+    else
+        log_error "UI source not found at $INSTALL_DIR/web/ui. Cannot build HMI."
+        return 1
     fi
 }
 
