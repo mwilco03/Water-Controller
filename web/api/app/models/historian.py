@@ -6,20 +6,17 @@ SPDX-License-Identifier: GPL-3.0-or-later
 SQLAlchemy models for historian data and PROFINET diagnostics.
 """
 
-from datetime import datetime, timezone
 
 from sqlalchemy import (
     Column,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
     Integer,
     String,
-    Float,
-    DateTime,
-    ForeignKey,
-    Text,
-    Index,
 )
 from sqlalchemy.dialects.sqlite import JSON
-from sqlalchemy.orm import relationship
 
 from .base import Base
 

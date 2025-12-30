@@ -27,16 +27,17 @@ Usage:
         sys.exit(1)
 """
 
+import logging
 import os
 import socket
-import logging
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from enum import Enum
-from typing import List, Optional, Dict, Any, Callable
 import time
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from enum import Enum
+from typing import Any
 
-from .paths import paths, validate_paths, PathSeverity, get_ui_asset_status
+from .paths import PathSeverity, get_ui_asset_status, paths, validate_paths
 
 logger = logging.getLogger(__name__)
 
@@ -64,15 +65,15 @@ class ReadinessCheck:
     state: ReadinessState
     message: str
     duration_ms: float = 0.0
-    details: Dict[str, Any] = field(default_factory=dict)
-    operator_action: Optional[str] = None
+    details: dict[str, Any] = field(default_factory=dict)
+    operator_action: str | None = None
 
 
 @dataclass
 class StartupResult:
     """Complete startup validation result."""
-    checks: List[ReadinessCheck] = field(default_factory=list)
-    started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    checks: list[ReadinessCheck] = field(default_factory=list)
+    started_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     mode: StartupMode = StartupMode.PRODUCTION
 
     @property
@@ -86,11 +87,11 @@ class StartupResult:
         return all(c.state == ReadinessState.READY for c in self.checks)
 
     @property
-    def failed_checks(self) -> List[ReadinessCheck]:
+    def failed_checks(self) -> list[ReadinessCheck]:
         return [c for c in self.checks if c.state == ReadinessState.FAILED]
 
     @property
-    def degraded_checks(self) -> List[ReadinessCheck]:
+    def degraded_checks(self) -> list[ReadinessCheck]:
         return [c for c in self.checks if c.state == ReadinessState.DEGRADED]
 
     def log_all(self) -> None:
@@ -127,7 +128,7 @@ class StartupResult:
         else:
             logger.info("STARTUP COMPLETE: All systems ready")
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for API responses."""
         return {
             "can_serve_traffic": self.can_serve_traffic,
@@ -232,6 +233,7 @@ def check_ui_assets() -> tuple:
 def check_database() -> tuple:
     """Verify database is accessible and writable."""
     from sqlalchemy import text
+
     from ..models.base import engine
 
     try:
@@ -272,7 +274,7 @@ def check_port_available(port: int, host: str = "0.0.0.0") -> tuple:
             {"port": port, "host": host},
             None,
         )
-    except socket.error as e:
+    except OSError as e:
         return (
             ReadinessState.FAILED,
             f"Port {port} unavailable: {e}",
@@ -350,10 +352,10 @@ def check_required_python_modules() -> tuple:
 
 
 def validate_startup(
-    mode: Optional[StartupMode] = None,
+    mode: StartupMode | None = None,
     skip_ui_check: bool = False,
     skip_ipc_check: bool = False,
-    api_port: int = 8000,
+    _api_port: int = 8000,  # Reserved for future use
 ) -> StartupResult:
     """
     Perform comprehensive startup validation.
@@ -411,10 +413,10 @@ def validate_startup(
 
 
 # Global startup result for health check access
-_startup_result: Optional[StartupResult] = None
+_startup_result: StartupResult | None = None
 
 
-def get_startup_result() -> Optional[StartupResult]:
+def get_startup_result() -> StartupResult | None:
     """Get the startup validation result (if validation has run)."""
     return _startup_result
 

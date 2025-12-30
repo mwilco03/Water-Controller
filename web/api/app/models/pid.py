@@ -6,16 +6,16 @@ SPDX-License-Identifier: GPL-3.0-or-later
 SQLAlchemy model for PID loop configuration.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import (
+    Boolean,
     Column,
+    DateTime,
+    Float,
+    ForeignKey,
     Integer,
     String,
-    Float,
-    Boolean,
-    DateTime,
-    ForeignKey,
 )
 from sqlalchemy.orm import relationship
 
@@ -61,11 +61,11 @@ class PidLoop(Base):
     mode = Column(String(16), nullable=False, default=PidMode.AUTO)
 
     # Timestamps
-    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
     updated_at = Column(
         DateTime(timezone=True),
-        default=lambda: datetime.now(timezone.utc),
-        onupdate=lambda: datetime.now(timezone.utc)
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC)
     )
 
     # Relationship

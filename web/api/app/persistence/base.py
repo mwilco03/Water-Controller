@@ -6,24 +6,43 @@ SPDX-License-Identifier: GPL-3.0-or-later
 Database connection, schema initialization, and shared utilities.
 """
 
-import sqlite3
-import os
 import logging
+import os
+import sqlite3
 from contextlib import contextmanager
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
 # Database path
 DB_PATH = os.environ.get('WTC_DB_PATH', '/var/lib/water-controller/wtc.db')
 
-# Initialization state
-_initialized = False
+
+class _DatabaseState:
+    """
+    Encapsulated database initialization state.
+    Avoids module-level mutable global per Section 1.6.
+    """
+    __slots__ = ('_initialized',)
+
+    def __init__(self) -> None:
+        self._initialized = False
+
+    @property
+    def initialized(self) -> bool:
+        return self._initialized
+
+    def mark_initialized(self) -> None:
+        self._initialized = True
+
+
+_db_state = _DatabaseState()
 
 
 @contextmanager
 def get_db():
     """Context manager for database connections"""
-    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+    Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     try:
@@ -420,24 +439,28 @@ def initialize() -> bool:
     Explicitly initialize the database.
     Call this from application startup, not at import time.
     """
-    global _initialized
-    if _initialized:
+    if _db_state.initialized:
         return True
 
     try:
-        db_dir = os.path.dirname(DB_PATH)
-        if db_dir:
-            os.makedirs(db_dir, exist_ok=True)
+        db_path = Path(DB_PATH)
+        if db_path.parent != Path():
+            db_path.parent.mkdir(parents=True, exist_ok=True)
 
         init_database()
-        _initialized = True
+        _db_state.mark_initialized()
         logger.info("Database initialized successfully")
         return True
     except Exception as e:
-        logger.critical(f"Database initialization failed: {e}")
+        # [CONDITION] + [CONSEQUENCE] + [ACTION] per Section 1.9
+        logger.critical(
+            f"Database initialization failed: {e}. "
+            "Application cannot persist data. "
+            "Check database path permissions and disk space, then restart."
+        )
         return False
 
 
 def is_initialized() -> bool:
     """Check if database has been initialized"""
-    return _initialized
+    return _db_state.initialized

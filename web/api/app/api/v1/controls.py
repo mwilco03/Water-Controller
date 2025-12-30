@@ -8,31 +8,29 @@ Access Model:
 - POST/PUT/DELETE endpoints: Control access (authentication required)
 """
 
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 from fastapi import APIRouter, Depends, Path
 from sqlalchemy.orm import Session
 
-from ...core.exceptions import (
-    RtuNotConnectedError,
-    ControlNotFoundError,
-    CommandRejectedError,
-    CommandTimeoutError,
-)
+from ...core.auth import log_control_action, require_control_access
 from ...core.errors import build_success_response
-from ...core.rtu_utils import get_rtu_or_404, get_data_quality
-from ...core.auth import require_control_access, log_control_action
-from ...models.base import get_db
-from ...models.rtu import RTU, Control, RtuState, ControlType
+from ...core.exceptions import (
+    CommandRejectedError,
+    ControlNotFoundError,
+    RtuNotConnectedError,
+)
+from ...core.rtu_utils import get_data_quality, get_rtu_or_404
 from ...models.audit import CommandAudit, CommandResult
+from ...models.base import get_db
+from ...models.rtu import RTU, Control, ControlType, RtuState
 from ...schemas.common import DataQuality
 from ...schemas.control import (
-    ControlState,
-    ControlCommand,
     CommandResponse,
+    ControlCommand,
     ControlListMeta,
-    CoupledAction,
+    ControlState,
 )
 
 router = APIRouter()
@@ -53,7 +51,7 @@ def get_control_or_404(db: Session, rtu: RTU, tag: str) -> Control:
 async def get_controls(
     name: str = Path(..., description="RTU station name"),
     db: Session = Depends(get_db)
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Get current control states.
     """
@@ -62,7 +60,7 @@ async def get_controls(
     controls = db.query(Control).filter(Control.rtu_id == rtu.id).order_by(Control.tag).all()
 
     quality = get_data_quality(rtu.state)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     result = []
     for control in controls:
@@ -114,7 +112,7 @@ async def send_command(
     command: ControlCommand = None,
     db: Session = Depends(get_db),
     session: dict = Depends(require_control_access)
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Issue command to a control.
 
@@ -201,7 +199,7 @@ async def send_command(
 
     db.commit()
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     response_data = CommandResponse(
         tag=tag,

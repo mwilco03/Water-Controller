@@ -6,15 +6,14 @@ SPDX-License-Identifier: GPL-3.0-or-later
 Modbus server config, downstream devices, and register mappings.
 """
 
-from typing import List, Optional, Dict, Any
+from typing import Any
 
-from .base import get_db
 from .audit import log_audit
-
+from .base import get_db
 
 # ============== Modbus Server Config ==============
 
-def get_modbus_server_config() -> Dict[str, Any]:
+def get_modbus_server_config() -> dict[str, Any]:
     """Get Modbus server configuration"""
     with get_db() as conn:
         cursor = conn.cursor()
@@ -23,7 +22,7 @@ def get_modbus_server_config() -> Dict[str, Any]:
         return dict(row) if row else {}
 
 
-def update_modbus_server_config(config: Dict[str, Any]) -> bool:
+def update_modbus_server_config(config: dict[str, Any]) -> bool:
     """Update Modbus server configuration"""
     with get_db() as conn:
         cursor = conn.cursor()
@@ -45,7 +44,7 @@ def update_modbus_server_config(config: Dict[str, Any]) -> bool:
 
 # ============== Modbus Downstream Devices ==============
 
-def get_modbus_downstream_devices() -> List[Dict[str, Any]]:
+def get_modbus_downstream_devices() -> list[dict[str, Any]]:
     """Get all downstream Modbus devices"""
     with get_db() as conn:
         cursor = conn.cursor()
@@ -53,7 +52,7 @@ def get_modbus_downstream_devices() -> List[Dict[str, Any]]:
         return [dict(row) for row in cursor.fetchall()]
 
 
-def create_modbus_downstream_device(device: Dict[str, Any]) -> int:
+def create_modbus_downstream_device(device: dict[str, Any]) -> int:
     """Create a new downstream Modbus device"""
     with get_db() as conn:
         cursor = conn.cursor()
@@ -73,7 +72,7 @@ def create_modbus_downstream_device(device: Dict[str, Any]) -> int:
         return cursor.lastrowid
 
 
-def update_modbus_downstream_device(device_id: int, device: Dict[str, Any]) -> bool:
+def update_modbus_downstream_device(device_id: int, device: dict[str, Any]) -> bool:
     """Update a downstream Modbus device"""
     with get_db() as conn:
         cursor = conn.cursor()
@@ -103,7 +102,7 @@ def delete_modbus_downstream_device(device_id: int) -> bool:
 
 # ============== Modbus Register Mappings ==============
 
-def get_modbus_register_mappings() -> List[Dict[str, Any]]:
+def get_modbus_register_mappings() -> list[dict[str, Any]]:
     """Get all Modbus register mappings"""
     with get_db() as conn:
         cursor = conn.cursor()
@@ -111,7 +110,7 @@ def get_modbus_register_mappings() -> List[Dict[str, Any]]:
         return [dict(row) for row in cursor.fetchall()]
 
 
-def create_modbus_register_mapping(mapping: Dict[str, Any]) -> int:
+def create_modbus_register_mapping(mapping: dict[str, Any]) -> int:
     """Create a new Modbus register mapping"""
     with get_db() as conn:
         cursor = conn.cursor()
@@ -129,7 +128,7 @@ def create_modbus_register_mapping(mapping: Dict[str, Any]) -> int:
         return cursor.lastrowid
 
 
-def update_modbus_register_mapping(mapping_id: int, mapping: Dict[str, Any]) -> bool:
+def update_modbus_register_mapping(mapping_id: int, mapping: dict[str, Any]) -> bool:
     """Update a Modbus register mapping"""
     with get_db() as conn:
         cursor = conn.cursor()

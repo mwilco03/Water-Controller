@@ -38,6 +38,21 @@ export function CommandModeProvider({ children }: CommandModeProviderProps) {
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
   const countdownRef = useRef<NodeJS.Timeout | null>(null);
 
+  // Define exitCommandMode before effects that use it
+  const exitCommandMode = useCallback(() => {
+    setMode('view');
+    setExpiryTime(null);
+    setTimeRemaining(null);
+
+    // Clear auth token - control actions require re-authentication
+    setAuthToken(null);
+
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
+    }
+  }, []);
+
   // Update countdown timer
   useEffect(() => {
     if (mode === 'command' && expiryTime) {
@@ -62,9 +77,7 @@ export function CommandModeProvider({ children }: CommandModeProviderProps) {
     } else {
       setTimeRemaining(null);
     }
-    // exitCommandMode is stable (empty deps) but defined after this effect
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, expiryTime]);
+  }, [mode, expiryTime, exitCommandMode]);
 
   // Clear timeout on unmount
   useEffect(() => {
@@ -126,23 +139,7 @@ export function CommandModeProvider({ children }: CommandModeProviderProps) {
       logger.error('Error entering command mode:', error);
       return false;
     }
-  }, []);
-
-  const exitCommandMode = useCallback(() => {
-    setMode('view');
-    setExpiryTime(null);
-    setTimeRemaining(null);
-
-    // Clear auth token - control actions require re-authentication
-    // This implements the read-first model: view is always available,
-    // but control requires fresh authentication
-    setAuthToken(null);
-
-    if (timeoutRef.current) {
-      clearTimeout(timeoutRef.current);
-      timeoutRef.current = null;
-    }
-  }, []);
+  }, [exitCommandMode]);
 
   const extendTimeout = useCallback(() => {
     if (mode === 'command') {

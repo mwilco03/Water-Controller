@@ -8,27 +8,26 @@ No console pollution - all output goes through proper logging.
 Includes correlation ID support for distributed tracing.
 """
 
+import json
 import logging
 import sys
+import time
 import uuid
 from contextvars import ContextVar
-from datetime import datetime, timezone
-from typing import Optional
-import json
-import time
+from datetime import UTC, datetime
 
 # Correlation ID context variable (thread-safe and async-safe)
-_correlation_id: ContextVar[Optional[str]] = ContextVar('correlation_id', default=None)
-_operation_name: ContextVar[Optional[str]] = ContextVar('operation_name', default=None)
-_operation_start: ContextVar[Optional[float]] = ContextVar('operation_start', default=None)
+_correlation_id: ContextVar[str | None] = ContextVar('correlation_id', default=None)
+_operation_name: ContextVar[str | None] = ContextVar('operation_name', default=None)
+_operation_start: ContextVar[float | None] = ContextVar('operation_start', default=None)
 
 
-def get_correlation_id() -> Optional[str]:
+def get_correlation_id() -> str | None:
     """Get the current correlation ID."""
     return _correlation_id.get()
 
 
-def set_correlation_id(correlation_id: Optional[str]) -> None:
+def set_correlation_id(correlation_id: str | None) -> None:
     """Set the correlation ID for the current context."""
     _correlation_id.set(correlation_id)
 
@@ -50,7 +49,7 @@ def start_operation(operation: str) -> str:
     return cid
 
 
-def end_operation() -> Optional[float]:
+def end_operation() -> float | None:
     """
     End the current correlated operation.
     Returns the duration in milliseconds, or None if no operation was started.
@@ -81,7 +80,7 @@ class StructuredFormatter(logging.Formatter):
 
     def format(self, record: logging.LogRecord) -> str:
         log_entry = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "level": record.levelname,
             "logger": record.name,
             "message": record.getMessage(),
@@ -116,7 +115,7 @@ class HumanReadableFormatter(logging.Formatter):
     """Human-readable formatter for development."""
 
     def format(self, record: logging.LogRecord) -> str:
-        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        timestamp = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
 
         # Build correlation ID prefix
         cid_prefix = ""
@@ -151,7 +150,7 @@ class HumanReadableFormatter(logging.Formatter):
 def setup_logging(
     level: str = "INFO",
     structured: bool = False,
-    log_file: Optional[str] = None
+    log_file: str | None = None
 ) -> logging.Logger:
     """
     Configure application logging.
@@ -175,10 +174,7 @@ def setup_logging(
     root_logger.addFilter(correlation_filter)
 
     # Choose formatter
-    if structured:
-        formatter = StructuredFormatter()
-    else:
-        formatter = HumanReadableFormatter()
+    formatter = StructuredFormatter() if structured else HumanReadableFormatter()
 
     # Console handler (stderr to avoid console pollution on stdout)
     console_handler = logging.StreamHandler(sys.stderr)
@@ -354,7 +350,7 @@ def log_ui_build_missing() -> None:
 def log_startup_degraded(components: list) -> None:
     """Log degraded startup with operator guidance."""
     operator_log.warning(
-        what=f"System started in degraded mode",
+        what="System started in degraded mode",
         impact=f"Some features may not work correctly. Degraded: {', '.join(components)}",
         still_works="Core monitoring and basic operations remain available.",
         action="Review startup logs for specific issues: journalctl -u water-controller-api -n 100",
@@ -367,6 +363,6 @@ def log_data_stale(rtu_name: str, age_seconds: int) -> None:
         what=f"Data from RTU '{rtu_name}' is stale ({age_seconds}s old)",
         impact="Displayed values may not reflect current conditions.",
         still_works="Alarm thresholds based on last known values. Manual refresh may help.",
-        action=f"Check RTU connectivity: ping <rtu-ip>. Check PROFINET status in System page.",
+        action="Check RTU connectivity: ping <rtu-ip>. Check PROFINET status in System page.",
         rtu=rtu_name,
     )

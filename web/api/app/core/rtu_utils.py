@@ -8,9 +8,9 @@ Common utility functions for RTU operations used across multiple endpoints.
 
 from sqlalchemy.orm import Session
 
-from .exceptions import RtuNotFoundError
 from ..models.rtu import RTU, RtuState
 from ..schemas.common import DataQuality
+from .exceptions import RtuNotFoundError
 
 
 def get_rtu_or_404(db: Session, name: str) -> RTU:

@@ -6,8 +6,8 @@ SPDX-License-Identifier: GPL-3.0-or-later
 Exception handlers and error response formatting.
 """
 
-from datetime import datetime, timezone
-from typing import Dict, Any, Optional
+from datetime import UTC, datetime
+from typing import Any
 from uuid import uuid4
 
 from fastapi import Request
@@ -16,7 +16,7 @@ from fastapi.responses import JSONResponse
 from .exceptions import ScadaException
 
 # Map error codes to HTTP status codes
-ERROR_CODE_STATUS_MAP: Dict[str, int] = {
+ERROR_CODE_STATUS_MAP: dict[str, int] = {
     "VALIDATION_ERROR": 400,
     "RTU_NOT_FOUND": 404,
     "RTU_ALREADY_EXISTS": 409,
@@ -35,7 +35,7 @@ ERROR_CODE_STATUS_MAP: Dict[str, int] = {
 
 # Operator-friendly error messages for low-skill environments
 # These translations help field operators understand issues without technical knowledge
-OPERATOR_MESSAGES: Dict[str, str] = {
+OPERATOR_MESSAGES: dict[str, str] = {
     "VALIDATION_ERROR": "The information provided is incomplete or incorrect. Please check your input.",
     "RTU_NOT_FOUND": "The requested device was not found. It may have been removed or renamed.",
     "RTU_ALREADY_EXISTS": "A device with this name already exists. Please use a different name.",
@@ -70,8 +70,8 @@ def get_request_id(request: Request) -> str:
 
 def build_error_response(
     error: ScadaException,
-    request_id: Optional[str] = None
-) -> Dict[str, Any]:
+    request_id: str | None = None
+) -> dict[str, Any]:
     """Build standardized error response envelope with operator-friendly message."""
     error_dict = error.to_dict()
     # Add operator-friendly message for display in low-skill environments
@@ -80,7 +80,7 @@ def build_error_response(
     return {
         "error": error_dict,
         "meta": {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "request_id": request_id or str(uuid4()),
         }
     }
@@ -88,14 +88,14 @@ def build_error_response(
 
 def build_success_response(
     data: Any,
-    request_id: Optional[str] = None,
-    meta: Optional[Dict[str, Any]] = None
-) -> Dict[str, Any]:
+    request_id: str | None = None,
+    meta: dict[str, Any] | None = None
+) -> dict[str, Any]:
     """Build standardized success response envelope."""
     response = {"data": data}
 
     response_meta = {
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
     }
     if request_id:
         response_meta["request_id"] = request_id

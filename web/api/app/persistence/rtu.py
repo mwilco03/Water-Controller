@@ -6,15 +6,14 @@ SPDX-License-Identifier: GPL-3.0-or-later
 RTU device, sensor, and control operations.
 """
 
-from typing import List, Optional, Dict, Any
+from typing import Any
 
-from .base import get_db
 from .audit import log_audit
-
+from .base import get_db
 
 # ============== RTU Device Operations ==============
 
-def get_rtu_devices() -> List[Dict[str, Any]]:
+def get_rtu_devices() -> list[dict[str, Any]]:
     """Get all RTU devices"""
     with get_db() as conn:
         cursor = conn.cursor()
@@ -22,7 +21,7 @@ def get_rtu_devices() -> List[Dict[str, Any]]:
         return [dict(row) for row in cursor.fetchall()]
 
 
-def get_rtu_device(station_name: str) -> Optional[Dict[str, Any]]:
+def get_rtu_device(station_name: str) -> dict[str, Any] | None:
     """Get a single RTU device"""
     with get_db() as conn:
         cursor = conn.cursor()
@@ -31,7 +30,7 @@ def get_rtu_device(station_name: str) -> Optional[Dict[str, Any]]:
         return dict(row) if row else None
 
 
-def create_rtu_device(device: Dict[str, Any]) -> int:
+def create_rtu_device(device: dict[str, Any]) -> int:
     """Create a new RTU device"""
     with get_db() as conn:
         cursor = conn.cursor()
@@ -46,7 +45,7 @@ def create_rtu_device(device: Dict[str, Any]) -> int:
         return cursor.lastrowid
 
 
-def update_rtu_device(station_name: str, device: Dict[str, Any]) -> bool:
+def update_rtu_device(station_name: str, device: dict[str, Any]) -> bool:
     """Update an RTU device"""
     with get_db() as conn:
         cursor = conn.cursor()
@@ -82,7 +81,7 @@ def delete_rtu_device(station_name: str) -> bool:
 
 # ============== RTU Sensors Operations ==============
 
-def get_rtu_sensors(rtu_station: str) -> List[Dict[str, Any]]:
+def get_rtu_sensors(rtu_station: str) -> list[dict[str, Any]]:
     """Get all sensors for an RTU"""
     with get_db() as conn:
         cursor = conn.cursor()
@@ -92,7 +91,7 @@ def get_rtu_sensors(rtu_station: str) -> List[Dict[str, Any]]:
         return [dict(row) for row in cursor.fetchall()]
 
 
-def upsert_rtu_sensor(sensor: Dict[str, Any]) -> int:
+def upsert_rtu_sensor(sensor: dict[str, Any]) -> int:
     """Insert or update an RTU sensor"""
     with get_db() as conn:
         cursor = conn.cursor()
@@ -149,7 +148,7 @@ def clear_rtu_sensors(rtu_station: str) -> int:
 
 # ============== RTU Controls Operations ==============
 
-def get_rtu_controls(rtu_station: str) -> List[Dict[str, Any]]:
+def get_rtu_controls(rtu_station: str) -> list[dict[str, Any]]:
     """Get all controls for an RTU"""
     with get_db() as conn:
         cursor = conn.cursor()
@@ -159,7 +158,7 @@ def get_rtu_controls(rtu_station: str) -> List[Dict[str, Any]]:
         return [dict(row) for row in cursor.fetchall()]
 
 
-def upsert_rtu_control(control: Dict[str, Any]) -> int:
+def upsert_rtu_control(control: dict[str, Any]) -> int:
     """Insert or update an RTU control"""
     with get_db() as conn:
         cursor = conn.cursor()
@@ -215,7 +214,7 @@ def clear_rtu_controls(rtu_station: str) -> int:
         return cursor.rowcount
 
 
-def get_rtu_inventory(rtu_station: str) -> Optional[Dict[str, Any]]:
+def get_rtu_inventory(rtu_station: str) -> dict[str, Any] | None:
     """Get complete inventory for an RTU (sensors + controls)"""
     device = get_rtu_device(rtu_station)
     if not device:

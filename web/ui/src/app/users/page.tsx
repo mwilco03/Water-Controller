@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { authLogger } from '@/lib/logger';
 
 interface User {
   id: number;
@@ -63,7 +64,7 @@ export default function UsersPage() {
         setUsers(await res.json());
       }
     } catch (error) {
-      console.error('Failed to fetch users:', error);
+      authLogger.error('Failed to fetch users', error);
     }
   };
 
@@ -74,7 +75,7 @@ export default function UsersPage() {
         setSessions(await res.json());
       }
     } catch (error) {
-      console.error('Failed to fetch sessions:', error);
+      authLogger.error('Failed to fetch sessions', error);
     }
   };
 

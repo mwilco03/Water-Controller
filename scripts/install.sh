@@ -14,7 +14,7 @@
 # Constraints: SD card write endurance, real-time requirements, 1GB RAM minimum
 #
 
-set -o pipefail
+set -euo pipefail
 
 # =============================================================================
 # Script Constants
@@ -360,7 +360,7 @@ preflight_checks() {
 
     # Check root privileges
     if [ "$(id -u)" -ne 0 ]; then
-        log_error "This script must be run as root"
+        log_error "Script not running as root. Installation cannot proceed. Run with: sudo $0"
         ((errors++))
     fi
 
@@ -368,7 +368,7 @@ preflight_checks() {
     local required_commands=("bash" "grep" "sed" "awk" "tar" "gzip")
     for cmd in "${required_commands[@]}"; do
         if ! command -v "$cmd" >/dev/null 2>&1; then
-            log_error "Required command not found: $cmd"
+            log_error "Required command not found: $cmd. Installation cannot continue. Install $cmd package and retry."
             ((errors++))
         fi
     done
@@ -377,20 +377,20 @@ preflight_checks() {
     local free_space
     free_space=$(df -m / 2>/dev/null | awk 'NR==2 {print $4}')
     if [ -n "$free_space" ] && [ "$free_space" -lt 1024 ]; then
-        log_error "Insufficient disk space: ${free_space}MB available, 1024MB required"
+        log_error "Insufficient disk space: ${free_space}MB available, 1024MB required. Installation will fail. Free disk space and retry."
         ((errors++))
     fi
 
     # Check if systemd is available
     if ! command -v systemctl >/dev/null 2>&1; then
-        log_error "systemd is required but not found"
+        log_error "systemd not found. Service management unavailable. Install systemd or use a compatible init system."
         ((errors++))
     fi
 
     # Check source availability
     if [ -n "$SOURCE_PATH" ]; then
         if [ ! -d "$SOURCE_PATH" ]; then
-            log_error "Source path not found: $SOURCE_PATH"
+            log_error "Source path not found: $SOURCE_PATH. Cannot install from specified location. Verify path exists and retry."
             ((errors++))
         fi
     else
@@ -403,7 +403,7 @@ preflight_checks() {
     # Check for existing installation in upgrade mode
     if [ $UPGRADE_MODE -eq 1 ]; then
         if [ ! -d "$INSTALL_DIR" ]; then
-            log_error "No existing installation found at $INSTALL_DIR for upgrade"
+            log_error "No existing installation at $INSTALL_DIR. Upgrade cannot proceed. Run fresh install instead."
             ((errors++))
         fi
     fi
@@ -411,8 +411,7 @@ preflight_checks() {
     # Check no existing installation in fresh install mode
     if [ $UPGRADE_MODE -eq 0 ] && [ $UNINSTALL_MODE -eq 0 ]; then
         if [ -d "$INSTALL_DIR" ] && [ $FORCE -eq 0 ]; then
-            log_error "Installation already exists at $INSTALL_DIR"
-            log_error "Use --upgrade to upgrade or --force to overwrite"
+            log_error "Installation exists at $INSTALL_DIR. Fresh install blocked. Use --upgrade to upgrade or --force to overwrite."
             ((errors++))
         fi
     fi
@@ -554,7 +553,7 @@ step_detect_system() {
 
     # Run system detection
     if ! detect_system; then
-        log_error "System detection failed"
+        log_error "System detection failed. Cannot determine hardware/OS configuration. Check system compatibility and retry."
         return 1
     fi
 
@@ -565,7 +564,7 @@ step_detect_system() {
 
     # Check prerequisites
     if ! check_prerequisites; then
-        log_error "Prerequisites check failed"
+        log_error "Prerequisites check failed. Required system components missing. Review requirements and install missing packages."
         return 1
     fi
 
@@ -592,19 +591,19 @@ step_install_dependencies() {
 
     # Install Python
     if ! install_python; then
-        log_error "Python installation failed"
+        log_error "Python installation failed. Backend cannot run. Check package manager and network, then retry."
         return 1
     fi
 
     # Install Node.js
     if ! install_nodejs; then
-        log_error "Node.js installation failed"
+        log_error "Node.js installation failed. Frontend build unavailable. Check package manager and network, then retry."
         return 1
     fi
 
     # Install build dependencies
     if ! install_build_deps; then
-        log_error "Build dependencies installation failed"
+        log_error "Build dependencies installation failed. Compilation will fail. Check package manager and retry."
         return 1
     fi
 
@@ -613,7 +612,7 @@ step_install_dependencies() {
 
     # Verify all dependencies
     if ! verify_all_dependencies; then
-        log_error "Dependency verification failed"
+        log_error "Dependency verification failed. Some packages not properly installed. Check logs and reinstall missing packages."
         return 1
     fi
 
@@ -648,8 +647,7 @@ step_install_pnet() {
     log_info "Installing p-net from source (not available in repositories)..."
 
     if ! install_pnet_full; then
-        log_error "P-Net installation failed"
-        log_error "This is critical - PROFINET communication will not work"
+        log_error "P-Net installation failed. PROFINET communication unavailable. Check build tools and network, then retry."
         return 1
     fi
 
@@ -680,7 +678,7 @@ step_install_pnet() {
 
     # Final verification
     if ! verify_pnet_installation; then
-        log_error "P-Net installation verification failed"
+        log_error "P-Net verification failed. Installation incomplete or corrupted. Check build logs and reinstall."
         return 1
     fi
 
@@ -713,40 +711,40 @@ step_build() {
     # Acquire source
     if [ -n "$SOURCE_PATH" ]; then
         if ! acquire_source "$SOURCE_PATH" "$build_dir"; then
-            log_error "Failed to copy source from $SOURCE_PATH"
+            log_error "Source copy failed from $SOURCE_PATH. Build cannot proceed. Verify source path and permissions."
             return 1
         fi
     else
         if ! acquire_source "$SOURCE_REPO" "$build_dir" "$SOURCE_BRANCH"; then
-            log_error "Failed to clone repository"
+            log_error "Repository clone failed. Build cannot proceed. Check network connectivity and repository URL."
             return 1
         fi
     fi
 
     # Create Python virtual environment
     if ! create_python_venv "${INSTALL_DIR}/venv"; then
-        log_error "Failed to create Python virtual environment"
+        log_error "Python venv creation failed. Backend isolation unavailable. Check Python installation and disk space."
         rm -rf "$build_dir"
         return 1
     fi
 
     # Build Python backend
     if ! build_python_backend "$build_dir" "${INSTALL_DIR}/venv"; then
-        log_error "Failed to build Python backend"
+        log_error "Python backend build failed. API server unavailable. Check dependencies and build logs."
         rm -rf "$build_dir"
         return 1
     fi
 
     # Build React frontend
     if ! build_react_frontend "$build_dir"; then
-        log_error "Failed to build React frontend"
+        log_error "React frontend build failed. HMI unavailable. Check Node.js and npm dependencies."
         rm -rf "$build_dir"
         return 1
     fi
 
     # Verify build
     if ! verify_build "$build_dir"; then
-        log_error "Build verification failed"
+        log_error "Build verification failed. Artifacts may be incomplete. Review build logs and retry."
         rm -rf "$build_dir"
         return 1
     fi
@@ -776,36 +774,36 @@ step_install_files() {
 
     # Create service user
     if ! create_service_user; then
-        log_error "Failed to create service user"
+        log_error "Service user creation failed. Service cannot run securely. Check user permissions and retry."
         return 1
     fi
 
     # Create directory structure
     if ! create_directory_structure; then
-        log_error "Failed to create directory structure"
+        log_error "Directory creation failed. Files cannot be installed. Check disk space and permissions."
         return 1
     fi
 
     # Install Python application (uses SOURCE_DIR set by acquire_source)
     if [ -n "$SOURCE_DIR" ] && [ -d "$SOURCE_DIR" ]; then
         if ! install_python_app; then
-            log_error "Failed to install Python application"
+            log_error "Python app installation failed. Backend unavailable. Check file permissions and disk space."
             return 1
         fi
 
         # Install frontend
         if ! install_frontend; then
-            log_error "Failed to install frontend"
+            log_error "Frontend installation failed. HMI unavailable. Check file permissions and disk space."
             return 1
         fi
     elif [ $SKIP_BUILD -eq 0 ]; then
-        log_error "SOURCE_DIR not set or not found. Run build step first."
+        log_error "SOURCE_DIR not set. Installation sequence error. Run build step first or use --source."
         return 1
     fi
 
     # Install configuration template
     if ! install_config_template; then
-        log_error "Failed to install configuration"
+        log_error "Configuration installation failed. Default settings unavailable. Check template files and permissions."
         return 1
     fi
 
@@ -824,13 +822,13 @@ step_configure_service() {
 
     # Install service (install_service handles generation internally)
     if ! install_service; then
-        log_error "Failed to install service"
+        log_error "Service installation failed. Automatic startup unavailable. Check systemd and file permissions."
         return 1
     fi
 
     # Enable service
     if ! enable_service; then
-        log_error "Failed to enable service"
+        log_error "Service enable failed. Auto-start on boot unavailable. Run: systemctl enable water-controller"
         return 1
     fi
 
@@ -909,7 +907,7 @@ step_start_service() {
 
     # Start the service
     if ! start_service; then
-        log_error "Failed to start service"
+        log_error "Service start failed. Application not running. Check logs: journalctl -u water-controller"
         return 1
     fi
 
@@ -918,7 +916,7 @@ step_start_service() {
 
     # Check service health
     if ! check_service_health; then
-        log_error "Service health check failed"
+        log_error "Service health check failed. Application may be misconfigured. Check logs: journalctl -u water-controller"
         return 1
     fi
 
@@ -1013,7 +1011,7 @@ do_upgrade() {
     # Check disk space
     log_info "Checking disk space..."
     if ! check_disk_space_for_upgrade; then
-        log_error "Insufficient disk space for upgrade"
+        log_error "Insufficient disk space for upgrade. Upgrade cannot proceed. Free disk space and retry."
         return 1
     fi
 
@@ -1051,7 +1049,7 @@ do_upgrade() {
     if [ $CANARY_MODE -eq 1 ] && [ -n "$ROLLBACK_POINT" ]; then
         log_info "CANARY MODE: Testing rollback restore capability..."
         if ! test_rollback_restore "$ROLLBACK_POINT"; then
-            log_error "Rollback restore test failed - aborting upgrade"
+            log_error "Rollback restore test failed. Upgrade unsafe without rollback capability. Fix backup system and retry."
             return 1
         fi
     fi
@@ -1101,7 +1099,7 @@ do_upgrade() {
 
         # Test API endpoints
         if ! test_upgrade_api_endpoints; then
-            log_error "API endpoint test failed - initiating rollback"
+            log_error "API endpoint test failed. Backend not responding correctly. Initiating rollback."
             rollback_on_failure
             return 1
         fi
@@ -1112,7 +1110,7 @@ do_upgrade() {
         # Monitor service stability for 60 seconds
         log_info "Monitoring service stability (60 seconds)..."
         if ! verify_service_stability 60; then
-            log_error "Service stability check failed - initiating rollback"
+            log_error "Service stability check failed. Service crashed or unresponsive. Initiating rollback."
             rollback_on_failure
             return 1
         fi
@@ -1134,7 +1132,7 @@ do_upgrade() {
     if ! verify_database_migration; then
         log_warn "Database migration verification had issues"
         if [ $UNATTENDED_MODE -eq 1 ] || [ $CANARY_MODE -eq 1 ]; then
-            log_error "Database migration failed - initiating rollback"
+            log_error "Database migration failed. Data integrity at risk. Initiating rollback."
             rollback_on_failure
             return 1
         fi
@@ -1173,16 +1171,15 @@ _run_upgrade_step() {
 # Rollback on failure during upgrade
 rollback_on_failure() {
     if [ -n "$ROLLBACK_POINT" ]; then
-        log_error "Installation failed, initiating rollback..."
+        log_error "Installation failed. System may be in inconsistent state. Initiating rollback..."
         if perform_rollback "$ROLLBACK_POINT"; then
-            log_info "Rollback successful"
+            log_info "Rollback successful. System restored to pre-upgrade state."
         else
-            log_error "Standard rollback failed, trying emergency rollback..."
+            log_error "Standard rollback failed. Trying emergency rollback..."
             if emergency_rollback; then
-                log_info "Emergency rollback completed"
+                log_info "Emergency rollback completed. Verify system manually."
             else
-                log_error "Emergency rollback also failed - manual intervention required"
-                log_error "Run: ./install.sh --selective-rollback for component-level recovery"
+                log_error "Emergency rollback failed. Manual intervention required. Run: ./install.sh --selective-rollback"
             fi
         fi
     fi
@@ -1815,7 +1812,7 @@ main() {
 
     # Load modules
     if ! load_modules; then
-        _early_log_error "Failed to load installation modules"
+        _early_log_error "Module loading failed. Installation cannot proceed. Verify scripts/lib/ directory exists."
         exit 1
     fi
 
@@ -1829,7 +1826,7 @@ main() {
 
     # Run pre-flight checks
     if ! preflight_checks; then
-        log_error "Pre-flight checks failed"
+        log_error "Pre-flight checks failed. Review errors above and fix before retrying."
         exit 1
     fi
 
@@ -1849,7 +1846,7 @@ main() {
     if [ $result -eq 0 ]; then
         show_completion_message
     else
-        log_error "Installation failed. Check log file: $LOG_FILE"
+        log_error "Installation failed. Review errors in log file: $LOG_FILE"
         exit 1
     fi
 

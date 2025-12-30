@@ -7,10 +7,10 @@ User management and authentication operations.
 """
 
 import logging
-from typing import List, Optional, Dict, Any
+from typing import Any
 
-from .base import get_db
 from .audit import log_audit
+from .base import get_db
 
 logger = logging.getLogger(__name__)
 
@@ -48,12 +48,16 @@ def verify_password(password: str, stored_hash: str) -> bool:
         computed = hash_password(password)
         return computed == stored_hash
     else:
-        # Unknown format
-        logger.warning(f"Unknown password hash format: {stored_hash[:10]}...")
+        # [CONDITION] + [CONSEQUENCE] + [ACTION] per Section 1.9
+        logger.warning(
+            f"Unknown password hash format: {stored_hash[:10]}... "
+            "Authentication cannot proceed. "
+            "Reset user password via admin interface."
+        )
         return False
 
 
-def get_users(include_inactive: bool = False) -> List[Dict[str, Any]]:
+def get_users(include_inactive: bool = False) -> list[dict[str, Any]]:
     """Get all users"""
     with get_db() as conn:
         cursor = conn.cursor()
@@ -64,7 +68,7 @@ def get_users(include_inactive: bool = False) -> List[Dict[str, Any]]:
         return [dict(row) for row in cursor.fetchall()]
 
 
-def get_user(user_id: int) -> Optional[Dict[str, Any]]:
+def get_user(user_id: int) -> dict[str, Any] | None:
     """Get a single user by ID"""
     with get_db() as conn:
         cursor = conn.cursor()
@@ -73,7 +77,7 @@ def get_user(user_id: int) -> Optional[Dict[str, Any]]:
         return dict(row) if row else None
 
 
-def get_user_by_username(username: str) -> Optional[Dict[str, Any]]:
+def get_user_by_username(username: str) -> dict[str, Any] | None:
     """Get a user by username"""
     with get_db() as conn:
         cursor = conn.cursor()
@@ -82,7 +86,7 @@ def get_user_by_username(username: str) -> Optional[Dict[str, Any]]:
         return dict(row) if row else None
 
 
-def create_user(user: Dict[str, Any]) -> int:
+def create_user(user: dict[str, Any]) -> int:
     """Create a new user"""
     with get_db() as conn:
         cursor = conn.cursor()
@@ -99,7 +103,7 @@ def create_user(user: Dict[str, Any]) -> int:
         return cursor.lastrowid
 
 
-def update_user(user_id: int, user: Dict[str, Any]) -> bool:
+def update_user(user_id: int, user: dict[str, Any]) -> bool:
     """Update a user"""
     with get_db() as conn:
         cursor = conn.cursor()
@@ -121,7 +125,7 @@ def update_user(user_id: int, user: Dict[str, Any]) -> bool:
             values.append(1 if user['sync_to_rtus'] else 0)
 
         # Handle password change
-        if 'password' in user and user['password']:
+        if user.get('password'):
             fields.append('password_hash = ?')
             values.append(hash_password(user['password']))
 
@@ -155,7 +159,7 @@ def delete_user(user_id: int) -> bool:
         return False
 
 
-def authenticate_user(username: str, password: str) -> Optional[Dict[str, Any]]:
+def authenticate_user(username: str, password: str) -> dict[str, Any] | None:
     """Authenticate user with username and password"""
     user = get_user_by_username(username)
     if not user:
@@ -178,7 +182,7 @@ def authenticate_user(username: str, password: str) -> Optional[Dict[str, Any]]:
     return user
 
 
-def get_users_for_sync() -> List[Dict[str, Any]]:
+def get_users_for_sync() -> list[dict[str, Any]]:
     """Get all users that should be synced to RTUs"""
     with get_db() as conn:
         cursor = conn.cursor()

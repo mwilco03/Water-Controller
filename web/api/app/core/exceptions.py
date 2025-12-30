@@ -7,7 +7,7 @@ Standardized exception classes for SCADA operations.
 All exceptions follow the response envelope pattern.
 """
 
-from typing import Dict, Any, Optional
+from typing import Any
 
 
 class ScadaException(Exception):
@@ -17,9 +17,9 @@ class ScadaException(Exception):
         self,
         code: str,
         message: str,
-        details: Optional[Dict[str, Any]] = None,
+        details: dict[str, Any] | None = None,
         recoverable: bool = True,
-        suggested_action: Optional[str] = None
+        suggested_action: str | None = None
     ):
         super().__init__(message)
         self.code = code
@@ -28,7 +28,7 @@ class ScadaException(Exception):
         self.recoverable = recoverable
         self.suggested_action = suggested_action
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert exception to error response dictionary."""
         result = {
             "code": self.code,
@@ -45,7 +45,7 @@ class ScadaException(Exception):
 class ValidationError(ScadaException):
     """Request validation failed."""
 
-    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
+    def __init__(self, message: str, details: dict[str, Any] | None = None):
         super().__init__(
             code="VALIDATION_ERROR",
             message=message,
@@ -139,9 +139,9 @@ class CommandRejectedError(ScadaException):
     def __init__(
         self,
         message: str,
-        interlock: Optional[str] = None,
-        condition: Optional[str] = None,
-        current_value: Optional[float] = None
+        interlock: str | None = None,
+        condition: str | None = None,
+        current_value: float | None = None
     ):
         details = {}
         if interlock:
@@ -176,7 +176,7 @@ class CommandTimeoutError(ScadaException):
 class ProfinetError(ScadaException):
     """PROFINET communication failure."""
 
-    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
+    def __init__(self, message: str, details: dict[str, Any] | None = None):
         super().__init__(
             code="PROFINET_ERROR",
             message=message,

@@ -4,25 +4,25 @@ Copyright (C) 2024
 SPDX-License-Identifier: GPL-3.0-or-later
 """
 
-from datetime import datetime, timezone
-from typing import Any, Dict, List
+from datetime import UTC, datetime
+from typing import Any
 
 from fastapi import APIRouter, Depends, Path
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session
 
+from ...core.errors import build_success_response
 from ...core.exceptions import (
     SlotNotFoundError,
     ValidationError,
 )
-from ...core.errors import build_success_response
 from ...core.rtu_utils import get_rtu_or_404
 from ...models.base import get_db
-from ...models.rtu import RTU, Slot, Sensor, Control, SlotStatus
+from ...models.rtu import RTU, Control, Sensor, Slot, SlotStatus
 from ...schemas.slot import (
     SlotConfig,
-    SlotSensorSummary,
-    SlotResponse,
     SlotConfigUpdate,
+    SlotResponse,
+    SlotSensorSummary,
 )
 
 router = APIRouter()
@@ -43,7 +43,7 @@ def get_slot_or_404(db: Session, rtu: RTU, slot_number: int) -> Slot:
 async def list_slots(
     name: str = Path(..., description="RTU station name"),
     db: Session = Depends(get_db)
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     List all slots for an RTU.
     """
@@ -106,7 +106,7 @@ async def configure_slot(
     slot: int = Path(..., ge=1, description="Slot number"),
     config: SlotConfigUpdate = None,
     db: Session = Depends(get_db)
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Configure a slot (module type, sensor mappings).
     """
@@ -116,7 +116,7 @@ async def configure_slot(
     # Update slot configuration
     slot_obj.module_type = config.module_type
     slot_obj.status = SlotStatus.OK
-    slot_obj.updated_at = datetime.now(timezone.utc)
+    slot_obj.updated_at = datetime.now(UTC)
 
     # Clear existing sensors and controls for this slot
     db.query(Sensor).filter(Sensor.slot_id == slot_obj.id).delete()

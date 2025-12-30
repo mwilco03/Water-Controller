@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { networkLogger } from '@/lib/logger';
 
 interface NetworkConfig {
   mode: 'dhcp' | 'static';
@@ -69,7 +70,7 @@ export default function NetworkPage() {
         setNetworkConfig(await res.json());
       }
     } catch (error) {
-      console.error('Failed to fetch network config:', error);
+      networkLogger.error('Failed to fetch network config', error);
     }
   };
 
@@ -80,7 +81,7 @@ export default function NetworkPage() {
         setWebConfig(await res.json());
       }
     } catch (error) {
-      console.error('Failed to fetch web config:', error);
+      networkLogger.error('Failed to fetch web config', error);
     }
   };
 
@@ -91,7 +92,7 @@ export default function NetworkPage() {
         setInterfaces(await res.json());
       }
     } catch (error) {
-      console.error('Failed to fetch interfaces:', error);
+      networkLogger.error('Failed to fetch interfaces', error);
     }
   };
 

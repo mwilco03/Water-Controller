@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { alarmLogger } from '@/lib/logger';
 
 interface Alarm {
   alarm_id: number;
@@ -52,7 +53,7 @@ export default function AlarmSummary({ alarms, onShelve }: Props) {
         body: JSON.stringify({ user: 'operator' }),
       });
     } catch (error) {
-      console.error('Failed to acknowledge alarm:', error);
+      alarmLogger.error('Failed to acknowledge alarm', error);
     }
   };
 
@@ -64,7 +65,7 @@ export default function AlarmSummary({ alarms, onShelve }: Props) {
         body: JSON.stringify({ user: 'operator' }),
       });
     } catch (error) {
-      console.error('Failed to acknowledge all alarms:', error);
+      alarmLogger.error('Failed to acknowledge all alarms', error);
     }
   };
 

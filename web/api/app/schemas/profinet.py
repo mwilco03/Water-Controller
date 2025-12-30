@@ -8,7 +8,8 @@ Pydantic models for PROFINET status and diagnostics.
 
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 from .common import DataQuality
@@ -59,7 +60,7 @@ class ProfinetStatusConnected(BaseModel):
     cycle_time: CycleTimeStats = Field(description="Cycle time statistics")
     packet_stats: PacketStats = Field(description="Packet statistics")
     jitter_ms: float = Field(description="Timing jitter in ms")
-    last_error: Optional[str] = Field(None, description="Last error if any")
+    last_error: str | None = Field(None, description="Last error if any")
     io_status: IoStatus = Field(description="I/O data status")
     timestamp: datetime = Field(description="Status timestamp")
 
@@ -69,8 +70,8 @@ class ProfinetStatusDisconnected(BaseModel):
 
     connected: bool = Field(False, description="Connection status")
     state: str = Field(description="Current RTU state")
-    last_connected: Optional[datetime] = Field(None, description="Last connection time")
-    last_error: Optional[str] = Field(None, description="Last error message")
+    last_connected: datetime | None = Field(None, description="Last connection time")
+    last_error: str | None = Field(None, description="Last error message")
     timestamp: datetime = Field(description="Status timestamp")
 
 
@@ -80,20 +81,20 @@ class ProfinetStatus(BaseModel):
     connected: bool = Field(description="Whether RTU is connected")
 
     # Connected fields
-    ar_handle: Optional[str] = Field(None, description="AR handle when connected")
-    uptime_seconds: Optional[int] = Field(None, description="RTU uptime")
-    session_seconds: Optional[int] = Field(None, description="Session duration")
-    cycle_time: Optional[CycleTimeStats] = Field(None, description="Cycle time stats")
-    packet_stats: Optional[PacketStats] = Field(None, description="Packet stats")
-    jitter_ms: Optional[float] = Field(None, description="Timing jitter")
-    io_status: Optional[IoStatus] = Field(None, description="I/O status")
+    ar_handle: str | None = Field(None, description="AR handle when connected")
+    uptime_seconds: int | None = Field(None, description="RTU uptime")
+    session_seconds: int | None = Field(None, description="Session duration")
+    cycle_time: CycleTimeStats | None = Field(None, description="Cycle time stats")
+    packet_stats: PacketStats | None = Field(None, description="Packet stats")
+    jitter_ms: float | None = Field(None, description="Timing jitter")
+    io_status: IoStatus | None = Field(None, description="I/O status")
 
     # Disconnected fields
-    state: Optional[str] = Field(None, description="State when disconnected")
-    last_connected: Optional[datetime] = Field(None, description="Last connection time")
+    state: str | None = Field(None, description="State when disconnected")
+    last_connected: datetime | None = Field(None, description="Last connection time")
 
     # Common fields
-    last_error: Optional[str] = Field(None, description="Last error")
+    last_error: str | None = Field(None, description="Last error")
     timestamp: datetime = Field(description="Status timestamp")
 
 
@@ -104,7 +105,7 @@ class ProfinetSubslot(BaseModel):
     io_type: str = Field(description="I/O type (input, output)")
     bytes: int = Field(description="Data size in bytes")
     status: str = Field(description="Subslot status")
-    diag_info: Optional[str] = Field(None, description="Diagnostic info")
+    diag_info: str | None = Field(None, description="Diagnostic info")
 
 
 class ProfinetSlot(BaseModel):
@@ -112,8 +113,8 @@ class ProfinetSlot(BaseModel):
 
     slot: int = Field(description="Slot number")
     module_id: str = Field(description="Module identifier")
-    module_ident: Optional[str] = Field(None, description="Module identification string")
-    subslots: List[ProfinetSubslot] = Field(default_factory=list, description="Subslot info")
+    module_ident: str | None = Field(None, description="Module identification string")
+    subslots: list[ProfinetSubslot] = Field(default_factory=list, description="Subslot info")
     status: str = Field(description="Slot status")
     pulled: bool = Field(False, description="Module was pulled")
     wrong_module: bool = Field(False, description="Wrong module installed")
@@ -127,7 +128,7 @@ class ProfinetDiagnostic(BaseModel):
     level: DiagnosticLevel = Field(description="Severity level")
     source: str = Field(description="Diagnostic source (AR, CYCLE, etc.)")
     message: str = Field(description="Diagnostic message")
-    details: Optional[Dict[str, Any]] = Field(None, description="Additional details")
+    details: dict[str, Any] | None = Field(None, description="Additional details")
 
 
 class ProfinetDiagnosticListMeta(BaseModel):
@@ -141,5 +142,5 @@ class ProfinetDiagnosticListMeta(BaseModel):
 class ProfinetDiagnosticListResponse(BaseModel):
     """Response wrapper for diagnostic list."""
 
-    data: List[ProfinetDiagnostic]
+    data: list[ProfinetDiagnostic]
     meta: ProfinetDiagnosticListMeta

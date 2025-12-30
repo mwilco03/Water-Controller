@@ -4,30 +4,29 @@ Copyright (C) 2024
 SPDX-License-Identifier: GPL-3.0-or-later
 """
 
-from datetime import datetime, timezone, timedelta
-from typing import Any, Dict, List, Optional
+import csv
+import io
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
-from sqlalchemy import func
-import io
-import csv
 
 from ...core.errors import build_success_response
 from ...models.base import get_db
+from ...models.historian import DataQuality, HistorianSample
 from ...models.rtu import Sensor
-from ...models.historian import HistorianSample, DataQuality
 from ...schemas.common import DataQuality as DataQualityEnum
 from ...schemas.trends import (
-    TrendInterval,
+    ExportFormat,
     TrendAggregate,
+    TrendData,
+    TrendExportRequest,
+    TrendInterval,
+    TrendMeta,
     TrendPoint,
     TrendPointValue,
-    TrendData,
-    TrendMeta,
-    TrendExportRequest,
-    ExportFormat,
 )
 
 router = APIRouter()
@@ -53,12 +52,12 @@ async def get_trends(
     interval: TrendInterval = Query(TrendInterval.ONE_MINUTE, description="Aggregation interval"),
     aggregate: TrendAggregate = Query(TrendAggregate.AVG, description="Aggregation function"),
     db: Session = Depends(get_db)
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Get historical data for trending.
 
     Performance: Uses single bulk query per tag + in-memory aggregation
-    instead of per-interval queries (O(tags) instead of O(tags × intervals)).
+    instead of per-interval queries (O(tags) instead of O(tags x intervals)).
     """
     tag_list = [t.strip() for t in tags.split(",")]
 
@@ -70,7 +69,7 @@ async def get_trends(
     interval_seconds = get_interval_seconds(interval)
 
     # Pre-fetch ALL samples for ALL tags in the time range (single query per tag)
-    # This converts O(intervals × tags) queries to O(tags) queries
+    # This converts O(intervals x tags) queries to O(tags) queries
     samples_by_sensor = {}
     for tag in tag_list:
         sensor = sensor_map.get(tag)
@@ -87,7 +86,7 @@ async def get_trends(
     def get_bucket_start(ts: datetime) -> datetime:
         ts_epoch = ts.timestamp()
         bucket_epoch = (int(ts_epoch) // interval_seconds) * interval_seconds
-        return datetime.fromtimestamp(bucket_epoch, tz=ts.tzinfo or timezone.utc)
+        return datetime.fromtimestamp(bucket_epoch, tz=ts.tzinfo or UTC)
 
     # Pre-aggregate samples into buckets (O(n) where n = total samples)
     bucket_samples = {}  # (tag, bucket_start) -> list of samples
@@ -216,7 +215,7 @@ async def export_trends(
         writer = csv.writer(output)
 
         # Header
-        header = ["Timestamp"] + request.tags
+        header = ["Timestamp", *request.tags]
         if request.include_metadata:
             header += [f"{tag}_quality" for tag in request.tags]
         writer.writerow(header)

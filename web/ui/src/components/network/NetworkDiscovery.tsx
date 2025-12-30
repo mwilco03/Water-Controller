@@ -79,6 +79,9 @@ export default function NetworkDiscovery({ onDeviceSelect, onAddDevice }: Props)
     arp: false,
   });
 
+  // Justification: simulateScan is a development-only fallback that reads current state.
+  // Including it as a dependency would require converting it to useCallback, adding complexity
+  // for a dev-only code path. startScan recreates when networkRange/scanMethods change.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const startScan = useCallback(async () => {
     setScanning(true);

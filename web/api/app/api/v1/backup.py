@@ -7,19 +7,19 @@ SPDX-License-Identifier: GPL-3.0-or-later
 import io
 import json
 import zipfile
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from datetime import UTC, datetime
+from typing import Any
 
-from fastapi import APIRouter, Depends, UploadFile, File
+from fastapi import APIRouter, Depends, File, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from ...core.errors import build_success_response
-from ...models.base import get_db
-from ...models.rtu import RTU, Slot, Sensor, Control
 from ...models.alarm import AlarmRule
+from ...models.base import get_db
 from ...models.pid import PidLoop
+from ...models.rtu import RTU, Control, Sensor, Slot
 
 router = APIRouter()
 
@@ -46,7 +46,7 @@ async def create_backup(
 
     Returns a downloadable ZIP file containing all configuration.
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     backup_id = now.strftime("%Y%m%d_%H%M%S")
 
     # Collect all configuration
@@ -174,7 +174,7 @@ async def restore_backup(
     file: UploadFile = File(...),
     merge: bool = False,
     db: Session = Depends(get_db)
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Restore configuration from backup.
 
@@ -189,7 +189,7 @@ async def restore_backup(
     except Exception as e:
         return build_success_response({
             "success": False,
-            "error": f"Invalid backup file: {str(e)}",
+            "error": f"Invalid backup file: {e!s}",
         })
 
     # Validate version

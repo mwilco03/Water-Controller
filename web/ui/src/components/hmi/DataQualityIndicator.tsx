@@ -26,16 +26,29 @@ interface DataQualityIndicatorProps {
   children?: ReactNode;
 }
 
-// Convert numeric quality codes to quality enum
+/**
+ * Convert numeric OPC UA quality codes to DataQuality enum.
+ * Per WT-SPEC-001 Section 5.2:
+ *   0x00 = GOOD (fresh, valid measurement)
+ *   0x40 = UNCERTAIN (stale, degraded, or at limits)
+ *   0x80 = BAD (sensor failure, invalid data)
+ *   0xC0 = NOT_CONNECTED (no communication with sensor)
+ *
+ * Uses bit mask on bits 6-7 to determine quality category.
+ */
 export function qualityFromCode(code: number): DataQuality {
-  if (code >= 192) return 'GOOD';        // 0xC0+
-  if (code >= 64) return 'UNCERTAIN';    // 0x40-0xBF
-  if (code === 0) return 'NOT_CONNECTED';
-  return 'BAD';
+  if (code === 0x00) return 'GOOD';
+
+  const qualityMask = code & 0xC0;
+  if (qualityMask === 0x40) return 'UNCERTAIN';
+  if (qualityMask === 0x80) return 'BAD';
+  if (qualityMask === 0xC0) return 'NOT_CONNECTED';
+
+  return 'GOOD';
 }
 
 // Check if data is stale based on timestamp
-export function isStale(timestamp: Date | string | null, thresholdSeconds: number = 30): boolean {
+export function isStale(timestamp: Date | string | null | undefined, thresholdSeconds: number = 30): boolean {
   if (!timestamp) return false;
   const ts = typeof timestamp === 'string' ? new Date(timestamp) : timestamp;
   const now = new Date();

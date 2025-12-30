@@ -6,9 +6,9 @@ SPDX-License-Identifier: GPL-3.0-or-later
 SQLAlchemy model for RTU configuration templates.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
-from sqlalchemy import Column, Integer, String, Text, DateTime
+from sqlalchemy import Column, DateTime, Integer, String
 from sqlalchemy.dialects.sqlite import JSON
 
 from .base import Base
@@ -33,9 +33,9 @@ class ConfigTemplate(Base):
     config_data = Column(JSON, nullable=False, default=dict)
 
     # Timestamps
-    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
     updated_at = Column(
         DateTime(timezone=True),
-        default=lambda: datetime.now(timezone.utc),
-        onupdate=lambda: datetime.now(timezone.utc)
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC)
     )

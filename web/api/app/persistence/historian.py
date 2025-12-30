@@ -6,15 +6,14 @@ SPDX-License-Identifier: GPL-3.0-or-later
 Historian tags and slot configuration operations.
 """
 
-from typing import List, Optional, Dict, Any
+from typing import Any
 
-from .base import get_db
 from .audit import log_audit
-
+from .base import get_db
 
 # ============== Slot Configuration Operations ==============
 
-def get_all_slot_configs() -> List[Dict[str, Any]]:
+def get_all_slot_configs() -> list[dict[str, Any]]:
     """Get all slot configurations"""
     with get_db() as conn:
         cursor = conn.cursor()
@@ -22,7 +21,7 @@ def get_all_slot_configs() -> List[Dict[str, Any]]:
         return [dict(row) for row in cursor.fetchall()]
 
 
-def get_slot_configs_by_rtu(rtu_station: str) -> List[Dict[str, Any]]:
+def get_slot_configs_by_rtu(rtu_station: str) -> list[dict[str, Any]]:
     """Get slot configurations for a specific RTU"""
     with get_db() as conn:
         cursor = conn.cursor()
@@ -31,7 +30,7 @@ def get_slot_configs_by_rtu(rtu_station: str) -> List[Dict[str, Any]]:
         return [dict(row) for row in cursor.fetchall()]
 
 
-def get_slot_config(rtu_station: str, slot: int) -> Optional[Dict[str, Any]]:
+def get_slot_config(rtu_station: str, slot: int) -> dict[str, Any] | None:
     """Get a specific slot configuration"""
     with get_db() as conn:
         cursor = conn.cursor()
@@ -41,7 +40,7 @@ def get_slot_config(rtu_station: str, slot: int) -> Optional[Dict[str, Any]]:
         return dict(row) if row else None
 
 
-def upsert_slot_config(config: Dict[str, Any]) -> int:
+def upsert_slot_config(config: dict[str, Any]) -> int:
     """Create or update a slot configuration"""
     with get_db() as conn:
         cursor = conn.cursor()
@@ -92,7 +91,7 @@ def delete_slot_config(rtu_station: str, slot: int) -> bool:
 
 # ============== Historian Tag Operations ==============
 
-def get_historian_tags() -> List[Dict[str, Any]]:
+def get_historian_tags() -> list[dict[str, Any]]:
     """Get all historian tags"""
     with get_db() as conn:
         cursor = conn.cursor()
@@ -100,7 +99,7 @@ def get_historian_tags() -> List[Dict[str, Any]]:
         return [dict(row) for row in cursor.fetchall()]
 
 
-def get_historian_tag(tag_id: int) -> Optional[Dict[str, Any]]:
+def get_historian_tag(tag_id: int) -> dict[str, Any] | None:
     """Get a specific historian tag by ID"""
     with get_db() as conn:
         cursor = conn.cursor()
@@ -109,7 +108,7 @@ def get_historian_tag(tag_id: int) -> Optional[Dict[str, Any]]:
         return dict(row) if row else None
 
 
-def get_historian_tag_by_name(tag_name: str) -> Optional[Dict[str, Any]]:
+def get_historian_tag_by_name(tag_name: str) -> dict[str, Any] | None:
     """Get a historian tag by name"""
     with get_db() as conn:
         cursor = conn.cursor()
@@ -118,7 +117,7 @@ def get_historian_tag_by_name(tag_name: str) -> Optional[Dict[str, Any]]:
         return dict(row) if row else None
 
 
-def upsert_historian_tag(tag: Dict[str, Any]) -> int:
+def upsert_historian_tag(tag: dict[str, Any]) -> int:
     """Create or update a historian tag"""
     with get_db() as conn:
         cursor = conn.cursor()

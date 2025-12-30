@@ -6,18 +6,18 @@ SPDX-License-Identifier: GPL-3.0-or-later
 SQLAlchemy models for alarm rules and events.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import (
+    Boolean,
     Column,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
     Integer,
     String,
-    Float,
-    Boolean,
-    DateTime,
-    ForeignKey,
     Text,
-    Index,
 )
 from sqlalchemy.orm import relationship
 
@@ -60,11 +60,11 @@ class AlarmRule(Base):
     enabled = Column(Boolean, default=True)
 
     # Timestamps
-    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
     updated_at = Column(
         DateTime(timezone=True),
-        default=lambda: datetime.now(timezone.utc),
-        onupdate=lambda: datetime.now(timezone.utc)
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC)
     )
 
     # Relationships
@@ -86,7 +86,7 @@ class AlarmEvent(Base):
     message = Column(String(256), nullable=True)
 
     # Timestamps
-    activated_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+    activated_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
     acknowledged_at = Column(DateTime(timezone=True), nullable=True)
     acknowledged_by = Column(String(64), nullable=True)
     cleared_at = Column(DateTime(timezone=True), nullable=True)
@@ -103,10 +103,10 @@ class AlarmEvent(Base):
         Index("ix_alarm_events_rtu_state", "rtu_id", "state"),
     )
 
-    def acknowledge(self, user: str, note: str = None):
+    def acknowledge(self, user: str, note: str | None = None):
         """Acknowledge the alarm."""
         self.state = AlarmState.ACKNOWLEDGED
-        self.acknowledged_at = datetime.now(timezone.utc)
+        self.acknowledged_at = datetime.now(UTC)
         self.acknowledged_by = user
         if note:
             self.note = note
@@ -114,4 +114,4 @@ class AlarmEvent(Base):
     def clear(self):
         """Clear the alarm."""
         self.state = AlarmState.CLEARED
-        self.cleared_at = datetime.now(timezone.utc)
+        self.cleared_at = datetime.now(UTC)

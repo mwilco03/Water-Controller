@@ -6,14 +6,14 @@ SPDX-License-Identifier: GPL-3.0-or-later
 
 from fastapi import APIRouter
 
-from .auth import router as auth_router
-from .rtus import router as rtus_router
 from .alarms import router as alarms_router
-from .trends import router as trends_router
-from .discover import router as discover_router
-from .system import router as system_router
+from .auth import router as auth_router
 from .backup import router as backup_router
+from .discover import router as discover_router
+from .rtus import router as rtus_router
+from .system import router as system_router
 from .templates import router as templates_router
+from .trends import router as trends_router
 
 api_router = APIRouter()
 

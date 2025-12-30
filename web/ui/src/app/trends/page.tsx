@@ -238,6 +238,9 @@ function TrendsContent() {
   }, [autoRefresh, selectedTags, connected, fetchTrendData]);
 
   // Re-draw chart when trend data changes
+  // Justification: drawChart reads trendData directly when invoked; including it as a
+  // dependency would cause infinite re-renders since it's not memoized. The effect
+  // correctly triggers on trendData changes and calls the current drawChart function.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     drawChart();

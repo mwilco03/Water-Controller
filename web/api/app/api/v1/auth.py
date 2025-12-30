@@ -7,12 +7,12 @@ Authentication endpoints for the read-first access model.
 Login is only required for control actions, not viewing.
 """
 
-from fastapi import APIRouter, HTTPException, status, Request
+from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
-from ...core.auth import auth_service, get_current_session
-from ...persistence.sessions import delete_session, get_session
+from ...core.auth import auth_service
 from ...core.logging import get_logger
+from ...persistence.sessions import delete_session, get_session
 
 logger = get_logger(__name__)
 

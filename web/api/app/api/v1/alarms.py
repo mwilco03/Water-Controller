@@ -8,38 +8,40 @@ Access Model:
 - POST/PUT/DELETE endpoints: Control access (authentication required)
 """
 
-from datetime import datetime, timezone, timedelta
-from typing import Any, Dict, List, Optional
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
-from fastapi import APIRouter, Depends, Query, Path
+from fastapi import APIRouter, Depends, Path, Query
 from sqlalchemy.orm import Session
 
-from ...core.exceptions import AlarmNotFoundError, RtuNotFoundError
+from ...core.auth import log_control_action, require_control_access
 from ...core.errors import build_success_response
-from ...core.auth import require_control_access, log_control_action
+from ...core.exceptions import AlarmNotFoundError, RtuNotFoundError
+from ...models.alarm import AlarmEvent, AlarmPriority, AlarmRule, AlarmState
 from ...models.base import get_db
 from ...models.rtu import RTU
-from ...models.alarm import AlarmRule, AlarmEvent, AlarmState, AlarmPriority
+from ...persistence import alarms as alarm_persistence
 from ...schemas.alarm import (
-    AlarmEvent as AlarmEventSchema,
     AlarmAcknowledgeRequest,
     AlarmListMeta,
     AlarmShelveRequest,
     ShelvedAlarm,
 )
-from ...persistence import alarms as alarm_persistence
+from ...schemas.alarm import (
+    AlarmEvent as AlarmEventSchema,
+)
 
 router = APIRouter()
 
 
 @router.get("")
 async def list_alarms(
-    rtu: Optional[str] = Query(None, description="Filter by RTU station name"),
-    priority: Optional[str] = Query(None, description="Filter by priority"),
-    acknowledged: Optional[bool] = Query(None, description="Filter by acknowledged status"),
+    rtu: str | None = Query(None, description="Filter by RTU station name"),
+    priority: str | None = Query(None, description="Filter by priority"),
+    acknowledged: bool | None = Query(None, description="Filter by acknowledged status"),
     limit: int = Query(100, ge=1, le=1000, description="Max records"),
     db: Session = Depends(get_db)
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     List active alarms across all RTUs.
     """
@@ -108,18 +110,18 @@ async def list_alarms(
 
 @router.get("/history")
 async def alarm_history(
-    start: Optional[datetime] = Query(None, description="Start time"),
-    end: Optional[datetime] = Query(None, description="End time"),
-    rtu: Optional[str] = Query(None, description="Filter by RTU"),
-    priority: Optional[str] = Query(None, description="Filter by priority"),
+    start: datetime | None = Query(None, description="Start time"),
+    end: datetime | None = Query(None, description="End time"),
+    rtu: str | None = Query(None, description="Filter by RTU"),
+    priority: str | None = Query(None, description="Filter by priority"),
     limit: int = Query(100, ge=1, le=1000, description="Max records"),
     db: Session = Depends(get_db)
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Get historical alarm log.
     """
     # Default to last 24 hours
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     if not end:
         end = now
     if not start:
@@ -177,10 +179,10 @@ async def alarm_history(
 @router.post("/{alarm_id}/acknowledge")
 async def acknowledge_alarm(
     alarm_id: int = Path(..., description="Alarm event ID"),
-    request: Optional[AlarmAcknowledgeRequest] = None,
+    request: AlarmAcknowledgeRequest | None = None,
     db: Session = Depends(get_db),
     session: dict = Depends(require_control_access)
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Acknowledge an alarm.
 
@@ -226,11 +228,11 @@ async def acknowledge_alarm(
 
 @router.post("/acknowledge-all")
 async def acknowledge_all_alarms(
-    rtu: Optional[str] = Query(None, description="Filter by RTU"),
-    request: Optional[AlarmAcknowledgeRequest] = None,
+    rtu: str | None = Query(None, description="Filter by RTU"),
+    request: AlarmAcknowledgeRequest | None = None,
     db: Session = Depends(get_db),
     session: dict = Depends(require_control_access)
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Acknowledge all active alarms.
 
@@ -277,7 +279,7 @@ async def acknowledge_all_alarms(
 @router.get("/shelved")
 async def list_shelved_alarms(
     include_expired: bool = Query(False, description="Include expired shelved alarms"),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     List all shelved alarms.
 
@@ -315,7 +317,7 @@ async def shelve_alarm(
     slot: int = Path(..., ge=0, description="Slot number"),
     request: AlarmShelveRequest = ...,
     session: dict = Depends(require_control_access)
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Shelve an alarm for a specified duration.
 
@@ -358,7 +360,7 @@ async def shelve_alarm(
 async def unshelve_alarm(
     shelf_id: int = Path(..., description="Shelf entry ID"),
     session: dict = Depends(require_control_access)
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Remove an alarm from shelf before expiration.
 
@@ -396,7 +398,7 @@ async def unshelve_alarm(
 async def check_alarm_shelved(
     rtu_station: str = Path(..., description="RTU station name"),
     slot: int = Path(..., ge=0, description="Slot number"),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Check if a specific alarm is currently shelved.
     """

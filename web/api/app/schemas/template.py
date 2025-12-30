@@ -7,7 +7,7 @@ Pydantic models for RTU configuration templates.
 """
 
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Union
+
 from pydantic import BaseModel, Field
 
 
@@ -15,8 +15,8 @@ class SlotTemplate(BaseModel):
     """Slot configuration template."""
 
     slot_number: int = Field(ge=0, le=31, description="Slot number")
-    module_type: Optional[str] = Field(None, description="Module type (analog_input, digital_output, etc.)")
-    module_id: Optional[str] = Field(None, description="Module identifier")
+    module_type: str | None = Field(None, description="Module type (analog_input, digital_output, etc.)")
+    module_id: str | None = Field(None, description="Module identifier")
 
 
 class SensorTemplate(BaseModel):
@@ -41,8 +41,8 @@ class ControlTemplate(BaseModel):
     channel: int = Field(ge=0, description="Channel on slot")
     control_type: str = Field(description="Control type (discrete, analog, pwm)")
     equipment_type: str = Field(description="Equipment type (pump, valve, motor)")
-    min_value: Optional[float] = Field(None, description="Minimum output")
-    max_value: Optional[float] = Field(None, description="Maximum output")
+    min_value: float | None = Field(None, description="Minimum output")
+    max_value: float | None = Field(None, description="Maximum output")
 
 
 class AlarmTemplate(BaseModel):
@@ -74,16 +74,16 @@ class TemplateCreate(BaseModel):
     """Request to create a configuration template."""
 
     name: str = Field(min_length=1, max_length=64, description="Template name")
-    description: Optional[str] = Field(None, max_length=256, description="Description")
+    description: str | None = Field(None, max_length=256, description="Description")
     category: str = Field("general", description="Template category")
-    vendor_id: Optional[int] = Field(None, description="Target vendor ID")
-    device_id: Optional[int] = Field(None, description="Target device ID")
+    vendor_id: int | None = Field(None, description="Target vendor ID")
+    device_id: int | None = Field(None, description="Target device ID")
     slot_count: int = Field(16, ge=1, le=32, description="Number of slots")
-    slots: List[SlotTemplate] = Field(default_factory=list, description="Slot configs")
-    sensors: List[SensorTemplate] = Field(default_factory=list, description="Sensor configs")
-    controls: List[ControlTemplate] = Field(default_factory=list, description="Control configs")
-    alarms: List[AlarmTemplate] = Field(default_factory=list, description="Alarm rules")
-    pid_loops: List[PidTemplate] = Field(default_factory=list, description="PID loops")
+    slots: list[SlotTemplate] = Field(default_factory=list, description="Slot configs")
+    sensors: list[SensorTemplate] = Field(default_factory=list, description="Sensor configs")
+    controls: list[ControlTemplate] = Field(default_factory=list, description="Control configs")
+    alarms: list[AlarmTemplate] = Field(default_factory=list, description="Alarm rules")
+    pid_loops: list[PidTemplate] = Field(default_factory=list, description="PID loops")
 
 
 class TemplateResponse(BaseModel):
@@ -91,16 +91,16 @@ class TemplateResponse(BaseModel):
 
     id: int = Field(description="Template ID")
     name: str = Field(description="Template name")
-    description: Optional[str] = Field(None, description="Description")
+    description: str | None = Field(None, description="Description")
     category: str = Field(description="Template category")
-    vendor_id: Optional[Union[int, str]] = Field(None, description="Target vendor ID")
-    device_id: Optional[Union[int, str]] = Field(None, description="Target device ID")
+    vendor_id: int | str | None = Field(None, description="Target vendor ID")
+    device_id: int | str | None = Field(None, description="Target device ID")
     slot_count: int = Field(description="Number of slots")
-    slots: List[SlotTemplate] = Field(description="Slot configs")
-    sensors: List[SensorTemplate] = Field(description="Sensor configs")
-    controls: List[ControlTemplate] = Field(description="Control configs")
-    alarms: List[AlarmTemplate] = Field(description="Alarm rules")
-    pid_loops: List[PidTemplate] = Field(description="PID loops")
+    slots: list[SlotTemplate] = Field(description="Slot configs")
+    sensors: list[SensorTemplate] = Field(description="Sensor configs")
+    controls: list[ControlTemplate] = Field(description="Control configs")
+    alarms: list[AlarmTemplate] = Field(description="Alarm rules")
+    pid_loops: list[PidTemplate] = Field(description="PID loops")
     created_at: datetime = Field(description="Creation timestamp")
     updated_at: datetime = Field(description="Last update timestamp")
 

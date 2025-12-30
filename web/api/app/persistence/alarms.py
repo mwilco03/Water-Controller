@@ -7,17 +7,17 @@ Alarm rules and shelved alarms (ISA-18.2) operations.
 """
 
 import logging
-from typing import List, Optional, Dict, Any
+from typing import Any
 
-from .base import get_db
 from .audit import log_audit
+from .base import get_db
 
 logger = logging.getLogger(__name__)
 
 
 # ============== Alarm Rules Operations ==============
 
-def get_alarm_rules() -> List[Dict[str, Any]]:
+def get_alarm_rules() -> list[dict[str, Any]]:
     """Get all alarm rules"""
     with get_db() as conn:
         cursor = conn.cursor()
@@ -25,7 +25,7 @@ def get_alarm_rules() -> List[Dict[str, Any]]:
         return [dict(row) for row in cursor.fetchall()]
 
 
-def get_alarm_rule(rule_id: int) -> Optional[Dict[str, Any]]:
+def get_alarm_rule(rule_id: int) -> dict[str, Any] | None:
     """Get a single alarm rule"""
     with get_db() as conn:
         cursor = conn.cursor()
@@ -34,7 +34,7 @@ def get_alarm_rule(rule_id: int) -> Optional[Dict[str, Any]]:
         return dict(row) if row else None
 
 
-def create_alarm_rule(rule: Dict[str, Any]) -> int:
+def create_alarm_rule(rule: dict[str, Any]) -> int:
     """
     Create a new alarm rule.
 
@@ -56,7 +56,7 @@ def create_alarm_rule(rule: Dict[str, Any]) -> int:
         return cursor.lastrowid
 
 
-def update_alarm_rule(rule_id: int, rule: Dict[str, Any]) -> bool:
+def update_alarm_rule(rule_id: int, rule: dict[str, Any]) -> bool:
     """
     Update an alarm rule.
 
@@ -91,7 +91,7 @@ def delete_alarm_rule(rule_id: int) -> bool:
 
 # ============== Shelved Alarms Operations (ISA-18.2) ==============
 
-def get_shelved_alarms(include_expired: bool = False) -> List[Dict[str, Any]]:
+def get_shelved_alarms(include_expired: bool = False) -> list[dict[str, Any]]:
     """Get all shelved alarms, optionally including expired ones"""
     with get_db() as conn:
         cursor = conn.cursor()
@@ -119,7 +119,7 @@ def is_alarm_shelved(rtu_station: str, slot: int) -> bool:
 
 
 def shelve_alarm(rtu_station: str, slot: int, username: str,
-                 duration_minutes: int, reason: str = None) -> int:
+                 duration_minutes: int, reason: str | None = None) -> int:
     """Shelve an alarm for a specified duration"""
     with get_db() as conn:
         cursor = conn.cursor()
@@ -174,7 +174,7 @@ def cleanup_expired_shelves() -> int:
         return count
 
 
-def get_shelved_alarm(shelf_id: int) -> Optional[Dict[str, Any]]:
+def get_shelved_alarm(shelf_id: int) -> dict[str, Any] | None:
     """Get a single shelved alarm entry"""
     with get_db() as conn:
         cursor = conn.cursor()

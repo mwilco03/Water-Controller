@@ -9,42 +9,37 @@ Note: Business logic is delegated to RtuService for testability.
 Route handlers remain thin and declarative.
 """
 
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any
 
-from fastapi import APIRouter, Depends, Query, HTTPException
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
-from ...core.exceptions import (
-    RtuNotFoundError,
-    RtuAlreadyExistsError,
-    RtuNotConnectedError,
-    RtuBusyError,
-    ValidationError,
-    SlotNotFoundError,
-)
 from ...core.errors import build_success_response
+from ...core.exceptions import (
+    RtuBusyError,
+    RtuNotConnectedError,
+)
+from ...models.alarm import AlarmRule
 from ...models.base import get_db
-from ...models.rtu import RTU, Slot, Sensor, Control, RtuState, SlotStatus
-from ...models.alarm import AlarmRule, AlarmEvent
 from ...models.historian import HistorianSample
+from ...models.rtu import RTU, Control, RtuState, Sensor, Slot, SlotStatus
 from ...schemas.rtu import (
-    RtuCreate,
-    RtuResponse,
-    RtuDetailResponse,
-    RtuStats,
-    SlotSummary,
-    DeletionImpact,
     ConnectRequest,
     ConnectResponse,
+    DeletionImpact,
     DisconnectResponse,
-    DiscoverResponse,
     DiscoveredSlot,
+    DiscoverResponse,
     DiscoverSummary,
+    RtuCreate,
+    RtuDetailResponse,
+    RtuResponse,
+    RtuStats,
+    SlotSummary,
     TestResponse,
     TestResult,
 )
-from ...services.rtu_service import RtuService, get_rtu_service
+from ...services.rtu_service import get_rtu_service
 
 router = APIRouter()
 
@@ -68,7 +63,7 @@ def build_rtu_stats(db: Session, rtu: RTU) -> RtuStats:
 async def create_rtu(
     request: RtuCreate,
     db: Session = Depends(get_db)
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Create a new RTU configuration.
 
@@ -96,12 +91,12 @@ async def create_rtu(
 
 @router.get("")
 async def list_rtus(
-    state: Optional[str] = Query(None, description="Filter by state"),
+    state: str | None = Query(None, description="Filter by state"),
     include_stats: bool = Query(False, description="Include sensor/alarm counts"),
     limit: int = Query(100, ge=1, le=1000, description="Maximum number of RTUs to return"),
     offset: int = Query(0, ge=0, description="Number of RTUs to skip"),
     db: Session = Depends(get_db)
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     List all configured RTUs with pagination.
     """
@@ -140,7 +135,7 @@ async def list_rtus(
 async def get_rtu(
     name: str,
     db: Session = Depends(get_db)
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Get detailed RTU information.
     """
@@ -183,7 +178,7 @@ async def get_rtu(
 async def delete_rtu(
     name: str,
     db: Session = Depends(get_db)
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Delete RTU and all associated resources.
 
@@ -227,7 +222,7 @@ async def delete_rtu(
 async def get_deletion_impact(
     name: str,
     db: Session = Depends(get_db)
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Preview what will be deleted (for confirmation UI).
     """
@@ -266,9 +261,9 @@ async def get_deletion_impact(
 @router.post("/{name}/connect", status_code=202)
 async def connect_rtu(
     name: str,
-    request: Optional[ConnectRequest] = None,
+    request: ConnectRequest | None = None,
     db: Session = Depends(get_db)
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Establish PROFINET connection to RTU.
 
@@ -300,7 +295,7 @@ async def connect_rtu(
 async def disconnect_rtu(
     name: str,
     db: Session = Depends(get_db)
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Gracefully close PROFINET connection.
 
@@ -331,7 +326,7 @@ async def disconnect_rtu(
 async def discover_modules(
     name: str,
     db: Session = Depends(get_db)
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Discover modules in RTU slots via PROFINET.
 
@@ -376,7 +371,7 @@ async def discover_modules(
 async def test_connection(
     name: str,
     db: Session = Depends(get_db)
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Run connection and I/O test.
 
@@ -412,11 +407,11 @@ async def test_connection(
 
 
 # Include nested routers for slots, sensors, controls, profinet, pid
-from .slots import router as slots_router
-from .sensors import router as sensors_router
 from .controls import router as controls_router
-from .profinet import router as profinet_router
 from .pid import router as pid_router
+from .profinet import router as profinet_router
+from .sensors import router as sensors_router
+from .slots import router as slots_router
 
 router.include_router(slots_router, prefix="/{name}/slots")
 router.include_router(sensors_router, prefix="/{name}/sensors")

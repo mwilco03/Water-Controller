@@ -13,35 +13,32 @@ import os
 import sys
 import time
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
-from typing import Dict, Any
+from datetime import UTC, datetime
+from typing import Any
 from uuid import uuid4
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
-from .core.exceptions import ScadaException
-from .core.errors import scada_exception_handler, generic_exception_handler
-from .core.logging import (
-    setup_logging,
-    get_logger,
-    set_correlation_id,
-    get_correlation_id,
-    start_operation,
-    end_operation,
-)
-from .core.startup import (
-    validate_startup,
-    set_startup_result,
-    get_startup_result,
-    StartupMode,
-)
-from .models.base import Base, engine, get_db
 from .api.v1 import api_router
 from .api.websocket import router as websocket_router
-from .persistence.base import initialize as init_persistence, is_initialized
+from .core.errors import generic_exception_handler, scada_exception_handler
+from .core.exceptions import ScadaException
+from .core.logging import (
+    get_logger,
+    set_correlation_id,
+    setup_logging,
+)
+from .core.startup import (
+    StartupMode,
+    get_startup_result,
+    set_startup_result,
+    validate_startup,
+)
+from .models.base import Base, engine, get_db
+from .persistence.base import initialize as init_persistence
+from .persistence.base import is_initialized
 from .persistence.users import ensure_default_admin
 from .services.profinet_client import get_profinet_client
 
@@ -194,7 +191,7 @@ app.include_router(websocket_router, prefix="/api/v1")
 
 # Health check endpoint
 @app.get("/health")
-async def health_check() -> Dict[str, Any]:
+async def health_check() -> dict[str, Any]:
     """
     Health check endpoint with subsystem status including startup validation.
 
@@ -316,7 +313,7 @@ async def health_check() -> Dict[str, Any]:
 
     return {
         "status": status,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
         "subsystems": subsystems,
         "degraded_components": degraded_components if degraded_components else None,
     }

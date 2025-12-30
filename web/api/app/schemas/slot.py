@@ -6,13 +6,13 @@ SPDX-License-Identifier: GPL-3.0-or-later
 Pydantic models for slot configuration endpoints.
 """
 
-from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any
+
 from pydantic import BaseModel, Field
 
-from .sensor import SensorConfig
 from .control import ControlConfig
+from .sensor import SensorConfig
 
 
 class SlotStatus(str, Enum):
@@ -37,15 +37,15 @@ class SlotConfig(BaseModel):
     """Slot configuration with sensors and controls."""
 
     slot: int = Field(description="Slot number")
-    module_id: Optional[str] = Field(None, description="Module identifier (hex)")
-    module_type: Optional[str] = Field(None, description="Module type name")
+    module_id: str | None = Field(None, description="Module identifier (hex)")
+    module_type: str | None = Field(None, description="Module type name")
     status: SlotStatus = Field(SlotStatus.EMPTY, description="Current status")
     configured: bool = Field(False, description="Whether slot is configured")
-    sensors: List[SlotSensorSummary] = Field(
+    sensors: list[SlotSensorSummary] = Field(
         default_factory=list,
         description="Sensors in this slot"
     )
-    controls: List[Dict[str, Any]] = Field(
+    controls: list[dict[str, Any]] = Field(
         default_factory=list,
         description="Controls in this slot"
     )
@@ -55,7 +55,7 @@ class SlotResponse(BaseModel):
     """Response for single slot configuration."""
 
     slot: int = Field(description="Slot number")
-    module_type: Optional[str] = Field(None, description="Module type")
+    module_type: str | None = Field(None, description="Module type")
     configured: bool = Field(description="Whether configured")
     sensors_configured: int = Field(0, description="Number of sensors")
     controls_configured: int = Field(0, description="Number of controls")
@@ -64,18 +64,18 @@ class SlotResponse(BaseModel):
 class SlotListResponse(BaseModel):
     """Response wrapper for slot list."""
 
-    data: List[SlotConfig]
+    data: list[SlotConfig]
 
 
 class SlotConfigUpdate(BaseModel):
     """Request to configure a slot."""
 
     module_type: str = Field(description="Module type identifier")
-    sensors: List[SensorConfig] = Field(
+    sensors: list[SensorConfig] = Field(
         default_factory=list,
         description="Sensor configurations"
     )
-    controls: List[ControlConfig] = Field(
+    controls: list[ControlConfig] = Field(
         default_factory=list,
         description="Control configurations"
     )

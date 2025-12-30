@@ -75,6 +75,16 @@ export const TIMING = {
     /** Session refresh interval (1 minute) */
     REFRESH_MS: 60000,
   },
+
+  /**
+   * WebSocket connection settings
+   */
+  WEBSOCKET: {
+    /** Reconnect attempt interval (3 seconds) */
+    RECONNECT_INTERVAL_MS: 3000,
+    /** Maximum reconnection attempts before giving up */
+    MAX_RECONNECT_ATTEMPTS: 10,
+  },
 } as const;
 
 /**

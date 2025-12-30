@@ -8,7 +8,7 @@ Pydantic models for control/actuator endpoints.
 
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional
+
 from pydantic import BaseModel, Field
 
 from .common import DataQuality
@@ -38,20 +38,20 @@ class ControlState(BaseModel):
     control_type: ControlType = Field(description="Control output type")
 
     # For discrete controls
-    state: Optional[str] = Field(None, description="Current state (ON, OFF, etc.)")
-    commanded_state: Optional[str] = Field(None, description="Last commanded state")
+    state: str | None = Field(None, description="Current state (ON, OFF, etc.)")
+    commanded_state: str | None = Field(None, description="Last commanded state")
 
     # For analog controls
-    value: Optional[float] = Field(None, description="Current output value")
-    commanded_value: Optional[float] = Field(None, description="Last commanded value")
-    unit: Optional[str] = Field(None, description="Output unit")
-    min_value: Optional[float] = Field(None, description="Minimum allowed value")
-    max_value: Optional[float] = Field(None, description="Maximum allowed value")
+    value: float | None = Field(None, description="Current output value")
+    commanded_value: float | None = Field(None, description="Last commanded value")
+    unit: str | None = Field(None, description="Output unit")
+    min_value: float | None = Field(None, description="Minimum allowed value")
+    max_value: float | None = Field(None, description="Maximum allowed value")
 
     quality: DataQuality = Field(description="Data quality indicator")
     timestamp: datetime = Field(description="State timestamp")
     interlock_active: bool = Field(False, description="Whether interlock is active")
-    available_commands: List[str] = Field(
+    available_commands: list[str] = Field(
         default_factory=list,
         description="Commands available from current state"
     )
@@ -67,14 +67,14 @@ class AnalogCommand(BaseModel):
     """Command for analog control."""
 
     value: float = Field(description="Setpoint value")
-    ramp_seconds: Optional[float] = Field(None, ge=0, description="Ramp time in seconds")
+    ramp_seconds: float | None = Field(None, ge=0, description="Ramp time in seconds")
 
 
 class ControlCommand(BaseModel):
     """Generic control command (either discrete or analog)."""
 
     # Idempotency support for safe retries in field deployments
-    idempotency_key: Optional[str] = Field(
+    idempotency_key: str | None = Field(
         None,
         min_length=1,
         max_length=64,
@@ -82,11 +82,11 @@ class ControlCommand(BaseModel):
     )
 
     # For discrete controls
-    command: Optional[str] = Field(None, description="Discrete command")
+    command: str | None = Field(None, description="Discrete command")
 
     # For analog controls
-    value: Optional[float] = Field(None, description="Analog setpoint")
-    ramp_seconds: Optional[float] = Field(None, ge=0, description="Ramp time")
+    value: float | None = Field(None, description="Analog setpoint")
+    ramp_seconds: float | None = Field(None, ge=0, description="Ramp time")
 
 
 class CoupledAction(BaseModel):
@@ -102,13 +102,13 @@ class CommandResponse(BaseModel):
     """Response for control command."""
 
     tag: str = Field(description="Control tag name")
-    command: Optional[str] = Field(None, description="Command issued (discrete)")
-    value: Optional[float] = Field(None, description="Value set (analog)")
+    command: str | None = Field(None, description="Command issued (discrete)")
+    value: float | None = Field(None, description="Value set (analog)")
     accepted: bool = Field(description="Whether command was accepted")
-    previous_state: Optional[str] = Field(None, description="State before command")
-    new_state: Optional[str] = Field(None, description="State after command")
+    previous_state: str | None = Field(None, description="State before command")
+    new_state: str | None = Field(None, description="State after command")
     timestamp: datetime = Field(description="Command timestamp")
-    coupled_actions: List[CoupledAction] = Field(
+    coupled_actions: list[CoupledAction] = Field(
         default_factory=list,
         description="Coupled actions triggered"
     )
@@ -118,11 +118,11 @@ class ControlListMeta(BaseModel):
     """Metadata for control list response."""
 
     rtu_state: str = Field(description="RTU connection state")
-    last_io_update: Optional[datetime] = Field(None, description="Last I/O cycle timestamp")
+    last_io_update: datetime | None = Field(None, description="Last I/O cycle timestamp")
 
 
 class ControlListResponse(BaseModel):
     """Response wrapper for control list."""
 
-    data: List[ControlState]
+    data: list[ControlState]
     meta: ControlListMeta

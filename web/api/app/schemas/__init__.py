@@ -4,123 +4,123 @@ Copyright (C) 2024
 SPDX-License-Identifier: GPL-3.0-or-later
 """
 
-from .common import DataQuality, ResponseMeta, ErrorResponse, SuccessResponse
+from .alarm import (
+    AlarmAcknowledgeRequest,
+    AlarmConfig,
+    AlarmEvent,
+    AlarmListResponse,
+    AlarmPriority,
+    AlarmState,
+    AlarmType,
+)
+from .common import DataQuality, ErrorResponse, ResponseMeta, SuccessResponse
+from .control import (
+    CommandResponse,
+    ControlCommand,
+    ControlConfig,
+    ControlListResponse,
+    ControlState,
+    ControlType,
+)
+from .profinet import (
+    CycleTimeStats,
+    IoStatus,
+    PacketStats,
+    ProfinetDiagnostic,
+    ProfinetSlot,
+    ProfinetStatus,
+)
 from .rtu import (
-    RtuState,
-    RtuCreate,
-    RtuResponse,
-    RtuListResponse,
-    RtuDetailResponse,
-    RtuStats,
-    DeletionImpact,
     ConnectRequest,
     ConnectResponse,
+    DeletionImpact,
     DisconnectResponse,
     DiscoverResponse,
+    RtuCreate,
+    RtuDetailResponse,
+    RtuListResponse,
+    RtuResponse,
+    RtuState,
+    RtuStats,
     TestResponse,
 )
 from .sensor import (
     SensorConfig,
-    SensorValue,
     SensorListResponse,
-)
-from .control import (
-    ControlType,
-    ControlConfig,
-    ControlState,
-    ControlCommand,
-    CommandResponse,
-    ControlListResponse,
+    SensorValue,
 )
 from .slot import (
-    SlotStatus,
     SlotConfig,
-    SlotResponse,
-    SlotListResponse,
     SlotConfigUpdate,
-)
-from .profinet import (
-    CycleTimeStats,
-    PacketStats,
-    IoStatus,
-    ProfinetStatus,
-    ProfinetSlot,
-    ProfinetDiagnostic,
-)
-from .alarm import (
-    AlarmPriority,
-    AlarmState,
-    AlarmType,
-    AlarmConfig,
-    AlarmEvent,
-    AlarmListResponse,
-    AlarmAcknowledgeRequest,
+    SlotListResponse,
+    SlotResponse,
+    SlotStatus,
 )
 from .trends import (
-    TrendInterval,
     TrendAggregate,
-    TrendPoint,
     TrendData,
-    TrendQuery,
     TrendExportRequest,
+    TrendInterval,
+    TrendPoint,
+    TrendQuery,
 )
 
 __all__ = [
-    # Common
-    "DataQuality",
-    "ResponseMeta",
-    "ErrorResponse",
-    "SuccessResponse",
-    # RTU
-    "RtuState",
-    "RtuCreate",
-    "RtuResponse",
-    "RtuListResponse",
-    "RtuDetailResponse",
-    "RtuStats",
-    "DeletionImpact",
-    "ConnectRequest",
-    "ConnectResponse",
-    "DisconnectResponse",
-    "DiscoverResponse",
-    "TestResponse",
-    # Sensor
-    "SensorConfig",
-    "SensorValue",
-    "SensorListResponse",
-    # Control
-    "ControlType",
-    "ControlConfig",
-    "ControlState",
-    "ControlCommand",
-    "CommandResponse",
-    "ControlListResponse",
-    # Slot
-    "SlotStatus",
-    "SlotConfig",
-    "SlotResponse",
-    "SlotListResponse",
-    "SlotConfigUpdate",
-    # PROFINET
-    "CycleTimeStats",
-    "PacketStats",
-    "IoStatus",
-    "ProfinetStatus",
-    "ProfinetSlot",
-    "ProfinetDiagnostic",
+    "AlarmAcknowledgeRequest",
+    "AlarmConfig",
+    "AlarmEvent",
+    "AlarmListResponse",
     # Alarm
     "AlarmPriority",
     "AlarmState",
     "AlarmType",
-    "AlarmConfig",
-    "AlarmEvent",
-    "AlarmListResponse",
-    "AlarmAcknowledgeRequest",
+    "CommandResponse",
+    "ConnectRequest",
+    "ConnectResponse",
+    "ControlCommand",
+    "ControlConfig",
+    "ControlListResponse",
+    "ControlState",
+    # Control
+    "ControlType",
+    # PROFINET
+    "CycleTimeStats",
+    # Common
+    "DataQuality",
+    "DeletionImpact",
+    "DisconnectResponse",
+    "DiscoverResponse",
+    "ErrorResponse",
+    "IoStatus",
+    "PacketStats",
+    "ProfinetDiagnostic",
+    "ProfinetSlot",
+    "ProfinetStatus",
+    "ResponseMeta",
+    "RtuCreate",
+    "RtuDetailResponse",
+    "RtuListResponse",
+    "RtuResponse",
+    # RTU
+    "RtuState",
+    "RtuStats",
+    # Sensor
+    "SensorConfig",
+    "SensorListResponse",
+    "SensorValue",
+    "SlotConfig",
+    "SlotConfigUpdate",
+    "SlotListResponse",
+    "SlotResponse",
+    # Slot
+    "SlotStatus",
+    "SuccessResponse",
+    "TestResponse",
+    "TrendAggregate",
+    "TrendData",
+    "TrendExportRequest",
     # Trends
     "TrendInterval",
-    "TrendAggregate",
     "TrendPoint",
-    "TrendData",
     "TrendQuery",
-    "TrendExportRequest",
 ]
