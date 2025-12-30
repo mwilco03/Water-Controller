@@ -7,12 +7,12 @@ This module provides time-series data storage using TimescaleDB.
 Falls back to SQLite if TimescaleDB is not available.
 """
 
-import os
 import logging
-from datetime import datetime, timedelta
-from typing import List, Optional, Dict, Any, Tuple
+import os
 from contextlib import contextmanager
+from datetime import datetime, timedelta
 from enum import Enum
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -54,18 +54,18 @@ class HistorianBackend:
     def record_sample(self, tag_id: int, timestamp: datetime, value: float, quality: int):
         raise NotImplementedError
 
-    def record_samples_batch(self, samples: List[Tuple[int, datetime, float, int]]):
+    def record_samples_batch(self, samples: list[tuple[int, datetime, float, int]]):
         raise NotImplementedError
 
     def query_raw(self, tag_id: int, start_time: datetime, end_time: datetime,
-                  limit: int = 10000) -> List[Dict[str, Any]]:
+                  limit: int = 10000) -> list[dict[str, Any]]:
         raise NotImplementedError
 
     def query_aggregate(self, tag_id: int, start_time: datetime, end_time: datetime,
-                        interval_seconds: int = 60) -> List[Dict[str, Any]]:
+                        interval_seconds: int = 60) -> list[dict[str, Any]]:
         raise NotImplementedError
 
-    def get_latest(self, tag_id: int) -> Optional[Dict[str, Any]]:
+    def get_latest(self, tag_id: int) -> dict[str, Any] | None:
         raise NotImplementedError
 
     def purge_old_data(self, retention_days: int) -> int:
@@ -112,13 +112,12 @@ class TimescaleBackend(HistorianBackend):
 
     def init_schema(self):
         """Initialize TimescaleDB schema with hypertables"""
-        with self.get_conn() as conn:
-            with conn.cursor() as cur:
-                # Create extension if not exists
-                cur.execute("CREATE EXTENSION IF NOT EXISTS timescaledb CASCADE;")
+        with self.get_conn() as conn, conn.cursor() as cur:
+            # Create extension if not exists
+            cur.execute("CREATE EXTENSION IF NOT EXISTS timescaledb CASCADE;")
 
-                # Historian samples table
-                cur.execute("""
+            # Historian samples table
+            cur.execute("""
                     CREATE TABLE IF NOT EXISTS historian_samples (
                         time TIMESTAMPTZ NOT NULL,
                         tag_id INTEGER NOT NULL,
@@ -127,32 +126,32 @@ class TimescaleBackend(HistorianBackend):
                     );
                 """)
 
-                # Convert to hypertable if not already
-                cur.execute("""
+            # Convert to hypertable if not already
+            cur.execute("""
                     SELECT EXISTS (
                         SELECT 1 FROM timescaledb_information.hypertables
                         WHERE hypertable_name = 'historian_samples'
                     );
                 """)
-                is_hypertable = cur.fetchone()[0]
+            is_hypertable = cur.fetchone()[0]
 
-                if not is_hypertable:
-                    cur.execute("""
+            if not is_hypertable:
+                cur.execute("""
                         SELECT create_hypertable('historian_samples', 'time',
                                                   chunk_time_interval => INTERVAL '1 day',
                                                   if_not_exists => TRUE);
                     """)
-                    logger.info("Created historian_samples hypertable")
+                logger.info("Created historian_samples hypertable")
 
-                # Create index on tag_id and time
-                cur.execute("""
+            # Create index on tag_id and time
+            cur.execute("""
                     CREATE INDEX IF NOT EXISTS idx_historian_samples_tag_time
                     ON historian_samples (tag_id, time DESC);
                 """)
 
-                # Create continuous aggregates for common intervals
-                # 1-minute aggregates
-                cur.execute("""
+            # Create continuous aggregates for common intervals
+            # 1-minute aggregates
+            cur.execute("""
                     CREATE MATERIALIZED VIEW IF NOT EXISTS historian_1min
                     WITH (timescaledb.continuous) AS
                     SELECT
@@ -168,8 +167,8 @@ class TimescaleBackend(HistorianBackend):
                     WITH NO DATA;
                 """)
 
-                # 1-hour aggregates
-                cur.execute("""
+            # 1-hour aggregates
+            cur.execute("""
                     CREATE MATERIALIZED VIEW IF NOT EXISTS historian_1hour
                     WITH (timescaledb.continuous) AS
                     SELECT
@@ -185,8 +184,8 @@ class TimescaleBackend(HistorianBackend):
                     WITH NO DATA;
                 """)
 
-                # 1-day aggregates
-                cur.execute("""
+            # 1-day aggregates
+            cur.execute("""
                     CREATE MATERIALIZED VIEW IF NOT EXISTS historian_1day
                     WITH (timescaledb.continuous) AS
                     SELECT
@@ -202,118 +201,111 @@ class TimescaleBackend(HistorianBackend):
                     WITH NO DATA;
                 """)
 
-                # Add refresh policies for continuous aggregates
-                try:
-                    cur.execute("""
+            # Add refresh policies for continuous aggregates
+            try:
+                cur.execute("""
                         SELECT add_continuous_aggregate_policy('historian_1min',
                             start_offset => INTERVAL '1 hour',
                             end_offset => INTERVAL '1 minute',
                             schedule_interval => INTERVAL '1 minute',
                             if_not_exists => TRUE);
                     """)
-                    cur.execute("""
+                cur.execute("""
                         SELECT add_continuous_aggregate_policy('historian_1hour',
                             start_offset => INTERVAL '1 day',
                             end_offset => INTERVAL '1 hour',
                             schedule_interval => INTERVAL '1 hour',
                             if_not_exists => TRUE);
                     """)
-                    cur.execute("""
+                cur.execute("""
                         SELECT add_continuous_aggregate_policy('historian_1day',
                             start_offset => INTERVAL '7 days',
                             end_offset => INTERVAL '1 day',
                             schedule_interval => INTERVAL '1 day',
                             if_not_exists => TRUE);
                     """)
-                except Exception as e:
-                    logger.warning(f"Failed to add continuous aggregate policies: {e}")
+            except Exception as e:
+                logger.warning(f"Failed to add continuous aggregate policies: {e}")
 
-                # Add compression policy (compress chunks older than 7 days)
-                try:
-                    cur.execute("""
+            # Add compression policy (compress chunks older than 7 days)
+            try:
+                cur.execute("""
                         ALTER TABLE historian_samples SET (
                             timescaledb.compress,
                             timescaledb.compress_segmentby = 'tag_id'
                         );
                     """)
-                    cur.execute("""
+                cur.execute("""
                         SELECT add_compression_policy('historian_samples',
                             INTERVAL '7 days', if_not_exists => TRUE);
                     """)
-                except Exception as e:
-                    logger.warning(f"Failed to add compression policy: {e}")
+            except Exception as e:
+                logger.warning(f"Failed to add compression policy: {e}")
 
-                # Add retention policy (drop chunks older than 365 days by default)
-                try:
-                    cur.execute("""
+            # Add retention policy (drop chunks older than 365 days by default)
+            try:
+                cur.execute("""
                         SELECT add_retention_policy('historian_samples',
                             INTERVAL '365 days', if_not_exists => TRUE);
                     """)
-                except Exception as e:
-                    logger.warning(f"Failed to add retention policy: {e}")
+            except Exception as e:
+                logger.warning(f"Failed to add retention policy: {e}")
 
-                conn.commit()
-                logger.info("TimescaleDB historian schema initialized")
+            conn.commit()
+            logger.info("TimescaleDB historian schema initialized")
 
     def record_sample(self, tag_id: int, timestamp: datetime, value: float, quality: int = 192):
         """Record a single sample"""
-        with self.get_conn() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "INSERT INTO historian_samples (time, tag_id, value, quality) VALUES (%s, %s, %s, %s)",
-                    (timestamp, tag_id, value, quality)
-                )
-                conn.commit()
+        with self.get_conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO historian_samples (time, tag_id, value, quality) VALUES (%s, %s, %s, %s)",
+                (timestamp, tag_id, value, quality)
+            )
+            conn.commit()
 
-    def record_samples_batch(self, samples: List[Tuple[int, datetime, float, int]]):
+    def record_samples_batch(self, samples: list[tuple[int, datetime, float, int]]):
         """Record multiple samples efficiently"""
         if not samples:
             return
 
-        with self.get_conn() as conn:
-            with conn.cursor() as cur:
-                psycopg2.extras.execute_values(
-                    cur,
-                    "INSERT INTO historian_samples (tag_id, time, value, quality) VALUES %s",
-                    samples,
-                    template="(%s, %s, %s, %s)"
-                )
-                conn.commit()
+        with self.get_conn() as conn, conn.cursor() as cur:
+            psycopg2.extras.execute_values(
+                cur,
+                "INSERT INTO historian_samples (tag_id, time, value, quality) VALUES %s",
+                samples,
+                template="(%s, %s, %s, %s)"
+            )
+            conn.commit()
 
     def query_raw(self, tag_id: int, start_time: datetime, end_time: datetime,
-                  limit: int = 10000) -> List[Dict[str, Any]]:
+                  limit: int = 10000) -> list[dict[str, Any]]:
         """Query raw samples"""
-        with self.get_conn() as conn:
-            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-                cur.execute("""
+        with self.get_conn() as conn, conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("""
                     SELECT time, value, quality
                     FROM historian_samples
                     WHERE tag_id = %s AND time >= %s AND time <= %s
                     ORDER BY time ASC
                     LIMIT %s
                 """, (tag_id, start_time, end_time, limit))
-                return [dict(row) for row in cur.fetchall()]
+            return [dict(row) for row in cur.fetchall()]
 
     def query_aggregate(self, tag_id: int, start_time: datetime, end_time: datetime,
-                        interval_seconds: int = 60) -> List[Dict[str, Any]]:
+                        interval_seconds: int = 60) -> list[dict[str, Any]]:
         """Query aggregated data"""
         # Choose appropriate materialized view based on interval
-        time_range = (end_time - start_time).total_seconds()
+        (end_time - start_time).total_seconds()
 
         if interval_seconds >= 86400:  # 1 day or more
             view = "historian_1day"
-            bucket_interval = "1 day"
         elif interval_seconds >= 3600:  # 1 hour or more
             view = "historian_1hour"
-            bucket_interval = "1 hour"
         elif interval_seconds >= 60:  # 1 minute or more
             view = "historian_1min"
-            bucket_interval = "1 minute"
         else:
             # Use raw data with time_bucket for sub-minute intervals
-            with self.get_conn() as conn:
-                with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-                    cur.execute(f"""
+            with self.get_conn() as conn, conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute(f"""
                         SELECT
                             time_bucket('{interval_seconds} seconds', time) AS bucket,
                             AVG(value) AS avg_value,
@@ -325,51 +317,47 @@ class TimescaleBackend(HistorianBackend):
                         GROUP BY bucket
                         ORDER BY bucket ASC
                     """, (tag_id, start_time, end_time))
-                    return [dict(row) for row in cur.fetchall()]
+                return [dict(row) for row in cur.fetchall()]
 
-        with self.get_conn() as conn:
-            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-                cur.execute(f"""
+        with self.get_conn() as conn, conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(f"""
                     SELECT bucket, avg_value, min_value, max_value, sample_count
                     FROM {view}
                     WHERE tag_id = %s AND bucket >= %s AND bucket <= %s
                     ORDER BY bucket ASC
                 """, (tag_id, start_time, end_time))
-                return [dict(row) for row in cur.fetchall()]
+            return [dict(row) for row in cur.fetchall()]
 
-    def get_latest(self, tag_id: int) -> Optional[Dict[str, Any]]:
+    def get_latest(self, tag_id: int) -> dict[str, Any] | None:
         """Get latest value for a tag"""
-        with self.get_conn() as conn:
-            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-                cur.execute("""
+        with self.get_conn() as conn, conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("""
                     SELECT time, value, quality
                     FROM historian_samples
                     WHERE tag_id = %s
                     ORDER BY time DESC
                     LIMIT 1
                 """, (tag_id,))
-                row = cur.fetchone()
-                return dict(row) if row else None
+            row = cur.fetchone()
+            return dict(row) if row else None
 
     def purge_old_data(self, retention_days: int) -> int:
         """Manually purge old data (in addition to retention policy)"""
         cutoff = datetime.utcnow() - timedelta(days=retention_days)
-        with self.get_conn() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "DELETE FROM historian_samples WHERE time < %s",
-                    (cutoff,)
-                )
-                deleted = cur.rowcount
-                conn.commit()
-                return deleted
+        with self.get_conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM historian_samples WHERE time < %s",
+                (cutoff,)
+            )
+            deleted = cur.rowcount
+            conn.commit()
+            return deleted
 
-    def get_statistics(self, tag_id: Optional[int] = None) -> Dict[str, Any]:
+    def get_statistics(self, tag_id: int | None = None) -> dict[str, Any]:
         """Get historian statistics"""
-        with self.get_conn() as conn:
-            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-                if tag_id:
-                    cur.execute("""
+        with self.get_conn() as conn, conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            if tag_id:
+                cur.execute("""
                         SELECT
                             COUNT(*) as total_samples,
                             MIN(time) as oldest_sample,
@@ -378,8 +366,8 @@ class TimescaleBackend(HistorianBackend):
                         FROM historian_samples
                         WHERE tag_id = %s
                     """, (tag_id,))
-                else:
-                    cur.execute("""
+            else:
+                cur.execute("""
                         SELECT
                             COUNT(*) as total_samples,
                             COUNT(DISTINCT tag_id) as total_tags,
@@ -388,8 +376,8 @@ class TimescaleBackend(HistorianBackend):
                             pg_size_pretty(pg_total_relation_size('historian_samples')) as storage_size
                         FROM historian_samples
                     """)
-                row = cur.fetchone()
-                return dict(row) if row else {}
+            row = cur.fetchone()
+            return dict(row) if row else {}
 
 
 class SQLiteBackend(HistorianBackend):
@@ -441,7 +429,7 @@ class SQLiteBackend(HistorianBackend):
             )
             conn.commit()
 
-    def record_samples_batch(self, samples: List[Tuple[int, datetime, float, int]]):
+    def record_samples_batch(self, samples: list[tuple[int, datetime, float, int]]):
         """Record multiple samples"""
         if not samples:
             return
@@ -455,7 +443,7 @@ class SQLiteBackend(HistorianBackend):
             conn.commit()
 
     def query_raw(self, tag_id: int, start_time: datetime, end_time: datetime,
-                  limit: int = 10000) -> List[Dict[str, Any]]:
+                  limit: int = 10000) -> list[dict[str, Any]]:
         """Query raw samples"""
         with self.get_conn() as conn:
             cursor = conn.cursor()
@@ -469,7 +457,7 @@ class SQLiteBackend(HistorianBackend):
             return [dict(row) for row in cursor.fetchall()]
 
     def query_aggregate(self, tag_id: int, start_time: datetime, end_time: datetime,
-                        interval_seconds: int = 60) -> List[Dict[str, Any]]:
+                        interval_seconds: int = 60) -> list[dict[str, Any]]:
         """Query aggregated data using window functions"""
         with self.get_conn() as conn:
             cursor = conn.cursor()
@@ -488,7 +476,7 @@ class SQLiteBackend(HistorianBackend):
             """, (tag_id, start_time.isoformat(), end_time.isoformat()))
             return [dict(row) for row in cursor.fetchall()]
 
-    def get_latest(self, tag_id: int) -> Optional[Dict[str, Any]]:
+    def get_latest(self, tag_id: int) -> dict[str, Any] | None:
         """Get latest value for a tag"""
         with self.get_conn() as conn:
             cursor = conn.cursor()
@@ -512,7 +500,7 @@ class SQLiteBackend(HistorianBackend):
             conn.commit()
             return deleted
 
-    def get_statistics(self, tag_id: Optional[int] = None) -> Dict[str, Any]:
+    def get_statistics(self, tag_id: int | None = None) -> dict[str, Any]:
         """Get historian statistics"""
         with self.get_conn() as conn:
             cursor = conn.cursor()
@@ -543,7 +531,7 @@ class SQLiteBackend(HistorianBackend):
 
 
 # Global historian instance
-_historian: Optional[HistorianBackend] = None
+_historian: HistorianBackend | None = None
 
 
 def get_historian() -> HistorianBackend:
@@ -571,29 +559,29 @@ def record_sample(tag_id: int, timestamp: datetime, value: float, quality: int =
     get_historian().record_sample(tag_id, timestamp, value, quality)
 
 
-def record_samples_batch(samples: List[Tuple[int, datetime, float, int]]):
+def record_samples_batch(samples: list[tuple[int, datetime, float, int]]):
     """Record multiple samples efficiently"""
     get_historian().record_samples_batch(samples)
 
 
 def query_raw(tag_id: int, start_time: datetime, end_time: datetime,
-              limit: int = 10000) -> List[Dict[str, Any]]:
+              limit: int = 10000) -> list[dict[str, Any]]:
     """Query raw samples"""
     return get_historian().query_raw(tag_id, start_time, end_time, limit)
 
 
 def query_aggregate(tag_id: int, start_time: datetime, end_time: datetime,
-                    interval_seconds: int = 60) -> List[Dict[str, Any]]:
+                    interval_seconds: int = 60) -> list[dict[str, Any]]:
     """Query aggregated data"""
     return get_historian().query_aggregate(tag_id, start_time, end_time, interval_seconds)
 
 
-def get_latest(tag_id: int) -> Optional[Dict[str, Any]]:
+def get_latest(tag_id: int) -> dict[str, Any] | None:
     """Get latest value for a tag"""
     return get_historian().get_latest(tag_id)
 
 
-def get_statistics(tag_id: Optional[int] = None) -> Dict[str, Any]:
+def get_statistics(tag_id: int | None = None) -> dict[str, Any]:
     """Get historian statistics"""
     return get_historian().get_statistics(tag_id)
 

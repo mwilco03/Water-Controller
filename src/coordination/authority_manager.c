@@ -313,6 +313,8 @@ wtc_result_t authority_validate_command(authority_manager_t *manager,
                                          const char *station_name,
                                          uint32_t command_epoch,
                                          const authority_context_t *ctx) {
+    (void)ctx;  /* Reserved for future use */
+
     if (!manager || !station_name) {
         return WTC_ERROR_INVALID_PARAM;
     }
