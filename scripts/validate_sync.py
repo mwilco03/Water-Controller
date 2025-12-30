@@ -20,10 +20,8 @@ To fix drift:
 """
 
 import hashlib
-import shutil
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
 
 
@@ -67,15 +65,9 @@ def compute_hash(path: Path) -> str:
     return hashlib.sha256(normalized.encode()).hexdigest()
 
 
-def run_generator(script: str, output_dir: Path) -> bool:
-    """Run a generator script with modified output directory."""
+def run_generator(script: str) -> bool:
+    """Run a generator script."""
     script_path = SCRIPTS_DIR / script
-
-    # Set environment to redirect output
-    env = {
-        'PYTHONPATH': str(REPO_ROOT),
-        'PATH': '/usr/bin:/bin',
-    }
 
     result = subprocess.run(
         [sys.executable, str(script_path)],
@@ -113,7 +105,7 @@ def main():
     print("Running generators...")
     for gen in GENERATORS:
         print(f"  {gen}...")
-        if not run_generator(gen, REPO_ROOT):
+        if not run_generator(gen):
             print(f"\nFAILED: Generator {gen} failed")
             sys.exit(2)
 
