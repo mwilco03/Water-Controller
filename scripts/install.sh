@@ -14,7 +14,7 @@
 # Constraints: SD card write endurance, real-time requirements, 1GB RAM minimum
 #
 
-set -o pipefail
+set -euo pipefail
 
 # =============================================================================
 # Script Constants
