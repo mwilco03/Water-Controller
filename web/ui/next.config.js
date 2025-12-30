@@ -14,6 +14,10 @@ const nextConfig = {
         source: '/ws/:path*',
         destination: 'http://localhost:8080/ws/:path*',
       },
+      {
+        source: '/health',
+        destination: 'http://localhost:8080/health',
+      },
     ];
   },
 };

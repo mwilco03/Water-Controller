@@ -75,7 +75,7 @@ export function SystemHealthProvider({ children }: SystemHealthProviderProps) {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), HEALTH_CHECK_TIMEOUT_MS);
 
-      const response = await fetch('/api/v1/../health', {
+      const response = await fetch('/health', {
         signal: controller.signal,
         headers: {
           'Accept': 'application/json',
