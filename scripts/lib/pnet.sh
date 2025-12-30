@@ -16,7 +16,7 @@
 #
 
 # Prevent multiple sourcing
-if [ -n "$_WTC_PNET_LOADED" ]; then
+if [ -n "${_WTC_PNET_LOADED:-}" ]; then
     return 0
 fi
 _WTC_PNET_LOADED=1
