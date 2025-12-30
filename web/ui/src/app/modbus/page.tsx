@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { modbusLogger } from '@/lib/logger';
 
 interface ModbusServerConfig {
   tcp_enabled: boolean;
@@ -129,7 +130,7 @@ export default function ModbusPage() {
         setServerConfig(await res.json());
       }
     } catch (error) {
-      console.error('Failed to fetch server config:', error);
+      modbusLogger.error('Failed to fetch server config', error);
     }
   };
 
@@ -140,7 +141,7 @@ export default function ModbusPage() {
         setDownstreamDevices(await res.json());
       }
     } catch (error) {
-      console.error('Failed to fetch downstream devices:', error);
+      modbusLogger.error('Failed to fetch downstream devices', error);
     }
   };
 
@@ -151,7 +152,7 @@ export default function ModbusPage() {
         setRegisterMappings(await res.json());
       }
     } catch (error) {
-      console.error('Failed to fetch register mappings:', error);
+      modbusLogger.error('Failed to fetch register mappings', error);
     }
   };
 
@@ -162,7 +163,7 @@ export default function ModbusPage() {
         setStats(await res.json());
       }
     } catch (error) {
-      console.error('Failed to fetch stats:', error);
+      modbusLogger.error('Failed to fetch stats', error);
     }
   };
 
@@ -173,7 +174,7 @@ export default function ModbusPage() {
         setRtus(await res.json());
       }
     } catch (error) {
-      console.error('Failed to fetch RTUs:', error);
+      modbusLogger.error('Failed to fetch RTUs', error);
     }
   };
 

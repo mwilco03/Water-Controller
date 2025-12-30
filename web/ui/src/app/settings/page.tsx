@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { configLogger, systemLogger, modbusLogger } from '@/lib/logger';
 
 const PAGE_TITLE = 'Settings - Water Treatment Controller';
 
@@ -108,7 +109,7 @@ export default function SettingsPage() {
         setBackups(await res.json());
       }
     } catch (error) {
-      console.error('Failed to fetch backups:', error);
+      configLogger.error('Failed to fetch backups', error);
     }
   };
 
@@ -240,7 +241,7 @@ export default function SettingsPage() {
         setServices(await res.json());
       }
     } catch (error) {
-      console.error('Failed to fetch services:', error);
+      systemLogger.error('Failed to fetch services', error);
     }
   };
 
@@ -280,7 +281,7 @@ export default function SettingsPage() {
         setDownstreamDevices(await devicesRes.json());
       }
     } catch (error) {
-      console.error('Failed to fetch Modbus config:', error);
+      modbusLogger.error('Failed to fetch Modbus config', error);
     }
   };
 
@@ -335,7 +336,7 @@ export default function SettingsPage() {
         setLogDestinations(data.destinations || []);
       }
     } catch (error) {
-      console.error('Failed to fetch log config:', error);
+      configLogger.error('Failed to fetch log config', error);
     }
   };
 

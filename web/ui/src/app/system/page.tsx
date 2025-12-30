@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
+import { systemLogger } from '@/lib/logger';
 
 const PAGE_TITLE = 'System Status - Water Treatment Controller';
 
@@ -67,7 +68,7 @@ export default function SystemPage() {
         setHealth(await res.json());
       }
     } catch (error) {
-      console.error('Failed to fetch health:', error);
+      systemLogger.error('Failed to fetch health', error);
     }
   }, []);
 
@@ -78,7 +79,7 @@ export default function SystemPage() {
         setLogs(await res.json());
       }
     } catch (error) {
-      console.error('Failed to fetch logs:', error);
+      systemLogger.error('Failed to fetch logs', error);
     }
   }, [logFilter]);
 
@@ -103,7 +104,7 @@ export default function SystemPage() {
         }
       }
     } catch (error) {
-      console.error('Failed to fetch services:', error);
+      systemLogger.error('Failed to fetch services', error);
     }
   }, []);
 
@@ -114,7 +115,7 @@ export default function SystemPage() {
         setAuditLog(await res.json());
       }
     } catch (error) {
-      console.error('Failed to fetch audit log:', error);
+      systemLogger.error('Failed to fetch audit log', error);
     }
   }, []);
 

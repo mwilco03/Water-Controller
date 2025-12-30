@@ -11,254 +11,35 @@
  * - RTU connection status prominently displayed
  */
 
-import { useEffect, useState, useCallback, useRef } from 'react';
-
-// Set page title
-const PAGE_TITLE = 'RTU Status - Water Treatment Controller';
-import { useWebSocket } from '@/hooks/useWebSocket';
-import { getRTUs, getAlarms, getRTUInventory } from '@/lib/api';
+import { useEffect } from 'react';
+import { alarmLogger } from '@/lib/logger';
+import { useRTUStatusData } from '@/hooks/useRTUStatusData';
 import {
   RTUStatusCard,
-  RTUStatusData,
   AlarmBanner,
-  AlarmData,
   SystemStatusBar,
   ConnectionStatusIndicator,
-  connectionStateFromRtuState,
 } from '@/components/hmi';
 import type { ConnectionState } from '@/components/hmi';
 
-interface SystemMetrics {
-  cycleTimeMs: number;
-  pendingWrites: number;
-}
+const PAGE_TITLE = 'RTU Status - Water Treatment Controller';
 
 export default function RTUStatusPage() {
-  const [rtus, setRtus] = useState<RTUStatusData[]>([]);
-  const [alarms, setAlarms] = useState<AlarmData[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [dataMode, setDataMode] = useState<'streaming' | 'polling' | 'disconnected'>('polling');
-  const [metrics, setMetrics] = useState<SystemMetrics>({
-    cycleTimeMs: 1000,
-    pendingWrites: 0,
-  });
-  const [isVisible, setIsVisible] = useState(true); // Track tab visibility for power efficiency
-  const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const {
+    rtus,
+    alarms,
+    loading,
+    error,
+    dataMode,
+    metrics,
+    connected,
+    refetch,
+  } = useRTUStatusData();
 
   // Set page title
   useEffect(() => {
     document.title = PAGE_TITLE;
   }, []);
-
-  // Fetch RTU and alarm data
-  const fetchData = useCallback(async () => {
-    try {
-      const [rtusResponse, alarmsResponse] = await Promise.all([
-        getRTUs(),
-        getAlarms(),
-      ]);
-
-      // Transform RTU data to RTUStatusData format
-      // Note: getRTUs() already returns RTUDevice[] directly
-      const rtuList = rtusResponse;
-
-      // Fetch inventory for each RTU to get sensor/actuator counts
-      const rtusWithInventory = await Promise.all(
-        rtuList.map(async (rtu: any) => {
-          try {
-            const inventory = await getRTUInventory(rtu.station_name);
-            return {
-              station_name: rtu.station_name,
-              ip_address: rtu.ip_address,
-              state: rtu.state,
-              slot_count: rtu.slot_count || 0,
-              sensor_count: inventory?.sensors?.length || 0,
-              actuator_count: inventory?.controls?.length || 0,
-              last_communication: rtu.last_seen || new Date().toISOString(),
-              alarm_count: 0,
-              has_unacknowledged_alarms: false,
-              healthy: rtu.healthy ?? true,
-            };
-          } catch {
-            return {
-              station_name: rtu.station_name,
-              ip_address: rtu.ip_address,
-              state: rtu.state,
-              slot_count: rtu.slot_count || 0,
-              sensor_count: 0,
-              actuator_count: 0,
-              last_communication: rtu.last_seen,
-              alarm_count: 0,
-              has_unacknowledged_alarms: false,
-              healthy: rtu.healthy ?? true,
-            };
-          }
-        })
-      );
-
-      // Process alarms
-      // Note: getAlarms() already returns Alarm[] directly
-      const alarmList = alarmsResponse;
-      const formattedAlarms: AlarmData[] = alarmList.map((alarm: any) => ({
-        alarm_id: alarm.alarm_id || alarm.id,
-        rtu_station: alarm.rtu_station || alarm.station_name,
-        slot: alarm.slot,
-        severity: alarm.severity || alarm.priority || 'MEDIUM',
-        message: alarm.message || alarm.description,
-        state: alarm.state || (alarm.acknowledged ? 'ACTIVE_ACK' : 'ACTIVE'),
-        timestamp: alarm.timestamp || alarm.raised_at,
-        acknowledged: alarm.acknowledged,
-      }));
-
-      // Update RTU alarm counts
-      const rtusWithAlarms = rtusWithInventory.map(rtu => {
-        const rtuAlarms = formattedAlarms.filter(a => a.rtu_station === rtu.station_name && a.state !== 'CLEARED');
-        return {
-          ...rtu,
-          alarm_count: rtuAlarms.length,
-          has_unacknowledged_alarms: rtuAlarms.some(a => a.state === 'ACTIVE'),
-        };
-      });
-
-      setRtus(rtusWithAlarms);
-      setAlarms(formattedAlarms);
-      setError(null);
-    } catch (err) {
-      console.error('Error fetching data:', err);
-      setError('Failed to fetch system data');
-      setDataMode('disconnected');
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  // WebSocket for real-time updates
-  const { connected, subscribe } = useWebSocket({
-    onConnect: () => {
-      setDataMode('streaming');
-      // Stop polling when WebSocket connects
-      if (pollIntervalRef.current) {
-        clearInterval(pollIntervalRef.current);
-        pollIntervalRef.current = null;
-      }
-    },
-    onDisconnect: () => {
-      setDataMode('polling');
-      // Start polling when WebSocket disconnects
-      if (!pollIntervalRef.current) {
-        pollIntervalRef.current = setInterval(fetchData, 5000);
-      }
-    },
-  });
-
-  // Subscribe to real-time updates
-  useEffect(() => {
-    const unsubRtu = subscribe('rtu_update', () => {
-      fetchData();
-    });
-
-    const unsubAlarm = subscribe('alarm_raised', (_, alarm) => {
-      setAlarms(prev => {
-        const existing = prev.findIndex(a => a.alarm_id === alarm.alarm_id);
-        if (existing >= 0) {
-          const updated = [...prev];
-          updated[existing] = {
-            ...alarm,
-            state: 'ACTIVE',
-          };
-          return updated;
-        }
-        return [{ ...alarm, state: 'ACTIVE' }, ...prev];
-      });
-
-      // Update RTU alarm count
-      setRtus(prev => prev.map(rtu =>
-        rtu.station_name === alarm.rtu_station
-          ? {
-              ...rtu,
-              alarm_count: (rtu.alarm_count || 0) + 1,
-              has_unacknowledged_alarms: true,
-            }
-          : rtu
-      ));
-    });
-
-    const unsubAlarmAck = subscribe('alarm_acknowledged', (_, data) => {
-      setAlarms(prev =>
-        prev.map(a =>
-          a.alarm_id === data.alarm_id ? { ...a, state: 'ACTIVE_ACK' as const } : a
-        )
-      );
-
-      // Update RTU alarm state
-      setRtus(prev => prev.map(rtu => {
-        if (rtu.station_name === data.rtu_station) {
-          const remainingUnack = alarms.filter(
-            a => a.rtu_station === rtu.station_name &&
-                 a.alarm_id !== data.alarm_id &&
-                 a.state === 'ACTIVE'
-          ).length;
-          return {
-            ...rtu,
-            has_unacknowledged_alarms: remainingUnack > 0,
-          };
-        }
-        return rtu;
-      }));
-    });
-
-    const unsubAlarmClear = subscribe('alarm_cleared', (_, data) => {
-      setAlarms(prev => prev.filter(a => a.alarm_id !== data.alarm_id));
-
-      // Update RTU alarm count
-      setRtus(prev => prev.map(rtu =>
-        rtu.station_name === data.rtu_station
-          ? {
-              ...rtu,
-              alarm_count: Math.max(0, (rtu.alarm_count || 0) - 1),
-            }
-          : rtu
-      ));
-    });
-
-    return () => {
-      unsubRtu();
-      unsubAlarm();
-      unsubAlarmAck();
-      unsubAlarmClear();
-    };
-  }, [subscribe, fetchData, alarms]);
-
-  // Track tab visibility for power efficiency (reduces polling when tab is hidden)
-  useEffect(() => {
-    const handleVisibilityChange = () => {
-      setIsVisible(!document.hidden);
-    };
-
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    return () => {
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-    };
-  }, []);
-
-  // Initial data fetch and polling setup (respects tab visibility)
-  useEffect(() => {
-    fetchData();
-
-    // Only poll when tab is visible (power efficiency for field deployments)
-    if (isVisible) {
-      // Start polling initially (WebSocket will disable if it connects)
-      pollIntervalRef.current = setInterval(fetchData, 5000);
-    }
-
-    return () => {
-      if (pollIntervalRef.current) {
-        clearInterval(pollIntervalRef.current);
-        pollIntervalRef.current = null;
-      }
-    };
-  }, [fetchData, isVisible]);
 
   // Handle alarm acknowledge
   const handleAcknowledgeAlarm = async (alarmId: number | string) => {
@@ -268,9 +49,8 @@ export default function RTUStatusPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ user: 'operator' }),
       });
-      // WebSocket will update the state
     } catch (err) {
-      console.error('Failed to acknowledge alarm:', err);
+      alarmLogger.error('Failed to acknowledge alarm', err);
     }
   };
 
@@ -281,9 +61,8 @@ export default function RTUStatusPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ user: 'operator' }),
       });
-      // WebSocket will update the state
     } catch (err) {
-      console.error('Failed to acknowledge all alarms:', err);
+      alarmLogger.error('Failed to acknowledge all alarms', err);
     }
   };
 
@@ -319,7 +98,7 @@ export default function RTUStatusPage() {
           <h2 className="text-xl font-semibold text-hmi-text mb-2">Connection Error</h2>
           <p className="text-hmi-text-secondary mb-4">{error}</p>
           <button
-            onClick={fetchData}
+            onClick={refetch}
             className="px-4 py-2 bg-alarm-blue text-white rounded-lg hover:bg-alarm-blue/90 transition-colors"
           >
             Retry
@@ -328,6 +107,10 @@ export default function RTUStatusPage() {
       </div>
     );
   }
+
+  const activeAlarmCount = alarms.filter(a => a.state !== 'CLEARED').length;
+  const onlineRtuCount = rtus.filter(r => r.state === 'RUNNING').length;
+  const profinetStatus = getProfinetStatus();
 
   return (
     <div className="min-h-screen bg-hmi-bg flex flex-col">
@@ -354,21 +137,21 @@ export default function RTUStatusPage() {
             <div className="flex items-center gap-6">
               <div className="text-center">
                 <div className="text-2xl font-bold font-mono text-hmi-text">
-                  {rtus.filter(r => r.state === 'RUNNING').length}
+                  {onlineRtuCount}
                   <span className="text-lg text-hmi-text-secondary">/{rtus.length}</span>
                 </div>
                 <div className="text-xs text-hmi-text-secondary">RTUs Online</div>
               </div>
               <div className="text-center">
-                <div className={`text-2xl font-bold font-mono ${alarms.filter(a => a.state !== 'CLEARED').length > 0 ? 'text-alarm-red' : 'text-hmi-text'}`}>
-                  {alarms.filter(a => a.state !== 'CLEARED').length}
+                <div className={`text-2xl font-bold font-mono ${activeAlarmCount > 0 ? 'text-alarm-red' : 'text-hmi-text'}`}>
+                  {activeAlarmCount}
                 </div>
                 <div className="text-xs text-hmi-text-secondary">Active Alarms</div>
               </div>
               <div className="flex items-center gap-2">
                 <ConnectionStatusIndicator
-                  state={getProfinetStatus()}
-                  label={getProfinetStatus() === 'ONLINE' ? 'All Connected' : getProfinetStatus() === 'DEGRADED' ? 'Partial' : 'Disconnected'}
+                  state={profinetStatus}
+                  label={profinetStatus === 'ONLINE' ? 'All Connected' : profinetStatus === 'DEGRADED' ? 'Partial' : 'Disconnected'}
                   size="lg"
                 />
               </div>
@@ -423,7 +206,7 @@ export default function RTUStatusPage() {
               <strong>Communication Lost:</strong> Cannot reach API server.
             </span>
             <button
-              onClick={fetchData}
+              onClick={refetch}
               className="ml-auto px-3 py-1 bg-alarm-red text-white rounded hover:bg-alarm-red/90 transition-colors"
             >
               Retry
@@ -434,7 +217,7 @@ export default function RTUStatusPage() {
 
       {/* System Status Bar */}
       <SystemStatusBar
-        profinetStatus={getProfinetStatus()}
+        profinetStatus={profinetStatus}
         websocketStatus={connected ? 'ONLINE' : 'OFFLINE'}
         cycleTimeMs={metrics.cycleTimeMs}
         pendingWrites={metrics.pendingWrites}

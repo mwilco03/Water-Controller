@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
+import { rtuLogger, configLogger } from '@/lib/logger';
 
 interface RTUDevice {
   station_name: string;
@@ -61,7 +62,7 @@ export default function IOTagsPage() {
         }
       }
     } catch (error) {
-      console.error('Failed to fetch RTUs:', error);
+      rtuLogger.error('Failed to fetch RTUs', error);
     }
   }, [selectedRtu]);
 
@@ -73,7 +74,7 @@ export default function IOTagsPage() {
         setSlotConfigs(await res.json());
       }
     } catch (error) {
-      console.error('Failed to fetch slot configs:', error);
+      configLogger.error('Failed to fetch slot configs', error);
     }
   }, [selectedRtu]);
 
@@ -85,7 +86,7 @@ export default function IOTagsPage() {
         setHistorianTags(data.filter((t: HistorianTag) => !selectedRtu || t.rtu_station === selectedRtu));
       }
     } catch (error) {
-      console.error('Failed to fetch historian tags:', error);
+      configLogger.error('Failed to fetch historian tags', error);
     }
   }, [selectedRtu]);
 

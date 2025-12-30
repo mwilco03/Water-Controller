@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { wsLogger as logger } from '@/lib/logger';
+import { TIMING } from '@/constants';
 
 type MessageHandler = (event: string, data: any) => void;
 
@@ -58,8 +59,8 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
     onMessage,
     onConnect,
     onDisconnect,
-    reconnectInterval = 3000,
-    maxReconnectAttempts = 10,
+    reconnectInterval = TIMING.WEBSOCKET.RECONNECT_INTERVAL_MS,
+    maxReconnectAttempts = TIMING.WEBSOCKET.MAX_RECONNECT_ATTEMPTS,
   } = options;
 
   const [state, setState] = useState<WebSocketState>({

@@ -9,6 +9,7 @@ import { SensorList, ControlList, InventoryRefresh, RtuStateBadge, ProfinetStatu
 import { useWebSocket } from '@/hooks/useWebSocket';
 import { useCommandMode } from '@/contexts/CommandModeContext';
 import CommandModeLogin from '@/components/CommandModeLogin';
+import { rtuLogger } from '@/lib/logger';
 
 type Tab = 'overview' | 'sensors' | 'controls' | 'profinet';
 
@@ -34,7 +35,7 @@ export default function RTUDetailPage() {
       setInventory(inventoryData);
       setError(null);
     } catch (err) {
-      console.error('Failed to fetch RTU data:', err);
+      rtuLogger.error('Failed to fetch RTU data', err);
       setError(err instanceof Error ? err.message : 'Failed to load RTU data');
     } finally {
       setLoading(false);

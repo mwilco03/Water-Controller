@@ -17,8 +17,8 @@ interface Alarm {
   message: string;
   state: string;
   timestamp: string;
-  value: number;
-  threshold: number;
+  value?: number;
+  threshold?: number;
   ack_user?: string;
   ack_time?: string;
 }

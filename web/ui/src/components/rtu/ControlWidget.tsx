@@ -3,6 +3,7 @@
 import { useState, useCallback } from 'react';
 import type { RTUControl } from '@/lib/api';
 import { sendControlCommand } from '@/lib/api';
+import { controlLogger } from '@/lib/logger';
 
 interface Props {
   control: RTUControl;
@@ -101,7 +102,7 @@ export default function ControlWidget({
       await sendControlCommand(rtuStation, control.control_id, command, value);
       onCommandSent?.();
     } catch (error) {
-      console.error('Failed to send command:', error);
+      controlLogger.error('Failed to send command', error);
     } finally {
       setLoading(false);
       setConfirmDialog(null);

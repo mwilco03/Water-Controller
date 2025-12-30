@@ -120,5 +120,10 @@ export const apiLogger = createLogger('API');
 export const authLogger = createLogger('Auth');
 export const rtuLogger = createLogger('RTU');
 export const alarmLogger = createLogger('Alarm');
+export const modbusLogger = createLogger('Modbus');
+export const networkLogger = createLogger('Network');
+export const systemLogger = createLogger('System');
+export const controlLogger = createLogger('Control');
+export const configLogger = createLogger('Config');
 
 export default logger;
