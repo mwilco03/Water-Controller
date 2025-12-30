@@ -125,10 +125,9 @@ if CORS_ORIGINS:
     allowed_origins = [origin.strip() for origin in CORS_ORIGINS.split(",") if origin.strip()]
 else:
     # Development fallback - localhost only
+    # UI runs on port 8080 (see web/ui/package.json)
     allowed_origins = [
-        "http://localhost:3000",
         "http://localhost:8080",
-        "http://127.0.0.1:3000",
         "http://127.0.0.1:8080",
     ]
 

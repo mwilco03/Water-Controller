@@ -61,7 +61,11 @@ setup_python_venv "$INSTALL_DIR/web/api/requirements.txt"
 
 # Build UI
 log_step "Step 5: Building UI..."
-build_nodejs_ui
+if ! build_nodejs_ui; then
+    log_error "HMI build failed. Installation cannot continue."
+    log_error "Fix the errors above and run the installer again."
+    exit 1
+fi
 
 # Create default configuration
 log_step "Step 6: Creating default configuration..."
