@@ -447,14 +447,12 @@ wtc_result_t state_reconcile(state_reconciler_t *reconciler,
     /* Compare actuator states */
     for (int i = 0; i < desired->actuator_count; i++) {
         const desired_actuator_state_t *ds = &desired->actuators[i];
-        bool found = false;
         bool conflict = false;
 
         if (rtu_actual_state) {
             for (int j = 0; j < rtu_actual_state->actuator_count; j++) {
                 const desired_actuator_state_t *rs = &rtu_actual_state->actuators[j];
                 if (rs->slot == ds->slot) {
-                    found = true;
                     if (rs->command != ds->command || rs->pwm_duty != ds->pwm_duty) {
                         conflict = true;
                         result->actuators_conflicted++;

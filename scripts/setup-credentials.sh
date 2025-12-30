@@ -274,10 +274,7 @@ create_application_users() {
     VIEWER_HASH=$(hash_password "$VIEWER_PASSWORD")
 
     # Insert users into database
-    PGPASSWORD="$DB_PASSWORD" psql -h localhost -U wtc -d water_treatment << EOF 2>/dev/null || {
-        print_warning "Could not create application users - database may not be ready"
-        return 0
-    }
+    if ! PGPASSWORD="$DB_PASSWORD" psql -h localhost -U wtc -d water_treatment 2>/dev/null << 'EOF'
 -- Create users table if not exists
 CREATE TABLE IF NOT EXISTS users (
     user_id SERIAL PRIMARY KEY,
@@ -301,8 +298,14 @@ CREATE TABLE IF NOT EXISTS user_audit_log (
     ip_address INET,
     timestamp TIMESTAMPTZ DEFAULT NOW()
 );
+EOF
+    then
+        print_warning "Could not create application users - database may not be ready"
+        return 0
+    fi
 
--- Insert or update default users
+    # Insert or update default users (separate command to use shell variables)
+    PGPASSWORD="$DB_PASSWORD" psql -h localhost -U wtc -d water_treatment 2>/dev/null << EOF
 INSERT INTO users (username, password_hash, role, full_name)
 VALUES
     ('admin', '$ADMIN_HASH', 'ADMIN', 'System Administrator'),

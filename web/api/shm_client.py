@@ -7,13 +7,14 @@ SPDX-License-Identifier: GPL-3.0-or-later
 Includes correlation ID support for distributed tracing.
 """
 
+import ctypes
+import logging
 import mmap
 import struct
-import ctypes
-from ctypes import c_uint32, c_uint64, c_int, c_float, c_bool, c_uint8, c_uint16, c_char
-from typing import Optional, List, Dict, Any
+from ctypes import c_bool, c_char, c_float, c_int, c_uint8, c_uint16, c_uint32, c_uint64
+from typing import Any
+
 import posix_ipc
-import logging
 
 # Import correlation ID support (if available)
 try:
@@ -331,7 +332,7 @@ class WtcShmClient:
             return False
         return struct.unpack_from('?', self.mm, 16)[0]  # controller_running offset
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         """Get system status"""
         if not self.mm:
             return {"connected": False}
@@ -347,7 +348,7 @@ class WtcShmClient:
             "unack_alarms": data.unack_alarms,
         }
 
-    def get_rtus(self) -> List[Dict[str, Any]]:
+    def get_rtus(self) -> list[dict[str, Any]]:
         """Get list of RTU devices"""
         if not self.mm:
             return []
@@ -393,7 +394,7 @@ class WtcShmClient:
 
         return rtus
 
-    def get_alarms(self) -> List[Dict[str, Any]]:
+    def get_alarms(self) -> list[dict[str, Any]]:
         """Get list of active alarms"""
         if not self.mm:
             return []
@@ -420,7 +421,7 @@ class WtcShmClient:
 
         return alarms
 
-    def get_pid_loops(self) -> List[Dict[str, Any]]:
+    def get_pid_loops(self) -> list[dict[str, Any]]:
         """Get list of PID loops"""
         if not self.mm:
             return []
@@ -519,7 +520,7 @@ class WtcShmClient:
 
     # ============== RTU-specific accessor methods ==============
 
-    def get_rtu(self, station_name: str) -> Optional[Dict[str, Any]]:
+    def get_rtu(self, station_name: str) -> dict[str, Any] | None:
         """Get a single RTU by station name"""
         rtus = self.get_rtus()
         for rtu in rtus:
@@ -527,7 +528,7 @@ class WtcShmClient:
                 return rtu
         return None
 
-    def get_sensors(self, station_name: str) -> List[Dict[str, Any]]:
+    def get_sensors(self, station_name: str) -> list[dict[str, Any]]:
         """
         Get sensors for a specific RTU.
         Returns list of sensor data with slot, value, status, timestamp.
@@ -551,7 +552,7 @@ class WtcShmClient:
             })
         return sensors
 
-    def get_actuators(self, station_name: str) -> List[Dict[str, Any]]:
+    def get_actuators(self, station_name: str) -> list[dict[str, Any]]:
         """
         Get actuators for a specific RTU.
         Returns list of actuator states with slot, command, pwm_duty, forced.
@@ -573,7 +574,7 @@ class WtcShmClient:
             })
         return actuators
 
-    def get_sensor_value(self, station_name: str, slot: int) -> Optional[Dict[str, Any]]:
+    def get_sensor_value(self, station_name: str, slot: int) -> dict[str, Any] | None:
         """Get a specific sensor value by station and slot"""
         sensors = self.get_sensors(station_name)
         for sensor in sensors:
@@ -581,7 +582,7 @@ class WtcShmClient:
                 return sensor
         return None
 
-    def get_actuator_state(self, station_name: str, slot: int) -> Optional[Dict[str, Any]]:
+    def get_actuator_state(self, station_name: str, slot: int) -> dict[str, Any] | None:
         """Get a specific actuator state by station and slot"""
         actuators = self.get_actuators(station_name)
         for actuator in actuators:
@@ -676,7 +677,7 @@ class WtcShmClient:
 
     # ============== Discovery IPC Commands ==============
 
-    def dcp_discover(self, timeout_ms: int = 5000) -> List[Dict[str, Any]]:
+    def dcp_discover(self, timeout_ms: int = 5000) -> list[dict[str, Any]]:
         """
         Discover PROFINET devices on the network using DCP Identify All.
 
@@ -730,7 +731,7 @@ class WtcShmClient:
             logger.error(f"DCP discovery failed: {e}")
             return []
 
-    def _read_discovery_results(self) -> List[Dict[str, Any]]:
+    def _read_discovery_results(self) -> list[dict[str, Any]]:
         """
         Read discovered devices from the shared memory discovery buffer.
         The C controller populates this buffer after DCP discovery.
@@ -755,7 +756,7 @@ class WtcShmClient:
                 return []
 
             # Read each discovered device
-            for i in range(count):
+            for _i in range(count):
                 entry_data = self.mm.read(128)  # Each entry is 128 bytes
                 if len(entry_data) < 128:
                     break
@@ -831,7 +832,7 @@ class WtcShmClient:
 
     # ============== User Sync Methods ==============
 
-    def sync_users_to_rtu(self, station_name: str, users: List[Dict[str, Any]]) -> bool:
+    def sync_users_to_rtu(self, station_name: str, users: list[dict[str, Any]]) -> bool:
         """
         Send user sync command to a specific RTU.
 
@@ -877,7 +878,7 @@ class WtcShmClient:
             active = 1 if user.get('active', True) else 0
             flags = active | 0x02  # Bit 1 = synced_from_controller
 
-            struct.pack_into(f'32s64sBB', cmd_data, offset,
+            struct.pack_into('32s64sBB', cmd_data, offset,
                             username.ljust(32, b'\x00'),
                             password_hash.ljust(64, b'\x00'),
                             role, flags)
@@ -893,7 +894,7 @@ class WtcShmClient:
             logger.error(f"Failed to send user sync command: {e}")
             return False
 
-    def sync_users_to_all_rtus(self, users: List[Dict[str, Any]]) -> int:
+    def sync_users_to_all_rtus(self, users: list[dict[str, Any]]) -> int:
         """
         Send user sync command to all connected RTUs.
 
@@ -952,7 +953,7 @@ class CircuitBreaker:
         self._state = "CLOSED"
         self._failures = 0
         self._successes = 0
-        self._last_failure_time: Optional[float] = None
+        self._last_failure_time: float | None = None
 
     @property
     def state(self) -> str:
@@ -1042,7 +1043,7 @@ class WtcShmClientWithCircuitBreaker:
         """Check if connected."""
         return self._client.is_connected()
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         """Get system status with circuit breaker protection."""
         if self._circuit_breaker.is_open:
             return {"connected": False, "circuit_breaker": "OPEN"}
@@ -1056,7 +1057,7 @@ class WtcShmClientWithCircuitBreaker:
             self._circuit_breaker.record_failure()
             return {"connected": False, "error": str(e), "circuit_breaker": self._circuit_breaker.state}
 
-    def get_rtus(self) -> List[Dict[str, Any]]:
+    def get_rtus(self) -> list[dict[str, Any]]:
         """Get RTUs with circuit breaker protection."""
         if self._circuit_breaker.is_open:
             return []
@@ -1082,7 +1083,7 @@ class WtcShmClientWithCircuitBreaker:
 
 
 # Global client instance
-_client: Optional[WtcShmClient] = None
+_client: WtcShmClient | None = None
 
 
 def get_client() -> WtcShmClient:

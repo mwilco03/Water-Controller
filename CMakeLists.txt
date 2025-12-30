@@ -42,6 +42,12 @@ if(NOT JSONC_FOUND)
     message(WARNING "json-c not found, using bundled implementation")
 endif()
 
+# Check for systemd (optional)
+pkg_check_modules(SYSTEMD libsystemd)
+if(SYSTEMD_FOUND)
+    add_definitions(-DHAVE_SYSTEMD)
+endif()
+
 # Include directories
 include_directories(
     ${CMAKE_SOURCE_DIR}/src
@@ -215,8 +221,10 @@ target_link_libraries(modbus_gateway
     wtc_ipc
     rt
     m
-    systemd
 )
+if(SYSTEMD_FOUND)
+    target_link_libraries(modbus_gateway ${SYSTEMD_LIBRARIES})
+endif()
 export_board_definitions(modbus_gateway)
 
 # Tests

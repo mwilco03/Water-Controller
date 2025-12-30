@@ -10,9 +10,8 @@ To update this file, modify the source schemas and run:
 """
 
 from enum import Enum
-from typing import Any, Dict, List, Optional, Union
-from pydantic import BaseModel, Field, field_validator
 
+from pydantic import BaseModel, Field
 
 # ========== Alarm Manager Configuration ==========
 
@@ -57,7 +56,7 @@ class FloodDetectionConfig(BaseModel):
 class SeverityConfig(BaseModel):
     """Severity level definitions"""
 
-    levels: List[LevelsItemConfig] = Field(default=[{'id': 1, 'name': 'Low', 'color': '#FFFF00', 'response_time_sec': 3600}, {'id': 2, 'name': 'Medium', 'color': '#FFA500', 'response_time_sec': 1800}, {'id': 3, 'name': 'High', 'color': '#FF0000', 'response_time_sec': 300}, {'id': 4, 'name': 'Emergency', 'color': '#8B0000', 'response_time_sec': 60}])
+    levels: list[LevelsItemConfig] = Field(default=[{'id': 1, 'name': 'Low', 'color': '#FFFF00', 'response_time_sec': 3600}, {'id': 2, 'name': 'Medium', 'color': '#FFA500', 'response_time_sec': 1800}, {'id': 3, 'name': 'High', 'color': '#FF0000', 'response_time_sec': 300}, {'id': 4, 'name': 'Emergency', 'color': '#8B0000', 'response_time_sec': 60}])
 
     model_config = {
         "extra": "forbid",
@@ -69,7 +68,7 @@ class EmailConfig(BaseModel):
 
     enabled: bool = Field(default=False, description="Enable email notifications")
     min_severity: int = Field(default=3, ge=1, le=4, description="Minimum severity to trigger email")
-    recipients: List[str] = Field(default_factory=list, description="Email recipients for alarm notifications")
+    recipients: list[str] = Field(default_factory=list, description="Email recipients for alarm notifications")
     smtp_host: str = Field(default="", description="SMTP server hostname")
     smtp_port: int = Field(default=587, ge=1, le=65535, description="SMTP server port")
 
@@ -82,7 +81,7 @@ class NotificationsConfig(BaseModel):
     """Alarm notification settings"""
 
     audible_alert: bool = Field(default=True, description="Enable audible alerts on HMI")
-    email: Optional[EmailConfig] = Field(default=None, description="Email notification settings")
+    email: EmailConfig | None = Field(default=None, description="Email notification settings")
     enabled: bool = Field(default=True, description="Enable alarm notifications")
     websocket_broadcast: bool = Field(default=True, description="Broadcast alarms to WebSocket clients")
 
@@ -106,7 +105,7 @@ class SuppressionConfig(BaseModel):
 class ConditionsConfig(BaseModel):
     """Available alarm conditions"""
 
-    types: List[str] = Field(default=['HIGH', 'LOW', 'HIGH_HIGH', 'LOW_LOW', 'RATE_OF_CHANGE', 'DEVIATION', 'BAD_QUALITY'], description="Available alarm condition types")
+    types: list[str] = Field(default=['HIGH', 'LOW', 'HIGH_HIGH', 'LOW_LOW', 'RATE_OF_CHANGE', 'DEVIATION', 'BAD_QUALITY'], description="Available alarm condition types")
 
     model_config = {
         "extra": "forbid",
@@ -116,15 +115,15 @@ class ConditionsConfig(BaseModel):
 class AlarmsConfig(BaseModel):
     """ISA-18.2 compliant alarm management configuration"""
 
-    conditions: Optional[ConditionsConfig] = Field(default=None, description="Available alarm conditions")
+    conditions: ConditionsConfig | None = Field(default=None, description="Available alarm conditions")
     database_path: str = Field(default="", description="Alarm database path (uses main database if empty)")
     enabled: bool = Field(default=True, description="Enable alarm management")
-    flood_detection: Optional[FloodDetectionConfig] = Field(default=None, description="Alarm flood detection (per ISA-18.2)")
-    isa_18_2: Optional[Isa182Config] = Field(default=None, description="ISA-18.2 compliance settings")
-    limits: Optional[LimitsConfig] = Field(default=None, description="Alarm system limits")
-    notifications: Optional[NotificationsConfig] = Field(default=None, description="Alarm notification settings")
-    severity: Optional[SeverityConfig] = Field(default=None, description="Severity level definitions")
-    suppression: Optional[SuppressionConfig] = Field(default=None, description="Alarm suppression settings")
+    flood_detection: FloodDetectionConfig | None = Field(default=None, description="Alarm flood detection (per ISA-18.2)")
+    isa_18_2: Isa182Config | None = Field(default=None, description="ISA-18.2 compliance settings")
+    limits: LimitsConfig | None = Field(default=None, description="Alarm system limits")
+    notifications: NotificationsConfig | None = Field(default=None, description="Alarm notification settings")
+    severity: SeverityConfig | None = Field(default=None, description="Severity level definitions")
+    suppression: SuppressionConfig | None = Field(default=None, description="Alarm suppression settings")
 
     model_config = {
         "extra": "forbid",
@@ -182,7 +181,7 @@ class LoggingConfig(BaseModel):
     """Logging configuration"""
 
     file: str = Field(default="", description="Log file path (empty for stderr only)")
-    forward: Optional[ForwardConfig] = Field(default=None, description="Log forwarding to external systems (Elastic, Graylog, Syslog)")
+    forward: ForwardConfig | None = Field(default=None, description="Log forwarding to external systems (Elastic, Graylog, Syslog)")
     level: LevelEnum = Field(default="INFO", description="Minimum log level to output")
     log_dir: str = Field(default="/var/log/water-controller", description="Directory for log files")
     structured: bool = Field(default=False, description="Enable structured JSON logging for log aggregators")
@@ -316,16 +315,16 @@ class DebugConfig(BaseModel):
 class ControllerConfig(BaseModel):
     """Main configuration for the Water Treatment PROFINET IO Controller"""
 
-    cycle: Optional[CycleConfig] = Field(default=None, description="Main control cycle timing")
-    daemon: Optional[DaemonConfig] = Field(default=None, description="Daemon/service mode settings")
-    database: Optional[DatabaseConfig] = Field(default=None, description="PostgreSQL database configuration for persistent storage")
-    debug: Optional[DebugConfig] = Field(default=None, description="Debug and development settings")
-    failover: Optional[FailoverConfig] = Field(default=None, description="RTU failover and redundancy settings")
-    ipc: Optional[IpcConfig] = Field(default=None, description="Inter-process communication settings")
-    limits: Optional[LimitsConfig] = Field(default=None, description="System limits and maximums")
-    logging: Optional[LoggingConfig] = Field(default=None, description="Logging configuration")
-    sqlite: Optional[SqliteConfig] = Field(default=None, description="SQLite configuration for local-only deployments")
-    system: Optional[SystemConfig] = Field(default=None, description="System-wide settings")
+    cycle: CycleConfig | None = Field(default=None, description="Main control cycle timing")
+    daemon: DaemonConfig | None = Field(default=None, description="Daemon/service mode settings")
+    database: DatabaseConfig | None = Field(default=None, description="PostgreSQL database configuration for persistent storage")
+    debug: DebugConfig | None = Field(default=None, description="Debug and development settings")
+    failover: FailoverConfig | None = Field(default=None, description="RTU failover and redundancy settings")
+    ipc: IpcConfig | None = Field(default=None, description="Inter-process communication settings")
+    limits: LimitsConfig | None = Field(default=None, description="System limits and maximums")
+    logging: LoggingConfig | None = Field(default=None, description="Logging configuration")
+    sqlite: SqliteConfig | None = Field(default=None, description="SQLite configuration for local-only deployments")
+    system: SystemConfig | None = Field(default=None, description="System-wide settings")
 
     model_config = {
         "extra": "forbid",
@@ -418,14 +417,14 @@ class PerformanceConfig(BaseModel):
 class HistorianConfig(BaseModel):
     """Configuration for time-series data collection, compression, and storage"""
 
-    compression: Optional[CompressionConfig] = Field(default=None, description="Data compression settings")
+    compression: CompressionConfig | None = Field(default=None, description="Data compression settings")
     database_path: str = Field(default="/var/lib/water-controller/historian.db", description="SQLite historian database path (for local storage)")
     enabled: bool = Field(default=True, description="Enable historian data collection")
-    limits: Optional[LimitsConfig] = Field(default=None, description="Historian limits")
-    performance: Optional[PerformanceConfig] = Field(default=None, description="Performance tuning")
-    retention: Optional[RetentionConfig] = Field(default=None, description="Data retention settings")
-    sampling: Optional[SamplingConfig] = Field(default=None, description="Default sampling settings for new tags")
-    timescale: Optional[TimescaleConfig] = Field(default=None, description="TimescaleDB configuration for scalable time-series storage")
+    limits: LimitsConfig | None = Field(default=None, description="Historian limits")
+    performance: PerformanceConfig | None = Field(default=None, description="Performance tuning")
+    retention: RetentionConfig | None = Field(default=None, description="Data retention settings")
+    sampling: SamplingConfig | None = Field(default=None, description="Default sampling settings for new tags")
+    timescale: TimescaleConfig | None = Field(default=None, description="TimescaleDB configuration for scalable time-series storage")
 
     model_config = {
         "extra": "forbid",
@@ -473,8 +472,8 @@ class RtuConfig(BaseModel):
 class ServerConfig(BaseModel):
     """Modbus server configuration (exposes PROFINET data)"""
 
-    rtu: Optional[RtuConfig] = Field(default=None, description="Modbus RTU server settings")
-    tcp: Optional[TcpConfig] = Field(default=None, description="Modbus TCP server settings")
+    rtu: RtuConfig | None = Field(default=None, description="Modbus RTU server settings")
+    tcp: TcpConfig | None = Field(default=None, description="Modbus TCP server settings")
 
     model_config = {
         "extra": "forbid",
@@ -523,11 +522,11 @@ class TimingConfig(BaseModel):
 class ModbusConfig(BaseModel):
     """PROFINET to Modbus TCP/RTU protocol bridge configuration"""
 
-    downstream: Optional[DownstreamConfig] = Field(default=None, description="Downstream Modbus client configuration")
+    downstream: DownstreamConfig | None = Field(default=None, description="Downstream Modbus client configuration")
     enabled: bool = Field(default=True, description="Enable Modbus gateway")
-    register_map: Optional[RegisterMapConfig] = Field(default=None, description="Register mapping configuration")
-    server: Optional[ServerConfig] = Field(default=None, description="Modbus server configuration (exposes PROFINET data)")
-    timing: Optional[TimingConfig] = Field(default=None, description="Modbus timing configuration")
+    register_map: RegisterMapConfig | None = Field(default=None, description="Register mapping configuration")
+    server: ServerConfig | None = Field(default=None, description="Modbus server configuration (exposes PROFINET data)")
+    timing: TimingConfig | None = Field(default=None, description="Modbus timing configuration")
 
     model_config = {
         "extra": "forbid",
@@ -604,16 +603,16 @@ class AuthorityConfig(BaseModel):
 class ProfinetConfig(BaseModel):
     """Configuration for PROFINET RT Class 1 communication with RTU devices"""
 
-    authority: Optional[AuthorityConfig] = Field(default=None, description="Authority handoff protocol settings")
-    controller: Optional[ControllerConfig] = Field(default=None, description="Controller identity settings")
+    authority: AuthorityConfig | None = Field(default=None, description="Authority handoff protocol settings")
+    controller: ControllerConfig | None = Field(default=None, description="Controller identity settings")
     cycle_time_us: int = Field(default=1000000, ge=31250, le=4000000, description="PROFINET cycle time (minimum 31.25us, typically 1ms for RT Class 1)")
-    discovery: Optional[DiscoveryConfig] = Field(default=None, description="DCP discovery settings")
+    discovery: DiscoveryConfig | None = Field(default=None, description="DCP discovery settings")
     interface: str = Field(default="eth0", max_length=32, pattern=r"^[a-zA-Z0-9_-]+$", description="Network interface for PROFINET communication")
-    limits: Optional[LimitsConfig] = Field(default=None, description="PROFINET stack limits")
+    limits: LimitsConfig | None = Field(default=None, description="PROFINET stack limits")
     reduction_ratio: int = Field(default=1, ge=1, le=512, description="Reduction ratio for actual cycle time")
     send_clock_factor: int = Field(default=32, ge=1, le=128, description="Send clock factor (32 = 1ms base cycle)")
     socket_priority: int = Field(default=6, ge=0, le=7, description="Socket priority for QoS (0-7, 6 recommended for RT)")
-    timing: Optional[TimingConfig] = Field(default=None, description="Timing and watchdog settings")
+    timing: TimingConfig | None = Field(default=None, description="Timing and watchdog settings")
     use_raw_sockets: bool = Field(default=True, description="Use raw sockets for RT frames (requires CAP_NET_RAW)")
 
     model_config = {
@@ -728,14 +727,14 @@ class SecurityConfig(BaseModel):
 class WebConfig(BaseModel):
     """Configuration for FastAPI REST API, WebSocket streaming, and React HMI"""
 
-    api: Optional[ApiConfig] = Field(default=None, description="FastAPI backend configuration")
-    authentication: Optional[AuthenticationConfig] = Field(default=None, description="Authentication configuration")
-    circuit_breaker: Optional[CircuitBreakerConfig] = Field(default=None, description="Circuit breaker for API resilience")
-    polling: Optional[PollingConfig] = Field(default=None, description="Fallback polling configuration (when WebSocket unavailable)")
-    security: Optional[SecurityConfig] = Field(default=None, description="Security settings")
-    timeouts: Optional[TimeoutsConfig] = Field(default=None, description="API timeout configuration")
-    ui: Optional[UiConfig] = Field(default=None, description="Web UI configuration")
-    websocket: Optional[WebsocketConfig] = Field(default=None, description="WebSocket streaming configuration")
+    api: ApiConfig | None = Field(default=None, description="FastAPI backend configuration")
+    authentication: AuthenticationConfig | None = Field(default=None, description="Authentication configuration")
+    circuit_breaker: CircuitBreakerConfig | None = Field(default=None, description="Circuit breaker for API resilience")
+    polling: PollingConfig | None = Field(default=None, description="Fallback polling configuration (when WebSocket unavailable)")
+    security: SecurityConfig | None = Field(default=None, description="Security settings")
+    timeouts: TimeoutsConfig | None = Field(default=None, description="API timeout configuration")
+    ui: UiConfig | None = Field(default=None, description="Web UI configuration")
+    websocket: WebsocketConfig | None = Field(default=None, description="WebSocket streaming configuration")
 
     model_config = {
         "extra": "forbid",
@@ -747,12 +746,12 @@ class WebConfig(BaseModel):
 class WaterControllerConfig(BaseModel):
     """Complete Water Controller configuration."""
 
-    alarms: Optional[AlarmsConfig] = Field(default=None, description="ISA-18.2 compliant alarm management configuration")
-    controller: Optional[ControllerConfig] = Field(default=None, description="Main configuration for the Water Treatment PROFINET IO Controller")
-    historian: Optional[HistorianConfig] = Field(default=None, description="Configuration for time-series data collection, compression, and storage")
-    modbus: Optional[ModbusConfig] = Field(default=None, description="PROFINET to Modbus TCP/RTU protocol bridge configuration")
-    profinet: Optional[ProfinetConfig] = Field(default=None, description="Configuration for PROFINET RT Class 1 communication with RTU devices")
-    web: Optional[WebConfig] = Field(default=None, description="Configuration for FastAPI REST API, WebSocket streaming, and React HMI")
+    alarms: AlarmsConfig | None = Field(default=None, description="ISA-18.2 compliant alarm management configuration")
+    controller: ControllerConfig | None = Field(default=None, description="Main configuration for the Water Treatment PROFINET IO Controller")
+    historian: HistorianConfig | None = Field(default=None, description="Configuration for time-series data collection, compression, and storage")
+    modbus: ModbusConfig | None = Field(default=None, description="PROFINET to Modbus TCP/RTU protocol bridge configuration")
+    profinet: ProfinetConfig | None = Field(default=None, description="Configuration for PROFINET RT Class 1 communication with RTU devices")
+    web: WebConfig | None = Field(default=None, description="Configuration for FastAPI REST API, WebSocket streaming, and React HMI")
 
     model_config = {
         "extra": "forbid",

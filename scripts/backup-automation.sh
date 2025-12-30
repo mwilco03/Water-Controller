@@ -51,12 +51,12 @@ log_info() {
 
 log_error() {
     log "ERROR" "$@"
-    echo -e "${RED}[ERROR]${NC} $@" >&2
+    echo -e "${RED}[ERROR]${NC} $*" >&2
 }
 
 log_success() {
     log "SUCCESS" "$@"
-    echo -e "${GREEN}[OK]${NC} $@"
+    echo -e "${GREEN}[OK]${NC} $*"
 }
 
 # Create backup directories

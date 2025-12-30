@@ -22,7 +22,12 @@
 #include <unistd.h>
 #include <getopt.h>
 #include <errno.h>
+
+#ifdef HAVE_SYSTEMD
 #include <systemd/sd-daemon.h>
+#else
+#define sd_notify(unset_environment, state) ((void)0)
+#endif
 
 #define LOG_TAG "MODBUS_MAIN"
 #define VERSION "1.0.0"
@@ -235,18 +240,18 @@ static int init_gateway(void) {
         .server = {
             .tcp_enabled = g_config.tcp_enabled,
             .tcp_port = g_config.tcp_port,
+            .tcp_bind_address = {0},
             .rtu_enabled = g_config.rtu_enabled,
-            .rtu_baud = g_config.rtu_baud,
-            .rtu_data_bits = 8,
-            .rtu_parity = 'N',
-            .rtu_stop_bits = 1,
+            .rtu_device = {0},
+            .rtu_baud_rate = (uint32_t)g_config.rtu_baud,
             .rtu_slave_addr = g_config.rtu_slave_addr,
         },
-        .auto_generate_mappings = true,
-        .downstream_poll_ms = g_config.poll_interval_ms,
+        .downstream_count = 0,
+        .register_map_file = {0},
+        .auto_generate_map = true,
     };
 
-    strncpy(mb_config.server.tcp_bind, g_config.tcp_bind, sizeof(mb_config.server.tcp_bind) - 1);
+    strncpy(mb_config.server.tcp_bind_address, g_config.tcp_bind, sizeof(mb_config.server.tcp_bind_address) - 1);
     strncpy(mb_config.server.rtu_device, g_config.rtu_device, sizeof(mb_config.server.rtu_device) - 1);
 
     wtc_result_t res = modbus_gateway_init(&g_gateway, &mb_config);
@@ -269,7 +274,7 @@ static void main_loop(void) {
     sd_notify(0, "READY=1");
 
     while (g_running) {
-        uint64_t now_ms = time_utils_get_monotonic_ms();
+        uint64_t now_ms = time_get_monotonic_ms();
 
         /* Handle reload signal */
         if (g_reload) {
@@ -327,7 +332,18 @@ int main(int argc, char *argv[]) {
     if (strcmp(g_config.log_level, "DEBUG") == 0) level = LOG_LEVEL_DEBUG;
     else if (strcmp(g_config.log_level, "WARN") == 0) level = LOG_LEVEL_WARN;
     else if (strcmp(g_config.log_level, "ERROR") == 0) level = LOG_LEVEL_ERROR;
-    logger_init(level, NULL);
+    logger_config_t log_config = {
+        .level = level,
+        .output = NULL,
+        .log_file = NULL,
+        .use_colors = true,
+        .include_timestamp = true,
+        .include_source = true,
+        .include_correlation_id = false,
+        .max_file_size = 0,
+        .max_backup_files = 0,
+    };
+    logger_init(&log_config);
 
     LOG_INFO("Starting Modbus Gateway v%s", VERSION);
     LOG_INFO("TCP: %s, Port: %d, Bind: %s",

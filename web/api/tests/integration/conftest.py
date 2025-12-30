@@ -6,9 +6,10 @@ SPDX-License-Identifier: GPL-3.0-or-later
 Fixtures for integration testing with live PROFINET controller.
 """
 
-import pytest
-import sys
 import os
+import sys
+
+import pytest
 
 # Add parent paths for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
