@@ -826,7 +826,7 @@ check_service_health() {
 
     # Check uvicorn processes
     local uvicorn_count
-    uvicorn_count="$(pgrep -c -f 'uvicorn' 2>/dev/null || echo 0)"
+    uvicorn_count="$(pgrep -c -f 'uvicorn' 2>/dev/null)" || uvicorn_count=0
     if [ "$uvicorn_count" -gt 0 ]; then
         results+=("[OK] Uvicorn processes: $uvicorn_count")
     else

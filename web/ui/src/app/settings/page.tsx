@@ -4,15 +4,6 @@ import { useEffect, useState } from 'react';
 
 const PAGE_TITLE = 'Settings - Water Treatment Controller';
 
-interface Backup {
-  backup_id: string;
-  filename: string;
-  created_at: string;
-  size_bytes: number;
-  description?: string;
-  includes_historian: boolean;
-}
-
 interface ServiceStatus {
   [key: string]: string;
 }
@@ -71,7 +62,6 @@ interface LogDestination {
 
 export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState<'general' | 'backup' | 'modbus' | 'services' | 'logging'>('general');
-  const [backups, setBackups] = useState<Backup[]>([]);
   const [services, setServices] = useState<ServiceStatus>({});
   const [modbusConfig, setModbusConfig] = useState<ModbusServerConfig | null>(null);
   const [downstreamDevices, setDownstreamDevices] = useState<ModbusDownstreamDevice[]>([]);
@@ -79,16 +69,13 @@ export default function SettingsPage() {
   const [logDestinations, setLogDestinations] = useState<LogDestination[]>([]);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
-  const [newBackupDesc, setNewBackupDesc] = useState('');
 
   // Set page title
   useEffect(() => {
     document.title = PAGE_TITLE;
   }, []);
-  const [includeHistorian, setIncludeHistorian] = useState(false);
 
   useEffect(() => {
-    fetchBackups();
     fetchServices();
     fetchModbusConfig();
     fetchLogConfig();
@@ -100,34 +87,29 @@ export default function SettingsPage() {
   };
 
   // ============== Backup Functions ==============
-
-  const fetchBackups = async () => {
-    try {
-      const res = await fetch('/api/v1/backups');
-      if (res.ok) {
-        setBackups(await res.json());
-      }
-    } catch (error) {
-      console.error('Failed to fetch backups:', error);
-    }
-  };
+  // Note: The server creates and returns backups immediately (no server-side storage).
+  // Backups should be saved locally by the user.
 
   const createBackup = async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/v1/backups', {
+      // POST to /api/v1/system/ creates and immediately returns backup as ZIP
+      const res = await fetch('/api/v1/system/', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          description: newBackupDesc,
-          include_historian: includeHistorian,
-        }),
       });
 
       if (res.ok) {
-        showMessage('success', 'Backup created successfully');
-        setNewBackupDesc('');
-        fetchBackups();
+        // Download the backup file
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `wtc_backup_${new Date().toISOString().replace(/[:.]/g, '-')}.zip`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        showMessage('success', 'Backup downloaded successfully');
       } else {
         showMessage('error', 'Failed to create backup');
       }
@@ -138,19 +120,28 @@ export default function SettingsPage() {
     }
   };
 
-  const restoreBackup = async (backupId: string) => {
+  const restoreBackup = async (file: File) => {
     if (!confirm('Are you sure you want to restore this backup? Current configuration will be overwritten.')) {
       return;
     }
 
     setLoading(true);
     try {
-      const res = await fetch(`/api/v1/backups/${backupId}/restore`, {
+      const formData = new FormData();
+      formData.append('file', file);
+
+      const res = await fetch('/api/v1/system/restore', {
         method: 'POST',
+        body: formData,
       });
 
       if (res.ok) {
-        showMessage('success', 'Configuration restored successfully');
+        const result = await res.json();
+        if (result.success) {
+          showMessage('success', 'Configuration restored successfully');
+        } else {
+          showMessage('error', result.error || 'Failed to restore backup');
+        }
       } else {
         showMessage('error', 'Failed to restore backup');
       }
@@ -161,28 +152,10 @@ export default function SettingsPage() {
     }
   };
 
-  const downloadBackup = (backupId: string) => {
-    window.open(`/api/v1/backups/${backupId}/download`, '_blank');
-  };
-
-  const deleteBackup = async (backupId: string) => {
-    if (!confirm('Are you sure you want to delete this backup?')) {
-      return;
-    }
-
-    try {
-      const res = await fetch(`/api/v1/backups/${backupId}`, {
-        method: 'DELETE',
-      });
-
-      if (res.ok) {
-        showMessage('success', 'Backup deleted');
-        fetchBackups();
-      } else {
-        showMessage('error', 'Failed to delete backup');
-      }
-    } catch (error) {
-      showMessage('error', 'Error deleting backup');
+  const handleRestoreFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      restoreBackup(file);
     }
   };
 
@@ -487,94 +460,37 @@ export default function SettingsPage() {
         <div className="space-y-6">
           {/* Create Backup */}
           <div className="scada-panel p-6">
-            <h2 className="text-lg font-semibold text-white mb-4">Create New Backup</h2>
-
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm text-gray-300 mb-1">Description (optional)</label>
-                <input
-                  type="text"
-                  value={newBackupDesc}
-                  onChange={(e) => setNewBackupDesc(e.target.value)}
-                  placeholder="e.g., Before upgrade, Production config"
-                  className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white"
-                />
-              </div>
-
-              <div className="flex items-center space-x-2">
-                <input
-                  type="checkbox"
-                  id="includeHistorian"
-                  checked={includeHistorian}
-                  onChange={(e) => setIncludeHistorian(e.target.checked)}
-                  className="rounded"
-                />
-                <label htmlFor="includeHistorian" className="text-sm text-gray-300">
-                  Include historian data (larger backup)
-                </label>
-              </div>
-
-              <button
-                onClick={createBackup}
-                disabled={loading}
-                className="px-4 py-2 bg-green-600 hover:bg-green-700 rounded text-white disabled:opacity-50"
-              >
-                {loading ? 'Creating...' : 'Create Backup'}
-              </button>
-            </div>
+            <h2 className="text-lg font-semibold text-white mb-4">Create Backup</h2>
+            <p className="text-sm text-gray-400 mb-4">
+              Create a backup of the current configuration. The backup will be downloaded
+              as a ZIP file containing database and configuration files.
+            </p>
+            <button
+              onClick={createBackup}
+              disabled={loading}
+              className="px-4 py-2 bg-green-600 hover:bg-green-700 rounded text-white disabled:opacity-50"
+            >
+              {loading ? 'Creating...' : 'Download Backup'}
+            </button>
           </div>
 
-          {/* Backup List */}
+          {/* Restore from File */}
           <div className="scada-panel p-6">
-            <h2 className="text-lg font-semibold text-white mb-4">Available Backups</h2>
-
-            {backups.length === 0 ? (
-              <p className="text-gray-400">No backups found</p>
-            ) : (
-              <div className="space-y-3">
-                {backups.map((backup) => (
-                  <div
-                    key={backup.backup_id}
-                    className="flex items-center justify-between p-4 bg-gray-800 rounded"
-                  >
-                    <div>
-                      <div className="font-medium text-white">{backup.filename}</div>
-                      <div className="text-sm text-gray-400">
-                        {formatDate(backup.created_at)} - {formatBytes(backup.size_bytes)}
-                        {backup.includes_historian && (
-                          <span className="ml-2 px-2 py-0.5 bg-blue-900 text-blue-300 rounded text-xs">
-                            Full
-                          </span>
-                        )}
-                      </div>
-                      {backup.description && (
-                        <div className="text-sm text-gray-500">{backup.description}</div>
-                      )}
-                    </div>
-                    <div className="flex space-x-2">
-                      <button
-                        onClick={() => downloadBackup(backup.backup_id)}
-                        className="px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded text-sm text-white"
-                      >
-                        Download
-                      </button>
-                      <button
-                        onClick={() => restoreBackup(backup.backup_id)}
-                        className="px-3 py-1 bg-blue-600 hover:bg-blue-700 rounded text-sm text-white"
-                      >
-                        Restore
-                      </button>
-                      <button
-                        onClick={() => deleteBackup(backup.backup_id)}
-                        className="px-3 py-1 bg-red-600 hover:bg-red-700 rounded text-sm text-white"
-                      >
-                        Delete
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
+            <h2 className="text-lg font-semibold text-white mb-4">Restore from Backup</h2>
+            <p className="text-sm text-gray-400 mb-4">
+              Select a backup file (.zip) to restore the configuration.
+              This will overwrite the current configuration.
+            </p>
+            <label className="inline-block px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded text-white cursor-pointer">
+              <input
+                type="file"
+                accept=".zip"
+                onChange={handleRestoreFileSelect}
+                className="hidden"
+                disabled={loading}
+              />
+              {loading ? 'Restoring...' : 'Select Backup File to Restore'}
+            </label>
           </div>
         </div>
       )}

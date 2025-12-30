@@ -198,7 +198,7 @@ DB_USER=wtc
 
 # API configuration
 API_HOST=0.0.0.0
-API_PORT=8080
+API_PORT=8000
 API_WORKERS=4
 
 # Security settings

@@ -1187,7 +1187,7 @@ verify_installation() {
     fi
 
     # Check UI accessibility
-    if ! curl -sf http://localhost:3000 > /dev/null; then
+    if ! curl -sf http://localhost:8080 > /dev/null; then
         log_error "UI not accessible"
         ((errors++))
     fi
@@ -1216,7 +1216,7 @@ print_summary() {
     water-controller-ui    Web HMI (Next.js)
 
   Access Points:
-    Web HMI:               http://localhost:3000
+    Web HMI:               http://localhost:8080
     REST API:              http://localhost:8000/api/v1
     API Documentation:     http://localhost:8000/docs
 
@@ -1293,7 +1293,7 @@ Post-installation verification must confirm:
 │  NETWORK VERIFICATION                                                    │
 │  ────────────────────                                                    │
 │  [ ] API listening on configured port (default 8000)                    │
-│  [ ] UI listening on configured port (default 3000)                     │
+│  [ ] UI listening on configured port (default 8080)                     │
 │  [ ] PROFINET interface has raw socket capability                       │
 │  [ ] No port conflicts with existing services                           │
 │                                                                          │

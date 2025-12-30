@@ -110,7 +110,7 @@ Before beginning commissioning:
    - Observe boot sequence (LEDs)
    - Wait for boot completion (typically 30-60 seconds)
    - Verify SSH access: `ssh wtc@<controller-ip>`
-   - Verify Web UI: `http://<controller-ip>:3000`
+   - Verify Web UI: `http://<controller-ip>:8080`
 
 3. **Power RTU SBC**
    - Apply 5V power
@@ -137,7 +137,7 @@ sudo journalctl -u water-controller -n 50 --no-pager | grep -i error
 sudo journalctl -u water-controller-api -n 50 --no-pager | grep -i error
 
 # Check API health
-curl http://localhost:8080/api/v1/system/health
+curl http://localhost:8000/api/v1/system/health
 ```
 
 **Expected Results:**
@@ -167,10 +167,10 @@ ping -c 5 <rtu-ip-address>
 
 ```bash
 # Trigger DCP scan
-curl -X POST http://localhost:8080/api/v1/discover/rtu
+curl -X POST http://localhost:8000/api/v1/discover/rtu
 
 # Check discovered devices
-curl http://localhost:8080/api/v1/discover/cached
+curl http://localhost:8000/api/v1/discover/cached
 ```
 
 **Expected Results:**
@@ -183,19 +183,19 @@ curl http://localhost:8080/api/v1/discover/cached
 
 1. Add RTU to controller:
    ```bash
-   curl -X POST http://localhost:8080/api/v1/rtus \
+   curl -X POST http://localhost:8000/api/v1/rtus \
      -H "Content-Type: application/json" \
      -d '{"station_name": "<station-name>"}'
    ```
 
 2. Initiate connection:
    ```bash
-   curl -X POST http://localhost:8080/api/v1/rtus/<station-name>/connect
+   curl -X POST http://localhost:8000/api/v1/rtus/<station-name>/connect
    ```
 
 3. Verify connection state:
    ```bash
-   curl http://localhost:8080/api/v1/rtus/<station-name>
+   curl http://localhost:8000/api/v1/rtus/<station-name>
    ```
 
 **Expected Results:**
@@ -237,7 +237,7 @@ For each sensor, verify readings are reasonable:
 
 ```bash
 # Get all sensor readings
-curl http://localhost:8080/api/v1/rtus/<station-name>/sensors | jq
+curl http://localhost:8000/api/v1/rtus/<station-name>/sensors | jq
 ```
 
 | Sensor | Slot | Expected Range | Actual Reading | Quality | Pass/Fail |
@@ -257,7 +257,7 @@ For each sensor, temporarily disconnect and verify:
 2. Wait 5 seconds
 3. Check API:
    ```bash
-   curl http://localhost:8080/api/v1/rtus/<station-name>/sensors | \
+   curl http://localhost:8000/api/v1/rtus/<station-name>/sensors | \
      jq '.[] | select(.slot == <slot>) | .status'
    ```
 4. Verify status shows "BAD" or "NOT_CONNECTED"
@@ -300,7 +300,7 @@ For each actuator:
 
 2. **Command ON:**
    ```bash
-   curl -X POST http://localhost:8080/api/v1/rtus/<station-name>/actuators/<slot> \
+   curl -X POST http://localhost:8000/api/v1/rtus/<station-name>/actuators/<slot> \
      -H "Content-Type: application/json" \
      -d '{"command": "ON"}'
    ```
@@ -311,7 +311,7 @@ For each actuator:
 
 4. **Command OFF:**
    ```bash
-   curl -X POST http://localhost:8080/api/v1/rtus/<station-name>/actuators/<slot> \
+   curl -X POST http://localhost:8000/api/v1/rtus/<station-name>/actuators/<slot> \
      -H "Content-Type: application/json" \
      -d '{"command": "OFF"}'
    ```
@@ -328,7 +328,7 @@ For variable speed devices:
 
 ```bash
 # Set 50% output
-curl -X POST http://localhost:8080/api/v1/rtus/<station-name>/actuators/<slot> \
+curl -X POST http://localhost:8000/api/v1/rtus/<station-name>/actuators/<slot> \
   -H "Content-Type: application/json" \
   -d '{"command": "PWM", "pwm_duty": 50}'
 ```
@@ -419,7 +419,7 @@ Before testing, verify interlock configuration on RTU:
 Configure alarm rules for each monitored point:
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/alarms/rules \
+curl -X POST http://localhost:8000/api/v1/alarms/rules \
   -H "Content-Type: application/json" \
   -d '{
     "rtu_station": "<station-name>",
@@ -450,7 +450,7 @@ For each alarm rule:
 
 4. Acknowledge alarm:
    ```bash
-   curl -X POST http://localhost:8080/api/v1/alarms/<alarm_id>/acknowledge \
+   curl -X POST http://localhost:8000/api/v1/alarms/<alarm_id>/acknowledge \
      -H "Content-Type: application/json" \
      -d '{"user": "commissioning_engineer"}'
    ```
@@ -469,7 +469,7 @@ For each alarm rule:
 Create historian tags for all points to be trended:
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/trends/tags \
+curl -X POST http://localhost:8000/api/v1/trends/tags \
   -H "Content-Type: application/json" \
   -d '{
     "rtu_station": "<station-name>",
@@ -485,7 +485,7 @@ curl -X POST http://localhost:8080/api/v1/trends/tags \
 1. Wait 5 minutes for data collection
 2. Query historian:
    ```bash
-   curl "http://localhost:8080/api/v1/trends/1?start=$(date -d '-5 minutes' -Iseconds)&end=$(date -Iseconds)"
+   curl "http://localhost:8000/api/v1/trends/1?start=$(date -d '-5 minutes' -Iseconds)&end=$(date -Iseconds)"
    ```
 3. Verify:
    - [ ] Data points present
@@ -507,19 +507,19 @@ curl -X POST http://localhost:8080/api/v1/trends/tags \
 
 1. Create backup via Web UI or CLI:
    ```bash
-   curl -X POST http://localhost:8080/api/v1/backups \
+   curl -X POST http://localhost:8000/api/v1/backups \
      -H "Content-Type: application/json" \
      -d '{"description": "Commissioning backup", "include_historian": true}'
    ```
 
 2. Verify backup created:
    ```bash
-   curl http://localhost:8080/api/v1/backups
+   curl http://localhost:8000/api/v1/backups
    ```
 
 3. Download backup:
    ```bash
-   curl -O http://localhost:8080/api/v1/backups/<backup_id>/download
+   curl -O http://localhost:8000/api/v1/backups/<backup_id>/download
    ```
 
 4. Verify backup file is valid:
@@ -534,7 +534,7 @@ curl -X POST http://localhost:8080/api/v1/trends/tags \
 1. Make a deliberate configuration change
 2. Restore from backup:
    ```bash
-   curl -X POST http://localhost:8080/api/v1/backups/<backup_id>/restore
+   curl -X POST http://localhost:8000/api/v1/backups/<backup_id>/restore
    ```
 3. Verify original configuration restored
 
@@ -546,13 +546,13 @@ curl -X POST http://localhost:8080/api/v1/trends/tags \
 
 ```bash
 # Full system health
-curl http://localhost:8080/api/v1/system/health | jq
+curl http://localhost:8000/health | jq
 
 # All RTUs connected
-curl http://localhost:8080/api/v1/rtus | jq '.[].connection_state'
+curl http://localhost:8000/api/v1/rtus | jq '.[].connection_state'
 
 # No active alarms
-curl http://localhost:8080/api/v1/alarms | jq 'length'
+curl http://localhost:8000/api/v1/alarms | jq 'length'
 ```
 
 ### 10.2 Extended Run Test

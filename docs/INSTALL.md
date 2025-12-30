@@ -174,12 +174,12 @@ curl http://localhost:8000/health
 journalctl -u water-controller --since "10 minutes ago"
 ```
 
-### Access the HMI
+### Access the Web Interface
 
 Open a web browser and navigate to:
 
 - **HMI Interface**: http://YOUR_IP:8080
-- **API Documentation**: http://YOUR_IP:8000/docs
+- **API Documentation**: http://YOUR_IP:8000/api/docs
 
 ### Enable Service at Boot
 
@@ -212,7 +212,7 @@ Create or edit `/etc/water-controller/environment`:
 API_PORT=8000
 
 # HMI port (default: 8080)
-UI_PORT=8080
+HMI_PORT=8080
 
 # Log level
 LOG_LEVEL=INFO
@@ -312,8 +312,9 @@ curl -fsSL .../bootstrap.sh | bash -s -- remove --keep-config
 ## Next Steps
 
 - [Upgrade Guide](UPGRADE.md) - How to upgrade to newer versions
-- [Configuration Reference](CONFIGURATION.md) - Detailed configuration options
-- [Troubleshooting Guide](TROUBLESHOOTING.md) - Common issues and solutions
+- [Deployment Guide](DEPLOYMENT.md) - Detailed configuration and deployment options
+- [Troubleshooting Guide](TROUBLESHOOTING_GUIDE.md) - Common issues and solutions
+- [Operator Guide](OPERATOR.md) - Quick reference for operators
 
 ## Getting Help
 

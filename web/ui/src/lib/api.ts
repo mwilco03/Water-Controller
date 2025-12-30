@@ -318,32 +318,42 @@ export async function isAlarmShelved(rtuStation: string, slot: number): Promise<
 }
 
 // Control API
+// Note: PID loops are per-RTU. Use getRtuPIDLoops() for RTU-specific loops.
 export async function getPIDLoops(): Promise<PIDLoop[]> {
-  const data = await apiFetch<{ loops: PIDLoop[] }>('/api/v1/control/pid');
+  // TODO: Implement global PID loop listing when endpoint is added
+  console.warn('getPIDLoops: Global PID endpoint not yet implemented. Use getRtuPIDLoops(stationName) instead.');
+  return [];
+}
+
+export async function getRtuPIDLoops(stationName: string): Promise<PIDLoop[]> {
+  const data = await apiFetch<{ loops: PIDLoop[] }>(
+    `/api/v1/rtus/${encodeURIComponent(stationName)}/pid`
+  );
   return data.loops || [];
 }
 
-export async function setSetpoint(loopId: number, setpoint: number): Promise<void> {
-  await apiFetch(`/api/v1/control/pid/${loopId}/setpoint`, {
+export async function setSetpoint(stationName: string, loopId: number, setpoint: number): Promise<void> {
+  await apiFetch(`/api/v1/rtus/${encodeURIComponent(stationName)}/pid/${loopId}/setpoint`, {
     method: 'PUT',
     body: JSON.stringify({ setpoint }),
   });
 }
 
-export async function setPIDMode(loopId: number, mode: 'AUTO' | 'MANUAL' | 'CASCADE'): Promise<void> {
-  await apiFetch(`/api/v1/control/pid/${loopId}/mode`, {
+export async function setPIDMode(stationName: string, loopId: number, mode: 'AUTO' | 'MANUAL' | 'CASCADE'): Promise<void> {
+  await apiFetch(`/api/v1/rtus/${encodeURIComponent(stationName)}/pid/${loopId}/mode`, {
     method: 'PUT',
     body: JSON.stringify({ mode }),
   });
 }
 
 export async function setPIDTuning(
+  stationName: string,
   loopId: number,
   kp: number,
   ki: number,
   kd: number
 ): Promise<void> {
-  await apiFetch(`/api/v1/control/pid/${loopId}/tuning`, {
+  await apiFetch(`/api/v1/rtus/${encodeURIComponent(stationName)}/pid/${loopId}/tuning`, {
     method: 'PUT',
     body: JSON.stringify({ kp, ki, kd }),
   });
@@ -377,7 +387,9 @@ export async function getTrendTags(): Promise<Array<{
 
 // System API
 export async function getSystemHealth(): Promise<SystemHealth> {
-  return apiFetch<SystemHealth>('/api/v1/system/health');
+  // Note: /health endpoint returns subsystem status, not cycle_time_ms
+  // For detailed system metrics, use /api/v1/system/status
+  return apiFetch<SystemHealth>('/api/v1/system/status');
 }
 
 export async function exportConfiguration(): Promise<Blob> {
@@ -399,26 +411,34 @@ export async function importConfiguration(configFile: File): Promise<void> {
 }
 
 // Backup API
-export async function createBackup(): Promise<{ backup_id: string }> {
-  return apiFetch('/api/v1/backups', { method: 'POST' });
-}
-
-export async function listBackups(): Promise<Array<{
-  id: string;
-  created_at: string;
-  size_bytes: number;
-}>> {
-  return apiFetch('/api/v1/backups');
-}
-
-export async function downloadBackup(backupId: string): Promise<Blob> {
-  const res = await fetch(`${API_BASE}/api/v1/backups/${backupId}/download`);
-  if (!res.ok) throw new Error('Failed to download backup');
+// Note: The backup API creates and downloads in a single request.
+// There is no persistent backup storage on the server.
+export async function createAndDownloadBackup(): Promise<Blob> {
+  // POST to /system/ creates and immediately returns backup as ZIP
+  const res = await fetch(`${API_BASE}/api/v1/system/`, {
+    method: 'POST',
+    headers: authToken ? { 'Authorization': `Bearer ${authToken}` } : {},
+  });
+  if (!res.ok) throw new Error('Failed to create backup');
   return res.blob();
 }
 
-export async function restoreBackup(backupId: string): Promise<void> {
-  await apiFetch(`/api/v1/backups/${backupId}/restore`, { method: 'POST' });
+export async function restoreBackup(file: File): Promise<{ success: boolean; error?: string }> {
+  const formData = new FormData();
+  formData.append('file', file);
+
+  const headers: HeadersInit = {};
+  if (authToken) {
+    headers['Authorization'] = `Bearer ${authToken}`;
+  }
+
+  const res = await fetch(`${API_BASE}/api/v1/system/restore`, {
+    method: 'POST',
+    headers,
+    body: formData,
+  });
+  if (!res.ok) throw new Error('Failed to restore backup');
+  return res.json();
 }
 
 // RTU Inventory API
