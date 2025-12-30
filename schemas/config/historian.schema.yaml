@@ -1,0 +1,183 @@
+# Water Treatment Controller - Historian Schema
+# Configuration for time-series data storage and compression
+#
+# IMPORTANT: This file is the single source of truth.
+# DO NOT manually edit generated files.
+
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "water-controller/config/historian"
+title: "Data Historian Configuration"
+description: "Configuration for time-series data collection, compression, and storage"
+
+type: object
+properties:
+  enabled:
+    type: boolean
+    default: true
+    description: "Enable historian data collection"
+    x-env-var: "WTC_HISTORIAN_ENABLED"
+
+  database_path:
+    type: string
+    default: "/var/lib/water-controller/historian.db"
+    description: "SQLite historian database path (for local storage)"
+    x-env-var: "WTC_HISTORIAN_DB"
+
+  timescale:
+    type: object
+    description: "TimescaleDB configuration for scalable time-series storage"
+    properties:
+      enabled:
+        type: boolean
+        default: false
+        description: "Use TimescaleDB instead of SQLite"
+        x-env-var: "WTC_TIMESCALE_ENABLED"
+
+      host:
+        type: string
+        default: "localhost"
+        description: "TimescaleDB server hostname"
+        x-env-var: "WTC_TIMESCALE_HOST"
+
+      port:
+        type: integer
+        minimum: 1
+        maximum: 65535
+        default: 5432
+        description: "TimescaleDB server port"
+        x-env-var: "WTC_TIMESCALE_PORT"
+
+      database:
+        type: string
+        default: "wtc_historian"
+        description: "TimescaleDB database name"
+        x-env-var: "WTC_TIMESCALE_DB"
+
+      user:
+        type: string
+        default: "wtc"
+        description: "TimescaleDB username"
+        x-env-var: "WTC_TIMESCALE_USER"
+
+      password:
+        type: string
+        default: "wtc_password"
+        description: "TimescaleDB password"
+        x-env-var: "WTC_TIMESCALE_PASSWORD"
+        x-sensitive: true
+
+  sampling:
+    type: object
+    description: "Default sampling settings for new tags"
+    properties:
+      default_rate_ms:
+        type: integer
+        minimum: 100
+        maximum: 3600000
+        default: 1000
+        description: "Default sample rate for new historian tags"
+        x-unit: "milliseconds"
+
+      default_deadband:
+        type: number
+        minimum: 0.0
+        maximum: 100.0
+        default: 0.1
+        description: "Default deadband percentage (change threshold to record)"
+        x-unit: "percent"
+
+  compression:
+    type: object
+    description: "Data compression settings"
+    properties:
+      default_algorithm:
+        type: string
+        enum: ["none", "swinging_door", "boxcar", "deadband"]
+        default: "swinging_door"
+        description: "Default compression algorithm (SDT is industry standard)"
+
+      swinging_door_deviation:
+        type: number
+        minimum: 0.0
+        maximum: 10.0
+        default: 0.5
+        description: "Swinging door compression deviation percentage"
+        x-unit: "percent"
+
+  retention:
+    type: object
+    description: "Data retention settings"
+    properties:
+      days:
+        type: integer
+        minimum: 1
+        maximum: 36500
+        default: 365
+        description: "Number of days to retain historical data"
+        x-env-var: "WTC_HISTORIAN_RETENTION_DAYS"
+
+      auto_purge:
+        type: boolean
+        default: true
+        description: "Automatically purge data older than retention period"
+
+      purge_interval_hours:
+        type: integer
+        minimum: 1
+        maximum: 168
+        default: 24
+        description: "Interval between purge operations"
+        x-unit: "hours"
+
+  limits:
+    type: object
+    description: "Historian limits"
+    properties:
+      max_tags:
+        type: integer
+        minimum: 1
+        maximum: 100000
+        default: 1024
+        description: "Maximum number of historian tags"
+        x-c-define: "WTC_MAX_HISTORIAN_TAGS"
+
+      buffer_size:
+        type: integer
+        minimum: 100
+        maximum: 100000
+        default: 1000
+        description: "In-memory buffer size per tag before flush"
+
+      max_samples_per_tag:
+        type: integer
+        minimum: 1000
+        maximum: 100000000
+        default: 1000000
+        description: "Maximum samples stored per tag (prevents unbounded growth)"
+        x-env-var: "WTC_HISTORIAN_MAX_SAMPLES"
+
+  performance:
+    type: object
+    description: "Performance tuning"
+    properties:
+      async_writes:
+        type: boolean
+        default: true
+        description: "Use asynchronous database writes"
+
+      batch_size:
+        type: integer
+        minimum: 1
+        maximum: 10000
+        default: 100
+        description: "Number of samples to batch before writing"
+
+      flush_interval_ms:
+        type: integer
+        minimum: 100
+        maximum: 60000
+        default: 5000
+        description: "Maximum time between buffer flushes"
+        x-unit: "milliseconds"
+
+required: []

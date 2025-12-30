@@ -1,0 +1,265 @@
+# Water Treatment Controller - Web API and HMI Schema
+# Configuration for FastAPI backend and React frontend
+#
+# IMPORTANT: This file is the single source of truth.
+# DO NOT manually edit generated files.
+
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "water-controller/config/web"
+title: "Web API and HMI Configuration"
+description: "Configuration for FastAPI REST API, WebSocket streaming, and React HMI"
+
+type: object
+properties:
+  api:
+    type: object
+    description: "FastAPI backend configuration"
+    properties:
+      host:
+        type: string
+        default: "0.0.0.0"
+        description: "API server bind address"
+        x-env-var: "WTC_API_HOST"
+
+      port:
+        type: integer
+        minimum: 1
+        maximum: 65535
+        default: 8080
+        description: "API server port"
+        x-env-var: "WTC_API_PORT"
+        x-cli-arg: "-p, --port"
+
+      api_only:
+        type: boolean
+        default: false
+        description: "Run API only (no UI serving)"
+        x-env-var: "WTC_API_ONLY"
+
+      cors_origins:
+        type: string
+        default: ""
+        description: "Comma-separated list of allowed CORS origins"
+        x-env-var: "WTC_CORS_ORIGINS"
+
+      workers:
+        type: integer
+        minimum: 1
+        maximum: 32
+        default: 4
+        description: "Number of API worker processes"
+
+      debug:
+        type: boolean
+        default: false
+        description: "Enable API debug mode"
+        x-env-var: "WTC_API_DEBUG"
+
+  ui:
+    type: object
+    description: "Web UI configuration"
+    properties:
+      port:
+        type: integer
+        minimum: 1
+        maximum: 65535
+        default: 3000
+        description: "UI server port (when running separately)"
+        x-env-var: "WTC_UI_PORT"
+
+      dist_dir:
+        type: string
+        default: ""
+        description: "Static UI distribution directory"
+        x-env-var: "WTC_UI_DIST_DIR"
+
+      api_url:
+        type: string
+        default: ""
+        description: "API URL for UI to connect to"
+        x-env-var: "NEXT_PUBLIC_API_URL"
+
+  timeouts:
+    type: object
+    description: "API timeout configuration"
+    properties:
+      command_ms:
+        type: integer
+        minimum: 100
+        maximum: 30000
+        default: 3000
+        description: "Command execution timeout"
+        x-env-var: "WTC_COMMAND_TIMEOUT_MS"
+        x-unit: "milliseconds"
+
+      db_query_ms:
+        type: integer
+        minimum: 100
+        maximum: 60000
+        default: 5000
+        description: "Database query timeout"
+        x-env-var: "WTC_DB_QUERY_TIMEOUT_MS"
+        x-unit: "milliseconds"
+
+      dcp_discovery_ms:
+        type: integer
+        minimum: 1000
+        maximum: 30000
+        default: 5000
+        description: "PROFINET DCP discovery timeout"
+        x-env-var: "WTC_DCP_DISCOVERY_MS"
+        x-unit: "milliseconds"
+
+  websocket:
+    type: object
+    description: "WebSocket streaming configuration"
+    properties:
+      reconnect_base_ms:
+        type: integer
+        minimum: 100
+        maximum: 30000
+        default: 1000
+        description: "Base reconnection interval (exponential backoff)"
+        x-env-var: "WTC_WS_RECONNECT_MS"
+        x-unit: "milliseconds"
+
+      reconnect_max_attempts:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 10
+        description: "Maximum reconnection attempts"
+        x-env-var: "WTC_WS_RECONNECT_ATTEMPTS"
+
+      heartbeat_interval_ms:
+        type: integer
+        minimum: 1000
+        maximum: 60000
+        default: 30000
+        description: "WebSocket heartbeat interval"
+        x-unit: "milliseconds"
+
+  polling:
+    type: object
+    description: "Fallback polling configuration (when WebSocket unavailable)"
+    properties:
+      default_interval_ms:
+        type: integer
+        minimum: 1000
+        maximum: 60000
+        default: 5000
+        description: "Default polling interval"
+        x-env-var: "WTC_POLL_INTERVAL_MS"
+        x-unit: "milliseconds"
+
+      many_rtus_interval_ms:
+        type: integer
+        minimum: 1000
+        maximum: 120000
+        default: 10000
+        description: "Reduced polling interval when many RTUs"
+        x-env-var: "WTC_MANY_RTUS_POLL_MS"
+        x-unit: "milliseconds"
+
+      many_rtus_threshold:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 10
+        description: "RTU count to trigger reduced polling"
+        x-env-var: "WTC_MANY_RTUS_THRESHOLD"
+
+  circuit_breaker:
+    type: object
+    description: "Circuit breaker for API resilience"
+    properties:
+      failure_threshold:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 5
+        description: "Failures before opening circuit"
+        x-env-var: "WTC_CB_FAILURE_THRESHOLD"
+
+      reset_timeout_seconds:
+        type: integer
+        minimum: 1
+        maximum: 600
+        default: 30
+        description: "Time before attempting reset"
+        x-env-var: "WTC_CB_RESET_TIMEOUT"
+        x-unit: "seconds"
+
+      success_threshold:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 3
+        description: "Successes required to close circuit"
+        x-env-var: "WTC_CB_SUCCESS_THRESHOLD"
+
+  authentication:
+    type: object
+    description: "Authentication configuration"
+    properties:
+      enabled:
+        type: boolean
+        default: true
+        description: "Enable authentication"
+        x-env-var: "WTC_AUTH_ENABLED"
+
+      session_timeout_minutes:
+        type: integer
+        minimum: 5
+        maximum: 1440
+        default: 60
+        description: "Session timeout"
+        x-unit: "minutes"
+
+      max_sessions_per_user:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 5
+        description: "Maximum concurrent sessions per user"
+
+      ad_enabled:
+        type: boolean
+        default: false
+        description: "Enable Active Directory authentication"
+        x-env-var: "WTC_AD_ENABLED"
+
+      ad_server:
+        type: string
+        default: ""
+        description: "Active Directory server"
+        x-env-var: "WTC_AD_SERVER"
+
+      ad_domain:
+        type: string
+        default: ""
+        description: "Active Directory domain"
+        x-env-var: "WTC_AD_DOMAIN"
+
+  security:
+    type: object
+    description: "Security settings"
+    properties:
+      rate_limit_requests_per_minute:
+        type: integer
+        minimum: 10
+        maximum: 10000
+        default: 100
+        description: "API rate limit per IP"
+
+      csrf_enabled:
+        type: boolean
+        default: true
+        description: "Enable CSRF protection"
+
+      secure_cookies:
+        type: boolean
+        default: true
+        description: "Use secure cookies (HTTPS only)"
+
+required: []
