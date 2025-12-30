@@ -1,0 +1,194 @@
+# Water Treatment Controller - Sensor Type Schema
+# Defines sensor slots and measurement types
+#
+# IMPORTANT: This file is the single source of truth.
+
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "water-controller/api/sensor"
+title: "Sensor Types"
+description: |
+  Sensor slot and measurement type definitions for water treatment.
+
+  Sensors are read-only data sources that provide process measurements
+  with quality indicators. Each sensor slot contains:
+  - Current value with quality and timestamp
+  - Measurement type and engineering unit
+  - Range limits for validation
+  - Calibration metadata
+
+definitions:
+  measurement_type:
+    type: string
+    enum:
+      - PH
+      - TEMPERATURE
+      - TURBIDITY
+      - TDS
+      - DISSOLVED_OXYGEN
+      - FLOW_RATE
+      - LEVEL
+      - PRESSURE
+      - CONDUCTIVITY
+      - ORP
+      - CHLORINE
+      - CUSTOM
+    description: "Type of measurement this sensor provides"
+    x-c-enum: "measurement_type_t"
+
+  sensor_reading:
+    type: object
+    description: "Current sensor value with quality (5-byte PROFINET format)"
+    required:
+      - value
+      - quality
+    properties:
+      value:
+        type: number
+        description: "Process value (float32)"
+      quality:
+        $ref: "../meta/data_quality.yaml#/definitions/quality_code"
+      timestamp:
+        type: string
+        format: date-time
+        description: "Reading timestamp (ISO 8601)"
+      raw_value:
+        type: integer
+        description: "Raw ADC value before scaling (optional)"
+
+  sensor_slot:
+    type: object
+    description: "Sensor slot definition"
+    required:
+      - slot_id
+      - name
+      - measurement_type
+    properties:
+      slot_id:
+        type: integer
+        minimum: 0
+        maximum: 255
+        description: "Slot number on the RTU"
+      name:
+        type: string
+        maxLength: 64
+        description: "Human-readable sensor name"
+      description:
+        type: string
+        maxLength: 256
+        description: "Detailed sensor description"
+      measurement_type:
+        $ref: "#/definitions/measurement_type"
+      unit:
+        type: string
+        maxLength: 16
+        default: ""
+        description: "Engineering unit symbol"
+      range_min:
+        type: number
+        default: 0
+        description: "Minimum expected value"
+      range_max:
+        type: number
+        default: 100
+        description: "Maximum expected value"
+      precision:
+        type: integer
+        minimum: 0
+        maximum: 6
+        default: 2
+        description: "Decimal places for display"
+      reading:
+        $ref: "#/definitions/sensor_reading"
+      calibration:
+        type: object
+        description: "Calibration metadata"
+        properties:
+          last_calibrated:
+            type: string
+            format: date-time
+          calibration_due:
+            type: string
+            format: date-time
+          offset:
+            type: number
+            default: 0
+          scale:
+            type: number
+            default: 1
+
+type: object
+properties:
+  measurement_types:
+    type: array
+    items:
+      type: object
+      required:
+        - id
+        - name
+        - default_unit
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        default_unit:
+          type: string
+        range_hint:
+          type: object
+          properties:
+            min:
+              type: number
+            max:
+              type: number
+    default:
+      - id: "PH"
+        name: "pH"
+        default_unit: "pH"
+        range_hint: { min: 0, max: 14 }
+      - id: "TEMPERATURE"
+        name: "Temperature"
+        default_unit: "C"
+        range_hint: { min: -40, max: 150 }
+      - id: "TURBIDITY"
+        name: "Turbidity"
+        default_unit: "NTU"
+        range_hint: { min: 0, max: 1000 }
+      - id: "TDS"
+        name: "Total Dissolved Solids"
+        default_unit: "mg/L"
+        range_hint: { min: 0, max: 2000 }
+      - id: "DISSOLVED_OXYGEN"
+        name: "Dissolved Oxygen"
+        default_unit: "mg/L"
+        range_hint: { min: 0, max: 20 }
+      - id: "FLOW_RATE"
+        name: "Flow Rate"
+        default_unit: "L/min"
+        range_hint: { min: 0, max: 10000 }
+      - id: "LEVEL"
+        name: "Level"
+        default_unit: "m"
+        range_hint: { min: 0, max: 100 }
+      - id: "PRESSURE"
+        name: "Pressure"
+        default_unit: "bar"
+        range_hint: { min: 0, max: 100 }
+      - id: "CONDUCTIVITY"
+        name: "Conductivity"
+        default_unit: "uS/cm"
+        range_hint: { min: 0, max: 10000 }
+      - id: "ORP"
+        name: "Oxidation-Reduction Potential"
+        default_unit: "mV"
+        range_hint: { min: -2000, max: 2000 }
+      - id: "CHLORINE"
+        name: "Chlorine"
+        default_unit: "mg/L"
+        range_hint: { min: 0, max: 10 }
+      - id: "CUSTOM"
+        name: "Custom"
+        default_unit: ""
+        range_hint: { min: 0, max: 100 }
+
+x-c-header: "sensor_types.h"
+x-doc-category: "API Types"

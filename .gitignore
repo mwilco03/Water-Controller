@@ -9,7 +9,6 @@ cmake_install.cmake
 CPackConfig.cmake
 CPackSourceConfig.cmake
 CTestTestfile.cmake
-Makefile
 compile_commands.json
 
 # Executables (built binaries)

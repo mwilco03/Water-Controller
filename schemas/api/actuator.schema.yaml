@@ -1,0 +1,211 @@
+# Water Treatment Controller - Actuator Type Schema
+# Defines actuator slots, types, and command interface
+#
+# IMPORTANT: This file is the single source of truth.
+
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "water-controller/api/actuator"
+title: "Actuator Types"
+description: |
+  Actuator slot and control type definitions for water treatment.
+
+  Actuators are controllable outputs that accept commands.
+  Commands flow THROUGH the RTU to actuators - never direct.
+
+  CRITICAL: The RTU maintains safe state during controller disconnect.
+  Commands include sequence numbers for authority handoff.
+
+definitions:
+  actuator_type:
+    type: string
+    enum:
+      - RELAY
+      - PWM
+      - PUMP
+      - VALVE
+      - LATCHING
+      - MOMENTARY
+    description: "Type of actuator control mechanism"
+    x-c-enum: "actuator_type_t"
+
+  actuator_command:
+    type: string
+    enum:
+      - "OFF"
+      - "ON"
+      - "PWM"
+    description: "Command to send to actuator"
+    x-c-enum: "actuator_cmd_t"
+    x-value-map:
+      "OFF": 0x00
+      "ON": 0x01
+      "PWM": 0x02
+
+  actuator_state:
+    type: object
+    description: "Current actuator state with feedback"
+    required:
+      - commanded
+      - feedback
+      - quality
+    properties:
+      commanded:
+        type: string
+        enum: ["OFF", "ON", "PWM"]
+        description: "Last commanded state"
+      commanded_value:
+        type: integer
+        minimum: 0
+        maximum: 255
+        description: "PWM duty cycle (0-255) if applicable"
+      feedback:
+        type: string
+        enum: ["OFF", "ON", "TRANSITIONING", "FAULT"]
+        description: "Actual state from feedback sensor"
+      feedback_value:
+        type: integer
+        description: "Measured feedback value (e.g., position)"
+      quality:
+        $ref: "../meta/data_quality.yaml#/definitions/quality_code"
+      fault_code:
+        type: integer
+        default: 0
+        description: "Fault code if in FAULT state"
+      last_command_time:
+        type: string
+        format: date-time
+        description: "When last command was received"
+      run_time_seconds:
+        type: integer
+        description: "Total runtime since reset"
+
+  actuator_slot:
+    type: object
+    description: "Actuator slot definition"
+    required:
+      - slot_id
+      - name
+      - actuator_type
+    properties:
+      slot_id:
+        type: integer
+        minimum: 0
+        maximum: 255
+        description: "Slot number on the RTU"
+      name:
+        type: string
+        maxLength: 64
+        description: "Human-readable actuator name"
+      description:
+        type: string
+        maxLength: 256
+        description: "Detailed actuator description"
+      actuator_type:
+        $ref: "#/definitions/actuator_type"
+      state:
+        $ref: "#/definitions/actuator_state"
+      interlocked:
+        type: boolean
+        default: false
+        description: "True if actuator is currently interlocked"
+      interlock_reason:
+        type: string
+        description: "Reason for interlock if interlocked"
+      min_on_time_ms:
+        type: integer
+        minimum: 0
+        default: 0
+        description: "Minimum on time before allowing off command"
+      min_off_time_ms:
+        type: integer
+        minimum: 0
+        default: 0
+        description: "Minimum off time before allowing on command"
+      pwm_min:
+        type: integer
+        minimum: 0
+        maximum: 255
+        default: 0
+        description: "Minimum PWM value (for PWM type)"
+      pwm_max:
+        type: integer
+        minimum: 0
+        maximum: 255
+        default: 255
+        description: "Maximum PWM value (for PWM type)"
+
+  actuator_command_request:
+    type: object
+    description: "Command request structure for actuator control"
+    required:
+      - slot_id
+      - command
+    properties:
+      slot_id:
+        type: integer
+        description: "Target slot"
+      command:
+        $ref: "#/definitions/actuator_command"
+      value:
+        type: integer
+        minimum: 0
+        maximum: 255
+        description: "PWM value (required for PWM command)"
+      sequence_number:
+        type: integer
+        description: "Command sequence for ordering/dedup"
+      timestamp:
+        type: string
+        format: date-time
+        description: "Command issue time"
+      operator_id:
+        type: string
+        description: "Operator who issued command (for audit)"
+
+type: object
+properties:
+  actuator_types:
+    type: array
+    items:
+      type: object
+      required:
+        - id
+        - name
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        supports_pwm:
+          type: boolean
+          default: false
+    default:
+      - id: "RELAY"
+        name: "Relay"
+        description: "On/off relay output"
+        supports_pwm: false
+      - id: "PWM"
+        name: "PWM Output"
+        description: "Pulse-width modulated output"
+        supports_pwm: true
+      - id: "PUMP"
+        name: "Pump"
+        description: "Pump motor control"
+        supports_pwm: false
+      - id: "VALVE"
+        name: "Valve"
+        description: "Valve actuator (on/off or modulating)"
+        supports_pwm: true
+      - id: "LATCHING"
+        name: "Latching Relay"
+        description: "Latching relay (maintains state on power loss)"
+        supports_pwm: false
+      - id: "MOMENTARY"
+        name: "Momentary Output"
+        description: "Pulse output (returns to off after trigger)"
+        supports_pwm: false
+
+x-c-header: "actuator_types.h"
+x-doc-category: "API Types"
