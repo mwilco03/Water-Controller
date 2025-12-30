@@ -1,3 +1,12 @@
+<!--
+  DOCUMENT CLASS: Guide (Living Document)
+
+  This document contains PROCEDURES that may change with each release.
+  Update when deployment steps, requirements, or best practices change.
+
+  For configuration options, see: generated/CONFIGURATION.md (auto-generated)
+-->
+
 # Water Treatment Controller - Deployment Guide
 
 This guide covers installation, configuration, and deployment of the Water Treatment Controller system.

@@ -1,3 +1,12 @@
+<!--
+  DOCUMENT CLASS: Guide (Living Document)
+
+  This document contains ALARM RESPONSE PROCEDURES per ISA-18.2.
+  Update when new alarms are added or response procedures change.
+
+  For alarm architecture/philosophy, see: architecture/ALARM_PHILOSOPHY.md
+-->
+
 # Alarm Response Procedures
 
 **Document ID:** WT-OPS-001

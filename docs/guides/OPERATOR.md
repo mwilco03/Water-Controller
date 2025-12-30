@@ -1,3 +1,13 @@
+<!--
+  DOCUMENT CLASS: Guide (Living Document)
+
+  This document contains PROCEDURES for daily operations.
+  Update when HMI changes or operational procedures change.
+
+  For alarm response procedures, see: ALARM_RESPONSE_PROCEDURES.md
+  For configuration options, see: generated/CONFIGURATION.md (auto-generated)
+-->
+
 # Water-Controller Operator Guide
 
 **For Field Operators and Plant Personnel**

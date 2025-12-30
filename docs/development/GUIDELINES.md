@@ -1,3 +1,12 @@
+<!--
+  DOCUMENT CLASS: Development (Developer Reference)
+
+  This document defines CODING STANDARDS and QUALITY GATES.
+  Update when development practices or tooling changes.
+
+  These standards are enforced by CI/CD - changes here affect the build pipeline.
+-->
+
 # Water-Controller Development, Validation, and Deployment Guidelines
 
 ## Preamble: Purpose and Scope
