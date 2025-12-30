@@ -29,7 +29,6 @@ This directory contains comprehensive documentation for the Water Treatment Cont
 - [INSTALL.md](INSTALL.md) - Installation guide with prerequisites
 - [DEPLOYMENT.md](DEPLOYMENT.md) - Comprehensive production deployment
 - [UPGRADE.md](UPGRADE.md) - Version upgrade procedures with rollback
-- [FIELD_UPGRADE_GUIDE.md](FIELD_UPGRADE_GUIDE.md) - In-field deployment updates
 - [TROUBLESHOOTING_GUIDE.md](TROUBLESHOOTING_GUIDE.md) - Diagnostic commands and solutions
 - [PERFORMANCE_TUNING_GUIDE.md](PERFORMANCE_TUNING_GUIDE.md) - System optimization
 
@@ -58,7 +57,6 @@ This directory contains comprehensive documentation for the Water Treatment Cont
 | [INSTALL.md](INSTALL.md) | Quick installation guide with prerequisites |
 | [DEPLOYMENT.md](DEPLOYMENT.md) | Full production deployment (31KB comprehensive) |
 | [UPGRADE.md](UPGRADE.md) | Version upgrades with zero-disk-write optimization |
-| [FIELD_UPGRADE_GUIDE.md](FIELD_UPGRADE_GUIDE.md) | Live system upgrade procedures |
 | [COMMISSIONING_PROCEDURE.md](COMMISSIONING_PROCEDURE.md) | New system commissioning steps |
 
 ### Operations & Procedures

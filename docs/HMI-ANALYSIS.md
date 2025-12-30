@@ -1106,7 +1106,7 @@ NORMAL --> ACTIVE_UNACK --> ACTIVE_ACK
 | ID | Gap | Impact | Recommendation | Status |
 |----|-----|--------|----------------|--------|
 | GAP-01 | ~~[MISSING] Confirmation dialogs for control actions~~ | Risk of accidental actuation | Add modal confirmation for pump/valve commands | **RESOLVED** - Confirmation modals added to ControlWidget and Control page |
-| GAP-02 | [MISSING] Alarm audio notifications | Operators may miss critical alarms | Add configurable audio alerts | **DEFERRED** - Planned for Q4 2026 (see TODO-Q4-2026-ALARM-AUDIO.md) |
+| GAP-02 | [MISSING] Alarm audio notifications | Operators may miss critical alarms | Add configurable audio alerts | **DEFERRED** - Planned for future release |
 | GAP-03 | ~~[MISSING] Alarm shelving~~ | Cannot suppress nuisance alarms | Implement ISA-18.2 shelving | **RESOLVED** - Full ISA-18.2 shelving implemented with duration options (1h/2h/4h/8h) |
 
 ### Medium Priority Gaps
