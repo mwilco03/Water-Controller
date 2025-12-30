@@ -1,0 +1,244 @@
+# Water Treatment Controller - Alarm Manager Schema
+# Configuration for ISA-18.2 compliant alarm management
+#
+# IMPORTANT: This file is the single source of truth.
+# DO NOT manually edit generated files.
+
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "water-controller/config/alarms"
+title: "Alarm Manager Configuration"
+description: "ISA-18.2 compliant alarm management configuration"
+
+type: object
+properties:
+  enabled:
+    type: boolean
+    default: true
+    description: "Enable alarm management"
+    x-env-var: "WTC_ALARMS_ENABLED"
+
+  database_path:
+    type: string
+    default: ""
+    description: "Alarm database path (uses main database if empty)"
+
+  limits:
+    type: object
+    description: "Alarm system limits"
+    properties:
+      max_active_alarms:
+        type: integer
+        minimum: 10
+        maximum: 10000
+        default: 256
+        description: "Maximum concurrent active alarms"
+
+      max_history_entries:
+        type: integer
+        minimum: 100
+        maximum: 1000000
+        default: 10000
+        description: "Maximum alarm history entries to retain"
+
+      max_rules:
+        type: integer
+        minimum: 1
+        maximum: 10000
+        default: 512
+        description: "Maximum alarm rules"
+        x-c-define: "WTC_MAX_ALARM_RULES"
+
+  isa_18_2:
+    type: object
+    description: "ISA-18.2 compliance settings"
+    properties:
+      require_acknowledgment:
+        type: boolean
+        default: true
+        description: "Require operator acknowledgment for alarms"
+
+      shelving_enabled:
+        type: boolean
+        default: true
+        description: "Allow alarm shelving (temporary disable with audit)"
+
+      max_shelve_duration_hours:
+        type: integer
+        minimum: 1
+        maximum: 168
+        default: 24
+        description: "Maximum duration an alarm can be shelved"
+        x-unit: "hours"
+
+      rationalization_required:
+        type: boolean
+        default: false
+        description: "Require consequence and response for each alarm rule"
+
+      out_of_service_logging:
+        type: boolean
+        default: true
+        description: "Log all out-of-service state changes"
+
+  flood_detection:
+    type: object
+    description: "Alarm flood detection (per ISA-18.2)"
+    properties:
+      enabled:
+        type: boolean
+        default: true
+        description: "Enable alarm flood detection"
+
+      threshold_per_10min:
+        type: integer
+        minimum: 10
+        maximum: 1000
+        default: 100
+        description: "Alarm count threshold to declare flood condition"
+        x-validation: "ISA-18.2 recommends max 10 alarms per 10 minutes per operator"
+
+      target_rate_per_10min:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 10
+        description: "Target sustainable alarm rate (ISA-18.2 benchmark)"
+
+  severity:
+    type: object
+    description: "Severity level definitions"
+    properties:
+      levels:
+        type: array
+        items:
+          type: object
+          properties:
+            id:
+              type: integer
+              minimum: 1
+              maximum: 10
+            name:
+              type: string
+            color:
+              type: string
+              pattern: "^#[0-9A-Fa-f]{6}$"
+            response_time_sec:
+              type: integer
+              description: "Expected response time"
+              x-unit: "seconds"
+        default:
+          - id: 1
+            name: "Low"
+            color: "#FFFF00"
+            response_time_sec: 3600
+          - id: 2
+            name: "Medium"
+            color: "#FFA500"
+            response_time_sec: 1800
+          - id: 3
+            name: "High"
+            color: "#FF0000"
+            response_time_sec: 300
+          - id: 4
+            name: "Emergency"
+            color: "#8B0000"
+            response_time_sec: 60
+
+  notifications:
+    type: object
+    description: "Alarm notification settings"
+    properties:
+      enabled:
+        type: boolean
+        default: true
+        description: "Enable alarm notifications"
+
+      websocket_broadcast:
+        type: boolean
+        default: true
+        description: "Broadcast alarms to WebSocket clients"
+
+      audible_alert:
+        type: boolean
+        default: true
+        description: "Enable audible alerts on HMI"
+
+      email:
+        type: object
+        description: "Email notification settings"
+        properties:
+          enabled:
+            type: boolean
+            default: false
+            description: "Enable email notifications"
+
+          min_severity:
+            type: integer
+            minimum: 1
+            maximum: 4
+            default: 3
+            description: "Minimum severity to trigger email"
+
+          smtp_host:
+            type: string
+            default: ""
+            description: "SMTP server hostname"
+            x-env-var: "WTC_SMTP_HOST"
+
+          smtp_port:
+            type: integer
+            minimum: 1
+            maximum: 65535
+            default: 587
+            description: "SMTP server port"
+
+          recipients:
+            type: array
+            items:
+              type: string
+              format: "email"
+            default: []
+            description: "Email recipients for alarm notifications"
+
+  suppression:
+    type: object
+    description: "Alarm suppression settings"
+    properties:
+      max_duration_minutes:
+        type: integer
+        minimum: 1
+        maximum: 1440
+        default: 60
+        description: "Maximum suppression duration"
+        x-unit: "minutes"
+
+      require_reason:
+        type: boolean
+        default: true
+        description: "Require reason when suppressing alarms"
+
+      audit_all:
+        type: boolean
+        default: true
+        description: "Audit log all suppression actions"
+
+  conditions:
+    type: object
+    description: "Available alarm conditions"
+    x-readonly: true
+    properties:
+      types:
+        type: array
+        items:
+          type: string
+        default:
+          - "HIGH"
+          - "LOW"
+          - "HIGH_HIGH"
+          - "LOW_LOW"
+          - "RATE_OF_CHANGE"
+          - "DEVIATION"
+          - "BAD_QUALITY"
+        description: "Available alarm condition types"
+
+required: []

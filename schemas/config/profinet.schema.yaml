@@ -1,0 +1,221 @@
+# Water Treatment Controller - PROFINET IO Controller Schema
+# Configuration for the PROFINET communication layer
+#
+# IMPORTANT: This file is the single source of truth.
+# DO NOT manually edit generated files.
+
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "water-controller/config/profinet"
+title: "PROFINET IO Controller Configuration"
+description: "Configuration for PROFINET RT Class 1 communication with RTU devices"
+
+type: object
+properties:
+  interface:
+    type: string
+    default: "eth0"
+    maxLength: 32
+    pattern: "^[a-zA-Z0-9_-]+$"
+    description: "Network interface for PROFINET communication"
+    x-env-var: "WTC_INTERFACE"
+    x-cli-arg: "-i, --interface"
+
+  cycle_time_us:
+    type: integer
+    minimum: 31250
+    maximum: 4000000
+    default: 1000000
+    description: "PROFINET cycle time (minimum 31.25us, typically 1ms for RT Class 1)"
+    x-unit: "microseconds"
+    x-validation: "Must be multiple of 31.25us (send_clock_factor * 31.25us)"
+
+  send_clock_factor:
+    type: integer
+    minimum: 1
+    maximum: 128
+    default: 32
+    description: "Send clock factor (32 = 1ms base cycle)"
+    x-validation: "cycle_time_us = send_clock_factor * 31.25us * reduction_ratio"
+
+  reduction_ratio:
+    type: integer
+    minimum: 1
+    maximum: 512
+    default: 1
+    description: "Reduction ratio for actual cycle time"
+
+  use_raw_sockets:
+    type: boolean
+    default: true
+    description: "Use raw sockets for RT frames (requires CAP_NET_RAW)"
+
+  socket_priority:
+    type: integer
+    minimum: 0
+    maximum: 7
+    default: 6
+    description: "Socket priority for QoS (0-7, 6 recommended for RT)"
+
+  controller:
+    type: object
+    description: "Controller identity settings"
+    properties:
+      vendor_id:
+        type: integer
+        minimum: 0
+        maximum: 65535
+        default: 4660
+        description: "PROFINET vendor ID (0x1234)"
+        x-format: "hex"
+
+      device_id:
+        type: integer
+        minimum: 0
+        maximum: 65535
+        default: 1
+        description: "PROFINET device ID"
+
+      station_name:
+        type: string
+        default: "wtc-controller"
+        maxLength: 64
+        pattern: "^[a-z0-9][a-z0-9.-]*$"
+        description: "Controller station name (DNS compatible)"
+        x-env-var: "WTC_STATION_NAME"
+
+      mac_address:
+        type: string
+        pattern: "^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$"
+        default: ""
+        description: "Controller MAC address (auto-detect if empty)"
+
+      ip_address:
+        type: string
+        format: "ipv4"
+        default: ""
+        description: "Controller IP address (auto-detect if empty)"
+
+      subnet_mask:
+        type: string
+        format: "ipv4"
+        default: "255.255.255.0"
+        description: "Network subnet mask"
+
+      gateway:
+        type: string
+        format: "ipv4"
+        default: ""
+        description: "Default gateway (optional)"
+
+  discovery:
+    type: object
+    description: "DCP discovery settings"
+    properties:
+      timeout_ms:
+        type: integer
+        minimum: 1000
+        maximum: 30000
+        default: 5000
+        description: "DCP discovery response timeout"
+        x-env-var: "WTC_DCP_DISCOVERY_MS"
+        x-unit: "milliseconds"
+
+      auto_discover:
+        type: boolean
+        default: true
+        description: "Automatically discover RTUs on startup"
+
+      periodic_scan:
+        type: boolean
+        default: false
+        description: "Periodically scan for new devices"
+
+      scan_interval_sec:
+        type: integer
+        minimum: 60
+        maximum: 3600
+        default: 300
+        description: "Interval between periodic discovery scans"
+        x-unit: "seconds"
+
+  timing:
+    type: object
+    description: "Timing and watchdog settings"
+    properties:
+      watchdog_ms:
+        type: integer
+        minimum: 100
+        maximum: 60000
+        default: 3000
+        description: "Device watchdog timeout"
+        x-unit: "milliseconds"
+
+      command_timeout_ms:
+        type: integer
+        minimum: 100
+        maximum: 10000
+        default: 3000
+        description: "Command execution timeout"
+        x-env-var: "WTC_COMMAND_TIMEOUT_MS"
+        x-unit: "milliseconds"
+
+      reconnect_delay_ms:
+        type: integer
+        minimum: 1000
+        maximum: 60000
+        default: 5000
+        description: "Delay before reconnection attempt"
+        x-unit: "milliseconds"
+
+  limits:
+    type: object
+    description: "PROFINET stack limits"
+    x-readonly: true
+    properties:
+      max_ar:
+        type: integer
+        default: 256
+        description: "Maximum Application Relationships"
+        x-c-define: "PROFINET_MAX_AR"
+
+      max_iocr:
+        type: integer
+        default: 64
+        description: "Maximum IO Communication Relationships per AR"
+        x-c-define: "PROFINET_MAX_IOCR"
+
+      max_api:
+        type: integer
+        default: 256
+        description: "Maximum Application Process Identifiers"
+        x-c-define: "PROFINET_MAX_API"
+
+      min_cycle_time_us:
+        type: integer
+        default: 31250
+        description: "Minimum PROFINET cycle time"
+        x-c-define: "PROFINET_MIN_CYCLE_TIME_US"
+        x-unit: "microseconds"
+
+  authority:
+    type: object
+    description: "Authority handoff protocol settings"
+    properties:
+      stale_command_threshold_ms:
+        type: integer
+        minimum: 100
+        maximum: 10000
+        default: 1000
+        description: "Commands older than this are rejected during authority transfer"
+        x-unit: "milliseconds"
+
+      handoff_timeout_ms:
+        type: integer
+        minimum: 1000
+        maximum: 30000
+        default: 5000
+        description: "Maximum time to wait for authority handoff acknowledgment"
+        x-unit: "milliseconds"
+
+required:
+  - interface

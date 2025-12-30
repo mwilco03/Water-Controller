@@ -1,0 +1,204 @@
+# Water Treatment Controller - Modbus Gateway Schema
+# Configuration for PROFINET-to-Modbus protocol bridge
+#
+# IMPORTANT: This file is the single source of truth.
+# DO NOT manually edit generated files.
+
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "water-controller/config/modbus"
+title: "Modbus Gateway Configuration"
+description: "PROFINET to Modbus TCP/RTU protocol bridge configuration"
+
+type: object
+properties:
+  enabled:
+    type: boolean
+    default: true
+    description: "Enable Modbus gateway"
+    x-env-var: "WTC_MODBUS_ENABLED"
+
+  server:
+    type: object
+    description: "Modbus server configuration (exposes PROFINET data)"
+    properties:
+      tcp:
+        type: object
+        description: "Modbus TCP server settings"
+        properties:
+          enabled:
+            type: boolean
+            default: true
+            description: "Enable Modbus TCP server"
+            x-env-var: "WTC_MODBUS_TCP_ENABLED"
+
+          port:
+            type: integer
+            minimum: 1
+            maximum: 65535
+            default: 502
+            description: "Modbus TCP listen port"
+            x-env-var: "WTC_MODBUS_TCP_PORT"
+
+          bind_address:
+            type: string
+            format: "ipv4"
+            default: "0.0.0.0"
+            description: "TCP bind address"
+
+          max_connections:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 10
+            description: "Maximum concurrent TCP connections"
+
+      rtu:
+        type: object
+        description: "Modbus RTU server settings"
+        properties:
+          enabled:
+            type: boolean
+            default: false
+            description: "Enable Modbus RTU server"
+            x-env-var: "WTC_MODBUS_RTU_ENABLED"
+
+          device:
+            type: string
+            default: ""
+            maxLength: 64
+            description: "Serial device path (e.g., /dev/ttyUSB0)"
+            x-env-var: "WTC_MODBUS_RTU_DEVICE"
+
+          baud_rate:
+            type: integer
+            enum: [1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200]
+            default: 9600
+            description: "Serial baud rate"
+            x-env-var: "WTC_MODBUS_RTU_BAUD"
+
+          data_bits:
+            type: integer
+            enum: [7, 8]
+            default: 8
+            description: "Serial data bits"
+
+          parity:
+            type: string
+            enum: ["N", "E", "O"]
+            default: "N"
+            description: "Serial parity (None, Even, Odd)"
+
+          stop_bits:
+            type: integer
+            enum: [1, 2]
+            default: 1
+            description: "Serial stop bits"
+
+          slave_address:
+            type: integer
+            minimum: 1
+            maximum: 247
+            default: 1
+            description: "RTU slave address"
+            x-env-var: "WTC_MODBUS_SLAVE_ADDR"
+
+  register_map:
+    type: object
+    description: "Register mapping configuration"
+    properties:
+      auto_generate:
+        type: boolean
+        default: true
+        description: "Automatically generate register map from RTU data"
+
+      map_file:
+        type: string
+        default: ""
+        maxLength: 256
+        description: "Custom register map file (JSON)"
+
+      sensor_base_address:
+        type: integer
+        minimum: 0
+        maximum: 65535
+        default: 0
+        description: "Base address for sensor registers"
+
+      actuator_base_address:
+        type: integer
+        minimum: 0
+        maximum: 65535
+        default: 1000
+        description: "Base address for actuator registers"
+
+      status_base_address:
+        type: integer
+        minimum: 0
+        maximum: 65535
+        default: 2000
+        description: "Base address for status registers"
+
+  downstream:
+    type: object
+    description: "Downstream Modbus client configuration"
+    properties:
+      max_devices:
+        type: integer
+        minimum: 0
+        maximum: 16
+        default: 16
+        description: "Maximum downstream devices"
+        x-c-define: "MAX_MODBUS_CLIENTS"
+
+      default_poll_interval_ms:
+        type: integer
+        minimum: 100
+        maximum: 60000
+        default: 1000
+        description: "Default polling interval for downstream devices"
+        x-unit: "milliseconds"
+
+      default_timeout_ms:
+        type: integer
+        minimum: 100
+        maximum: 30000
+        default: 1000
+        description: "Default timeout for downstream device communication"
+        x-unit: "milliseconds"
+
+      retry_count:
+        type: integer
+        minimum: 0
+        maximum: 10
+        default: 3
+        description: "Number of retries on communication failure"
+
+  timing:
+    type: object
+    description: "Modbus timing configuration"
+    properties:
+      response_timeout_ms:
+        type: integer
+        minimum: 50
+        maximum: 10000
+        default: 500
+        description: "Response timeout for requests"
+        x-unit: "milliseconds"
+
+      inter_frame_delay_ms:
+        type: integer
+        minimum: 0
+        maximum: 1000
+        default: 5
+        description: "Delay between frames (for RTU compliance)"
+        x-unit: "milliseconds"
+
+      turnaround_delay_ms:
+        type: integer
+        minimum: 0
+        maximum: 1000
+        default: 50
+        description: "Turnaround delay after response"
+        x-unit: "milliseconds"
+
+required: []

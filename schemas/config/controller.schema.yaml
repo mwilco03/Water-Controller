@@ -1,0 +1,387 @@
+# Water Treatment Controller - Main Configuration Schema
+# This is the primary schema that defines controller-wide configuration
+# Subsystem-specific settings are defined in separate schema files
+#
+# IMPORTANT: This file is the single source of truth for configuration.
+# Documentation, C types, and Pydantic models are GENERATED from this schema.
+# DO NOT manually edit generated files.
+
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "water-controller/config/controller"
+title: "Water Treatment Controller Configuration"
+description: "Main configuration for the Water Treatment PROFINET IO Controller"
+
+type: object
+properties:
+  system:
+    type: object
+    description: "System-wide settings"
+    properties:
+      name:
+        type: string
+        default: "Water Treatment Controller"
+        maxLength: 64
+        description: "Human-readable system name"
+        x-env-var: "WTC_SYSTEM_NAME"
+
+      version:
+        type: string
+        pattern: "^\\d+\\.\\d+\\.\\d+$"
+        default: "0.0.1"
+        description: "Controller version string"
+        x-readonly: true
+
+      config_dir:
+        type: string
+        default: "/etc/water-controller"
+        description: "Directory for configuration files"
+        x-env-var: "WTC_CONFIG_DIR"
+        x-cli-arg: "--config-dir"
+
+      data_dir:
+        type: string
+        default: "/var/lib/water-controller"
+        description: "Directory for persistent data storage"
+        x-env-var: "WTC_DATA_DIR"
+
+      install_dir:
+        type: string
+        default: "/opt/water-controller"
+        description: "Installation directory"
+        x-env-var: "WTC_INSTALL_DIR"
+
+  logging:
+    type: object
+    description: "Logging configuration"
+    properties:
+      level:
+        type: string
+        enum: ["TRACE", "DEBUG", "INFO", "WARN", "ERROR", "FATAL"]
+        default: "INFO"
+        description: "Minimum log level to output"
+        x-env-var: "WTC_LOG_LEVEL"
+        x-cli-arg: "-v, --verbose (decreases level) / -q, --quiet (increases level)"
+
+      file:
+        type: string
+        default: ""
+        description: "Log file path (empty for stderr only)"
+        x-env-var: "WTC_LOG_FILE"
+        x-cli-arg: "-l, --log"
+
+      log_dir:
+        type: string
+        default: "/var/log/water-controller"
+        description: "Directory for log files"
+        x-env-var: "WTC_LOG_DIR"
+
+      structured:
+        type: boolean
+        default: false
+        description: "Enable structured JSON logging for log aggregators"
+        x-env-var: "WTC_LOG_STRUCTURED"
+
+      forward:
+        type: object
+        description: "Log forwarding to external systems (Elastic, Graylog, Syslog)"
+        properties:
+          enabled:
+            type: boolean
+            default: false
+            description: "Enable log forwarding"
+            x-env-var: "WTC_LOG_FORWARD_ENABLED"
+
+          host:
+            type: string
+            default: ""
+            description: "Log forwarder hostname"
+            x-env-var: "WTC_LOG_FORWARD_HOST"
+            x-cli-arg: "--log-forward (host:port format)"
+
+          port:
+            type: integer
+            minimum: 1
+            maximum: 65535
+            default: 0
+            description: "Log forwarder port"
+            x-env-var: "WTC_LOG_FORWARD_PORT"
+
+          type:
+            type: string
+            enum: ["elastic", "graylog", "syslog", ""]
+            default: ""
+            description: "Log forwarder type"
+            x-env-var: "WTC_LOG_FORWARD_TYPE"
+            x-cli-arg: "--log-forward-type"
+
+  daemon:
+    type: object
+    description: "Daemon/service mode settings"
+    properties:
+      enabled:
+        type: boolean
+        default: false
+        description: "Run as a background daemon"
+        x-cli-arg: "-d, --daemon"
+
+      pid_file:
+        type: string
+        default: "/var/run/water-controller.pid"
+        description: "PID file location when running as daemon"
+
+  cycle:
+    type: object
+    description: "Main control cycle timing"
+    properties:
+      time_ms:
+        type: integer
+        minimum: 100
+        maximum: 60000
+        default: 1000
+        description: "Main cycle time for data collection and control"
+        x-env-var: "WTC_CYCLE_TIME"
+        x-cli-arg: "-t, --cycle"
+        x-unit: "milliseconds"
+
+      scan_rate_ms:
+        type: integer
+        minimum: 10
+        maximum: 10000
+        default: 100
+        description: "Control engine scan rate for PID/interlock evaluation"
+        x-unit: "milliseconds"
+
+  database:
+    type: object
+    description: "PostgreSQL database configuration for persistent storage"
+    properties:
+      enabled:
+        type: boolean
+        default: true
+        description: "Enable database persistence"
+        x-cli-arg: "--no-db (disables)"
+
+      host:
+        type: string
+        default: "localhost"
+        description: "PostgreSQL server hostname"
+        x-env-var: "WTC_DB_HOST"
+        x-cli-arg: "--db-host"
+
+      port:
+        type: integer
+        minimum: 1
+        maximum: 65535
+        default: 5432
+        description: "PostgreSQL server port"
+        x-env-var: "WTC_DB_PORT"
+        x-cli-arg: "--db-port"
+
+      name:
+        type: string
+        default: "water_controller"
+        description: "Database name"
+        x-env-var: "WTC_DB_NAME"
+        x-cli-arg: "--db-name"
+
+      user:
+        type: string
+        default: "wtc"
+        description: "Database username"
+        x-env-var: "WTC_DB_USER"
+        x-cli-arg: "--db-user"
+
+      password:
+        type: string
+        default: ""
+        description: "Database password"
+        x-env-var: "WTC_DB_PASSWORD"
+        x-cli-arg: "--db-password"
+        x-sensitive: true
+
+      max_connections:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 5
+        description: "Maximum database connection pool size"
+
+      connection_timeout_ms:
+        type: integer
+        minimum: 1000
+        maximum: 60000
+        default: 5000
+        description: "Connection timeout"
+        x-unit: "milliseconds"
+
+      use_ssl:
+        type: boolean
+        default: false
+        description: "Use SSL for database connections"
+
+  sqlite:
+    type: object
+    description: "SQLite configuration for local-only deployments"
+    properties:
+      db_path:
+        type: string
+        default: "/var/lib/water-controller/wtc.db"
+        description: "SQLite database file path"
+        x-env-var: "WTC_DB_PATH"
+
+      auto_init:
+        type: boolean
+        default: true
+        description: "Automatically initialize database schema"
+        x-env-var: "WTC_DB_AUTO_INIT"
+
+      echo:
+        type: boolean
+        default: false
+        description: "Echo SQL queries for debugging"
+        x-env-var: "WTC_DB_ECHO"
+
+  failover:
+    type: object
+    description: "RTU failover and redundancy settings"
+    properties:
+      enabled:
+        type: boolean
+        default: true
+        description: "Enable automatic failover handling"
+        x-env-var: "WTC_FAILOVER_ENABLED"
+
+      timeout_ms:
+        type: integer
+        minimum: 1000
+        maximum: 60000
+        default: 5000
+        description: "Time to wait before declaring RTU failed"
+        x-env-var: "WTC_FAILOVER_TIMEOUT_MS"
+        x-unit: "milliseconds"
+
+      heartbeat_interval_ms:
+        type: integer
+        minimum: 100
+        maximum: 10000
+        default: 1000
+        description: "RTU health check interval"
+        x-unit: "milliseconds"
+
+      max_retries:
+        type: integer
+        minimum: 0
+        maximum: 10
+        default: 3
+        description: "Number of reconnection attempts before failover"
+
+      mode:
+        type: string
+        enum: ["manual", "auto", "hot_standby"]
+        default: "auto"
+        description: "Failover mode"
+        x-env-var: "WTC_FAILOVER_MODE"
+
+  ipc:
+    type: object
+    description: "Inter-process communication settings"
+    properties:
+      shm_name:
+        type: string
+        default: "/wtc_shared_memory"
+        description: "Shared memory segment name"
+        x-env-var: "WTC_SHM_NAME"
+
+      shm_read_timeout_ms:
+        type: integer
+        minimum: 10
+        maximum: 5000
+        default: 100
+        description: "Timeout for reading shared memory"
+        x-env-var: "WTC_SHM_READ_TIMEOUT_MS"
+        x-unit: "milliseconds"
+
+  limits:
+    type: object
+    description: "System limits and maximums"
+    x-readonly: true
+    properties:
+      max_rtus:
+        type: integer
+        default: 256
+        description: "Maximum number of RTU devices"
+        x-c-define: "WTC_MAX_RTUS"
+
+      max_pid_loops:
+        type: integer
+        default: 64
+        description: "Maximum number of PID control loops"
+        x-c-define: "WTC_MAX_PID_LOOPS"
+
+      max_interlocks:
+        type: integer
+        default: 128
+        description: "Maximum number of interlocks"
+        x-c-define: "WTC_MAX_INTERLOCKS"
+
+      max_sequences:
+        type: integer
+        default: 32
+        description: "Maximum number of control sequences"
+        x-c-define: "WTC_MAX_SEQUENCES"
+
+      max_alarm_rules:
+        type: integer
+        default: 512
+        description: "Maximum number of alarm rules"
+        x-c-define: "WTC_MAX_ALARM_RULES"
+
+      max_historian_tags:
+        type: integer
+        default: 1024
+        description: "Maximum number of historian tags"
+        x-c-define: "WTC_MAX_HISTORIAN_TAGS"
+
+      default_slots:
+        type: integer
+        default: 64
+        description: "Default slot count per RTU"
+        x-c-define: "WTC_DEFAULT_SLOTS"
+
+      max_slots:
+        type: integer
+        default: 256
+        description: "Maximum slots per RTU for fixed arrays"
+        x-c-define: "WTC_MAX_SLOTS"
+
+  debug:
+    type: object
+    description: "Debug and development settings"
+    properties:
+      enabled:
+        type: boolean
+        default: false
+        description: "Enable debug mode"
+        x-env-var: "WTC_DEBUG"
+
+      simulation_mode:
+        type: boolean
+        default: false
+        description: "Run in simulation mode without real hardware"
+        x-env-var: "WTC_SIMULATION_MODE"
+
+      startup_mode:
+        type: string
+        enum: ["", "development", "testing", "production"]
+        default: ""
+        description: "Startup mode override"
+        x-env-var: "WTC_STARTUP_MODE"
+
+required: []
+
+x-subsystems:
+  - $ref: "profinet.schema.yaml"
+  - $ref: "historian.schema.yaml"
+  - $ref: "alarms.schema.yaml"
+  - $ref: "modbus.schema.yaml"
+  - $ref: "web.schema.yaml"
