@@ -1,102 +1,96 @@
 # Water-Controller Documentation
 
-This directory contains comprehensive documentation for the Water Treatment Controller SCADA system.
+Documentation for the Water Treatment Controller SCADA system.
 
 ## Quick Links
 
 | I want to... | Go to... |
 |--------------|----------|
-| Install the system | [INSTALL.md](INSTALL.md) |
-| Deploy to production | [DEPLOYMENT.md](DEPLOYMENT.md) |
-| Upgrade an existing installation | [UPGRADE.md](UPGRADE.md) |
-| Operate the system | [OPERATOR.md](OPERATOR.md) |
-| Troubleshoot issues | [TROUBLESHOOTING_GUIDE.md](TROUBLESHOOTING_GUIDE.md) |
-| Understand the API | [OPENAPI_SPECIFICATION.md](OPENAPI_SPECIFICATION.md) |
-| Configure Modbus gateway | [MODBUS_GATEWAY_GUIDE.md](MODBUS_GATEWAY_GUIDE.md) |
+| Install the system | [guides/INSTALL.md](guides/INSTALL.md) |
+| Deploy to production | [guides/DEPLOYMENT.md](guides/DEPLOYMENT.md) |
+| Upgrade an existing installation | [guides/UPGRADE.md](guides/UPGRADE.md) |
+| Operate the system | [guides/OPERATOR.md](guides/OPERATOR.md) |
+| Troubleshoot issues | [guides/TROUBLESHOOTING_GUIDE.md](guides/TROUBLESHOOTING_GUIDE.md) |
+| Understand configuration options | [generated/CONFIGURATION.md](generated/CONFIGURATION.md) |
 
 ---
 
-## Documentation by Role
+## Documentation Structure
 
-### For Operators
-
-- [OPERATOR.md](OPERATOR.md) - Quick reference guide for daily operations
-- [ALARM_RESPONSE_PROCEDURES.md](ALARM_RESPONSE_PROCEDURES.md) - ISA-18.2 compliant alarm handling
-- [templates/commissioning-checklist.md](templates/commissioning-checklist.md) - System startup checklist
-
-### For System Administrators
-
-- [INSTALL.md](INSTALL.md) - Installation guide with prerequisites
-- [DEPLOYMENT.md](DEPLOYMENT.md) - Comprehensive production deployment
-- [UPGRADE.md](UPGRADE.md) - Version upgrade procedures with rollback
-- [TROUBLESHOOTING_GUIDE.md](TROUBLESHOOTING_GUIDE.md) - Diagnostic commands and solutions
-- [PERFORMANCE_TUNING_GUIDE.md](PERFORMANCE_TUNING_GUIDE.md) - System optimization
-
-### For Developers
-
-- [DEVELOPMENT_GUIDELINES.md](DEVELOPMENT_GUIDELINES.md) - Code standards and quality gates
-- [INTERNALS.md](INTERNALS.md) - Internal architecture details
-- [HARMONIOUS_SYSTEM_DESIGN.md](HARMONIOUS_SYSTEM_DESIGN.md) - Full system architecture
-- [OPENAPI_SPECIFICATION.md](OPENAPI_SPECIFICATION.md) - REST API reference
-- [ALARM_ARCHITECTURE.md](ALARM_ARCHITECTURE.md) - ISA-18.2 alarm system design
-
-### For Integrators
-
-- [MODBUS_GATEWAY_GUIDE.md](MODBUS_GATEWAY_GUIDE.md) - Modbus TCP/RTU integration
-- [PROFINET_DATA_FORMAT_SPECIFICATION.md](PROFINET_DATA_FORMAT_SPECIFICATION.md) - PROFINET protocol details
-- [CROSS_SYSTEM_GUIDELINES_ADDENDUM.md](CROSS_SYSTEM_GUIDELINES_ADDENDUM.md) - External system integration
+```
+docs/
+├── generated/      # AUTO-GENERATED - Do not edit manually
+├── guides/         # Operational guides (how-to)
+├── architecture/   # Design philosophy (rarely changes)
+├── development/    # Developer reference
+└── templates/      # Fill-in forms
+```
 
 ---
 
-## Documentation Categories
-
-### Installation & Deployment
+## Guides (Operational How-To)
 
 | Document | Description |
 |----------|-------------|
-| [INSTALL.md](INSTALL.md) | Quick installation guide with prerequisites |
-| [DEPLOYMENT.md](DEPLOYMENT.md) | Full production deployment (31KB comprehensive) |
-| [UPGRADE.md](UPGRADE.md) | Version upgrades with zero-disk-write optimization |
-| [COMMISSIONING_PROCEDURE.md](COMMISSIONING_PROCEDURE.md) | New system commissioning steps |
+| [INSTALL.md](guides/INSTALL.md) | Quick installation guide |
+| [DEPLOYMENT.md](guides/DEPLOYMENT.md) | Production deployment |
+| [UPGRADE.md](guides/UPGRADE.md) | Version upgrades with rollback |
+| [OPERATOR.md](guides/OPERATOR.md) | Daily operations reference |
+| [ALARM_RESPONSE_PROCEDURES.md](guides/ALARM_RESPONSE_PROCEDURES.md) | ISA-18.2 alarm handling |
+| [TROUBLESHOOTING_GUIDE.md](guides/TROUBLESHOOTING_GUIDE.md) | Diagnostics and fixes |
+| [PERFORMANCE_TUNING_GUIDE.md](guides/PERFORMANCE_TUNING_GUIDE.md) | Optimization |
+| [COMMISSIONING_PROCEDURE.md](guides/COMMISSIONING_PROCEDURE.md) | New system startup |
+| [MODBUS_GATEWAY_GUIDE.md](guides/MODBUS_GATEWAY_GUIDE.md) | Modbus integration |
 
-### Operations & Procedures
+---
+
+## Generated (Auto-Generated from Schemas)
+
+**Do not edit these files manually.** They are regenerated from `schemas/` on each build.
+
+| Document | Source | Regenerate With |
+|----------|--------|-----------------|
+| [CONFIGURATION.md](generated/CONFIGURATION.md) | `schemas/config/*.yaml` | `make generate-docs` |
+
+To modify generated docs, edit the source schemas and run the generator.
+
+---
+
+## Architecture (Design Philosophy)
+
+Stable documentation that rarely changes. Defines system principles and contracts.
 
 | Document | Description |
 |----------|-------------|
-| [OPERATOR.md](OPERATOR.md) | Operator quick reference guide |
-| [ALARM_RESPONSE_PROCEDURES.md](ALARM_RESPONSE_PROCEDURES.md) | Alarm handling workflows |
-| [TROUBLESHOOTING_GUIDE.md](TROUBLESHOOTING_GUIDE.md) | Diagnostic commands and fixes |
-| [PERFORMANCE_TUNING_GUIDE.md](PERFORMANCE_TUNING_GUIDE.md) | Optimization strategies |
+| [SYSTEM_DESIGN.md](architecture/SYSTEM_DESIGN.md) | Full system architecture and philosophy |
+| [ALARM_PHILOSOPHY.md](architecture/ALARM_PHILOSOPHY.md) | ISA-18.2 alarm system design |
+| [PROFINET_SPEC.md](architecture/PROFINET_SPEC.md) | PROFINET wire protocol (5-byte format) |
+| [CROSS_SYSTEM.md](architecture/CROSS_SYSTEM.md) | RTU integration contracts |
 
-### Technical Specifications
+---
 
-| Document | Description |
-|----------|-------------|
-| [OPENAPI_SPECIFICATION.md](OPENAPI_SPECIFICATION.md) | Complete REST API documentation |
-| [PROFINET_DATA_FORMAT_SPECIFICATION.md](PROFINET_DATA_FORMAT_SPECIFICATION.md) | PROFINET frame structure |
-| [MODBUS_GATEWAY_GUIDE.md](MODBUS_GATEWAY_GUIDE.md) | Modbus TCP/RTU configuration |
-| [ALARM_ARCHITECTURE.md](ALARM_ARCHITECTURE.md) | ISA-18.2 alarm system design |
-
-### Architecture & Design
+## Development (Developer Reference)
 
 | Document | Description |
 |----------|-------------|
-| [HARMONIOUS_SYSTEM_DESIGN.md](HARMONIOUS_SYSTEM_DESIGN.md) | Full system architecture (65KB) |
-| [DEVELOPMENT_GUIDELINES.md](DEVELOPMENT_GUIDELINES.md) | Code standards and practices (61KB) |
-| [INTERNALS.md](INTERNALS.md) | Internal component details |
-| [ADR-001-SYSTEM-READINESS-GATES.md](ADR-001-SYSTEM-READINESS-GATES.md) | Architecture decision record |
+| [GUIDELINES.md](development/GUIDELINES.md) | Code standards and quality gates |
+| [INTERNALS.md](development/INTERNALS.md) | Build system internals |
+| [OPENAPI_SPECIFICATION.md](development/OPENAPI_SPECIFICATION.md) | REST API reference |
+| [HMI-ANALYSIS.md](development/HMI-ANALYSIS.md) | HMI component design |
 
-### Templates
+---
+
+## Templates (Fill-in Forms)
 
 | Template | Purpose |
 |----------|---------|
-| [templates/commissioning-checklist.md](templates/commissioning-checklist.md) | Pre-startup validation |
-| [templates/safety-interlocks-template.md](templates/safety-interlocks-template.md) | Safety logic documentation |
-| [templates/calibration-record.md](templates/calibration-record.md) | Sensor calibration records |
+| [commissioning-checklist.md](templates/commissioning-checklist.md) | Pre-startup validation |
+| [safety-interlocks-template.md](templates/safety-interlocks-template.md) | Safety logic documentation |
+| [calibration-record.md](templates/calibration-record.md) | Sensor calibration records |
 
 ---
 
-## Network Ports Reference
+## Network Ports
 
 | Port | Service | Description |
 |------|---------|-------------|
@@ -109,7 +103,7 @@ This directory contains comprehensive documentation for the Water Treatment Cont
 
 ## Related Resources
 
-- [Main README](../README.md) - Project overview and quick start
-- [CHANGELOG](../CHANGELOG.md) - Version history and release notes
-- [Scripts README](../scripts/README.md) - Installation script documentation
-- [GitHub Issues](https://github.com/mwilco03/Water-Controller/issues) - Bug reports and feature requests
+- [Main README](../README.md) - Project overview
+- [CHANGELOG](../CHANGELOG.md) - Version history
+- [Scripts README](../scripts/README.md) - Installation scripts
+- [Schemas](../schemas/) - Configuration schema definitions
