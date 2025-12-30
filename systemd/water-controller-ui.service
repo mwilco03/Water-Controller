@@ -12,8 +12,8 @@ ConditionPathIsDirectory=/opt/water-controller/web/ui/.next/static
 
 [Service]
 Type=simple
-User=water-controller
-Group=water-controller
+User=wtc
+Group=wtc
 WorkingDirectory=/opt/water-controller/web/ui
 
 # Startup validation: Verify UI build is complete

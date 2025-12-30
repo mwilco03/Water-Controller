@@ -235,7 +235,7 @@ The system implements a **two-plane safety architecture** that is properly docum
 ### Recommendations
 
 1. **Network Segmentation:** Deploy PROFINET on isolated VLAN
-2. **Firewall Rules:** Restrict management ports (3000, 8080) to authorized hosts
+2. **Firewall Rules:** Restrict management ports (8000, 8080) to authorized hosts
 3. **Modbus Security:** Limit port 502 access via firewall
 4. **Regular Updates:** Keep system and dependencies updated
 5. **Backup Automation:** Enable automated offsite backups
@@ -277,8 +277,8 @@ The system implements a **two-plane safety architecture** that is properly docum
 - [ ] Repository cloned
 - [ ] Installation script run successfully
 - [ ] Services start without errors
-- [ ] Web UI accessible on port 3000
-- [ ] API accessible on port 8080
+- [ ] Web UI accessible on port 8080
+- [ ] API accessible on port 8000
 
 ### Configuration
 - [ ] Controller config reviewed (`controller.conf`)

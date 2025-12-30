@@ -295,7 +295,7 @@ test_service_status() {
 
     # Check uvicorn processes
     local uvicorn_count
-    uvicorn_count="$(pgrep -c -f 'uvicorn' 2>/dev/null || echo 0)"
+    uvicorn_count="$(pgrep -c -f 'uvicorn' 2>/dev/null)" || uvicorn_count=0
 
     if [ "$uvicorn_count" -gt 0 ]; then
         _record_result "PASS" "Uvicorn processes" "$uvicorn_count running"

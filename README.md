@@ -171,10 +171,12 @@ sudo ./scripts/install.sh
 sudo systemctl start water-controller
 
 # Access web UI
-open http://localhost:3000
+open http://localhost:8080
 ```
 
 For detailed deployment instructions, see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+
+For a complete documentation index, see [docs/README.md](docs/README.md).
 
 ## Building
 
@@ -224,15 +226,15 @@ docker-compose --profile profinet up -d
 | `WT_CYCLE_TIME` | Cycle time in milliseconds | `1000` |
 | `WT_LOG_LEVEL` | Logging level (DEBUG, INFO, WARN, ERROR) | `INFO` |
 | `DATABASE_URL` | PostgreSQL connection string | SQLite default |
-| `WEB_PORT` | API server port | `8080` |
-| `UI_PORT` | Web UI server port | `3000` |
+| `API_PORT` | API server port | `8000` |
+| `UI_PORT` | Web UI server port | `8080` |
 
 ### Network Ports
 
 | Port | Service | Description |
 |------|---------|-------------|
-| 3000 | Web UI | Next.js frontend application |
-| 8080 | API | FastAPI backend REST/WebSocket |
+| 8000 | API | FastAPI backend REST/WebSocket |
+| 8080 | Web UI | Next.js frontend application |
 | 502 | Modbus | Modbus TCP gateway |
 | 34962-34964 | PROFINET | PROFINET RT communication |
 
@@ -459,11 +461,27 @@ SPDX-License-Identifier: GPL-3.0-or-later
 
 ## Contributing
 
+We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+Quick start:
+
 1. Fork the repository
-2. Create a feature branch
-3. Make your changes
+2. Create a feature branch: `git checkout -b feature/your-feature`
+3. Make your changes following our coding standards
 4. Run tests: `make test`
 5. Submit a pull request
+
+## Documentation
+
+| Guide | Description |
+|-------|-------------|
+| [Installation Guide](docs/INSTALL.md) | Quick installation with prerequisites |
+| [Deployment Guide](docs/DEPLOYMENT.md) | Full production deployment |
+| [Upgrade Guide](docs/UPGRADE.md) | Version upgrades with rollback |
+| [Operator Guide](docs/OPERATOR.md) | Operator quick reference |
+| [Troubleshooting](docs/TROUBLESHOOTING_GUIDE.md) | Diagnostic commands and fixes |
+| [API Specification](docs/OPENAPI_SPECIFICATION.md) | REST API reference |
+| [Documentation Index](docs/README.md) | Complete documentation listing |
 
 ## Support
 
