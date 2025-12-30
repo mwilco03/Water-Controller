@@ -78,8 +78,8 @@ info:
 servers:
   - url: http://localhost:8000/api/v1
     description: Local development server
-  - url: http://{controller_ip}:8080/api/v1
-    description: Production controller
+  - url: http://{controller_ip}:8000/api/v1
+    description: Production controller (API port 8000)
     variables:
       controller_ip:
         default: "192.168.1.100"
@@ -873,27 +873,43 @@ paths:
         '200':
           description: Rule deleted
 
-  # ============== PID Control ==============
-  /control/pid:
+  # ============== PID Control (Per-RTU) ==============
+  # Note: PID loops are scoped to individual RTUs
+  /rtus/{station_name}/pid:
     get:
-      summary: List PID loops
+      summary: List PID loops for an RTU
       tags: [PID Control]
       security:
         - BearerAuth: []
+      parameters:
+        - name: station_name
+          in: path
+          required: true
+          schema:
+            type: string
       responses:
         '200':
-          description: PID loops
+          description: PID loops for the RTU
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/PIDLoop'
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PIDLoop'
     post:
-      summary: Create PID loop
+      summary: Create PID loop for an RTU
       tags: [PID Control]
       security:
         - BearerAuth: []
+      parameters:
+        - name: station_name
+          in: path
+          required: true
+          schema:
+            type: string
       requestBody:
         required: true
         content:
@@ -901,16 +917,21 @@ paths:
             schema:
               $ref: '#/components/schemas/PIDLoop'
       responses:
-        '200':
+        '201':
           description: Loop created
 
-  /control/pid/{loop_id}:
+  /rtus/{station_name}/pid/{loop_id}:
     get:
       summary: Get PID loop details
       tags: [PID Control]
       security:
         - BearerAuth: []
       parameters:
+        - name: station_name
+          in: path
+          required: true
+          schema:
+            type: string
         - name: loop_id
           in: path
           required: true
@@ -925,6 +946,11 @@ paths:
       security:
         - BearerAuth: []
       parameters:
+        - name: station_name
+          in: path
+          required: true
+          schema:
+            type: string
         - name: loop_id
           in: path
           required: true
@@ -945,6 +971,11 @@ paths:
       security:
         - BearerAuth: []
       parameters:
+        - name: station_name
+          in: path
+          required: true
+          schema:
+            type: string
         - name: loop_id
           in: path
           required: true
@@ -954,13 +985,18 @@ paths:
         '200':
           description: Loop deleted
 
-  /control/pid/{loop_id}/setpoint:
+  /rtus/{station_name}/pid/{loop_id}/setpoint:
     put:
       summary: Update PID setpoint
       tags: [PID Control]
       security:
         - BearerAuth: []
       parameters:
+        - name: station_name
+          in: path
+          required: true
+          schema:
+            type: string
         - name: loop_id
           in: path
           required: true
@@ -981,13 +1017,18 @@ paths:
         '200':
           description: Setpoint updated
 
-  /control/pid/{loop_id}/mode:
+  /rtus/{station_name}/pid/{loop_id}/mode:
     put:
       summary: Update PID mode
       tags: [PID Control]
       security:
         - BearerAuth: []
       parameters:
+        - name: station_name
+          in: path
+          required: true
+          schema:
+            type: string
         - name: loop_id
           in: path
           required: true
@@ -1004,18 +1045,23 @@ paths:
               properties:
                 mode:
                   type: string
-                  enum: [AUTO, MANUAL]
+                  enum: [AUTO, MANUAL, CASCADE]
       responses:
         '200':
           description: Mode updated
 
-  /control/pid/{loop_id}/tuning:
+  /rtus/{station_name}/pid/{loop_id}/tuning:
     put:
       summary: Update PID tuning parameters
       tags: [PID Control]
       security:
         - BearerAuth: []
       parameters:
+        - name: station_name
+          in: path
+          required: true
+          schema:
+            type: string
         - name: loop_id
           in: path
           required: true
@@ -1163,82 +1209,61 @@ paths:
         '200':
           description: Configuration imported
 
-  # ============== Backups ==============
-  /backups:
-    get:
-      summary: List backups
-      tags: [System]
-      security:
-        - BearerAuth: []
-      responses:
-        '200':
-          description: Backup list
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/BackupMetadata'
+  # ============== Backup/Restore ==============
+  # Note: Backups are created and returned immediately (no server-side storage)
+  /system/:
     post:
-      summary: Create backup
+      summary: Create and download backup
+      description: |
+        Creates a backup of the current configuration and immediately returns it
+        as a ZIP file. There is no server-side backup storage - the backup is
+        streamed directly to the client for download.
       tags: [System]
       security:
         - BearerAuth: []
-      requestBody:
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                description:
-                  type: string
-                include_historian:
-                  type: boolean
-                  default: false
       responses:
         '200':
-          description: Backup created
+          description: Backup ZIP file
           content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/BackupMetadata'
-
-  /backups/{backup_id}/download:
-    get:
-      summary: Download backup file
-      tags: [System]
-      security:
-        - BearerAuth: []
-      parameters:
-        - name: backup_id
-          in: path
-          required: true
-          schema:
-            type: string
-      responses:
-        '200':
-          description: Backup file
-          content:
-            application/gzip:
+            application/zip:
               schema:
                 type: string
                 format: binary
 
-  /backups/{backup_id}/restore:
+  /system/restore:
     post:
-      summary: Restore from backup
+      summary: Restore from backup file
+      description: |
+        Restores the system configuration from an uploaded backup ZIP file.
+        This will overwrite the current configuration.
       tags: [System]
       security:
         - BearerAuth: []
-      parameters:
-        - name: backup_id
-          in: path
-          required: true
-          schema:
-            type: string
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - file
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: Backup ZIP file to restore
       responses:
         '200':
-          description: Restore initiated
+          description: Restore completed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  error:
+                    type: string
 
   # ============== Modbus ==============
   /modbus/config:
@@ -1454,12 +1479,16 @@ security:
 |-----------|--------|----------|
 | List RTUs | GET | `/rtus` |
 | Get sensor data | GET | `/rtus/{station}/sensors` |
-| Control actuator | POST | `/rtus/{station}/actuators/{slot}` |
+| Control actuator | POST | `/rtus/{station}/controls/{tag}/command` |
 | Get active alarms | GET | `/alarms` |
 | Acknowledge alarm | POST | `/alarms/{id}/acknowledge` |
+| List PID loops | GET | `/rtus/{station}/pid` |
+| Update setpoint | PUT | `/rtus/{station}/pid/{loop_id}/setpoint` |
 | Get trend data | GET | `/trends/{tag_id}?start=...&end=...` |
-| System health | GET | `/system/health` |
-| Create backup | POST | `/backups` |
+| System health | GET | `/health` |
+| System status | GET | `/system/status` |
+| Create backup | POST | `/system/` (returns ZIP) |
+| Restore backup | POST | `/system/restore` (multipart/form-data) |
 
 ### Response Codes
 
@@ -1477,16 +1506,18 @@ security:
 
 ## WebSocket API
 
-Real-time updates are available via WebSocket at `ws://<controller-ip>:8000/ws`.
+Real-time updates are available via WebSocket at `ws://<controller-ip>:8000/api/v1/ws/live`.
 
 ### Connection
 
 ```javascript
-const ws = new WebSocket('ws://localhost:8000/ws');
+const ws = new WebSocket('ws://localhost:8000/api/v1/ws/live');
 
 ws.onmessage = (event) => {
   const message = JSON.parse(event.data);
-  console.log(message.type, message.data);
+  // Backend sends 'channel', frontend may use 'type'
+  const type = message.type || message.channel;
+  console.log(type, message.data);
 };
 ```
 

@@ -9,35 +9,33 @@ import CommandModeLogin from '@/components/CommandModeLogin';
 import CoupledActionsPanel from '@/components/control/CoupledActionsPanel';
 import { wsLogger, logger } from '@/lib/logger';
 
+interface RTU {
+  station_name: string;
+  ip_address: string;
+  state: string;
+}
+
 interface PIDLoop {
-  loop_id: number;
+  id: number;
   name: string;
   enabled: boolean;
-  input_rtu: string;
-  input_slot: number;
-  output_rtu: string;
-  output_slot: number;
+  process_variable: string;
+  control_output: string;
   kp: number;
   ki: number;
   kd: number;
   setpoint: number;
-  pv: number;
-  cv: number;
+  pv: number | null;
+  cv: number | null;
+  error: number | null;
   mode: string;
-}
-
-interface Interlock {
-  interlock_id: number;
-  name: string;
-  enabled: boolean;
-  tripped: boolean;
-  condition_rtu: string;
-  condition_slot: number;
-  threshold: number;
+  output_min: number;
+  output_max: number;
+  rtu_name?: string;  // Added for display
 }
 
 interface ConfirmAction {
-  type: 'setpoint' | 'mode' | 'interlock';
+  type: 'setpoint' | 'mode';
   name: string;
   description: string;
   onConfirm: () => void;
@@ -62,9 +60,7 @@ function ConfirmationModal({
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
             </svg>
           </div>
-          <h3 className="text-lg font-semibold text-white">
-            {action.type === 'interlock' ? 'Confirm Interlock Reset' : 'Confirm Control Change'}
-          </h3>
+          <h3 className="text-lg font-semibold text-white">Confirm Control Change</h3>
         </div>
 
         <p className="text-gray-300 mb-2">
@@ -98,8 +94,9 @@ function ConfirmationModal({
 
 export default function ControlPage() {
   const { canCommand, mode } = useCommandMode();
+  const [rtus, setRtus] = useState<RTU[]>([]);
+  const [selectedRtu, setSelectedRtu] = useState<string | null>(null);
   const [pidLoops, setPidLoops] = useState<PIDLoop[]>([]);
-  const [interlocks, setInterlocks] = useState<Interlock[]>([]);
   const [selectedLoop, setSelectedLoop] = useState<PIDLoop | null>(null);
   const [loading, setLoading] = useState(true);
   const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null);
@@ -111,28 +108,51 @@ export default function ControlPage() {
     document.title = PAGE_TITLE;
   }, []);
 
-  const fetchControlData = useCallback(async () => {
+  // Fetch RTU list first
+  const fetchRtus = useCallback(async () => {
     try {
-      const [pidRes, interlockRes] = await Promise.all([
-        fetch('/api/v1/control/pid'),
-        fetch('/api/v1/control/interlocks'),
-      ]);
+      const res = await fetch('/api/v1/rtus');
+      if (res.ok) {
+        const data = await res.json();
+        const rtuList = data.data || [];
+        setRtus(rtuList);
+        // Auto-select first RTU if none selected
+        if (!selectedRtu && rtuList.length > 0) {
+          setSelectedRtu(rtuList[0].station_name);
+        }
+      }
+    } catch (error) {
+      logger.error('Error fetching RTUs', error);
+    }
+  }, [selectedRtu]);
+
+  // Fetch PID loops for selected RTU
+  const fetchControlData = useCallback(async () => {
+    if (!selectedRtu) {
+      setLoading(false);
+      return;
+    }
+
+    try {
+      const pidRes = await fetch(`/api/v1/rtus/${encodeURIComponent(selectedRtu)}/pid`);
 
       if (pidRes.ok) {
         const data = await pidRes.json();
-        setPidLoops(data.loops || []);
-      }
-
-      if (interlockRes.ok) {
-        const data = await interlockRes.json();
-        setInterlocks(data.interlocks || []);
+        const loops = (data.data || []).map((loop: PIDLoop) => ({
+          ...loop,
+          rtu_name: selectedRtu,
+        }));
+        setPidLoops(loops);
+      } else {
+        setPidLoops([]);
       }
     } catch (error) {
       logger.error('Error fetching control data', error);
+      setPidLoops([]);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [selectedRtu]);
 
   // WebSocket for real-time control updates
   const { connected, subscribe } = useWebSocket({
@@ -151,55 +171,52 @@ export default function ControlPage() {
     },
   });
 
-  // Subscribe to PID and interlock updates
+  // Subscribe to PID updates
   useEffect(() => {
     const unsubPid = subscribe('pid_update', (_, data) => {
       setPidLoops((prev) =>
         prev.map((loop) =>
-          loop.loop_id === data.loop_id
+          loop.id === data.loop_id
             ? { ...loop, pv: data.pv, cv: data.cv, setpoint: data.setpoint, mode: data.mode }
             : loop
         )
       );
       // Update selected loop if it matches
       setSelectedLoop((prev) =>
-        prev && prev.loop_id === data.loop_id
+        prev && prev.id === data.loop_id
           ? { ...prev, pv: data.pv, cv: data.cv, setpoint: data.setpoint, mode: data.mode }
           : prev
       );
     });
 
-    const unsubInterlock = subscribe('interlock_update', (_, data) => {
-      setInterlocks((prev) =>
-        prev.map((il) =>
-          il.interlock_id === data.interlock_id
-            ? { ...il, tripped: data.tripped }
-            : il
-        )
-      );
-    });
-
     return () => {
       unsubPid();
-      unsubInterlock();
     };
   }, [subscribe]);
 
-  // Initial fetch and polling setup
+  // Fetch RTUs on mount
   useEffect(() => {
-    fetchControlData();
-    pollIntervalRef.current = setInterval(fetchControlData, 2000);
+    fetchRtus();
+  }, [fetchRtus]);
 
-    return () => {
-      if (pollIntervalRef.current) {
-        clearInterval(pollIntervalRef.current);
-      }
-    };
-  }, [fetchControlData]);
+  // Fetch PID loops when selected RTU changes
+  useEffect(() => {
+    if (selectedRtu) {
+      setLoading(true);
+      fetchControlData();
+      pollIntervalRef.current = setInterval(fetchControlData, 2000);
 
-  const doUpdateSetpoint = async (loopId: number, setpoint: number) => {
+      return () => {
+        if (pollIntervalRef.current) {
+          clearInterval(pollIntervalRef.current);
+        }
+      };
+    }
+  }, [selectedRtu, fetchControlData]);
+
+  const doUpdateSetpoint = async (rtuName: string, loopId: number, setpoint: number) => {
     try {
-      await fetch(`/api/v1/control/pid/${loopId}/setpoint`, {
+      await fetch(`/api/v1/rtus/${encodeURIComponent(rtuName)}/pid/${loopId}/setpoint`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ setpoint }),
@@ -210,7 +227,7 @@ export default function ControlPage() {
     }
   };
 
-  const updateSetpoint = (loopId: number, setpoint: number, loopName: string) => {
+  const updateSetpoint = (rtuName: string, loopId: number, setpoint: number, loopName: string) => {
     if (!canCommand) return;
     setPendingSetpoint(setpoint);
     setConfirmAction({
@@ -218,15 +235,15 @@ export default function ControlPage() {
       name: loopName,
       description: `Change setpoint to ${setpoint.toFixed(2)}?`,
       onConfirm: () => {
-        doUpdateSetpoint(loopId, setpoint);
+        doUpdateSetpoint(rtuName, loopId, setpoint);
         setPendingSetpoint(null);
       },
     });
   };
 
-  const doToggleMode = async (loopId: number, pidMode: string) => {
+  const doToggleMode = async (rtuName: string, loopId: number, pidMode: string) => {
     try {
-      await fetch(`/api/v1/control/pid/${loopId}/mode`, {
+      await fetch(`/api/v1/rtus/${encodeURIComponent(rtuName)}/pid/${loopId}/mode`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ mode: pidMode }),
@@ -237,34 +254,13 @@ export default function ControlPage() {
     }
   };
 
-  const toggleMode = (loopId: number, pidMode: string, loopName: string) => {
+  const toggleMode = (rtuName: string, loopId: number, pidMode: string, loopName: string) => {
     if (!canCommand) return;
     setConfirmAction({
       type: 'mode',
       name: loopName,
       description: `Switch PID loop to ${pidMode} mode?`,
-      onConfirm: () => doToggleMode(loopId, pidMode),
-    });
-  };
-
-  const doResetInterlock = async (interlockId: number) => {
-    try {
-      await fetch(`/api/v1/control/interlocks/${interlockId}/reset`, {
-        method: 'POST',
-      });
-      fetchControlData();
-    } catch (error) {
-      logger.error('Error resetting interlock', error);
-    }
-  };
-
-  const resetInterlock = (interlockId: number, interlockName: string) => {
-    if (!canCommand) return;
-    setConfirmAction({
-      type: 'interlock',
-      name: interlockName,
-      description: 'Are you sure you want to reset this safety interlock? Ensure conditions are safe before proceeding.',
-      onConfirm: () => doResetInterlock(interlockId),
+      onConfirm: () => doToggleMode(rtuName, loopId, pidMode),
     });
   };
 
@@ -293,128 +289,113 @@ export default function ControlPage() {
           </svg>
           <div>
             <p className="text-orange-200 font-medium">View Mode Active</p>
-            <p className="text-sm text-orange-300/70">Enter Command Mode to modify PID settings and reset interlocks</p>
+            <p className="text-sm text-orange-300/70">Enter Command Mode to modify PID settings</p>
           </div>
         </div>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* PID Loops */}
-        <div className="scada-panel p-4">
-          <h2 className="text-lg font-semibold mb-4 text-white">PID Loops</h2>
-          <div className="space-y-4">
-            {pidLoops.map((loop) => (
-              <div
-                key={loop.loop_id}
-                className={`bg-scada-accent/50 rounded-lg p-4 cursor-pointer transition-colors ${
-                  selectedLoop?.loop_id === loop.loop_id ? 'ring-2 ring-scada-highlight' : ''
-                }`}
-                onClick={() => setSelectedLoop(loop)}
-              >
-                <div className="flex justify-between items-start mb-3">
-                  <div>
-                    <div className="font-medium text-white">{loop.name}</div>
-                    <div className="text-xs text-gray-400">
-                      {loop.input_rtu} → {loop.output_rtu}
-                    </div>
-                  </div>
-                  <span
-                    className={`text-xs px-2 py-1 rounded ${
-                      loop.mode === 'AUTO'
-                        ? 'bg-green-600'
-                        : loop.mode === 'MANUAL'
-                        ? 'bg-yellow-600'
-                        : 'bg-gray-600'
-                    }`}
-                  >
-                    {loop.mode}
-                  </span>
-                </div>
-
-                <div className="grid grid-cols-3 gap-4 text-center">
-                  <div>
-                    <div className="text-xs text-gray-400">PV</div>
-                    <div className="scada-value text-lg">{loop.pv?.toFixed(2) || '--'}</div>
-                  </div>
-                  <div>
-                    <div className="text-xs text-gray-400">SP</div>
-                    <div className="text-lg font-bold text-blue-400">
-                      {loop.setpoint?.toFixed(2) || '--'}
-                    </div>
-                  </div>
-                  <div>
-                    <div className="text-xs text-gray-400">CV</div>
-                    <div className="text-lg font-bold text-yellow-400">
-                      {loop.cv?.toFixed(1) || '--'}%
-                    </div>
-                  </div>
-                </div>
-
-                {/* Progress bar showing CV */}
-                <div className="mt-3 h-2 bg-scada-bg rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-yellow-500 transition-all duration-300"
-                    style={{ width: `${Math.max(0, Math.min(100, loop.cv || 0))}%` }}
-                  />
-                </div>
-              </div>
+      {/* RTU Selector */}
+      <div className="scada-panel p-4">
+        <div className="flex items-center gap-4">
+          <label className="text-sm text-gray-300">Select RTU:</label>
+          <select
+            value={selectedRtu || ''}
+            onChange={(e) => {
+              setSelectedRtu(e.target.value);
+              setSelectedLoop(null);
+            }}
+            className="bg-scada-accent text-white rounded px-3 py-2 min-w-[200px]"
+          >
+            {rtus.length === 0 && <option value="">No RTUs available</option>}
+            {rtus.map((rtu) => (
+              <option key={rtu.station_name} value={rtu.station_name}>
+                {rtu.station_name} ({rtu.state})
+              </option>
             ))}
-            {pidLoops.length === 0 && !loading && (
-              <div className="text-center text-gray-400 py-8">No PID loops configured</div>
-            )}
-          </div>
+          </select>
+          {loading && (
+            <span className="text-sm text-gray-400">Loading...</span>
+          )}
         </div>
+      </div>
 
-        {/* Interlocks */}
-        <div className="scada-panel p-4">
-          <h2 className="text-lg font-semibold mb-4 text-white">Safety Interlocks</h2>
-          <div className="space-y-3">
-            {interlocks.map((interlock) => (
-              <div
-                key={interlock.interlock_id}
-                className={`p-3 rounded-lg ${
-                  interlock.tripped
-                    ? 'bg-red-900/50 border border-red-500'
-                    : 'bg-scada-accent/50'
-                }`}
-              >
-                <div className="flex justify-between items-center">
-                  <div>
-                    <div className="font-medium text-white">{interlock.name}</div>
-                    <div className="text-xs text-gray-400">
-                      {interlock.condition_rtu} slot {interlock.condition_slot} &lt;{' '}
-                      {interlock.threshold}
-                    </div>
+      {/* PID Loops */}
+      <div className="scada-panel p-4">
+        <h2 className="text-lg font-semibold mb-4 text-white">
+          PID Loops {selectedRtu && `- ${selectedRtu}`}
+        </h2>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {pidLoops.map((loop) => (
+            <div
+              key={loop.id}
+              className={`bg-scada-accent/50 rounded-lg p-4 cursor-pointer transition-colors ${
+                selectedLoop?.id === loop.id ? 'ring-2 ring-scada-highlight' : ''
+              }`}
+              onClick={() => setSelectedLoop(loop)}
+            >
+              <div className="flex justify-between items-start mb-3">
+                <div>
+                  <div className="font-medium text-white">{loop.name}</div>
+                  <div className="text-xs text-gray-400">
+                    PV: {loop.process_variable} → CV: {loop.control_output}
                   </div>
-                  <div className="flex items-center gap-3">
-                    <span
-                      className={`text-xs px-2 py-1 rounded ${
-                        interlock.tripped ? 'bg-red-600 alarm-active' : 'bg-green-600'
-                      }`}
-                    >
-                      {interlock.tripped ? 'TRIPPED' : 'OK'}
-                    </span>
-                    {interlock.tripped && canCommand && (
-                      <button
-                        onClick={() => resetInterlock(interlock.interlock_id, interlock.name)}
-                        className="text-xs bg-scada-highlight hover:bg-red-600 px-3 py-1 rounded transition-colors"
-                      >
-                        Reset
-                      </button>
-                    )}
+                </div>
+                <span
+                  className={`text-xs px-2 py-1 rounded ${
+                    loop.mode === 'AUTO'
+                      ? 'bg-green-600'
+                      : loop.mode === 'MANUAL'
+                      ? 'bg-yellow-600'
+                      : 'bg-gray-600'
+                  }`}
+                >
+                  {loop.mode}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-3 gap-4 text-center">
+                <div>
+                  <div className="text-xs text-gray-400">PV</div>
+                  <div className="scada-value text-lg">{loop.pv?.toFixed(2) ?? '--'}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-gray-400">SP</div>
+                  <div className="text-lg font-bold text-blue-400">
+                    {loop.setpoint?.toFixed(2) ?? '--'}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs text-gray-400">CV</div>
+                  <div className="text-lg font-bold text-yellow-400">
+                    {loop.cv?.toFixed(1) ?? '--'}%
                   </div>
                 </div>
               </div>
-            ))}
-            {interlocks.length === 0 && !loading && (
-              <div className="text-center text-gray-400 py-8">No interlocks configured</div>
-            )}
-          </div>
+
+              {/* Progress bar showing CV */}
+              <div className="mt-3 h-2 bg-scada-bg rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-yellow-500 transition-all duration-300"
+                  style={{ width: `${Math.max(0, Math.min(100, loop.cv || 0))}%` }}
+                />
+              </div>
+            </div>
+          ))}
+          {pidLoops.length === 0 && !loading && selectedRtu && (
+            <div className="text-center text-gray-400 py-8 col-span-full">
+              No PID loops configured for {selectedRtu}
+            </div>
+          )}
+          {!selectedRtu && !loading && (
+            <div className="text-center text-gray-400 py-8 col-span-full">
+              Select an RTU to view PID loops
+            </div>
+          )}
         </div>
       </div>
 
       {/* Selected Loop Detail */}
-      {selectedLoop && (
+      {selectedLoop && selectedRtu && (
         <div className="scada-panel p-4">
           <h2 className="text-lg font-semibold mb-4 text-white">
             {selectedLoop.name} - Tuning Parameters
@@ -433,7 +414,7 @@ export default function ControlPage() {
                 />
                 {pendingSetpoint !== null && pendingSetpoint !== selectedLoop.setpoint && (
                   <button
-                    onClick={() => updateSetpoint(selectedLoop.loop_id, pendingSetpoint, selectedLoop.name)}
+                    onClick={() => updateSetpoint(selectedRtu, selectedLoop.id, pendingSetpoint, selectedLoop.name)}
                     className="px-3 py-2 bg-blue-600 hover:bg-blue-500 rounded text-sm font-medium transition-colors"
                     disabled={!canCommand}
                   >
@@ -463,7 +444,7 @@ export default function ControlPage() {
           </div>
           <div className="mt-4 flex gap-2">
             <button
-              onClick={() => toggleMode(selectedLoop.loop_id, 'AUTO', selectedLoop.name)}
+              onClick={() => toggleMode(selectedRtu, selectedLoop.id, 'AUTO', selectedLoop.name)}
               disabled={!canCommand || selectedLoop.mode === 'AUTO'}
               className={`px-4 py-2 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
                 selectedLoop.mode === 'AUTO' ? 'bg-green-600' : 'bg-scada-accent hover:bg-scada-accent/80'
@@ -472,7 +453,7 @@ export default function ControlPage() {
               AUTO
             </button>
             <button
-              onClick={() => toggleMode(selectedLoop.loop_id, 'MANUAL', selectedLoop.name)}
+              onClick={() => toggleMode(selectedRtu, selectedLoop.id, 'MANUAL', selectedLoop.name)}
               disabled={!canCommand || selectedLoop.mode === 'MANUAL'}
               className={`px-4 py-2 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
                 selectedLoop.mode === 'MANUAL' ? 'bg-yellow-600' : 'bg-scada-accent hover:bg-scada-accent/80'
