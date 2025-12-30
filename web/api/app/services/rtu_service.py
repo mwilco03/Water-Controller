@@ -7,20 +7,19 @@ Business logic for RTU operations, extracted from route handlers.
 This service layer enables testability and reusability across endpoints.
 """
 
-from datetime import datetime, timezone
-from typing import List, Optional
+from datetime import UTC, datetime
 
 from sqlalchemy.orm import Session
 
 from ..core.exceptions import (
-    RtuNotFoundError,
     RtuAlreadyExistsError,
-    RtuNotConnectedError,
     RtuBusyError,
+    RtuNotConnectedError,
+    RtuNotFoundError,
 )
-from ..models.rtu import RTU, Slot, Sensor, Control, RtuState, SlotStatus
-from ..models.alarm import AlarmRule, AlarmEvent
+from ..models.alarm import AlarmEvent, AlarmRule
 from ..models.historian import HistorianSample
+from ..models.rtu import RTU, Control, RtuState, Sensor, Slot, SlotStatus
 from ..schemas.rtu import RtuCreate, RtuStats
 
 
@@ -42,11 +41,11 @@ class RtuService:
             raise RtuNotFoundError(name)
         return rtu
 
-    def get_by_name_optional(self, name: str) -> Optional[RTU]:
+    def get_by_name_optional(self, name: str) -> RTU | None:
         """Get RTU by station name or return None."""
         return self.db.query(RTU).filter(RTU.station_name == name).first()
 
-    def list_all(self, state_filter: Optional[str] = None) -> List[RTU]:
+    def list_all(self, state_filter: str | None = None) -> list[RTU]:
         """List all RTUs with optional state filter."""
         query = self.db.query(RTU)
         if state_filter:
@@ -78,7 +77,7 @@ class RtuService:
             device_id=request.device_id,
             slot_count=request.slot_count,
             state=RtuState.OFFLINE,
-            state_since=datetime.now(timezone.utc),
+            state_since=datetime.now(UTC),
         )
         self.db.add(rtu)
         self.db.flush()  # Get the ID

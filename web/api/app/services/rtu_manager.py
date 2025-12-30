@@ -6,10 +6,8 @@ SPDX-License-Identifier: GPL-3.0-or-later
 RTU lifecycle management and state synchronization.
 """
 
-import asyncio
 import logging
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from sqlalchemy.orm import Session
 
@@ -25,11 +23,11 @@ class RtuManager:
     database and PROFINET controller.
     """
 
-    def __init__(self, profinet_client: Optional[ProfinetClient] = None):
+    def __init__(self, profinet_client: ProfinetClient | None = None):
         self._profinet = profinet_client or get_profinet_client()
-        self._state_cache: Dict[str, str] = {}  # station_name -> state
+        self._state_cache: dict[str, str] = {}  # station_name -> state
 
-    def sync_rtu_state(self, db: Session, station_name: str) -> Optional[str]:
+    def sync_rtu_state(self, db: Session, station_name: str) -> str | None:
         """
         Sync RTU state from controller to database.
 
@@ -57,7 +55,7 @@ class RtuManager:
 
         return rtu.state
 
-    def sync_all_rtu_states(self, db: Session) -> Dict[str, str]:
+    def sync_all_rtu_states(self, db: Session) -> dict[str, str]:
         """
         Sync all RTU states from controller.
 
@@ -73,7 +71,7 @@ class RtuManager:
 
         return states
 
-    def get_cached_state(self, station_name: str) -> Optional[str]:
+    def get_cached_state(self, station_name: str) -> str | None:
         """Get cached RTU state without querying controller."""
         return self._state_cache.get(station_name)
 
@@ -139,7 +137,7 @@ class RtuManager:
             return False
 
         # Send command to controller
-        success = self._profinet.disconnect_rtu(station_name)
+        self._profinet.disconnect_rtu(station_name)
 
         # Update database state with reason
         rtu.update_state(
@@ -151,11 +149,11 @@ class RtuManager:
         logger.info(f"RTU {station_name} disconnected by {requested_by}")
         return True
 
-    def get_sensor_values(self, station_name: str) -> List[Dict[str, Any]]:
+    def get_sensor_values(self, station_name: str) -> list[dict[str, Any]]:
         """Get real-time sensor values from controller."""
         return self._profinet.get_sensor_values(station_name)
 
-    def get_actuator_states(self, station_name: str) -> List[Dict[str, Any]]:
+    def get_actuator_states(self, station_name: str) -> list[dict[str, Any]]:
         """Get real-time actuator states from controller."""
         return self._profinet.get_actuator_states(station_name)
 
@@ -171,7 +169,7 @@ class RtuManager:
 
 
 # Global manager instance
-_rtu_manager: Optional[RtuManager] = None
+_rtu_manager: RtuManager | None = None
 
 
 def get_rtu_manager() -> RtuManager:

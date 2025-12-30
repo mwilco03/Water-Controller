@@ -9,30 +9,29 @@ Health Check Hierarchy (per HARMONIOUS_SYSTEM_DESIGN.md Principle 9):
 - /health/functional: Is it working correctly? (30s check interval)
 """
 
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
-import os
 import logging
+import os
+from datetime import UTC, datetime
+from typing import Any
 
 from fastapi import APIRouter, Depends, Query, Response
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
-from sqlalchemy.orm import Session
-from sqlalchemy.exc import SQLAlchemyError
-
+from pydantic import BaseModel
 from sqlalchemy import func, text
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
 
 from ...core.errors import build_success_response
-from ...models.base import get_db
-from ...models.rtu import RTU, RtuState
 from ...models.alarm import AlarmEvent, AlarmState
+from ...models.base import get_db
 from ...models.historian import HistorianSample
+from ...models.rtu import RTU, RtuState
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
 # Track server start time
-SERVER_START_TIME = datetime.now(timezone.utc)
+SERVER_START_TIME = datetime.now(UTC)
 
 # Controller version for version negotiation
 CONTROLLER_VERSION = "1.2.0"
@@ -83,11 +82,11 @@ class SystemStatus(BaseModel):
 @router.get("/status")
 async def get_system_status(
     db: Session = Depends(get_db)
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Get overall system health.
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     uptime = int((now - SERVER_START_TIME).total_seconds())
 
     # RTU summary - single query with GROUP BY instead of 4 separate queries
@@ -119,7 +118,6 @@ async def get_system_status(
     )
 
     # Historian summary
-    from datetime import timedelta
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     samples_today = db.query(HistorianSample).filter(
         HistorianSample.timestamp >= today_start
@@ -167,11 +165,11 @@ async def get_system_status(
 
 @router.get("/logs")
 async def get_system_logs(
-    level: Optional[str] = Query(None, description="Filter by level"),
+    level: str | None = Query(None, description="Filter by level"),
     hours: int = Query(24, ge=1, le=168, description="Hours to retrieve"),
     limit: int = Query(100, ge=1, le=1000, description="Max records"),
     db: Session = Depends(get_db)
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Get application logs.
     """
@@ -210,7 +208,7 @@ async def health_live() -> Response:
         status_code=200,
         content={
             "status": "alive",
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         }
     )
 
@@ -262,7 +260,7 @@ async def health_ready(db: Session = Depends(get_db)) -> Response:
         status_code=status_code,
         content={
             "status": "ready" if all_ready else "not_ready",
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "checks": checks,
         }
     )
@@ -294,7 +292,7 @@ async def health_functional(db: Session = Depends(get_db)) -> Response:
     """
     from ...core.paths import get_ui_asset_status
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     checks = {}
     degraded_components = []
     critical_failure = False
@@ -324,9 +322,9 @@ async def health_functional(db: Session = Depends(get_db)) -> Response:
 
     # Database health
     try:
-        start = datetime.now(timezone.utc)
+        start = datetime.now(UTC)
         db.execute(text("SELECT 1"))
-        latency_ms = (datetime.now(timezone.utc) - start).total_seconds() * 1000
+        latency_ms = (datetime.now(UTC) - start).total_seconds() * 1000
         checks["database"] = {
             "status": "ok",
             "latency_ms": round(latency_ms, 2),
@@ -470,7 +468,7 @@ async def health_functional(db: Session = Depends(get_db)) -> Response:
 
 
 @router.get("/version")
-async def get_version() -> Dict[str, Any]:
+async def get_version() -> dict[str, Any]:
     """
     Get controller version information.
 

@@ -7,11 +7,11 @@ SQLAlchemy base and session management.
 """
 
 import os
-from datetime import datetime, timezone
-from typing import Generator
+from collections.abc import Generator
+from datetime import UTC, datetime
 
 from sqlalchemy import create_engine
-from sqlalchemy.orm import declarative_base, sessionmaker, Session
+from sqlalchemy.orm import Session, declarative_base, sessionmaker
 
 # Database configuration
 DB_PATH = os.environ.get("WTC_DB_PATH", "/var/lib/water-controller/wtc.db")
@@ -47,4 +47,4 @@ def get_db() -> Generator[Session, None, None]:
 
 def utcnow() -> datetime:
     """Get current UTC timestamp."""
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)

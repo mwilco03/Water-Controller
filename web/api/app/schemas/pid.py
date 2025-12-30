@@ -7,7 +7,7 @@ Pydantic models for PID loop management.
 """
 
 from enum import Enum
-from typing import Optional
+
 from pydantic import BaseModel, Field
 
 
@@ -38,15 +38,15 @@ class PidLoopCreate(BaseModel):
 class PidLoopUpdate(BaseModel):
     """Request to update a PID loop."""
 
-    name: Optional[str] = Field(None, description="Loop name")
-    setpoint: Optional[float] = Field(None, description="Setpoint value")
-    kp: Optional[float] = Field(None, ge=0, description="Proportional gain")
-    ki: Optional[float] = Field(None, ge=0, description="Integral gain")
-    kd: Optional[float] = Field(None, ge=0, description="Derivative gain")
-    output_min: Optional[float] = Field(None, description="Minimum output")
-    output_max: Optional[float] = Field(None, description="Maximum output")
-    mode: Optional[PidMode] = Field(None, description="Operating mode")
-    enabled: Optional[bool] = Field(None, description="Whether enabled")
+    name: str | None = Field(None, description="Loop name")
+    setpoint: float | None = Field(None, description="Setpoint value")
+    kp: float | None = Field(None, ge=0, description="Proportional gain")
+    ki: float | None = Field(None, ge=0, description="Integral gain")
+    kd: float | None = Field(None, ge=0, description="Derivative gain")
+    output_min: float | None = Field(None, description="Minimum output")
+    output_max: float | None = Field(None, description="Maximum output")
+    mode: PidMode | None = Field(None, description="Operating mode")
+    enabled: bool | None = Field(None, description="Whether enabled")
 
 
 class PidLoopResponse(BaseModel):
@@ -64,9 +64,9 @@ class PidLoopResponse(BaseModel):
     output_max: float = Field(description="Maximum output")
     mode: PidMode = Field(description="Operating mode")
     enabled: bool = Field(description="Whether enabled")
-    pv: Optional[float] = Field(None, description="Current PV value")
-    cv: Optional[float] = Field(None, description="Current CV value")
-    error: Optional[float] = Field(None, description="Current error")
+    pv: float | None = Field(None, description="Current PV value")
+    cv: float | None = Field(None, description="Current CV value")
+    error: float | None = Field(None, description="Current error")
 
 
 class SetpointRequest(BaseModel):
@@ -103,7 +103,7 @@ class AutoTuneResponse(BaseModel):
     loop_id: int = Field(description="PID loop ID")
     method: str = Field(description="Tuning method used")
     status: str = Field(description="Tuning status: pending, running, completed, failed")
-    old_tuning: Optional[dict] = Field(None, description="Previous tuning parameters")
-    new_tuning: Optional[dict] = Field(None, description="Calculated tuning parameters")
-    metrics: Optional[dict] = Field(None, description="Process metrics from step test")
-    message: Optional[str] = Field(None, description="Status message")
+    old_tuning: dict | None = Field(None, description="Previous tuning parameters")
+    new_tuning: dict | None = Field(None, description="Calculated tuning parameters")
+    metrics: dict | None = Field(None, description="Process metrics from step test")
+    message: str | None = Field(None, description="Status message")

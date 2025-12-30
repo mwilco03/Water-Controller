@@ -9,17 +9,17 @@ User session management operations.
 import json
 import logging
 from datetime import datetime
-from typing import List, Optional, Dict, Any
+from typing import Any
 
-from .base import get_db
 from .audit import log_audit
+from .base import get_db
 
 logger = logging.getLogger(__name__)
 
 
-def create_session(token: str, username: str, role: str, groups: List[str],
-                   expires_at: datetime, ip_address: str = None,
-                   user_agent: str = None) -> bool:
+def create_session(token: str, username: str, role: str, groups: list[str],
+                   expires_at: datetime, ip_address: str | None = None,
+                   user_agent: str | None = None) -> bool:
     """Create a new user session"""
     with get_db() as conn:
         cursor = conn.cursor()
@@ -39,7 +39,7 @@ def create_session(token: str, username: str, role: str, groups: List[str],
             return False
 
 
-def get_session(token: str) -> Optional[Dict[str, Any]]:
+def get_session(token: str) -> dict[str, Any] | None:
     """Get session by token"""
     with get_db() as conn:
         cursor = conn.cursor()
@@ -54,7 +54,7 @@ def get_session(token: str) -> Optional[Dict[str, Any]]:
             if session.get('groups'):
                 try:
                     session['groups'] = json.loads(session['groups'])
-                except:
+                except json.JSONDecodeError:
                     session['groups'] = []
             return session
         return None
@@ -91,7 +91,7 @@ def delete_session(token: str) -> bool:
         return False
 
 
-def delete_session_by_prefix(token_prefix: str, admin_user: str = None) -> bool:
+def delete_session_by_prefix(token_prefix: str, admin_user: str | None = None) -> bool:
     """Delete a session by token prefix (for admin session termination)"""
     with get_db() as conn:
         cursor = conn.cursor()
@@ -132,7 +132,7 @@ def cleanup_expired_sessions() -> int:
         return deleted
 
 
-def get_active_sessions(username: str = None) -> List[Dict[str, Any]]:
+def get_active_sessions(username: str | None = None) -> list[dict[str, Any]]:
     """Get all active sessions, optionally filtered by username"""
     with get_db() as conn:
         cursor = conn.cursor()

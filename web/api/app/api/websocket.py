@@ -8,8 +8,8 @@ Real-time data streaming via WebSocket.
 
 import asyncio
 import logging
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Set
+from datetime import UTC, datetime
+from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
@@ -23,7 +23,7 @@ class ConnectionManager:
     """Manages WebSocket connections with channel-based subscriptions."""
 
     def __init__(self):
-        self._connections: Dict[WebSocket, Dict[str, Any]] = {}
+        self._connections: dict[WebSocket, dict[str, Any]] = {}
         self._lock = asyncio.Lock()
 
     async def connect(self, websocket: WebSocket) -> None:
@@ -33,8 +33,8 @@ class ConnectionManager:
             self._connections[websocket] = {
                 "channels": set(),
                 "rtus": set(),  # Empty means all RTUs
-                "connected_at": datetime.now(timezone.utc),
-                "last_activity": datetime.now(timezone.utc),
+                "connected_at": datetime.now(UTC),
+                "last_activity": datetime.now(UTC),
             }
         logger.info(f"WebSocket connected. Total connections: {len(self._connections)}")
 
@@ -48,8 +48,8 @@ class ConnectionManager:
     async def subscribe(
         self,
         websocket: WebSocket,
-        channels: List[str],
-        rtus: Optional[List[str]] = None
+        channels: list[str],
+        rtus: list[str] | None = None
     ) -> None:
         """Subscribe a connection to specific channels."""
         async with self._lock:
@@ -63,14 +63,14 @@ class ConnectionManager:
     async def broadcast(
         self,
         channel: str,
-        data: Dict[str, Any],
-        rtu: Optional[str] = None
+        data: dict[str, Any],
+        rtu: str | None = None
     ) -> None:
         """Broadcast message to all subscribed connections."""
         message = {
             "channel": channel,
             "data": data,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         }
         if rtu:
             message["rtu"] = rtu
@@ -117,8 +117,8 @@ class SubscriptionMessage(BaseModel):
     """Subscription request from client."""
 
     action: str  # "subscribe" or "unsubscribe"
-    channels: List[str]  # sensors, controls, alarms, rtu_state
-    rtus: Optional[List[str]] = None  # Optional filter by RTU names
+    channels: list[str]  # sensors, controls, alarms, rtu_state
+    rtus: list[str] | None = None  # Optional filter by RTU names
 
 
 @router.websocket("/ws/live")
@@ -182,17 +182,17 @@ async def websocket_live(websocket: WebSocket):
 # Helper functions for broadcasting events
 
 
-async def broadcast_sensor_update(rtu: str, sensors: List[Dict[str, Any]]) -> None:
+async def broadcast_sensor_update(rtu: str, sensors: list[dict[str, Any]]) -> None:
     """Broadcast sensor value updates."""
     await manager.broadcast("sensors", sensors, rtu)
 
 
-async def broadcast_control_update(rtu: str, controls: List[Dict[str, Any]]) -> None:
+async def broadcast_control_update(rtu: str, controls: list[dict[str, Any]]) -> None:
     """Broadcast control state updates."""
     await manager.broadcast("controls", controls, rtu)
 
 
-async def broadcast_alarm(action: str, alarm: Dict[str, Any]) -> None:
+async def broadcast_alarm(action: str, alarm: dict[str, Any]) -> None:
     """Broadcast alarm event."""
     await manager.broadcast("alarms", {
         "action": action,  # activated, acknowledged, cleared

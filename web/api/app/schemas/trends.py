@@ -8,7 +8,7 @@ Pydantic models for historian/trends endpoints.
 
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional
+
 from pydantic import BaseModel, Field
 
 from .common import DataQuality
@@ -37,7 +37,7 @@ class TrendAggregate(str, Enum):
 class TrendPointValue(BaseModel):
     """Value with quality for a single tag at a point in time."""
 
-    value: Optional[float] = Field(None, description="Aggregated value")
+    value: float | None = Field(None, description="Aggregated value")
     quality: DataQuality = Field(description="Data quality")
 
 
@@ -45,15 +45,15 @@ class TrendPoint(BaseModel):
     """Single point in trend data."""
 
     timestamp: datetime = Field(description="Point timestamp")
-    values: Dict[str, TrendPointValue] = Field(description="Values by tag")
+    values: dict[str, TrendPointValue] = Field(description="Values by tag")
 
 
 class TrendData(BaseModel):
     """Trend data response."""
 
-    tags: List[str] = Field(description="Tags included in data")
+    tags: list[str] = Field(description="Tags included in data")
     interval: TrendInterval = Field(description="Aggregation interval")
-    points: List[TrendPoint] = Field(description="Data points")
+    points: list[TrendPoint] = Field(description="Data points")
 
 
 class TrendMeta(BaseModel):
@@ -74,7 +74,7 @@ class TrendResponse(BaseModel):
 class TrendQuery(BaseModel):
     """Query parameters for trend data."""
 
-    tags: List[str] = Field(description="Sensor tags to retrieve")
+    tags: list[str] = Field(description="Sensor tags to retrieve")
     start: datetime = Field(description="Start time")
     end: datetime = Field(description="End time")
     interval: TrendInterval = Field(TrendInterval.ONE_MINUTE, description="Aggregation interval")
@@ -92,7 +92,7 @@ class TrendExportRequest(BaseModel):
     """Request to export trend data."""
 
     format: ExportFormat = Field(description="Export file format")
-    tags: List[str] = Field(description="Sensor tags to export")
+    tags: list[str] = Field(description="Sensor tags to export")
     start: datetime = Field(description="Start time")
     end: datetime = Field(description="End time")
     include_metadata: bool = Field(True, description="Include tag metadata")

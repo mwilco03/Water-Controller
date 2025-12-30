@@ -4,9 +4,8 @@ Copyright (C) 2024
 SPDX-License-Identifier: GPL-3.0-or-later
 """
 
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
 import time
+from typing import Any
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
@@ -22,7 +21,7 @@ router = APIRouter()
 class DiscoveryRequest(BaseModel):
     """Request for network discovery."""
 
-    subnet: Optional[str] = Field(None, description="Subnet to scan (e.g., '192.168.1.0/24')")
+    subnet: str | None = Field(None, description="Subnet to scan (e.g., '192.168.1.0/24')")
     timeout_seconds: int = Field(10, ge=1, le=60, description="Discovery timeout")
 
 
@@ -37,21 +36,21 @@ class DiscoveredDevice(BaseModel):
     device_type: str
     device_id: str
     already_configured: bool
-    rtu_name: Optional[str] = None
+    rtu_name: str | None = None
 
 
 class DiscoveryResponse(BaseModel):
     """Response for network discovery."""
 
-    devices: List[DiscoveredDevice]
+    devices: list[DiscoveredDevice]
     scan_duration_seconds: float
 
 
 @router.post("/rtu")
 async def discover_rtus(
-    request: Optional[DiscoveryRequest] = None,
+    request: DiscoveryRequest | None = None,
     db: Session = Depends(get_db)
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Scan network for PROFINET devices.
 
@@ -61,8 +60,8 @@ async def discover_rtus(
 
     # Get list of already configured RTUs
     existing_rtus = db.query(RTU).all()
-    configured_ips = {r.ip_address for r in existing_rtus}
-    ip_to_rtu = {r.ip_address: r.station_name for r in existing_rtus}
+    {r.ip_address for r in existing_rtus}
+    {r.ip_address: r.station_name for r in existing_rtus}
 
     # In a real implementation, this would:
     # 1. Send DCP Identify All multicast

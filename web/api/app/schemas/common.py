@@ -8,7 +8,8 @@ Shared Pydantic models used across all endpoints.
 
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, Generic, Optional, TypeVar
+from typing import Any, Generic, TypeVar
+
 from pydantic import BaseModel, Field
 
 
@@ -25,7 +26,7 @@ class ResponseMeta(BaseModel):
     """Metadata included in all API responses."""
 
     timestamp: datetime = Field(description="Response timestamp in ISO 8601 format")
-    request_id: Optional[str] = Field(None, description="Unique request identifier for tracing")
+    request_id: str | None = Field(None, description="Unique request identifier for tracing")
 
 
 class ErrorDetail(BaseModel):
@@ -33,9 +34,9 @@ class ErrorDetail(BaseModel):
 
     code: str = Field(description="Machine-readable error code")
     message: str = Field(description="Human-readable error message")
-    details: Optional[Dict[str, Any]] = Field(None, description="Additional error context")
+    details: dict[str, Any] | None = Field(None, description="Additional error context")
     recoverable: bool = Field(True, description="Whether client can retry the operation")
-    suggested_action: Optional[str] = Field(None, description="Suggested resolution")
+    suggested_action: str | None = Field(None, description="Suggested resolution")
 
 
 class ErrorResponse(BaseModel):
@@ -53,7 +54,7 @@ class SuccessResponse(BaseModel, Generic[T]):
     """Standard success response envelope."""
 
     data: Any = Field(description="Response payload")
-    meta: Optional[ResponseMeta] = Field(None, description="Response metadata")
+    meta: ResponseMeta | None = Field(None, description="Response metadata")
 
 
 class PaginationMeta(BaseModel):

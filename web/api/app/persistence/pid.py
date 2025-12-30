@@ -6,13 +6,13 @@ SPDX-License-Identifier: GPL-3.0-or-later
 PID control loop operations.
 """
 
-from typing import List, Optional, Dict, Any
+from typing import Any
 
-from .base import get_db
 from .audit import log_audit
+from .base import get_db
 
 
-def get_pid_loops() -> List[Dict[str, Any]]:
+def get_pid_loops() -> list[dict[str, Any]]:
     """Get all PID control loops"""
     with get_db() as conn:
         cursor = conn.cursor()
@@ -20,7 +20,7 @@ def get_pid_loops() -> List[Dict[str, Any]]:
         return [dict(row) for row in cursor.fetchall()]
 
 
-def get_pid_loop(loop_id: int) -> Optional[Dict[str, Any]]:
+def get_pid_loop(loop_id: int) -> dict[str, Any] | None:
     """Get a single PID loop by ID"""
     with get_db() as conn:
         cursor = conn.cursor()
@@ -29,7 +29,7 @@ def get_pid_loop(loop_id: int) -> Optional[Dict[str, Any]]:
         return dict(row) if row else None
 
 
-def create_pid_loop(loop: Dict[str, Any]) -> int:
+def create_pid_loop(loop: dict[str, Any]) -> int:
     """Create a new PID control loop"""
     with get_db() as conn:
         cursor = conn.cursor()
@@ -51,7 +51,7 @@ def create_pid_loop(loop: Dict[str, Any]) -> int:
         return cursor.lastrowid
 
 
-def update_pid_loop(loop_id: int, loop: Dict[str, Any]) -> bool:
+def update_pid_loop(loop_id: int, loop: dict[str, Any]) -> bool:
     """Update a PID control loop"""
     with get_db() as conn:
         cursor = conn.cursor()

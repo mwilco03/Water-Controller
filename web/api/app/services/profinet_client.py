@@ -7,25 +7,23 @@ Integration with the C controller via shared memory.
 """
 
 import logging
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 # Try to import the shared memory client
 try:
     import sys
-    import os
+    from pathlib import Path
     # Add parent directory to path for legacy module imports
-    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+    sys.path.insert(0, str(Path(__file__).parent.parent.parent))
     from shm_client import (
-        get_client,
-        WtcShmClient,
-        CONNECTION_STATE_NAMES,
-        SENSOR_STATUS_NAMES,
-        QUALITY_NAMES,
-        CONN_STATE_RUNNING,
         CONN_STATE_OFFLINE,
+        CONN_STATE_RUNNING,
+        CONNECTION_STATE_NAMES,
+        QUALITY_NAMES,
+        SENSOR_STATUS_NAMES,
+        get_client,
     )
     SHM_AVAILABLE = True
 except ImportError:
@@ -50,7 +48,7 @@ class ProfinetClient:
     """
 
     def __init__(self):
-        self._client: Optional[Any] = None
+        self._client: Any | None = None
         self._simulation_mode = not SHM_AVAILABLE
 
     def connect(self) -> bool:
@@ -85,7 +83,7 @@ class ProfinetClient:
             return False
         return self._client.is_controller_running()
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         """Get controller status."""
         if self._simulation_mode:
             return {
@@ -99,7 +97,7 @@ class ProfinetClient:
 
         return self._client.get_status()
 
-    def get_rtu_state(self, station_name: str) -> Optional[str]:
+    def get_rtu_state(self, station_name: str) -> str | None:
         """Get RTU connection state from controller."""
         if self._simulation_mode:
             return None
@@ -113,7 +111,7 @@ class ProfinetClient:
             return CONNECTION_STATE_NAMES.get(state_code, "UNKNOWN")
         return None
 
-    def get_sensor_values(self, station_name: str) -> List[Dict[str, Any]]:
+    def get_sensor_values(self, station_name: str) -> list[dict[str, Any]]:
         """Get sensor values from controller."""
         if self._simulation_mode:
             return []
@@ -123,7 +121,7 @@ class ProfinetClient:
 
         return self._client.get_sensors(station_name)
 
-    def get_actuator_states(self, station_name: str) -> List[Dict[str, Any]]:
+    def get_actuator_states(self, station_name: str) -> list[dict[str, Any]]:
         """Get actuator states from controller."""
         if self._simulation_mode:
             return []
@@ -201,7 +199,7 @@ class ProfinetClient:
 
         return self._client.remove_rtu(station_name)
 
-    def dcp_discover(self, timeout_ms: int = 5000) -> List[Dict[str, Any]]:
+    def dcp_discover(self, timeout_ms: int = 5000) -> list[dict[str, Any]]:
         """Discover PROFINET devices on network."""
         if self._simulation_mode:
             logger.info(f"[SIM] DCP discovery (timeout: {timeout_ms}ms)")
@@ -212,7 +210,7 @@ class ProfinetClient:
 
         return self._client.dcp_discover(timeout_ms)
 
-    def get_pid_loops(self) -> List[Dict[str, Any]]:
+    def get_pid_loops(self) -> list[dict[str, Any]]:
         """Get PID loop states from controller."""
         if self._simulation_mode:
             return []
@@ -244,7 +242,7 @@ class ProfinetClient:
 
         return self._client.set_pid_mode(loop_id, mode)
 
-    def get_alarms(self) -> List[Dict[str, Any]]:
+    def get_alarms(self) -> list[dict[str, Any]]:
         """Get active alarms from controller."""
         if self._simulation_mode:
             return []
@@ -267,7 +265,7 @@ class ProfinetClient:
 
 
 # Global client instance
-_profinet_client: Optional[ProfinetClient] = None
+_profinet_client: ProfinetClient | None = None
 
 
 def get_profinet_client() -> ProfinetClient:

@@ -7,7 +7,7 @@ Audit log and command log operations.
 """
 
 import logging
-from typing import List, Optional, Dict, Any
+from typing import Any
 
 from .base import get_db
 
@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 def log_audit(user: str, action: str, resource_type: str, resource_id: str,
-              details: str, ip_address: str = None):
+              details: str, ip_address: str | None = None):
     """Log an audit event"""
     try:
         with get_db() as conn:
@@ -29,7 +29,7 @@ def log_audit(user: str, action: str, resource_type: str, resource_id: str,
         logger.error(f"Failed to log audit event: {e}")
 
 
-def get_audit_log(limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
+def get_audit_log(limit: int = 100, offset: int = 0) -> list[dict[str, Any]]:
     """Get audit log entries"""
     with get_db() as conn:
         cursor = conn.cursor()
@@ -46,9 +46,9 @@ def log_command(
     rtu_station: str,
     control_id: str,
     command: str,
-    command_value: float = None,
-    source_ip: str = None,
-    session_token: str = None
+    command_value: float | None = None,
+    source_ip: str | None = None,
+    session_token: str | None = None
 ) -> int:
     """
     Log a control command attempt before execution.
@@ -66,7 +66,7 @@ def log_command(
         return cursor.lastrowid
 
 
-def update_command_result(log_id: int, result: str, error_message: str = None) -> bool:
+def update_command_result(log_id: int, result: str, error_message: str | None = None) -> bool:
     """Update a command log entry with execution result"""
     with get_db() as conn:
         cursor = conn.cursor()
@@ -79,11 +79,11 @@ def update_command_result(log_id: int, result: str, error_message: str = None) -
 
 
 def get_command_log(
-    rtu_station: str = None,
-    username: str = None,
+    rtu_station: str | None = None,
+    username: str | None = None,
     limit: int = 100,
     offset: int = 0
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Get command log entries with optional filtering."""
     with get_db() as conn:
         cursor = conn.cursor()
@@ -113,7 +113,7 @@ def get_command_log(
         return [dict(row) for row in cursor.fetchall()]
 
 
-def get_command_log_count(rtu_station: str = None, username: str = None) -> int:
+def get_command_log_count(rtu_station: str | None = None, username: str | None = None) -> int:
     """Get total count of command log entries with optional filtering"""
     with get_db() as conn:
         cursor = conn.cursor()

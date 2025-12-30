@@ -11,8 +11,9 @@ IMPORTANT: These enums must stay in sync with:
 """
 
 from datetime import datetime
-from enum import IntEnum, Enum
-from typing import Any, Dict, List, Optional, Union
+from enum import Enum, IntEnum
+from typing import Any
+
 from pydantic import BaseModel, Field, field_validator
 
 
@@ -221,10 +222,10 @@ class AlarmSource(str, Enum):
 class AlarmConfig(BaseModel):
     """Alarm rule configuration."""
 
-    id: Optional[int] = Field(None, description="Alarm rule ID")
+    id: int | None = Field(None, description="Alarm rule ID")
     rtu: str = Field(description="RTU station name")
     tag: str = Field(description="Sensor/control tag")
-    slot: Optional[int] = Field(None, description="Slot number (if tag not used)")
+    slot: int | None = Field(None, description="Slot number (if tag not used)")
     priority: AlarmPriority = Field(description="Alarm priority")
     type: AlarmType = Field(description="Alarm type")
     setpoint: float = Field(description="Trigger setpoint value")
@@ -249,21 +250,21 @@ class AlarmEvent(BaseModel):
     id: int = Field(description="Alarm event ID")
     rtu: str = Field(description="RTU station name")
     tag: str = Field(description="Sensor/control tag")
-    slot: Optional[int] = Field(None, description="Slot number")
+    slot: int | None = Field(None, description="Slot number")
     priority: AlarmPriority = Field(description="Alarm priority")
-    severity: Optional[int] = Field(None, description="Numeric severity (0-3)")
+    severity: int | None = Field(None, description="Numeric severity (0-3)")
     type: AlarmType = Field(description="Alarm type")
     message: str = Field(description="Alarm message")
-    value: Optional[float] = Field(None, description="Value at activation")
+    value: float | None = Field(None, description="Value at activation")
     setpoint: float = Field(description="Trigger setpoint")
-    unit: Optional[str] = Field(None, description="Engineering unit")
+    unit: str | None = Field(None, description="Engineering unit")
     state: str = Field(description="Current alarm state")
-    state_code: Optional[int] = Field(None, description="Numeric state (0-3)")
+    state_code: int | None = Field(None, description="Numeric state (0-3)")
     source: AlarmSource = Field(AlarmSource.CONTROLLER, description="Alarm source")
     activated_at: datetime = Field(description="Activation timestamp")
-    acknowledged_at: Optional[datetime] = Field(None, description="Acknowledgment time")
-    acknowledged_by: Optional[str] = Field(None, description="User who acknowledged")
-    cleared_at: Optional[datetime] = Field(None, description="Clear timestamp")
+    acknowledged_at: datetime | None = Field(None, description="Acknowledgment time")
+    acknowledged_by: str | None = Field(None, description="User who acknowledged")
+    cleared_at: datetime | None = Field(None, description="Clear timestamp")
 
     @field_validator('state', mode='before')
     @classmethod
@@ -286,7 +287,7 @@ class AlarmEvent(BaseModel):
 class AlarmAcknowledgeRequest(BaseModel):
     """Request to acknowledge an alarm."""
 
-    note: Optional[str] = Field(None, max_length=256, description="Optional operator note")
+    note: str | None = Field(None, max_length=256, description="Optional operator note")
 
 
 class AlarmListMeta(BaseModel):
@@ -301,7 +302,7 @@ class AlarmListMeta(BaseModel):
 class AlarmListResponse(BaseModel):
     """Response wrapper for alarm list."""
 
-    data: List[AlarmEvent]
+    data: list[AlarmEvent]
     meta: AlarmListMeta
 
 
@@ -316,7 +317,7 @@ class AlarmShelveRequest(BaseModel):
         le=1440,  # Max 24 hours
         description="Shelve duration in minutes (1-1440)"
     )
-    reason: Optional[str] = Field(
+    reason: str | None = Field(
         None,
         max_length=256,
         description="Reason for shelving (required for audit trail)"
@@ -333,15 +334,15 @@ class ShelvedAlarm(BaseModel):
     shelved_at: datetime = Field(description="When the alarm was shelved")
     duration_minutes: int = Field(description="Original shelf duration")
     expires_at: datetime = Field(description="When the shelf expires")
-    reason: Optional[str] = Field(None, description="Reason for shelving")
+    reason: str | None = Field(None, description="Reason for shelving")
     active: bool = Field(description="Whether shelf is currently active")
 
 
 class ShelvedAlarmListResponse(BaseModel):
     """Response for shelved alarm list."""
 
-    data: List[ShelvedAlarm]
-    meta: Dict[str, Any] = Field(default_factory=dict)
+    data: list[ShelvedAlarm]
+    meta: dict[str, Any] = Field(default_factory=dict)
 
 
 # ============== Mapping Functions ==============
@@ -358,7 +359,7 @@ def severity_from_c(c_value: int) -> AlarmSeverity:
     return AlarmSeverity.from_legacy(c_value)
 
 
-def severity_to_c(severity: Union[AlarmSeverity, AlarmPriority]) -> int:
+def severity_to_c(severity: AlarmSeverity | AlarmPriority) -> int:
     """Convert Python severity to C value (0-3)."""
     if isinstance(severity, AlarmPriority):
         severity = severity.to_severity()

@@ -23,13 +23,12 @@ Usage:
         sys.exit(1)
 """
 
-import os
-import stat
 import logging
+import os
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import List, Optional
+from datetime import UTC
 from enum import Enum
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +55,7 @@ class PathIssue:
 @dataclass
 class ValidationResult:
     """Result of path validation with operator guidance."""
-    issues: List[PathIssue] = field(default_factory=list)
+    issues: list[PathIssue] = field(default_factory=list)
 
     @property
     def has_critical_failures(self) -> bool:
@@ -254,7 +253,7 @@ def validate_paths(
     check_ui: bool = True,
     check_database: bool = True,
     check_config: bool = True,
-    expected_user: Optional[str] = None,
+    expected_user: str | None = None,
 ) -> ValidationResult:
     """
     Validate that all required paths exist with correct permissions.
@@ -369,14 +368,13 @@ def validate_paths(
                 ))
 
     # === Log directory writability ===
-    if paths.log_dir.exists():
-        if not os.access(paths.log_dir, os.W_OK):
-            result.issues.append(PathIssue(
-                path=str(paths.log_dir),
-                severity=PathSeverity.WARNING,
-                message="Log directory not writable - logs may fail",
-                operator_action=f"Fix permissions: sudo chown {expected_user or 'water-controller'} {paths.log_dir}",
-            ))
+    if paths.log_dir.exists() and not os.access(paths.log_dir, os.W_OK):
+        result.issues.append(PathIssue(
+            path=str(paths.log_dir),
+            severity=PathSeverity.WARNING,
+            message="Log directory not writable - logs may fail",
+            operator_action=f"Fix permissions: sudo chown {expected_user or 'water-controller'} {paths.log_dir}",
+        ))
 
     # === Ownership check ===
     if expected_user and paths.data_dir.exists():
@@ -428,9 +426,9 @@ def get_ui_asset_status() -> dict:
     if build_manifest.exists():
         try:
             mtime = build_manifest.stat().st_mtime
-            from datetime import datetime, timezone
+            from datetime import datetime
             status["build_time"] = datetime.fromtimestamp(
-                mtime, tz=timezone.utc
+                mtime, tz=UTC
             ).isoformat()
         except OSError:
             pass

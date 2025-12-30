@@ -4,26 +4,25 @@ Copyright (C) 2024
 SPDX-License-Identifier: GPL-3.0-or-later
 """
 
-from datetime import datetime, timezone
-from typing import Any, Dict, List
+from typing import Any
 
-from fastapi import APIRouter, Depends, Path, HTTPException
+from fastapi import APIRouter, Depends, Path
 from sqlalchemy.orm import Session
 
-from ...core.exceptions import RtuNotFoundError, ValidationError, PidLoopNotFoundError
 from ...core.errors import build_success_response
+from ...core.exceptions import PidLoopNotFoundError, RtuNotFoundError, ValidationError
 from ...models.base import get_db
+from ...models.pid import PidLoop
 from ...models.rtu import RTU
-from ...models.pid import PidLoop, PidMode
 from ...schemas.pid import (
-    PidLoopCreate,
-    PidLoopUpdate,
-    PidLoopResponse,
-    SetpointRequest,
-    TuningRequest,
-    ModeRequest,
     AutoTuneRequest,
     AutoTuneResponse,
+    ModeRequest,
+    PidLoopCreate,
+    PidLoopResponse,
+    PidLoopUpdate,
+    SetpointRequest,
+    TuningRequest,
 )
 from ...services.profinet_client import get_profinet_client
 
@@ -47,7 +46,7 @@ def pid_not_found(loop_id: int):
 async def list_pid_loops(
     name: str = Path(..., description="RTU station name"),
     db: Session = Depends(get_db)
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     List all PID loops for an RTU.
     """
@@ -57,7 +56,7 @@ async def list_pid_loops(
 
     # Get live PV/CV from controller if available
     profinet = get_profinet_client()
-    live_loops = {l["loop_id"]: l for l in profinet.get_pid_loops()}
+    live_loops = {pid_loop["loop_id"]: pid_loop for pid_loop in profinet.get_pid_loops()}
 
     result = []
     for loop in loops:
@@ -88,14 +87,14 @@ async def create_pid_loop(
     name: str = Path(..., description="RTU station name"),
     request: PidLoopCreate = None,
     db: Session = Depends(get_db)
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Create a new PID loop.
     """
     rtu = get_rtu_or_404(db, name)
 
     # Verify sensor and control tags exist
-    from ...models.rtu import Sensor, Control
+    from ...models.rtu import Control, Sensor
 
     sensor = db.query(Sensor).filter(
         Sensor.rtu_id == rtu.id,
@@ -156,7 +155,7 @@ async def get_pid_loop(
     name: str = Path(..., description="RTU station name"),
     loop_id: int = Path(..., description="PID loop ID"),
     db: Session = Depends(get_db)
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Get a specific PID loop.
     """
@@ -171,7 +170,7 @@ async def get_pid_loop(
 
     # Get live values
     profinet = get_profinet_client()
-    live_loops = {l["loop_id"]: l for l in profinet.get_pid_loops()}
+    live_loops = {pid_loop["loop_id"]: pid_loop for pid_loop in profinet.get_pid_loops()}
     live = live_loops.get(loop.id, {})
 
     return build_success_response(PidLoopResponse(
@@ -199,7 +198,7 @@ async def update_pid_loop(
     loop_id: int = Path(..., description="PID loop ID"),
     request: PidLoopUpdate = None,
     db: Session = Depends(get_db)
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Update a PID loop.
     """
@@ -242,7 +241,7 @@ async def delete_pid_loop(
     name: str = Path(..., description="RTU station name"),
     loop_id: int = Path(..., description="PID loop ID"),
     db: Session = Depends(get_db)
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Delete a PID loop.
     """
@@ -267,7 +266,7 @@ async def update_setpoint(
     loop_id: int = Path(..., description="PID loop ID"),
     request: SetpointRequest = None,
     db: Session = Depends(get_db)
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Update PID loop setpoint.
     """
@@ -301,7 +300,7 @@ async def update_tuning(
     loop_id: int = Path(..., description="PID loop ID"),
     request: TuningRequest = None,
     db: Session = Depends(get_db)
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Update PID tuning parameters.
     """
@@ -333,7 +332,7 @@ async def update_mode(
     loop_id: int = Path(..., description="PID loop ID"),
     request: ModeRequest = None,
     db: Session = Depends(get_db)
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Update PID loop operating mode.
     """
@@ -368,7 +367,7 @@ async def start_autotune(
     loop_id: int = Path(..., description="PID loop ID"),
     request: AutoTuneRequest = None,
     db: Session = Depends(get_db)
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Start PID auto-tuning process.
 

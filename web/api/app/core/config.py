@@ -14,7 +14,6 @@ Usage:
 """
 
 import os
-from typing import Optional
 
 
 def _get_int_env(key: str, default: int) -> int:

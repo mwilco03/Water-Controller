@@ -6,10 +6,11 @@ SPDX-License-Identifier: GPL-3.0-or-later
 Database connection, schema initialization, and shared utilities.
 """
 
-import sqlite3
-import os
 import logging
+import os
+import sqlite3
 from contextlib import contextmanager
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +24,7 @@ _initialized = False
 @contextmanager
 def get_db():
     """Context manager for database connections"""
-    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+    Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     try:
@@ -425,9 +426,9 @@ def initialize() -> bool:
         return True
 
     try:
-        db_dir = os.path.dirname(DB_PATH)
-        if db_dir:
-            os.makedirs(db_dir, exist_ok=True)
+        db_path = Path(DB_PATH)
+        if db_path.parent != Path():
+            db_path.parent.mkdir(parents=True, exist_ok=True)
 
         init_database()
         _initialized = True

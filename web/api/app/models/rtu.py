@@ -6,23 +6,20 @@ SPDX-License-Identifier: GPL-3.0-or-later
 SQLAlchemy models for RTU, Slot, Sensor, and Control entities.
 """
 
-from datetime import datetime, timezone
-from typing import Optional, List
+from datetime import UTC, datetime
 
 from sqlalchemy import (
+    Boolean,
     Column,
+    DateTime,
+    Float,
+    ForeignKey,
     Integer,
     String,
-    Float,
-    Boolean,
-    DateTime,
-    Enum as SQLEnum,
-    ForeignKey,
     Text,
     UniqueConstraint,
-    Index,
 )
-from sqlalchemy.orm import relationship, Mapped
+from sqlalchemy.orm import relationship
 
 from .base import Base
 
@@ -135,7 +132,7 @@ class RTU(Base):
 
     # State tracking
     state = Column(String(20), nullable=False, default=RtuState.OFFLINE)
-    state_since = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    state_since = Column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
     transition_reason = Column(String(256), nullable=True)  # Why the last state change occurred
     last_error = Column(Text, nullable=True)
 
@@ -144,11 +141,11 @@ class RTU(Base):
     version_mismatch = Column(Boolean, default=False)  # True if version mismatch detected
 
     # Timestamps
-    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
     updated_at = Column(
         DateTime(timezone=True),
-        default=lambda: datetime.now(timezone.utc),
-        onupdate=lambda: datetime.now(timezone.utc)
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC)
     )
 
     # Relationships
@@ -158,8 +155,8 @@ class RTU(Base):
     alarm_rules = relationship("AlarmRule", back_populates="rtu", cascade="all, delete-orphan")
     alarm_events = relationship("AlarmEvent", back_populates="rtu", cascade="all, delete-orphan")
 
-    def update_state(self, new_state: str, error: Optional[str] = None,
-                     reason: Optional[str] = None):
+    def update_state(self, new_state: str, error: str | None = None,
+                     reason: str | None = None):
         """Update RTU state with timestamp and transition reason.
 
         Per HARMONIOUS_SYSTEM_DESIGN.md Principle 4:
@@ -177,7 +174,7 @@ class RTU(Base):
 
         old_state = self.state
         self.state = new_state
-        self.state_since = datetime.now(timezone.utc)
+        self.state_since = datetime.now(UTC)
 
         # Store transition reason
         if reason:
@@ -217,11 +214,11 @@ class Slot(Base):
     status = Column(String(20), default=SlotStatus.EMPTY)
 
     # Timestamps
-    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
     updated_at = Column(
         DateTime(timezone=True),
-        default=lambda: datetime.now(timezone.utc),
-        onupdate=lambda: datetime.now(timezone.utc)
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC)
     )
 
     # Relationships
@@ -255,11 +252,11 @@ class Sensor(Base):
     eng_max = Column(Float, default=100.0)
 
     # Timestamps
-    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
     updated_at = Column(
         DateTime(timezone=True),
-        default=lambda: datetime.now(timezone.utc),
-        onupdate=lambda: datetime.now(timezone.utc)
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC)
     )
 
     # Relationships
@@ -287,11 +284,11 @@ class Control(Base):
     unit = Column(String(16), nullable=True)
 
     # Timestamps
-    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
     updated_at = Column(
         DateTime(timezone=True),
-        default=lambda: datetime.now(timezone.utc),
-        onupdate=lambda: datetime.now(timezone.utc)
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC)
     )
 
     # Relationships

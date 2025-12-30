@@ -6,19 +6,17 @@ SPDX-License-Identifier: GPL-3.0-or-later
 SQLAlchemy models for command audit trail.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import (
     Column,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
     Integer,
     String,
-    Float,
-    DateTime,
-    ForeignKey,
-    Text,
-    Index,
 )
-from sqlalchemy.orm import relationship
 
 from .base import Base
 
@@ -40,7 +38,7 @@ class CommandAudit(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     control_id = Column(Integer, ForeignKey("controls.id", ondelete="SET NULL"), nullable=True)
 
-    timestamp = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+    timestamp = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
     command = Column(String(32), nullable=False)
     value = Column(Float, nullable=True)  # For analog commands
     result = Column(String(16), nullable=False)

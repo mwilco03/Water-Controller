@@ -4,27 +4,29 @@ Copyright (C) 2024
 SPDX-License-Identifier: GPL-3.0-or-later
 """
 
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 from fastapi import APIRouter, Depends, Path, Query
 from sqlalchemy.orm import Session
 
-from ...core.exceptions import RtuNotFoundError
 from ...core.errors import build_success_response
+from ...core.exceptions import RtuNotFoundError
 from ...models.base import get_db
-from ...models.rtu import RTU, Slot, RtuState, SlotStatus
-from ...models.historian import ProfinetDiagnostic, DiagnosticLevel
+from ...models.historian import ProfinetDiagnostic
+from ...models.rtu import RTU, RtuState, Slot, SlotStatus
 from ...schemas.common import DataQuality
 from ...schemas.profinet import (
-    ProfinetStatus,
     CycleTimeStats,
-    PacketStats,
     IoStatus,
-    ProfinetSlot,
-    ProfinetSubslot,
-    ProfinetDiagnostic as ProfinetDiagnosticSchema,
+    PacketStats,
     ProfinetDiagnosticListMeta,
+    ProfinetSlot,
+    ProfinetStatus,
+    ProfinetSubslot,
+)
+from ...schemas.profinet import (
+    ProfinetDiagnostic as ProfinetDiagnosticSchema,
 )
 
 router = APIRouter()
@@ -42,14 +44,14 @@ def get_rtu_or_404(db: Session, name: str) -> RTU:
 async def get_profinet_status(
     name: str = Path(..., description="RTU station name"),
     db: Session = Depends(get_db)
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Get PROFINET connection health and I/O status.
 
     Returns minimal data if RTU not connected.
     """
     rtu = get_rtu_or_404(db, name)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     if rtu.state == RtuState.RUNNING:
         # Connected - return full status
@@ -98,7 +100,7 @@ async def get_profinet_status(
 async def get_profinet_slots(
     name: str = Path(..., description="RTU station name"),
     db: Session = Depends(get_db)
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Get PROFINET slot-level diagnostics.
     """
@@ -145,17 +147,17 @@ async def get_profinet_slots(
 async def get_profinet_diagnostics(
     name: str = Path(..., description="RTU station name"),
     hours: int = Query(24, ge=1, le=168, description="Hours to retrieve"),
-    level: Optional[str] = Query(None, description="Filter by level (INFO, WARNING, ERROR)"),
+    level: str | None = Query(None, description="Filter by level (INFO, WARNING, ERROR)"),
     limit: int = Query(100, ge=1, le=1000, description="Max records"),
     db: Session = Depends(get_db)
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Get PROFINET diagnostic message log.
     """
     rtu = get_rtu_or_404(db, name)
 
     # Calculate time range
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     from datetime import timedelta
     start_time = now - timedelta(hours=hours)
 

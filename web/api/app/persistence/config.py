@@ -8,17 +8,17 @@ System configuration: log forwarding, AD config, backups, import/export.
 
 import logging
 from datetime import datetime
-from typing import List, Optional, Dict, Any
+from typing import Any
 
-from .base import get_db
 from .audit import log_audit
+from .base import get_db
 
 logger = logging.getLogger(__name__)
 
 
 # ============== Log Forwarding Config Operations ==============
 
-def get_log_forwarding_config() -> Dict[str, Any]:
+def get_log_forwarding_config() -> dict[str, Any]:
     """Get log forwarding configuration"""
     with get_db() as conn:
         cursor = conn.cursor()
@@ -27,7 +27,7 @@ def get_log_forwarding_config() -> Dict[str, Any]:
         return dict(row) if row else {}
 
 
-def update_log_forwarding_config(config: Dict[str, Any]) -> bool:
+def update_log_forwarding_config(config: dict[str, Any]) -> bool:
     """Update log forwarding configuration"""
     with get_db() as conn:
         cursor = conn.cursor()
@@ -53,7 +53,7 @@ def update_log_forwarding_config(config: Dict[str, Any]) -> bool:
 
 # ============== AD Config Operations ==============
 
-def get_ad_config() -> Dict[str, Any]:
+def get_ad_config() -> dict[str, Any]:
     """Get Active Directory configuration"""
     with get_db() as conn:
         cursor = conn.cursor()
@@ -62,13 +62,13 @@ def get_ad_config() -> Dict[str, Any]:
         if row:
             result = dict(row)
             # Don't expose bind password
-            if 'bind_password' in result and result['bind_password']:
+            if result.get('bind_password'):
                 result['bind_password'] = '********'
             return result
         return {}
 
 
-def update_ad_config(config: Dict[str, Any]) -> bool:
+def update_ad_config(config: dict[str, Any]) -> bool:
     """Update Active Directory configuration"""
     with get_db() as conn:
         cursor = conn.cursor()
@@ -99,7 +99,7 @@ def update_ad_config(config: Dict[str, Any]) -> bool:
 
 # ============== Backup Metadata Operations ==============
 
-def get_backups() -> List[Dict[str, Any]]:
+def get_backups() -> list[dict[str, Any]]:
     """Get all backup records"""
     with get_db() as conn:
         cursor = conn.cursor()
@@ -107,7 +107,7 @@ def get_backups() -> List[Dict[str, Any]]:
         return [dict(row) for row in cursor.fetchall()]
 
 
-def get_backup(backup_id: str) -> Optional[Dict[str, Any]]:
+def get_backup(backup_id: str) -> dict[str, Any] | None:
     """Get a specific backup record"""
     with get_db() as conn:
         cursor = conn.cursor()
@@ -116,7 +116,7 @@ def get_backup(backup_id: str) -> Optional[Dict[str, Any]]:
         return dict(row) if row else None
 
 
-def create_backup_record(backup_id: str, filename: str, description: str = None,
+def create_backup_record(backup_id: str, filename: str, description: str | None = None,
                          size_bytes: int = 0, includes_historian: bool = False) -> int:
     """Create a backup metadata record"""
     with get_db() as conn:
@@ -147,19 +147,18 @@ def delete_backup_record(backup_id: str) -> bool:
 
 # ============== Shared Import/Export Logic ==============
 
-def import_configuration(config: Dict[str, Any], user: str = "system") -> Dict[str, int]:
+def import_configuration(config: dict[str, Any], user: str = "system") -> dict[str, int]:
     """
     Import configuration from a dictionary.
     This is the single source of truth for all import operations.
     """
     # Import these here to avoid circular imports
-    from .rtu import get_rtu_device, create_rtu_device, update_rtu_device
-    from .alarms import get_alarm_rule, create_alarm_rule, update_alarm_rule
-    from .pid import get_pid_loop, create_pid_loop, update_pid_loop
-    from .historian import upsert_slot_config, upsert_historian_tag
-    from .modbus import (create_modbus_downstream_device, create_modbus_register_mapping,
-                         update_modbus_server_config)
-    from .users import get_user_by_username, create_user
+    from .alarms import create_alarm_rule, get_alarm_rule, update_alarm_rule
+    from .historian import upsert_historian_tag, upsert_slot_config
+    from .modbus import create_modbus_downstream_device, create_modbus_register_mapping, update_modbus_server_config
+    from .pid import create_pid_loop, get_pid_loop, update_pid_loop
+    from .rtu import create_rtu_device, get_rtu_device, update_rtu_device
+    from .users import create_user, get_user_by_username
 
     imported = {
         "rtus": 0,
@@ -297,18 +296,17 @@ def import_configuration(config: Dict[str, Any], user: str = "system") -> Dict[s
     return imported
 
 
-def export_configuration() -> Dict[str, Any]:
+def export_configuration() -> dict[str, Any]:
     """
     Export all configuration to a dictionary.
     This is the single source of truth for all export operations.
     """
     # Import these here to avoid circular imports
-    from .rtu import get_rtu_devices
     from .alarms import get_alarm_rules
-    from .pid import get_pid_loops
     from .historian import get_all_slot_configs, get_historian_tags
-    from .modbus import (get_modbus_server_config, get_modbus_downstream_devices,
-                         get_modbus_register_mappings)
+    from .modbus import get_modbus_downstream_devices, get_modbus_register_mappings, get_modbus_server_config
+    from .pid import get_pid_loops
+    from .rtu import get_rtu_devices
     from .users import get_users
 
     # Get users without password hashes for export

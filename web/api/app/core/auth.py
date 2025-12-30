@@ -14,15 +14,15 @@ This implements industrial SCADA best practices where:
 - Control actions require accountability (audit trail)
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from secrets import token_urlsafe
-from typing import Optional
-from fastapi import Depends, HTTPException, status, Header, Request
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
-from ..persistence.sessions import get_session, create_session, update_session_activity
-from ..persistence.users import authenticate_user
+from fastapi import Depends, Header, HTTPException, Request, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+
 from ..persistence.audit import log_command
+from ..persistence.sessions import create_session, get_session, update_session_activity
+from ..persistence.users import authenticate_user
 from .logging import get_logger
 
 logger = get_logger(__name__)
@@ -36,9 +36,9 @@ optional_bearer = HTTPBearer(auto_error=False)
 
 
 async def get_token_from_header(
-    credentials: Optional[HTTPAuthorizationCredentials] = Depends(optional_bearer),
-    authorization: Optional[str] = Header(None),
-) -> Optional[str]:
+    credentials: HTTPAuthorizationCredentials | None = Depends(optional_bearer),
+    authorization: str | None = Header(None),
+) -> str | None:
     """
     Extract token from Authorization header.
     Supports both Bearer token and direct header value.
@@ -55,8 +55,8 @@ async def get_token_from_header(
 
 
 async def get_current_session(
-    token: Optional[str] = Depends(get_token_from_header)
-) -> Optional[dict]:
+    token: str | None = Depends(get_token_from_header)
+) -> dict | None:
     """
     Get current session if token is valid.
     Returns None if no token or invalid token (no error raised).
@@ -75,7 +75,7 @@ async def get_current_session(
 
 async def require_control_access(
     request: Request,
-    session: Optional[dict] = Depends(get_current_session)
+    session: dict | None = Depends(get_current_session)
 ) -> dict:
     """
     Dependency for control endpoints - requires authenticated operator.
@@ -121,8 +121,8 @@ async def require_control_access(
 
 
 async def optional_session_for_audit(
-    session: Optional[dict] = Depends(get_current_session)
-) -> Optional[dict]:
+    session: dict | None = Depends(get_current_session)
+) -> dict | None:
     """
     Optional session for audit logging on view endpoints.
     Returns session if available, None otherwise (no error).
@@ -134,7 +134,7 @@ def log_control_action(
     session: dict,
     action: str,
     target: str,
-    details: str = None,
+    details: str | None = None,
     success: bool = True
 ):
     """
@@ -172,7 +172,7 @@ class AuthService:
     """
 
     @staticmethod
-    def login(username: str, password: str, ip_address: str = None, user_agent: str = None) -> Optional[dict]:
+    def login(username: str, password: str, ip_address: str | None = None, user_agent: str | None = None) -> dict | None:
         """
         Authenticate user and create session.
 
@@ -185,7 +185,7 @@ class AuthService:
 
         # Generate session token
         token = token_urlsafe(32)
-        expires_at = datetime.now(timezone.utc) + timedelta(hours=SESSION_DURATION_HOURS)
+        expires_at = datetime.now(UTC) + timedelta(hours=SESSION_DURATION_HOURS)
 
         # Create session
         success = create_session(
@@ -212,7 +212,7 @@ class AuthService:
         }
 
     @staticmethod
-    def validate_session(token: str) -> Optional[dict]:
+    def validate_session(token: str) -> dict | None:
         """Validate a session token and return session info."""
         return get_session(token)
 

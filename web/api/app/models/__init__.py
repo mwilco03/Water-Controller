@@ -6,29 +6,29 @@ SPDX-License-Identifier: GPL-3.0-or-later
 SQLAlchemy models for the Water Controller database.
 """
 
-from .base import Base, engine, SessionLocal, get_db
-from .rtu import RTU, Slot, Sensor, Control
-from .alarm import AlarmRule, AlarmEvent
-from .historian import HistorianSample, ProfinetDiagnostic
+from .alarm import AlarmEvent, AlarmRule
 from .audit import CommandAudit
+from .base import Base, SessionLocal, engine, get_db
+from .historian import HistorianSample, ProfinetDiagnostic
 from .pid import PidLoop, PidMode
+from .rtu import RTU, Control, Sensor, Slot
 from .template import ConfigTemplate
 
 __all__ = [
-    "Base",
-    "engine",
-    "SessionLocal",
-    "get_db",
     "RTU",
-    "Slot",
-    "Sensor",
-    "Control",
-    "AlarmRule",
     "AlarmEvent",
-    "HistorianSample",
-    "ProfinetDiagnostic",
+    "AlarmRule",
+    "Base",
     "CommandAudit",
+    "ConfigTemplate",
+    "Control",
+    "HistorianSample",
     "PidLoop",
     "PidMode",
-    "ConfigTemplate",
+    "ProfinetDiagnostic",
+    "Sensor",
+    "SessionLocal",
+    "Slot",
+    "engine",
+    "get_db",
 ]

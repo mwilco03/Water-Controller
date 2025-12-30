@@ -6,12 +6,12 @@ SPDX-License-Identifier: GPL-3.0-or-later
 DCP discovery cache operations.
 """
 
-from typing import List, Optional, Dict, Any
+from typing import Any
 
 from .base import get_db
 
 
-def get_discovered_devices() -> List[Dict[str, Any]]:
+def get_discovered_devices() -> list[dict[str, Any]]:
     """Get all devices in the discovery cache"""
     with get_db() as conn:
         cursor = conn.cursor()
@@ -19,7 +19,7 @@ def get_discovered_devices() -> List[Dict[str, Any]]:
         return [dict(row) for row in cursor.fetchall()]
 
 
-def upsert_discovered_device(device: Dict[str, Any]) -> int:
+def upsert_discovered_device(device: dict[str, Any]) -> int:
     """Insert or update a discovered device"""
     with get_db() as conn:
         cursor = conn.cursor()

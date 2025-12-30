@@ -4,19 +4,17 @@ Copyright (C) 2024
 SPDX-License-Identifier: GPL-3.0-or-later
 """
 
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 from fastapi import APIRouter, Depends, Path, Query
 from sqlalchemy.orm import Session
 
-from ...core.exceptions import SensorNotFoundError
-from ...core.errors import build_success_response
-from ...core.rtu_utils import get_rtu_or_404, get_data_quality
+from ...core.rtu_utils import get_data_quality, get_rtu_or_404
 from ...models.base import get_db
-from ...models.rtu import RTU, Sensor, RtuState
+from ...models.rtu import RtuState, Sensor
 from ...schemas.common import DataQuality
-from ...schemas.sensor import SensorValue, SensorListMeta
+from ...schemas.sensor import SensorListMeta, SensorValue
 
 router = APIRouter()
 
@@ -24,9 +22,9 @@ router = APIRouter()
 @router.get("")
 async def get_sensors(
     name: str = Path(..., description="RTU station name"),
-    tags: Optional[str] = Query(None, description="Comma-separated list of tags"),
+    tags: str | None = Query(None, description="Comma-separated list of tags"),
     db: Session = Depends(get_db)
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Get current sensor values with quality.
 
@@ -44,7 +42,7 @@ async def get_sensors(
 
     # Determine data quality based on RTU state
     quality = get_data_quality(rtu.state)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     result = []
     for sensor in sensors:

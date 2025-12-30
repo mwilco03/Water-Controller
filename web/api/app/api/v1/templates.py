@@ -4,28 +4,21 @@ Copyright (C) 2024
 SPDX-License-Identifier: GPL-3.0-or-later
 """
 
-from datetime import datetime, timezone
-from typing import Any, Dict, List
+from typing import Any
 
-from fastapi import APIRouter, Depends, Path, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Path
 from sqlalchemy.orm import Session
 
-from ...core.exceptions import RtuNotFoundError, ValidationError
 from ...core.errors import build_success_response
-from ...models.base import get_db
-from ...models.rtu import RTU, Slot, Sensor, Control
+from ...core.exceptions import RtuNotFoundError, ValidationError
 from ...models.alarm import AlarmRule
+from ...models.base import get_db
 from ...models.pid import PidLoop
+from ...models.rtu import RTU, Control, Sensor, Slot
 from ...models.template import ConfigTemplate
 from ...schemas.template import (
     TemplateCreate,
     TemplateResponse,
-    ApplyTemplateRequest,
-    SlotTemplate,
-    SensorTemplate,
-    ControlTemplate,
-    AlarmTemplate,
-    PidTemplate,
 )
 
 router = APIRouter()
@@ -46,9 +39,9 @@ def template_not_found(template_id: int):
 
 @router.get("")
 async def list_templates(
-    category: str = None,
+    category: str | None = None,
     db: Session = Depends(get_db)
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     List all configuration templates.
     """
@@ -85,7 +78,7 @@ async def list_templates(
 async def create_template(
     request: TemplateCreate,
     db: Session = Depends(get_db)
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Create a new configuration template.
     """
@@ -143,7 +136,7 @@ async def create_template(
 async def get_template(
     template_id: int = Path(..., description="Template ID"),
     db: Session = Depends(get_db)
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Get a specific template.
     """
@@ -177,7 +170,7 @@ async def get_template(
 async def delete_template(
     template_id: int = Path(..., description="Template ID"),
     db: Session = Depends(get_db)
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Delete a template.
     """
@@ -199,7 +192,7 @@ async def apply_template(
     rtu_name: str = Path(..., description="RTU station name"),
     overwrite: bool = False,
     db: Session = Depends(get_db)
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Apply a template to an RTU.
 
@@ -408,11 +401,11 @@ async def apply_template(
 @router.post("/from-rtu/{rtu_name}")
 async def create_template_from_rtu(
     rtu_name: str = Path(..., description="RTU station name"),
-    name: str = None,
-    description: str = None,
+    name: str | None = None,
+    description: str | None = None,
     category: str = "custom",
     db: Session = Depends(get_db)
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Create a template from an existing RTU configuration.
     """
