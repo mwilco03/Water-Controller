@@ -42,8 +42,7 @@ To update this file, modify the source schemas and run:
 
 from datetime import datetime
 from enum import Enum
-from ipaddress import IPv4Address
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
 
@@ -77,9 +76,12 @@ def json_type_to_python(prop: Dict[str, Any], name: str) -> str:
     """Convert JSON Schema type to Python type hint.
 
     Handles JSON Schema formats:
-    - ipv4 -> IPv4Address
+    - ipv4 -> str (validated separately, as IPv4Address doesn't accept empty strings)
     - email -> EmailStr
     - date-time -> datetime
+
+    Note: We use str for ipv4 because IPv4Address type cannot have empty string
+    defaults, which are common for optional IP address fields.
     """
     prop_type = prop.get("type", "")
     prop_format = prop.get("format", "")
@@ -98,9 +100,8 @@ def json_type_to_python(prop: Dict[str, Any], name: str) -> str:
 
     if prop_type == "string":
         # Handle format-specific types
-        if prop_format == "ipv4":
-            return "IPv4Address"
-        elif prop_format == "email":
+        # Note: ipv4 stays as str because empty string defaults are common
+        if prop_format == "email":
             return "EmailStr"
         elif prop_format == "date-time":
             return "datetime"
@@ -108,6 +109,10 @@ def json_type_to_python(prop: Dict[str, Any], name: str) -> str:
 
     if prop_type == "array":
         items = prop.get("items", {})
+        # For array of objects with properties, generate a model for the item
+        if items.get("type") == "object" and "properties" in items:
+            # Name matches what generate_model creates: to_pascal_case(name + "_Item") + "Config"
+            return f"List[{to_pascal_case(name + '_Item')}Config]"
         item_type = json_type_to_python(items, name + "_item")
         return f"List[{item_type}]"
 
@@ -183,7 +188,7 @@ def generate_field(name: str, prop: Dict[str, Any]) -> str:
 
     # Constraints - skip for format-validated types that handle their own validation
     prop_format = prop.get("format", "")
-    if prop_format not in ("ipv4", "email", "date-time"):
+    if prop_format not in ("email", "date-time"):
         if "minimum" in prop:
             field_args.append(f"ge={prop['minimum']}")
         if "maximum" in prop:
@@ -220,9 +225,19 @@ def generate_model(name: str, schema: Dict[str, Any], collected_enums: Set[str])
 
     # First, collect any nested types
     for prop_name, prop in properties.items():
+        # Handle nested object properties
         if prop.get("type") == "object" and "properties" in prop:
             nested = generate_model(prop_name, prop, collected_enums)
             nested_models.append(nested)
+
+        # Handle array items that are objects with properties
+        if prop.get("type") == "array":
+            items = prop.get("items", {})
+            if items.get("type") == "object" and "properties" in items:
+                # Generate a model for the array item type
+                item_model_name = f"{prop_name}_Item"
+                nested = generate_model(item_model_name, items, collected_enums)
+                nested_models.append(nested)
 
         if "enum" in prop and prop.get("type") == "string":
             enum_name = to_pascal_case(prop_name) + "Enum"
