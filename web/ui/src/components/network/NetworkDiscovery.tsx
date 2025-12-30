@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useCallback, useEffect } from 'react';
+import { networkLogger } from '@/lib/logger';
 
 interface DiscoveredDevice {
   mac_address: string;
@@ -110,7 +111,7 @@ export default function NetworkDiscovery({ onDeviceSelect, onAddDevice }: Props)
       } else {
         // Use mock data only in development
         if (process.env.NODE_ENV === 'development') {
-          console.warn('[DEV] Network discovery API unavailable, using mock data');
+          networkLogger.debug('Network discovery API unavailable, using mock data');
           await simulateScan();
         } else {
           setScanProgress({
@@ -124,7 +125,7 @@ export default function NetworkDiscovery({ onDeviceSelect, onAddDevice }: Props)
     } catch (err) {
       // Use mock data only in development
       if (process.env.NODE_ENV === 'development') {
-        console.warn('[DEV] Network discovery API unavailable, using mock data');
+        networkLogger.debug('Network discovery API unavailable, using mock data');
         await simulateScan();
       } else {
         setScanProgress({

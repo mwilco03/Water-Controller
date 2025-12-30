@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { controlLogger } from '@/lib/logger';
 
 interface CoupledAction {
   coupling_id: number;
@@ -106,7 +107,7 @@ export default function CoupledActionsPanel({ rtuStation, showAll = false }: Pro
       } else if (res.status === 404) {
         // No couplings endpoint - use mock data only in development
         if (process.env.NODE_ENV === 'development') {
-          console.warn('[DEV] Couplings API unavailable, using mock data');
+          controlLogger.debug('Couplings API unavailable, using mock data');
           setCouplings(getMockCouplings());
           setError(null);
         } else {
@@ -122,7 +123,7 @@ export default function CoupledActionsPanel({ rtuStation, showAll = false }: Pro
 
       // Use mock data only in development
       if (process.env.NODE_ENV === 'development') {
-        console.warn('[DEV] Couplings API unavailable, using mock data');
+        controlLogger.debug('Couplings API unavailable, using mock data');
         setCouplings(getMockCouplings());
         setError(null);
       } else {

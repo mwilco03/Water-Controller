@@ -95,6 +95,23 @@ static void track_alarm(alarm_manager_t *manager) {
     manager->alarm_timestamp_idx = (manager->alarm_timestamp_idx + 1) % 600;
 }
 
+/* Internal: Check suppression without locking (caller must hold lock) */
+static bool _is_suppressed_unlocked(alarm_manager_t *manager,
+                                     const char *rtu_station,
+                                     int slot) {
+    uint64_t now_ms = time_get_ms();
+
+    for (int i = 0; i < manager->suppression_count; i++) {
+        if (strcmp(manager->suppressions[i].rtu_station, rtu_station) == 0 &&
+            manager->suppressions[i].slot == slot &&
+            manager->suppressions[i].end_time_ms > now_ms) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 /* Process thread function */
 static void *process_thread_func(void *arg) {
     alarm_manager_t *manager = (alarm_manager_t *)arg;
@@ -584,8 +601,8 @@ wtc_result_t alarm_manager_process(alarm_manager_t *manager) {
         alarm_rule_t *rule = &manager->rules[i];
         if (!rule->enabled) continue;
 
-        /* Check suppression */
-        if (alarm_manager_is_suppressed(manager, rule->rtu_station, rule->slot)) {
+        /* Check suppression - use unlocked version since caller holds lock */
+        if (_is_suppressed_unlocked(manager, rule->rtu_station, rule->slot)) {
             continue;
         }
 

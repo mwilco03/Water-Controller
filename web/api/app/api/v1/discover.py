@@ -60,8 +60,6 @@ async def discover_rtus(
 
     # Get list of already configured RTUs
     existing_rtus = db.query(RTU).all()
-    {r.ip_address for r in existing_rtus}
-    {r.ip_address: r.station_name for r in existing_rtus}
 
     # In a real implementation, this would:
     # 1. Send DCP Identify All multicast
