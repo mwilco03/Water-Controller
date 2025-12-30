@@ -318,10 +318,11 @@ export async function isAlarmShelved(rtuStation: string, slot: number): Promise<
 }
 
 // Control API
-// Note: PID loops are per-RTU. Use getRtuPIDLoops() for RTU-specific loops.
+// Note: PID loops are per-RTU. Global listing not supported by design.
+// Use getRtuPIDLoops(stationName) to get PID loops for a specific RTU.
 export async function getPIDLoops(): Promise<PIDLoop[]> {
-  // TODO: Implement global PID loop listing when endpoint is added
-  console.warn('getPIDLoops: Global PID endpoint not yet implemented. Use getRtuPIDLoops(stationName) instead.');
+  // Global PID listing not supported - return empty array
+  // Callers should use getRtuPIDLoops(stationName) instead
   return [];
 }
 

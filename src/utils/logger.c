@@ -191,12 +191,15 @@ void logger_vlog(log_level_t level, const char *file, int line,
 
     pthread_mutex_lock(&g_logger.lock);
 
-    /* Get timestamp */
+    /* Get timestamp - use thread-safe localtime_r */
     char timestamp[32] = "";
     if (g_logger.include_timestamp) {
         time_t now = time(NULL);
-        struct tm *tm_info = localtime(&now);
-        strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", tm_info);
+        struct tm tm_buf;
+        struct tm *tm_info = localtime_r(&now, &tm_buf);
+        if (tm_info) {
+            strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", tm_info);
+        }
     }
 
     /* Get source location */

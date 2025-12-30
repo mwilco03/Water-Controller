@@ -1,11 +1,19 @@
 'use client';
 
+interface RTUSensorData {
+  slot: number;
+  name: string;
+  value: number;
+  unit: string;
+  quality: string;
+}
+
 interface RTUDevice {
   station_name: string;
   ip_address: string;
   state: string;
   slot_count: number;
-  sensors?: any[];
+  sensors?: RTUSensorData[];
 }
 
 interface Props {

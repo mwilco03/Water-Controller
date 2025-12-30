@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { rtuLogger } from '@/lib/logger';
 
 interface DiagnosticAlarm {
   code: number;
@@ -119,7 +120,7 @@ export default function ProfinetDiagnosticsPanel({ stationName, onClose }: Props
       } else if (res.status === 404) {
         // Use mock data only in development
         if (process.env.NODE_ENV === 'development') {
-          console.warn('[DEV] Diagnostics API unavailable, using mock data');
+          rtuLogger.debug('Diagnostics API unavailable, using mock data');
           setDiagnostics(getMockDiagnostics(stationName));
           setError(null);
         } else {
@@ -134,7 +135,7 @@ export default function ProfinetDiagnosticsPanel({ stationName, onClose }: Props
 
       // Use mock data only in development
       if (process.env.NODE_ENV === 'development') {
-        console.warn('[DEV] Diagnostics API unavailable, using mock data');
+        rtuLogger.debug('Diagnostics API unavailable, using mock data');
         setDiagnostics(getMockDiagnostics(stationName));
         setError(null);
       } else {

@@ -272,6 +272,16 @@ wtc_result_t pid_process_autotune(int loop_id, float pv, float setpoint,
         if (state->crossing_count >= 6) {
             float Tu = state->period_sum / (state->crossing_count - 1);
             float amplitude = (state->amplitude_max - state->amplitude_min) / 2.0f;
+
+            /* Guard against divide-by-zero */
+            if (amplitude < 0.001f || Tu < 0.001f) {
+                LOG_WARN("Auto-tune failed: insufficient amplitude (%.3f) or period (%.3f)",
+                         amplitude, Tu);
+                state->active = false;
+                *complete = true;
+                return WTC_OK;
+            }
+
             float Ku = (4.0f * state->relay_amplitude) / (3.14159f * amplitude);
 
             /* Ziegler-Nichols PID tuning rules */
@@ -328,8 +338,8 @@ void pid_update_performance_metrics(int loop_id, float pv, float setpoint,
     perf->iae += fabsf(error) * dt;
     perf->ise += error * error * dt;
 
-    /* Overshoot */
-    if (setpoint > 0) {
+    /* Overshoot - guard against divide-by-zero */
+    if (fabsf(setpoint) > 0.0001f) {
         float overshoot_pct = (pv - setpoint) / setpoint * 100.0f;
         if (overshoot_pct > perf->overshoot) {
             perf->overshoot = overshoot_pct;
