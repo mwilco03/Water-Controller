@@ -1,3 +1,12 @@
+<!--
+  DOCUMENT CLASS: Guide (Living Document)
+
+  This document contains MODBUS INTEGRATION procedures.
+  Update when Modbus features or register mappings change.
+
+  For Modbus configuration options, see: generated/CONFIGURATION.md (auto-generated)
+-->
+
 # Modbus Gateway Configuration Guide
 
 **Document ID:** WT-MODBUS-001

@@ -1,3 +1,12 @@
+<!--
+  DOCUMENT CLASS: Guide (Living Document)
+
+  This document contains PROCEDURES that may change with each release.
+  Update when installation steps, requirements, or commands change.
+
+  For configuration options, see: generated/CONFIGURATION.md (auto-generated)
+-->
+
 # Water-Controller Installation Guide
 
 This guide covers installing Water-Controller on Debian-based Linux systems, including Raspberry Pi and other ARM single-board computers.

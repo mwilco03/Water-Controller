@@ -1,3 +1,12 @@
+<!--
+  DOCUMENT CLASS: Development (Developer Reference)
+
+  This document explains BUILD SYSTEM INTERNALS.
+  Update when installation/upgrade scripts are modified.
+
+  For user-facing installation guide, see: guides/INSTALL.md
+-->
+
 # Water-Controller Installation System Internals
 
 This document provides technical details about the installation, upgrade, and version management infrastructure for Water-Controller. It is intended for developers maintaining or extending the installation system.

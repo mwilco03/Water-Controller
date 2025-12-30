@@ -1,3 +1,13 @@
+<!--
+  DOCUMENT CLASS: Architecture (Stable Reference)
+
+  This document defines system design PHILOSOPHY and PRINCIPLES.
+  It should rarely change - only when fundamental design decisions change.
+
+  Before editing: Consider if this is a principle change or just implementation.
+  Implementation details belong in guides/ or development/ docs.
+-->
+
 # Harmonious System Design
 
 **Controller + RTU + HMI Integration Philosophy**

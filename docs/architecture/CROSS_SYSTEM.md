@@ -1,3 +1,12 @@
+<!--
+  DOCUMENT CLASS: Architecture (Stable Reference)
+
+  This document defines the CONTRACT between Water-Controller and Water-Treat.
+  Changes here require coordinated updates to BOTH repositories.
+
+  Before editing: Ensure both teams are aware of proposed changes.
+-->
+
 # Cross-System Development Guidelines Addendum
 
 ## PROFINET Data Exchange Standards

@@ -1,3 +1,12 @@
+<!--
+  DOCUMENT CLASS: Development (Developer Reference)
+
+  This document describes HMI COMPONENT DESIGN.
+  Update when UI components or screen layouts change.
+
+  For operator procedures, see: guides/OPERATOR.md
+-->
+
 # Water-Controller HMI Portal Analysis
 
 ## Comprehensive SCADA Operator-First Design Review

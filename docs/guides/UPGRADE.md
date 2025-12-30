@@ -1,3 +1,10 @@
+<!--
+  DOCUMENT CLASS: Guide (Living Document)
+
+  This document contains PROCEDURES that may change with each release.
+  Update when upgrade steps or rollback procedures change.
+-->
+
 # Water-Controller Upgrade Guide
 
 This guide covers upgrading Water-Controller to newer versions. The upgrade system is designed with SD card endurance in mind, using pre-flight version checking to avoid unnecessary disk writes.

@@ -1,3 +1,12 @@
+<!--
+  DOCUMENT CLASS: Guide (Living Document)
+
+  This document contains COMMISSIONING PROCEDURES for new installations.
+  Update when commissioning steps or verification requirements change.
+
+  For commissioning checklist template, see: templates/commissioning-checklist.md
+-->
+
 # Water Treatment Controller - Commissioning Procedure
 
 **Document ID:** WT-COMM-001

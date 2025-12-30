@@ -1,3 +1,13 @@
+<!--
+  DOCUMENT CLASS: Architecture (Stable Reference)
+
+  This document defines the WIRE PROTOCOL between Controller and RTU.
+  Changes here require coordinated updates to BOTH systems.
+
+  WARNING: Modifying this spec without updating both codebases
+  will cause silent data corruption. See CROSS_SYSTEM.md for process.
+-->
+
 # PROFINET Cyclic Data Format Specification
 
 ## Document Control

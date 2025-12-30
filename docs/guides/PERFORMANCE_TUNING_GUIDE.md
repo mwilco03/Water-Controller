@@ -1,3 +1,12 @@
+<!--
+  DOCUMENT CLASS: Guide (Living Document)
+
+  This document contains PERFORMANCE OPTIMIZATION procedures.
+  Update when new tuning options or optimization strategies are available.
+
+  For configuration options, see: generated/CONFIGURATION.md (auto-generated)
+-->
+
 # Water Treatment Controller - Performance Tuning Guide
 
 **Document ID:** WT-PERF-001

@@ -1,3 +1,13 @@
+<!--
+  DOCUMENT CLASS: Architecture (Stable Reference)
+
+  This document defines alarm system PHILOSOPHY based on ISA-18.2.
+  It should rarely change - only when alarm design principles change.
+
+  For alarm configuration details, see: generated/CONFIGURATION.md
+  For alarm response procedures, see: guides/ALARM_RESPONSE_PROCEDURES.md
+-->
+
 # Alarm and Interlock Architecture
 
 ## Core Principle

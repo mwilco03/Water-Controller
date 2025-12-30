@@ -1,3 +1,12 @@
+<!--
+  DOCUMENT CLASS: Development (Developer Reference)
+
+  This document describes the REST API.
+
+  TODO: This should be auto-generated from FastAPI.
+  Run: python -c "from web.api.main import app; import json; print(json.dumps(app.openapi()))"
+-->
+
 # Water Treatment Controller - OpenAPI Specification
 
 **Document ID:** WT-API-001

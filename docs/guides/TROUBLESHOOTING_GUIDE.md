@@ -1,3 +1,10 @@
+<!--
+  DOCUMENT CLASS: Guide (Living Document)
+
+  This document contains DIAGNOSTIC PROCEDURES.
+  Update when new error conditions are identified or fixes change.
+-->
+
 # Water Treatment Controller - Troubleshooting Guide
 
 **Document ID:** WT-MAINT-001
