@@ -174,20 +174,21 @@ Environment="PYTHONDONTWRITEBYTECODE=1"
 Environment="CONFIG_PATH=${CONFIG_DIR}/config.yaml"
 Environment="DATA_DIR=${DATA_DIR}"
 Environment="LOG_DIR=${LOG_DIR}"
+EnvironmentFile=-${CONFIG_DIR}/ports.env
 EnvironmentFile=-${CONFIG_DIR}/environment
 
 # Runtime directory
 RuntimeDirectory=${SERVICE_NAME}
 RuntimeDirectoryMode=0755
 
+# Pre-start checks - ensure environment is ready
+ExecStartPre=/bin/bash -c 'test -f ${VENV_PATH}/bin/uvicorn || { echo "uvicorn not found in venv"; exit 1; }'
+ExecStartPre=/bin/bash -c 'test -d ${LOG_DIR} || mkdir -p ${LOG_DIR}'
+ExecStartPre=/bin/bash -c 'test -w ${LOG_DIR} || { echo "Log directory not writable"; exit 1; }'
+
 # Start command - uvicorn with workers
-ExecStart=${VENV_PATH}/bin/uvicorn ${app_module} \\
-    --host 0.0.0.0 \\
-    --port ${DEFAULT_API_PORT} \\
-    --workers ${workers} \\
-    --log-config ${CONFIG_DIR}/logging.yaml \\
-    --access-log \\
-    --proxy-headers
+# Note: Use --log-config only if logging.yaml exists, otherwise use defaults
+ExecStart=/bin/bash -c 'LOG_OPTS=""; test -f ${CONFIG_DIR}/logging.yaml && LOG_OPTS="--log-config ${CONFIG_DIR}/logging.yaml"; exec ${VENV_PATH}/bin/uvicorn ${app_module} --host 0.0.0.0 --port ${DEFAULT_API_PORT} --workers ${workers} \$LOG_OPTS --access-log --proxy-headers'
 
 # Alternative: gunicorn (uncomment to use instead of uvicorn)
 # ExecStart=${VENV_PATH}/bin/gunicorn ${app_module} \\
@@ -303,11 +304,16 @@ Environment="NODE_ENV=production"
 Environment="PORT=${DEFAULT_HMI_PORT}"
 Environment="HOSTNAME=0.0.0.0"
 Environment="NEXT_TELEMETRY_DISABLED=1"
+EnvironmentFile=-${CONFIG_DIR}/ports.env
 EnvironmentFile=-${CONFIG_DIR}/environment
 
 # Runtime directory
 RuntimeDirectory=${FRONTEND_SERVICE_NAME}
 RuntimeDirectoryMode=0755
+
+# Pre-start checks - ensure Next.js is built
+ExecStartPre=/bin/bash -c 'test -d ${WEB_PATH}/.next || { echo "Next.js build not found at ${WEB_PATH}/.next"; exit 1; }'
+ExecStartPre=/bin/bash -c 'test -f ${WEB_PATH}/package.json || { echo "package.json not found"; exit 1; }'
 
 # Start command - Next.js production server
 ExecStart=/usr/bin/node ${WEB_PATH}/node_modules/.bin/next start -p ${DEFAULT_HMI_PORT} -H 0.0.0.0
@@ -613,8 +619,14 @@ disable_service() {
 # =============================================================================
 
 # Start service and wait for it to be active
+# Args: [--no-wait] - Skip waiting for service to be active (for async startup)
 # Returns: 0 on success, 4 on failure
 start_service() {
+    local no_wait=0
+    if [[ "${1:-}" == "--no-wait" ]]; then
+        no_wait=1
+    fi
+
     log_info "Starting service..."
 
     # Check if already running
@@ -623,11 +635,19 @@ start_service() {
         return 0
     fi
 
-    # Start the service
+    # Start the service (systemctl start runs in background via systemd)
+    log_info "Issuing start command to systemd..."
     if ! sudo systemctl start "$SERVICE_NAME.service" 2>&1 | tee -a "$INSTALL_LOG_FILE"; then
-        log_error "Failed to start service"
+        log_error "Failed to issue start command"
         _capture_service_logs
         return 4
+    fi
+
+    # If no-wait mode, return immediately
+    if [ $no_wait -eq 1 ]; then
+        log_info "Service start command issued (not waiting for active status)"
+        log_info "Check status with: systemctl status $SERVICE_NAME.service"
+        return 0
     fi
 
     # Wait for service to become active
@@ -639,6 +659,20 @@ start_service() {
         if systemctl is-active "$SERVICE_NAME.service" >/dev/null 2>&1; then
             log_info "Service started successfully (took ${waited}s)"
             _log_write "INFO" "Service started successfully"
+
+            # Quick verification that the API is responding
+            if command -v curl >/dev/null 2>&1; then
+                sleep 1  # Give uvicorn a moment to bind
+                local http_code
+                http_code="$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 3 "http://localhost:${DEFAULT_API_PORT}/health" 2>/dev/null || echo "000")"
+                if [ "$http_code" = "200" ]; then
+                    log_info "API health check passed (HTTP 200)"
+                elif [ "$http_code" = "000" ]; then
+                    log_warn "API not responding yet (may still be initializing)"
+                else
+                    log_warn "API returned HTTP $http_code (may still be initializing)"
+                fi
+            fi
 
             # Also start frontend service if it exists
             if [ -f "$FRONTEND_SERVICE_FILE" ]; then
@@ -678,11 +712,68 @@ start_service() {
 
 # Capture service logs for debugging
 _capture_service_logs() {
-    log_error "=== Recent service logs ==="
-    journalctl -u "$SERVICE_NAME.service" -n 20 --no-pager 2>&1 | while read -r line; do
+    log_error "=== SERVICE STARTUP DIAGNOSTICS ==="
+
+    # Show service status
+    log_error "--- Service Status ---"
+    systemctl status "$SERVICE_NAME.service" --no-pager 2>&1 | while read -r line; do
         log_error "  $line"
     done
-    log_error "==========================="
+
+    # Show recent logs
+    log_error "--- Recent Logs (last 30 lines) ---"
+    journalctl -u "$SERVICE_NAME.service" -n 30 --no-pager 2>&1 | while read -r line; do
+        log_error "  $line"
+    done
+
+    # Check for common issues
+    log_error "--- Common Issue Checks ---"
+
+    # Check if venv exists
+    if [ ! -d "$VENV_PATH" ]; then
+        log_error "  [ISSUE] Python venv not found at: $VENV_PATH"
+    elif [ ! -x "$VENV_PATH/bin/uvicorn" ]; then
+        log_error "  [ISSUE] uvicorn not found or not executable in venv"
+    else
+        log_error "  [OK] uvicorn found at: $VENV_PATH/bin/uvicorn"
+    fi
+
+    # Check if app exists
+    if [ ! -f "$APP_PATH/app/main.py" ] && [ ! -f "$APP_PATH/main.py" ]; then
+        log_error "  [ISSUE] No main.py found in: $APP_PATH"
+    else
+        log_error "  [OK] Application found in: $APP_PATH"
+    fi
+
+    # Check if config exists
+    if [ ! -f "$CONFIG_DIR/config.yaml" ]; then
+        log_error "  [ISSUE] Config not found: $CONFIG_DIR/config.yaml"
+    else
+        log_error "  [OK] Config found: $CONFIG_DIR/config.yaml"
+    fi
+
+    # Check if log dir is writable
+    if [ ! -w "$LOG_DIR" ]; then
+        log_error "  [ISSUE] Log directory not writable: $LOG_DIR"
+    else
+        log_error "  [OK] Log directory writable: $LOG_DIR"
+    fi
+
+    # Check port availability
+    if command -v ss >/dev/null 2>&1; then
+        if ss -tlnp 2>/dev/null | grep -q ":${DEFAULT_API_PORT} "; then
+            log_error "  [ISSUE] Port ${DEFAULT_API_PORT} already in use"
+            ss -tlnp 2>/dev/null | grep ":${DEFAULT_API_PORT} " | while read -r line; do
+                log_error "    $line"
+            done
+        else
+            log_error "  [OK] Port ${DEFAULT_API_PORT} is available"
+        fi
+    fi
+
+    log_error "=== END DIAGNOSTICS ==="
+    log_error ""
+    log_error "For more details, run: journalctl -u $SERVICE_NAME.service -f"
 }
 
 # =============================================================================

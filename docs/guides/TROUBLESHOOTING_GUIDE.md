@@ -117,6 +117,75 @@ sudo -u wtc /opt/water-controller/bin/water_treat_controller \
 
 ### 2. PROFINET Communication Issues
 
+#### 802.1Q VLAN Module Not Loaded
+
+**Symptoms:**
+- Validation warns "802.1Q module - Not loaded"
+- VLAN-tagged PROFINET traffic not working
+- Network isolation issues
+
+**Diagnostic Steps:**
+
+```bash
+# Check if 8021q module is loaded
+lsmod | grep 8021q
+
+# Check available VLAN interfaces
+ip -d link show type vlan
+```
+
+**Solutions:**
+
+```bash
+# Load the 8021q kernel module (required for VLAN support)
+sudo modprobe 8021q
+
+# Make it persistent across reboots
+echo "8021q" | sudo tee /etc/modules-load.d/8021q.conf
+
+# Create a VLAN interface (example: VLAN 100 on eth0)
+sudo ip link add link eth0 name eth0.100 type vlan id 100
+sudo ip link set eth0.100 up
+```
+
+**Note:** The 802.1Q module is only required if your PROFINET network uses VLAN tagging. Many installations work without VLANs. If you're not using VLANs, this warning can be safely ignored.
+
+#### P-Net Library Not in ldconfig Cache
+
+**Symptoms:**
+- Validation warns "P-Net ldconfig - Not in cache"
+- Controller fails to start with "libpnet.so: cannot open shared object file"
+- `ldd` shows missing pnet library
+
+**Diagnostic Steps:**
+
+```bash
+# Check if P-Net library exists
+ls -la /usr/local/lib/libpnet*
+
+# Check if library is in ldconfig cache
+ldconfig -p | grep pnet
+
+# Check library dependencies
+ldd /opt/water-controller/bin/water_treat_controller 2>&1 | grep pnet
+```
+
+**Solutions:**
+
+```bash
+# Option 1: Run ldconfig to refresh the cache
+sudo ldconfig
+
+# Option 2: If library is in a non-standard location, add it
+echo "/usr/local/lib" | sudo tee /etc/ld.so.conf.d/pnet.conf
+sudo ldconfig
+
+# Verify the fix
+ldconfig -p | grep pnet
+```
+
+**Note:** The `build-pnet.sh` script should automatically configure ldconfig. If you see this warning after a fresh build, try running `sudo ldconfig` manually.
+
 #### RTU Not Discovered
 
 **Symptoms:**
@@ -247,6 +316,30 @@ sudo journalctl -u water-controller-api -n 50
 | Missing dependencies | `pip install -r requirements.txt` |
 | Port conflict | Change port in config or stop conflicting service |
 | Shared memory not available | Start controller first |
+
+#### Frontend Validation Warning: No index.html
+
+**Symptoms:**
+- Validation warns "Frontend - No index.html (may be SSR build)"
+
+**Explanation:**
+
+This warning is **expected and benign** for this application. The Water-Controller UI uses Next.js with Server-Side Rendering (SSR), which does not produce a static `index.html` file. Instead, pages are rendered dynamically by the Next.js server.
+
+**Verification:**
+
+```bash
+# Confirm the Next.js build exists
+ls -la /opt/water-controller/web/ui/.next/
+
+# Check for build manifest (indicates successful build)
+cat /opt/water-controller/web/ui/.next/build-manifest.json
+
+# Test the UI is serving correctly
+curl -I http://localhost:8080/
+```
+
+If the `.next/` directory exists and contains `build-manifest.json`, the UI is built correctly. This warning can be safely ignored.
 
 #### Web UI Not Loading (Port 8080)
 
