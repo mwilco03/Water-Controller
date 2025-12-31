@@ -35,7 +35,8 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 }
 
 const sizeClasses: Record<ButtonSize, string> = {
-  sm: 'min-h-[2rem] px-3 py-1.5 text-sm gap-1.5',
+  // All sizes meet 44px minimum touch target (WCAG 2.1)
+  sm: 'min-h-touch px-3 py-2 text-sm gap-1.5',
   md: 'min-h-touch px-4 py-2.5 text-base gap-2',
   lg: 'min-h-touch-lg px-6 py-3 text-lg gap-2.5',
 };
@@ -181,8 +182,9 @@ interface IconButtonProps extends Omit<ButtonProps, 'leftIcon' | 'rightIcon' | '
 
 export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(
   ({ icon, size = 'md', className, ...props }, ref) => {
+    // All sizes meet 44px minimum touch target (WCAG 2.1)
     const sizeSquareClasses: Record<ButtonSize, string> = {
-      sm: 'w-8 h-8 p-0',
+      sm: 'w-11 h-11 p-0',
       md: 'w-11 h-11 p-0',
       lg: 'w-12 h-12 p-0',
     };

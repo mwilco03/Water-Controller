@@ -39,12 +39,13 @@ interface ToggleProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'onC
   showStateLabel?: boolean;
 }
 
+// All sizes meet 44px minimum touch target (WCAG 2.1)
 const sizeConfig = {
   sm: {
     track: 'w-9 h-5',
     thumb: 'w-4 h-4',
     thumbTranslate: 'translate-x-4',
-    container: 'min-h-[2.25rem]',
+    container: 'min-h-touch',
   },
   md: {
     track: 'w-11 h-6',

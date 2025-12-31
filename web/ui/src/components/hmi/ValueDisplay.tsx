@@ -18,6 +18,7 @@ import clsx from 'clsx';
 
 export type ValueQuality = 'good' | 'uncertain' | 'bad' | 'stale' | 'notConnected';
 export type ValueTrend = 'up' | 'down' | 'stable';
+export type TrendMeaning = 'positive' | 'negative' | 'neutral';
 export type ValueSize = 'sm' | 'md' | 'lg' | 'xl';
 
 interface ValueDisplayProps {
@@ -45,6 +46,8 @@ interface ValueDisplayProps {
   lowThreshold?: number;
   /** High threshold for out-of-range indication */
   highThreshold?: number;
+  /** What does "up" trend mean for this value? (default: positive=good) */
+  trendMeaning?: TrendMeaning;
   /** Click handler */
   onClick?: () => void;
   /** Additional class names */
@@ -137,22 +140,39 @@ const qualityStyles: Record<ValueQuality, {
   },
 };
 
-const trendIcons: Record<ValueTrend, ReactNode> = {
-  up: (
-    <svg className="w-4 h-4 text-status-ok" fill="currentColor" viewBox="0 0 20 20">
-      <path fillRule="evenodd" d="M5.293 9.707a1 1 0 010-1.414l4-4a1 1 0 011.414 0l4 4a1 1 0 01-1.414 1.414L11 7.414V15a1 1 0 11-2 0V7.414L6.707 9.707a1 1 0 01-1.414 0z" clipRule="evenodd" />
-    </svg>
-  ),
-  down: (
-    <svg className="w-4 h-4 text-status-alarm" fill="currentColor" viewBox="0 0 20 20">
-      <path fillRule="evenodd" d="M14.707 10.293a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 111.414-1.414L9 12.586V5a1 1 0 012 0v7.586l2.293-2.293a1 1 0 011.414 0z" clipRule="evenodd" />
-    </svg>
-  ),
-  stable: (
-    <svg className="w-4 h-4 text-hmi-muted" fill="currentColor" viewBox="0 0 20 20">
+// Trend color based on meaning (e.g., temperature rising might be bad, not good)
+function getTrendColor(trend: ValueTrend, meaning: TrendMeaning): string {
+  if (meaning === 'neutral') return 'text-hmi-muted';
+  if (trend === 'stable') return 'text-hmi-muted';
+
+  // For 'positive' meaning: up=good, down=bad
+  // For 'negative' meaning: up=bad, down=good
+  const isGood = meaning === 'positive' ? trend === 'up' : trend === 'down';
+  return isGood ? 'text-status-ok' : 'text-status-alarm';
+}
+
+const TrendIcon = ({ trend, meaning }: { trend: ValueTrend; meaning: TrendMeaning }) => {
+  const colorClass = getTrendColor(trend, meaning);
+
+  if (trend === 'up') {
+    return (
+      <svg className={clsx('w-4 h-4', colorClass)} fill="currentColor" viewBox="0 0 20 20">
+        <path fillRule="evenodd" d="M5.293 9.707a1 1 0 010-1.414l4-4a1 1 0 011.414 0l4 4a1 1 0 01-1.414 1.414L11 7.414V15a1 1 0 11-2 0V7.414L6.707 9.707a1 1 0 01-1.414 0z" clipRule="evenodd" />
+      </svg>
+    );
+  }
+  if (trend === 'down') {
+    return (
+      <svg className={clsx('w-4 h-4', colorClass)} fill="currentColor" viewBox="0 0 20 20">
+        <path fillRule="evenodd" d="M14.707 10.293a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 111.414-1.414L9 12.586V5a1 1 0 012 0v7.586l2.293-2.293a1 1 0 011.414 0z" clipRule="evenodd" />
+      </svg>
+    );
+  }
+  return (
+    <svg className={clsx('w-4 h-4', colorClass)} fill="currentColor" viewBox="0 0 20 20">
       <path fillRule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clipRule="evenodd" />
     </svg>
-  ),
+  );
 };
 
 export function ValueDisplay({
@@ -168,6 +188,7 @@ export function ValueDisplay({
   inRange,
   lowThreshold,
   highThreshold,
+  trendMeaning = 'positive',
   onClick,
   className,
 }: ValueDisplayProps) {
@@ -178,15 +199,6 @@ export function ValueDisplay({
   const formatValue = (): string => {
     if (value === null || value === undefined) return '--';
     if (typeof value === 'string') return value;
-
-    // Check thresholds
-    if (typeof lowThreshold === 'number' && value < lowThreshold) {
-      // Below low threshold
-    }
-    if (typeof highThreshold === 'number' && value > highThreshold) {
-      // Above high threshold
-    }
-
     if (typeof decimals === 'number') {
       return value.toFixed(decimals);
     }
@@ -279,7 +291,7 @@ export function ValueDisplay({
         )}
         {trend && (
           <span className="ml-1" aria-label={`Trend: ${trend}`}>
-            {trendIcons[trend]}
+            <TrendIcon trend={trend} meaning={trendMeaning} />
           </span>
         )}
       </div>

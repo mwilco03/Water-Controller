@@ -46,7 +46,8 @@ interface InputProps extends Omit<InputHTMLAttributes<HTMLInputElement>, 'size'>
 }
 
 const sizeClasses: Record<InputSize, string> = {
-  sm: 'min-h-[2.25rem] px-3 py-1.5 text-sm',
+  // All sizes meet 44px minimum touch target (WCAG 2.1)
+  sm: 'min-h-touch px-3 py-2 text-sm',
   md: 'min-h-touch px-3.5 py-2.5 text-base',
   lg: 'min-h-touch-lg px-4 py-3 text-lg',
 };

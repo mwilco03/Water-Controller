@@ -10,7 +10,8 @@
  * - Actions grouped by context/category
  * - Disabled actions are clearly indicated
  * - Dangerous actions require confirmation
- * - Responsive: scrolls horizontally on mobile, wraps on desktop
+ * - Responsive: wraps on all screen sizes for accessibility
+ * - Can float at bottom of screen on mobile
  */
 
 import { ReactNode, useState } from 'react';
