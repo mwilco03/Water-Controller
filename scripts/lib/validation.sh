@@ -432,12 +432,16 @@ test_api_endpoints() {
     fi
 
     local failed=0
+    # Endpoints that match the actual FastAPI application structure
+    # See: web/api/app/main.py for docs_url, openapi_url
+    # See: web/api/app/api/v1/system.py for /system/status, /system/health/*
     local endpoints=(
-        "/api/status"
-        "/api/v1/status"
-        "/api/v1/system/health"
-        "/docs"
-        "/openapi.json"
+        "/api/v1/system/status"
+        "/api/v1/system/health/live"
+        "/api/v1/system/health/ready"
+        "/api/v1/system/version"
+        "/api/docs"
+        "/api/openapi.json"
     )
 
     local found_working=false

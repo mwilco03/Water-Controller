@@ -131,6 +131,27 @@ case "${BUILD_SYSTEM}" in
 esac
 
 # -------------------------
+# Post-install: Update library cache
+# -------------------------
+log "Updating library cache (ldconfig)"
+
+# Create ldconfig configuration for the prefix if not already present
+if [[ ! -f /etc/ld.so.conf.d/pnet.conf ]]; then
+  echo "${PREFIX}/lib" > /etc/ld.so.conf.d/pnet.conf
+  log "Created /etc/ld.so.conf.d/pnet.conf"
+fi
+
+# Run ldconfig to update the library cache
+ldconfig
+
+# Verify the library is now in the cache
+if ldconfig -p | grep -q "libpnet"; then
+  log "p-net library registered in ldconfig cache"
+else
+  log "[WARNING] p-net library not found in ldconfig cache after update"
+fi
+
+# -------------------------
 # Post-install verification
 # -------------------------
 log "Verifying installation"
