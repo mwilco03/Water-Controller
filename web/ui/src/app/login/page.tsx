@@ -62,19 +62,19 @@ export default function LoginPage() {
       <div className="w-full max-w-md">
         <div className="scada-panel p-8">
           <div className="text-center mb-8">
-            <h1 className="text-2xl font-bold text-white">Water Treatment Controller</h1>
-            <p className="text-gray-400 mt-2">Sign in to continue</p>
+            <h1 className="text-2xl font-bold text-hmi-text">Water Treatment Controller</h1>
+            <p className="text-hmi-muted mt-2">Sign in to continue</p>
           </div>
 
           {error && (
-            <div className="bg-red-900 text-red-200 p-3 rounded mb-4">
+            <div className="bg-status-alarm/10 text-status-alarm p-3 rounded mb-4 border border-status-alarm/30">
               {error}
             </div>
           )}
 
           <form onSubmit={handleLogin} className="space-y-6">
             <div>
-              <label htmlFor="username" className="block text-sm text-gray-300 mb-2">
+              <label htmlFor="username" className="block text-sm text-hmi-muted mb-2">
                 Username
               </label>
               <input
@@ -83,13 +83,13 @@ export default function LoginPage() {
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 placeholder="Enter username"
-                className="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded text-white focus:border-blue-500 focus:outline-none"
+                className="w-full px-4 py-3 bg-white border border-hmi-border rounded text-hmi-text focus:ring-2 focus:ring-status-info focus:border-status-info focus:outline-none"
                 required
               />
             </div>
 
             <div>
-              <label htmlFor="password" className="block text-sm text-gray-300 mb-2">
+              <label htmlFor="password" className="block text-sm text-hmi-muted mb-2">
                 Password
               </label>
               <input
@@ -98,7 +98,7 @@ export default function LoginPage() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="Enter password"
-                className="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded text-white focus:border-blue-500 focus:outline-none"
+                className="w-full px-4 py-3 bg-white border border-hmi-border rounded text-hmi-text focus:ring-2 focus:ring-status-info focus:border-status-info focus:outline-none"
                 required
               />
             </div>
@@ -106,40 +106,40 @@ export default function LoginPage() {
             <button
               type="submit"
               disabled={loading}
-              className="w-full py-3 bg-blue-600 hover:bg-blue-700 rounded text-white font-medium disabled:opacity-50"
+              className="w-full py-3 bg-status-info hover:bg-status-info/90 rounded text-white font-medium disabled:opacity-50 transition-colors"
             >
               {loading ? 'Signing in...' : 'Sign In'}
             </button>
           </form>
 
-          <div className="mt-6 pt-6 border-t border-gray-700">
+          <div className="mt-6 pt-6 border-t border-hmi-border">
             <button
               onClick={() => setShowLdapConfig(!showLdapConfig)}
-              className="text-sm text-gray-400 hover:text-white"
+              className="text-sm text-hmi-muted hover:text-hmi-text transition-colors"
             >
               {showLdapConfig ? 'Hide' : 'Show'} Active Directory Settings
             </button>
 
             {showLdapConfig && (
               <div className="mt-4 space-y-4 text-sm">
-                <p className="text-gray-400">
+                <p className="text-hmi-muted">
                   To configure Active Directory authentication, add users to the appropriate
                   AD group and configure the LDAP settings in the controller configuration.
                 </p>
-                <div className="bg-gray-800 p-3 rounded">
-                  <div className="text-gray-400">Admin Group:</div>
-                  <code className="text-green-400">CN=WTC-Admins,OU=Groups,DC=example,DC=com</code>
+                <div className="bg-hmi-panel p-3 rounded border border-hmi-border">
+                  <div className="text-hmi-muted">Admin Group:</div>
+                  <code className="text-status-normal">CN=WTC-Admins,OU=Groups,DC=example,DC=com</code>
                 </div>
-                <div className="bg-gray-800 p-3 rounded">
-                  <div className="text-gray-400">LDAP Server:</div>
-                  <code className="text-green-400">ldap://dc.example.com:389</code>
+                <div className="bg-hmi-panel p-3 rounded border border-hmi-border">
+                  <div className="text-hmi-muted">LDAP Server:</div>
+                  <code className="text-status-normal">ldap://dc.example.com:389</code>
                 </div>
               </div>
             )}
           </div>
         </div>
 
-        <p className="text-center text-gray-500 text-sm mt-4">
+        <p className="text-center text-hmi-muted text-sm mt-4">
           Water Treatment Controller v1.0.0
         </p>
       </div>

@@ -251,12 +251,12 @@ export default function UsersPage() {
 
   const getRoleBadge = (role: string) => {
     const colors: { [key: string]: string } = {
-      admin: 'bg-red-900 text-red-300',
-      engineer: 'bg-purple-900 text-purple-300',
-      operator: 'bg-blue-900 text-blue-300',
-      viewer: 'bg-gray-700 text-gray-300',
+      admin: 'bg-status-alarm/10 text-status-alarm border border-status-alarm/20',
+      engineer: 'bg-purple-100 text-purple-700 border border-purple-200',
+      operator: 'bg-status-info/10 text-status-info border border-status-info/20',
+      viewer: 'bg-hmi-panel text-hmi-muted border border-hmi-border',
     };
-    return colors[role] || 'bg-gray-700 text-gray-300';
+    return colors[role] || 'bg-hmi-panel text-hmi-muted border border-hmi-border';
   };
 
   const formatDate = (dateStr: string | null) => {
@@ -267,10 +267,10 @@ export default function UsersPage() {
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
-        <h1 className="text-2xl font-bold text-white">User Management</h1>
+        <h1 className="text-2xl font-bold text-hmi-text">User Management</h1>
         <button
           onClick={() => setShowAddModal(true)}
-          className="px-4 py-2 bg-green-600 hover:bg-green-700 rounded text-white"
+          className="px-4 py-2 bg-status-ok hover:bg-status-ok/90 rounded text-white"
         >
           + Add User
         </button>
@@ -280,7 +280,7 @@ export default function UsersPage() {
       {message && (
         <div
           className={`p-4 rounded-lg ${
-            message.type === 'success' ? 'bg-green-900 text-green-200' : 'bg-red-900 text-red-200'
+            message.type === 'success' ? 'bg-status-ok/10 text-status-ok border border-status-ok/20' : 'bg-status-alarm/10 text-status-alarm border border-status-alarm/20'
           }`}
         >
           {message.text}
@@ -288,7 +288,7 @@ export default function UsersPage() {
       )}
 
       {/* Tabs */}
-      <div className="flex space-x-4 border-b border-gray-700">
+      <div className="flex space-x-4 border-b border-hmi-border">
         {[
           { id: 'users', label: 'Users' },
           { id: 'sessions', label: 'Active Sessions' },
@@ -298,8 +298,8 @@ export default function UsersPage() {
             onClick={() => setActiveTab(tab.id as 'users' | 'sessions')}
             className={`px-4 py-2 -mb-px ${
               activeTab === tab.id
-                ? 'border-b-2 border-blue-500 text-blue-400'
-                : 'text-gray-400 hover:text-white'
+                ? 'border-b-2 border-status-info text-status-info'
+                : 'text-hmi-muted hover:text-hmi-text'
             }`}
           >
             {tab.label}
@@ -309,10 +309,10 @@ export default function UsersPage() {
 
       {/* Users Tab */}
       {activeTab === 'users' && (
-        <div className="scada-panel p-6">
+        <div className="hmi-card p-6">
           <table className="w-full">
             <thead>
-              <tr className="text-left text-gray-400 text-sm border-b border-gray-700">
+              <tr className="text-left text-hmi-muted text-sm border-b border-hmi-border">
                 <th className="pb-3">Username</th>
                 <th className="pb-3">Role</th>
                 <th className="pb-3">Status</th>
@@ -323,11 +323,11 @@ export default function UsersPage() {
             </thead>
             <tbody>
               {users.map((user) => (
-                <tr key={user.id} className="border-b border-gray-800">
+                <tr key={user.id} className="border-b border-hmi-border">
                   <td className="py-4">
-                    <span className="font-medium text-white">{user.username}</span>
+                    <span className="font-medium text-hmi-text">{user.username}</span>
                     {user.username === 'admin' && (
-                      <span className="ml-2 text-xs text-yellow-400">(system)</span>
+                      <span className="ml-2 text-xs text-yellow-600">(system)</span>
                     )}
                   </td>
                   <td className="py-4">
@@ -338,41 +338,41 @@ export default function UsersPage() {
                   <td className="py-4">
                     <span
                       className={`flex items-center gap-2 ${
-                        user.active ? 'text-green-400' : 'text-gray-500'
+                        user.active ? 'text-status-ok' : 'text-hmi-muted'
                       }`}
                     >
                       <span
                         className={`w-2 h-2 rounded-full ${
-                          user.active ? 'bg-green-400' : 'bg-gray-500'
+                          user.active ? 'bg-status-ok' : 'bg-hmi-muted'
                         }`}
                       />
                       {user.active ? 'Active' : 'Inactive'}
                     </span>
                   </td>
                   <td className="py-4">
-                    <span className={user.sync_to_rtus ? 'text-blue-400' : 'text-gray-500'}>
+                    <span className={user.sync_to_rtus ? 'text-status-info' : 'text-hmi-muted'}>
                       {user.sync_to_rtus ? 'Yes' : 'No'}
                     </span>
                   </td>
-                  <td className="py-4 text-gray-400 text-sm">{formatDate(user.last_login)}</td>
+                  <td className="py-4 text-hmi-muted text-sm">{formatDate(user.last_login)}</td>
                   <td className="py-4 text-right">
                     <div className="flex justify-end space-x-2">
                       <button
                         onClick={() => setShowEditModal(user)}
-                        className="px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded text-sm text-white"
+                        className="px-3 py-1 bg-hmi-panel hover:bg-hmi-panel/90 rounded text-sm text-white"
                       >
                         Edit
                       </button>
                       <button
                         onClick={() => setShowPasswordModal(user)}
-                        className="px-3 py-1 bg-blue-600 hover:bg-blue-700 rounded text-sm text-white"
+                        className="px-3 py-1 bg-status-info hover:bg-status-info/90 rounded text-sm text-white"
                       >
                         Password
                       </button>
                       {user.username !== 'admin' && (
                         <button
                           onClick={() => deleteUser(user)}
-                          className="px-3 py-1 bg-red-600 hover:bg-red-700 rounded text-sm text-white"
+                          className="px-3 py-1 bg-status-alarm hover:bg-status-alarm/90 rounded text-sm text-white"
                         >
                           Delete
                         </button>
@@ -385,49 +385,49 @@ export default function UsersPage() {
           </table>
 
           {users.length === 0 && (
-            <p className="text-gray-400 text-center py-8">No users found</p>
+            <p className="text-hmi-muted text-center py-8">No users found</p>
           )}
         </div>
       )}
 
       {/* Sessions Tab */}
       {activeTab === 'sessions' && (
-        <div className="scada-panel p-6">
+        <div className="hmi-card p-6">
           <div className="flex justify-between items-center mb-4">
-            <h2 className="text-lg font-semibold text-white">Active Sessions</h2>
+            <h2 className="text-lg font-semibold text-hmi-text">Active Sessions</h2>
             <button
               onClick={fetchSessions}
-              className="px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded text-sm text-white"
+              className="px-3 py-1 bg-hmi-panel hover:bg-hmi-panel/90 rounded text-sm text-white"
             >
               Refresh
             </button>
           </div>
 
           {sessions.length === 0 ? (
-            <p className="text-gray-400">No active sessions</p>
+            <p className="text-hmi-muted">No active sessions</p>
           ) : (
             <div className="space-y-3">
               {sessions.map((session) => (
                 <div
                   key={session.token}
-                  className="flex items-center justify-between p-4 bg-gray-800 rounded"
+                  className="flex items-center justify-between p-4 bg-hmi-panel rounded"
                 >
                   <div>
-                    <div className="font-medium text-white">{session.username}</div>
-                    <div className="text-sm text-gray-400">
+                    <div className="font-medium text-hmi-text">{session.username}</div>
+                    <div className="text-sm text-hmi-muted">
                       <span className={`px-2 py-0.5 rounded text-xs ${getRoleBadge(session.role)}`}>
                         {session.role}
                       </span>
                       <span className="ml-3">IP: {session.ip_address || 'Unknown'}</span>
                     </div>
-                    <div className="text-xs text-gray-500 mt-1">
+                    <div className="text-xs text-hmi-muted mt-1">
                       Started: {formatDate(session.created_at)} | Last activity:{' '}
                       {formatDate(session.last_activity)}
                     </div>
                   </div>
                   <button
                     onClick={() => terminateSession(session.token)}
-                    className="px-3 py-1 bg-red-600 hover:bg-red-700 rounded text-sm text-white"
+                    className="px-3 py-1 bg-status-alarm hover:bg-status-alarm/90 rounded text-sm text-white"
                   >
                     Terminate
                   </button>
@@ -441,49 +441,49 @@ export default function UsersPage() {
       {/* Add User Modal */}
       {showAddModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-gray-900 p-6 rounded-lg w-full max-w-md">
-            <h2 className="text-xl font-semibold text-white mb-4">Add New User</h2>
+          <div className="bg-hmi-panel p-6 rounded-lg w-full max-w-md">
+            <h2 className="text-xl font-semibold text-hmi-text mb-4">Add New User</h2>
 
             <div className="space-y-4">
               <div>
-                <label className="block text-sm text-gray-300 mb-1">Username</label>
+                <label className="block text-sm text-hmi-muted mb-1">Username</label>
                 <input
                   type="text"
                   value={newUser.username}
                   onChange={(e) => setNewUser({ ...newUser, username: e.target.value })}
                   placeholder="Enter username"
-                  className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white"
+                  className="w-full px-3 py-2 bg-hmi-bg border border-hmi-border rounded text-hmi-text"
                 />
               </div>
 
               <div>
-                <label className="block text-sm text-gray-300 mb-1">Password</label>
+                <label className="block text-sm text-hmi-muted mb-1">Password</label>
                 <input
                   type="password"
                   value={newUser.password}
                   onChange={(e) => setNewUser({ ...newUser, password: e.target.value })}
                   placeholder="Enter password"
-                  className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white"
+                  className="w-full px-3 py-2 bg-hmi-bg border border-hmi-border rounded text-hmi-text"
                 />
               </div>
 
               <div>
-                <label className="block text-sm text-gray-300 mb-1">Confirm Password</label>
+                <label className="block text-sm text-hmi-muted mb-1">Confirm Password</label>
                 <input
                   type="password"
                   value={newUser.confirmPassword}
                   onChange={(e) => setNewUser({ ...newUser, confirmPassword: e.target.value })}
                   placeholder="Confirm password"
-                  className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white"
+                  className="w-full px-3 py-2 bg-hmi-bg border border-hmi-border rounded text-hmi-text"
                 />
               </div>
 
               <div>
-                <label className="block text-sm text-gray-300 mb-1">Role</label>
+                <label className="block text-sm text-hmi-muted mb-1">Role</label>
                 <select
                   value={newUser.role}
                   onChange={(e) => setNewUser({ ...newUser, role: e.target.value })}
-                  className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white"
+                  className="w-full px-3 py-2 bg-hmi-bg border border-hmi-border rounded text-hmi-text"
                 >
                   <option value="viewer">Viewer (read-only)</option>
                   <option value="operator">Operator (control access)</option>
@@ -499,7 +499,7 @@ export default function UsersPage() {
                   checked={newUser.sync_to_rtus}
                   onChange={(e) => setNewUser({ ...newUser, sync_to_rtus: e.target.checked })}
                 />
-                <label htmlFor="syncToRtus" className="text-sm text-gray-300">
+                <label htmlFor="syncToRtus" className="text-sm text-hmi-muted">
                   Sync credentials to RTUs
                 </label>
               </div>
@@ -508,14 +508,14 @@ export default function UsersPage() {
             <div className="flex justify-end space-x-3 mt-6">
               <button
                 onClick={() => setShowAddModal(false)}
-                className="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded text-white"
+                className="px-4 py-2 bg-hmi-panel hover:bg-hmi-panel/90 rounded text-white"
               >
                 Cancel
               </button>
               <button
                 onClick={addUser}
                 disabled={loading}
-                className="px-4 py-2 bg-green-600 hover:bg-green-700 rounded text-white disabled:opacity-50"
+                className="px-4 py-2 bg-status-ok hover:bg-status-ok/90 rounded text-white disabled:opacity-50"
               >
                 {loading ? 'Creating...' : 'Create User'}
               </button>
@@ -527,17 +527,17 @@ export default function UsersPage() {
       {/* Edit User Modal */}
       {showEditModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-gray-900 p-6 rounded-lg w-full max-w-md">
-            <h2 className="text-xl font-semibold text-white mb-4">Edit User: {showEditModal.username}</h2>
+          <div className="bg-hmi-panel p-6 rounded-lg w-full max-w-md">
+            <h2 className="text-xl font-semibold text-hmi-text mb-4">Edit User: {showEditModal.username}</h2>
 
             <div className="space-y-4">
               <div>
-                <label className="block text-sm text-gray-300 mb-1">Role</label>
+                <label className="block text-sm text-hmi-muted mb-1">Role</label>
                 <select
                   value={showEditModal.role}
                   onChange={(e) => setShowEditModal({ ...showEditModal, role: e.target.value })}
                   disabled={showEditModal.username === 'admin'}
-                  className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white disabled:opacity-50"
+                  className="w-full px-3 py-2 bg-hmi-bg border border-hmi-border rounded text-hmi-text disabled:opacity-50"
                 >
                   <option value="viewer">Viewer (read-only)</option>
                   <option value="operator">Operator (control access)</option>
@@ -554,7 +554,7 @@ export default function UsersPage() {
                   onChange={(e) => setShowEditModal({ ...showEditModal, active: e.target.checked })}
                   disabled={showEditModal.username === 'admin'}
                 />
-                <label htmlFor="editActive" className="text-sm text-gray-300">
+                <label htmlFor="editActive" className="text-sm text-hmi-muted">
                   Account active
                 </label>
               </div>
@@ -566,7 +566,7 @@ export default function UsersPage() {
                   checked={showEditModal.sync_to_rtus}
                   onChange={(e) => setShowEditModal({ ...showEditModal, sync_to_rtus: e.target.checked })}
                 />
-                <label htmlFor="editSyncToRtus" className="text-sm text-gray-300">
+                <label htmlFor="editSyncToRtus" className="text-sm text-hmi-muted">
                   Sync credentials to RTUs
                 </label>
               </div>
@@ -575,14 +575,14 @@ export default function UsersPage() {
             <div className="flex justify-end space-x-3 mt-6">
               <button
                 onClick={() => setShowEditModal(null)}
-                className="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded text-white"
+                className="px-4 py-2 bg-hmi-panel hover:bg-hmi-panel/90 rounded text-white"
               >
                 Cancel
               </button>
               <button
                 onClick={updateUser}
                 disabled={loading}
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded text-white disabled:opacity-50"
+                className="px-4 py-2 bg-status-info hover:bg-status-info/90 rounded text-white disabled:opacity-50"
               >
                 {loading ? 'Saving...' : 'Save Changes'}
               </button>
@@ -594,25 +594,25 @@ export default function UsersPage() {
       {/* Change Password Modal */}
       {showPasswordModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-gray-900 p-6 rounded-lg w-full max-w-md">
-            <h2 className="text-xl font-semibold text-white mb-4">
+          <div className="bg-hmi-panel p-6 rounded-lg w-full max-w-md">
+            <h2 className="text-xl font-semibold text-hmi-text mb-4">
               Change Password: {showPasswordModal.username}
             </h2>
 
             <div className="space-y-4">
               <div>
-                <label className="block text-sm text-gray-300 mb-1">New Password</label>
+                <label className="block text-sm text-hmi-muted mb-1">New Password</label>
                 <input
                   type="password"
                   value={passwordForm.newPassword}
                   onChange={(e) => setPasswordForm({ ...passwordForm, newPassword: e.target.value })}
                   placeholder="Enter new password"
-                  className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white"
+                  className="w-full px-3 py-2 bg-hmi-bg border border-hmi-border rounded text-hmi-text"
                 />
               </div>
 
               <div>
-                <label className="block text-sm text-gray-300 mb-1">Confirm Password</label>
+                <label className="block text-sm text-hmi-muted mb-1">Confirm Password</label>
                 <input
                   type="password"
                   value={passwordForm.confirmPassword}
@@ -620,7 +620,7 @@ export default function UsersPage() {
                     setPasswordForm({ ...passwordForm, confirmPassword: e.target.value })
                   }
                   placeholder="Confirm new password"
-                  className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white"
+                  className="w-full px-3 py-2 bg-hmi-bg border border-hmi-border rounded text-hmi-text"
                 />
               </div>
             </div>
@@ -631,14 +631,14 @@ export default function UsersPage() {
                   setShowPasswordModal(null);
                   setPasswordForm({ newPassword: '', confirmPassword: '' });
                 }}
-                className="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded text-white"
+                className="px-4 py-2 bg-hmi-panel hover:bg-hmi-panel/90 rounded text-white"
               >
                 Cancel
               </button>
               <button
                 onClick={changePassword}
                 disabled={loading}
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded text-white disabled:opacity-50"
+                className="px-4 py-2 bg-status-info hover:bg-status-info/90 rounded text-white disabled:opacity-50"
               >
                 {loading ? 'Changing...' : 'Change Password'}
               </button>

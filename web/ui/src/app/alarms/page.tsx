@@ -1,5 +1,16 @@
 'use client';
 
+/**
+ * Alarm Management Page
+ * ISA-101 Compliant SCADA HMI
+ *
+ * Design principles:
+ * - Gray is normal, color is abnormal
+ * - Red for critical/alarm states
+ * - Amber for warnings
+ * - Light background for readability
+ */
+
 import { useEffect, useState, useCallback, useRef } from 'react';
 import AlarmSummary from '@/components/AlarmSummary';
 
@@ -40,7 +51,7 @@ interface ShelveDialogState {
   alarm: Alarm | null;
 }
 
-// Shelve Dialog Component
+// Shelve Dialog Component - ISA-101 Compliant
 function ShelveDialog({
   isOpen,
   alarm,
@@ -58,31 +69,31 @@ function ShelveDialog({
   if (!isOpen || !alarm) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50">
-      <div className="bg-gray-800 rounded-lg p-6 max-w-md w-full mx-4 border border-gray-600">
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+      <div className="bg-hmi-panel rounded-lg p-6 max-w-md w-full mx-4 border border-hmi-border shadow-lg">
         <div className="flex items-center gap-3 mb-4">
-          <div className="w-10 h-10 rounded-full bg-blue-600/20 flex items-center justify-center">
-            <svg className="w-6 h-6 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <div className="w-10 h-10 rounded-full bg-status-info/10 flex items-center justify-center">
+            <svg className="w-6 h-6 text-status-info" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
           </div>
-          <h3 className="text-lg font-semibold text-white">Shelve Alarm</h3>
+          <h3 className="text-lg font-semibold text-hmi-text">Shelve Alarm</h3>
         </div>
 
-        <p className="text-gray-300 mb-4">
-          Temporarily suppress alarm: <span className="font-bold text-white">{alarm.message}</span>
+        <p className="text-hmi-muted mb-4">
+          Temporarily suppress alarm: <span className="font-bold text-hmi-text">{alarm.message}</span>
         </p>
-        <p className="text-sm text-gray-400 mb-4">
+        <p className="text-sm text-hmi-muted mb-4">
           RTU: {alarm.rtu_station} | Slot: {alarm.slot}
         </p>
 
         <div className="space-y-4">
           <div>
-            <label className="text-sm text-gray-400 block mb-2">Duration</label>
+            <label className="text-sm text-hmi-muted block mb-2">Duration</label>
             <select
               value={duration}
               onChange={(e) => setDuration(Number(e.target.value))}
-              className="w-full bg-gray-700 text-white rounded px-3 py-2"
+              className="w-full bg-hmi-bg border border-hmi-border text-hmi-text rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-status-info"
             >
               <option value={60}>1 hour</option>
               <option value={120}>2 hours</option>
@@ -92,13 +103,13 @@ function ShelveDialog({
           </div>
 
           <div>
-            <label className="text-sm text-gray-400 block mb-2">Reason (optional)</label>
+            <label className="text-sm text-hmi-muted block mb-2">Reason (optional)</label>
             <input
               type="text"
               value={reason}
               onChange={(e) => setReason(e.target.value)}
               placeholder="e.g., Scheduled maintenance"
-              className="w-full bg-gray-700 text-white rounded px-3 py-2"
+              className="w-full bg-hmi-bg border border-hmi-border text-hmi-text rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-status-info"
             />
           </div>
         </div>
@@ -106,13 +117,13 @@ function ShelveDialog({
         <div className="flex gap-3 justify-end mt-6">
           <button
             onClick={onClose}
-            className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded transition-colors"
+            className="px-4 py-2 bg-hmi-bg hover:bg-hmi-border text-hmi-text rounded border border-hmi-border transition-colors"
           >
             Cancel
           </button>
           <button
             onClick={() => onShelve(duration, reason)}
-            className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded font-medium transition-colors"
+            className="px-4 py-2 bg-status-info hover:bg-status-info/90 text-white rounded font-medium transition-colors"
           >
             Shelve Alarm
           </button>
@@ -131,10 +142,9 @@ export default function AlarmsPage() {
   const [loading, setLoading] = useState(true);
   const [shelveDialog, setShelveDialog] = useState<ShelveDialogState>({ isOpen: false, alarm: null });
   const [error, setError] = useState<string | null>(null);
-  const [visibleHistoryCount, setVisibleHistoryCount] = useState(50); /* UI-M2: Simple virtualization */
+  const [visibleHistoryCount, setVisibleHistoryCount] = useState(50);
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Set page title
   useEffect(() => {
     document.title = PAGE_TITLE;
   }, []);
@@ -148,7 +158,6 @@ export default function AlarmsPage() {
         fetch('/api/v1/alarms/shelved'),
       ]);
 
-      /* UI-M1: Better error state handling */
       if (!activeRes.ok) {
         setError(`Failed to fetch active alarms: ${activeRes.status}`);
       } else {
@@ -166,7 +175,6 @@ export default function AlarmsPage() {
         setShelvedAlarms(data.shelved_alarms || []);
       }
     } catch (err) {
-      /* UI-M1: Show user-facing error message */
       setError(err instanceof Error ? err.message : 'Network error - unable to fetch alarms');
       alarmLogger.error('Error fetching alarms', err);
     } finally {
@@ -174,7 +182,6 @@ export default function AlarmsPage() {
     }
   }, []);
 
-  // WebSocket for real-time alarm updates
   const { connected, subscribe } = useWebSocket({
     onConnect: () => {
       if (pollIntervalRef.current) {
@@ -191,7 +198,6 @@ export default function AlarmsPage() {
     },
   });
 
-  // Subscribe to alarm events
   useEffect(() => {
     const unsubRaised = subscribe('alarm_raised', (_, alarm) => {
       setAlarms((prev) => {
@@ -215,7 +221,6 @@ export default function AlarmsPage() {
 
     const unsubCleared = subscribe('alarm_cleared', (_, data) => {
       setAlarms((prev) => prev.filter((a) => a.alarm_id !== data.alarm_id));
-      // Refresh history when alarm clears
       fetchAlarms();
     });
 
@@ -226,7 +231,6 @@ export default function AlarmsPage() {
     };
   }, [subscribe, fetchAlarms]);
 
-  // Initial fetch and polling setup
   useEffect(() => {
     fetchAlarms();
     pollIntervalRef.current = setInterval(fetchAlarms, 5000);
@@ -283,7 +287,6 @@ export default function AlarmsPage() {
 
   return (
     <>
-      {/* Shelve Dialog */}
       <ShelveDialog
         isOpen={shelveDialog.isOpen}
         alarm={shelveDialog.alarm}
@@ -293,81 +296,89 @@ export default function AlarmsPage() {
 
       <div className="space-y-6">
         <div className="flex items-center justify-between">
-          <h1 className="text-2xl font-bold text-white">Alarm Management</h1>
+          <h1 className="text-2xl font-bold text-hmi-text">Alarm Management</h1>
           {mode === 'view' && <CommandModeLogin showButton />}
         </div>
 
-        {/* Statistics */}
+        {/* Statistics - ISA-101: color only for abnormal values */}
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-          <div className="scada-panel p-4 text-center">
-            <div className="text-3xl font-bold text-white">{stats.total}</div>
-            <div className="text-sm text-gray-400">Active Alarms</div>
+          <div className="hmi-card p-4 text-center">
+            <div className={`text-3xl font-bold font-mono ${stats.total > 0 ? 'text-status-alarm' : 'text-hmi-text'}`}>
+              {stats.total}
+            </div>
+            <div className="text-sm text-hmi-muted">Active Alarms</div>
           </div>
-          <div className="scada-panel p-4 text-center">
-            <div className="text-3xl font-bold text-red-500">{stats.critical}</div>
-            <div className="text-sm text-gray-400">Critical</div>
+          <div className="hmi-card p-4 text-center">
+            <div className={`text-3xl font-bold font-mono ${stats.critical > 0 ? 'text-status-alarm' : 'text-hmi-muted'}`}>
+              {stats.critical}
+            </div>
+            <div className="text-sm text-hmi-muted">Critical</div>
           </div>
-          <div className="scada-panel p-4 text-center">
-            <div className="text-3xl font-bold text-yellow-500">{stats.warning}</div>
-            <div className="text-sm text-gray-400">Warning</div>
+          <div className="hmi-card p-4 text-center">
+            <div className={`text-3xl font-bold font-mono ${stats.warning > 0 ? 'text-status-warning' : 'text-hmi-muted'}`}>
+              {stats.warning}
+            </div>
+            <div className="text-sm text-hmi-muted">Warning</div>
           </div>
-          <div className="scada-panel p-4 text-center">
-            <div className="text-3xl font-bold text-blue-400">{stats.unack}</div>
-            <div className="text-sm text-gray-400">Unacknowledged</div>
+          <div className="hmi-card p-4 text-center">
+            <div className={`text-3xl font-bold font-mono ${stats.unack > 0 ? 'text-status-info' : 'text-hmi-muted'}`}>
+              {stats.unack}
+            </div>
+            <div className="text-sm text-hmi-muted">Unacknowledged</div>
           </div>
-          <div className="scada-panel p-4 text-center">
-            <div className="text-3xl font-bold text-purple-400">{stats.shelved}</div>
-            <div className="text-sm text-gray-400">Shelved</div>
+          <div className="hmi-card p-4 text-center">
+            <div className="text-3xl font-bold font-mono text-hmi-muted">{stats.shelved}</div>
+            <div className="text-sm text-hmi-muted">Shelved</div>
           </div>
         </div>
 
-        {/* Tabs */}
-        <div className="flex gap-4 border-b border-scada-accent">
+        {/* Tabs - ISA-101: subtle styling */}
+        <div className="flex gap-4 border-b border-hmi-border">
           <button
             onClick={() => setActiveTab('active')}
-            className={`pb-2 px-4 ${
+            className={`pb-2 px-4 font-medium transition-colors ${
               activeTab === 'active'
-                ? 'border-b-2 border-scada-highlight text-white'
-                : 'text-gray-400'
+                ? 'border-b-2 border-status-info text-status-info'
+                : 'text-hmi-muted hover:text-hmi-text'
             }`}
           >
             Active Alarms ({alarms.length})
           </button>
           <button
             onClick={() => setActiveTab('shelved')}
-            className={`pb-2 px-4 ${
+            className={`pb-2 px-4 font-medium transition-colors ${
               activeTab === 'shelved'
-                ? 'border-b-2 border-scada-highlight text-white'
-                : 'text-gray-400'
+                ? 'border-b-2 border-status-info text-status-info'
+                : 'text-hmi-muted hover:text-hmi-text'
             }`}
           >
             Shelved ({shelvedAlarms.length})
           </button>
           <button
             onClick={() => setActiveTab('history')}
-            className={`pb-2 px-4 ${
+            className={`pb-2 px-4 font-medium transition-colors ${
               activeTab === 'history'
-                ? 'border-b-2 border-scada-highlight text-white'
-                : 'text-gray-400'
+                ? 'border-b-2 border-status-info text-status-info'
+                : 'text-hmi-muted hover:text-hmi-text'
             }`}
           >
             History ({history.length})
           </button>
         </div>
 
-        {/* UI-M1: Error state display */}
+        {/* Error state - ISA-101: red for errors */}
         {error && (
-          <div className="bg-red-900/30 border border-red-500/50 rounded-lg p-4 flex items-center gap-3">
-            <svg className="w-6 h-6 text-red-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <div className="bg-quality-bad border border-status-alarm/30 rounded-lg p-4 flex items-center gap-3">
+            <svg className="w-6 h-6 text-status-alarm flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
             <div className="flex-1">
-              <p className="text-red-300 font-medium">Error Loading Alarms</p>
-              <p className="text-red-400 text-sm">{error}</p>
+              <p className="text-status-alarm font-medium">Error Loading Alarms</p>
+              <p className="text-hmi-muted text-sm">{error}</p>
             </div>
             <button
               onClick={fetchAlarms}
-              className="px-3 py-1 bg-red-600 hover:bg-red-500 text-white text-sm rounded transition-colors"
+              className="px-3 py-1 bg-status-alarm hover:bg-status-alarm/90 text-white text-sm rounded transition-colors"
             >
               Retry
             </button>
@@ -375,17 +386,16 @@ export default function AlarmsPage() {
         )}
 
         {/* Alarm List */}
-        <div className="scada-panel p-4">
+        <div className="hmi-card p-4">
           {loading ? (
-            <div className="text-center text-gray-400 py-8">
-              <div className="inline-block animate-spin rounded-full h-8 w-8 border-4 border-gray-600 border-t-blue-500 mb-2"></div>
+            <div className="text-center text-hmi-muted py-8">
+              <div className="inline-block animate-spin rounded-full h-8 w-8 border-4 border-hmi-border border-t-status-info mb-2"></div>
               <p>Loading alarms...</p>
             </div>
           ) : activeTab === 'active' ? (
             <div>
-              {/* Shelve instruction */}
               {canCommand && alarms.length > 0 && (
-                <div className="mb-4 p-3 bg-blue-900/20 border border-blue-700/50 rounded text-sm text-blue-300">
+                <div className="mb-4 p-3 bg-status-info/10 border border-status-info/30 rounded text-sm text-status-info">
                   <svg className="w-4 h-4 inline mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                   </svg>
@@ -400,41 +410,41 @@ export default function AlarmsPage() {
           ) : activeTab === 'shelved' ? (
             <div>
               {shelvedAlarms.length === 0 ? (
-                <div className="text-center text-gray-400 py-8">No shelved alarms</div>
+                <div className="text-center text-hmi-muted py-8">No shelved alarms</div>
               ) : (
                 <div className="overflow-x-auto">
                   <table className="w-full">
                     <thead>
-                      <tr className="text-left text-gray-400 text-sm border-b border-scada-accent">
-                        <th className="pb-3">RTU</th>
-                        <th className="pb-3">Slot</th>
-                        <th className="pb-3">Shelved By</th>
-                        <th className="pb-3">Duration</th>
-                        <th className="pb-3">Expires</th>
-                        <th className="pb-3">Reason</th>
-                        <th className="pb-3">Actions</th>
+                      <tr className="text-left text-hmi-muted text-sm border-b border-hmi-border">
+                        <th className="pb-3 font-medium">RTU</th>
+                        <th className="pb-3 font-medium">Slot</th>
+                        <th className="pb-3 font-medium">Shelved By</th>
+                        <th className="pb-3 font-medium">Duration</th>
+                        <th className="pb-3 font-medium">Expires</th>
+                        <th className="pb-3 font-medium">Reason</th>
+                        <th className="pb-3 font-medium">Actions</th>
                       </tr>
                     </thead>
                     <tbody>
                       {shelvedAlarms.map((shelf) => (
-                        <tr key={shelf.id} className="border-b border-scada-accent/50">
-                          <td className="py-2 text-sm text-gray-300">{shelf.rtu_station}</td>
-                          <td className="py-2 text-sm text-gray-300">{shelf.slot}</td>
-                          <td className="py-2 text-sm text-gray-300">{shelf.shelved_by}</td>
-                          <td className="py-2 text-sm text-gray-300">
+                        <tr key={shelf.id} className="border-b border-hmi-border/50">
+                          <td className="py-3 text-sm text-hmi-text">{shelf.rtu_station}</td>
+                          <td className="py-3 text-sm text-hmi-text font-mono">{shelf.slot}</td>
+                          <td className="py-3 text-sm text-hmi-text">{shelf.shelved_by}</td>
+                          <td className="py-3 text-sm text-hmi-muted">
                             {shelf.shelf_duration_minutes >= 60
                               ? `${Math.floor(shelf.shelf_duration_minutes / 60)}h`
                               : `${shelf.shelf_duration_minutes}m`}
                           </td>
-                          <td className="py-2 text-sm text-gray-400">
+                          <td className="py-3 text-sm text-hmi-muted">
                             {new Date(shelf.expires_at).toLocaleString()}
                           </td>
-                          <td className="py-2 text-sm text-gray-400">{shelf.reason || '-'}</td>
-                          <td className="py-2">
+                          <td className="py-3 text-sm text-hmi-muted">{shelf.reason || '-'}</td>
+                          <td className="py-3">
                             {canCommand && (
                               <button
                                 onClick={() => handleUnshelve(shelf.id)}
-                                className="text-xs bg-purple-600 hover:bg-purple-500 px-3 py-1 rounded transition-colors"
+                                className="text-xs bg-status-info hover:bg-status-info/90 text-white px-3 py-1 rounded transition-colors"
                               >
                                 Unshelve
                               </button>
@@ -449,53 +459,51 @@ export default function AlarmsPage() {
             </div>
           ) : (
             <div className="overflow-x-auto">
-              {/* UI-M2: Simple virtualization with pagination */}
               <table className="w-full">
                 <thead>
-                  <tr className="text-left text-gray-400 text-sm border-b border-scada-accent">
-                    <th className="pb-3">Time</th>
-                    <th className="pb-3">Severity</th>
-                    <th className="pb-3">RTU</th>
-                    <th className="pb-3">Message</th>
-                    <th className="pb-3">Value</th>
-                    <th className="pb-3">Ack By</th>
+                  <tr className="text-left text-hmi-muted text-sm border-b border-hmi-border">
+                    <th className="pb-3 font-medium">Time</th>
+                    <th className="pb-3 font-medium">Severity</th>
+                    <th className="pb-3 font-medium">RTU</th>
+                    <th className="pb-3 font-medium">Message</th>
+                    <th className="pb-3 font-medium">Value</th>
+                    <th className="pb-3 font-medium">Ack By</th>
                   </tr>
                 </thead>
                 <tbody>
                   {history.slice(0, visibleHistoryCount).map((alarm) => (
-                    <tr key={alarm.alarm_id} className="border-b border-scada-accent/50">
-                      <td className="py-2 text-sm text-gray-400">
+                    <tr key={alarm.alarm_id} className="border-b border-hmi-border/50">
+                      <td className="py-3 text-sm text-hmi-muted font-mono">
                         {new Date(alarm.timestamp).toLocaleString()}
                       </td>
-                      <td className="py-2">
+                      <td className="py-3">
                         <span
-                          className={`text-xs px-2 py-0.5 rounded ${
+                          className={`text-xs px-2 py-0.5 rounded font-medium ${
                             alarm.severity === 'CRITICAL' || alarm.severity === 'EMERGENCY'
-                              ? 'bg-red-600'
+                              ? 'bg-status-alarm text-white'
                               : alarm.severity === 'WARNING'
-                              ? 'bg-yellow-600'
-                              : 'bg-blue-600'
+                              ? 'bg-status-warning text-white'
+                              : 'bg-status-info text-white'
                           }`}
                         >
                           {alarm.severity}
                         </span>
                       </td>
-                      <td className="py-2 text-sm text-gray-300">{alarm.rtu_station}</td>
-                      <td className="py-2 text-sm text-white">{alarm.message}</td>
-                      <td className="py-2 text-sm text-gray-300">
+                      <td className="py-3 text-sm text-hmi-text">{alarm.rtu_station}</td>
+                      <td className="py-3 text-sm text-hmi-text">{alarm.message}</td>
+                      <td className="py-3 text-sm text-hmi-muted font-mono">
                         {alarm.value?.toFixed(2)} / {alarm.threshold?.toFixed(2)}
                       </td>
-                      <td className="py-2 text-sm text-gray-400">{alarm.ack_user || '-'}</td>
+                      <td className="py-3 text-sm text-hmi-muted">{alarm.ack_user || '-'}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
-              {/* UI-M2: Load more button for virtualization */}
               {history.length > visibleHistoryCount && (
                 <div className="text-center mt-4">
                   <button
                     onClick={() => setVisibleHistoryCount((prev) => prev + 50)}
-                    className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white text-sm rounded transition-colors"
+                    className="px-4 py-2 bg-hmi-bg hover:bg-hmi-border text-hmi-text text-sm rounded border border-hmi-border transition-colors"
                   >
                     Load More ({history.length - visibleHistoryCount} remaining)
                   </button>

@@ -350,10 +350,10 @@ export default function ModbusPage() {
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
-        <h1 className="text-2xl font-bold text-white">Modbus Gateway</h1>
+        <h1 className="text-2xl font-bold text-hmi-text">Modbus Gateway</h1>
         <button
           onClick={restartGateway}
-          className="px-4 py-2 bg-yellow-600 hover:bg-yellow-700 rounded text-white"
+          className="px-4 py-2 bg-status-warning hover:bg-status-warning rounded text-hmi-text"
         >
           Restart Gateway
         </button>
@@ -363,7 +363,7 @@ export default function ModbusPage() {
       {message && (
         <div
           className={`p-4 rounded-lg ${
-            message.type === 'success' ? 'bg-green-900 text-green-200' : 'bg-red-900 text-red-200'
+            message.type === 'success' ? 'bg-status-ok text-hmi-text' : 'bg-status-alarm text-hmi-text'
           }`}
         >
           {message.text}
@@ -373,33 +373,33 @@ export default function ModbusPage() {
       {/* Status Overview */}
       {stats && (
         <div className="grid grid-cols-5 gap-4">
-          <div className="scada-panel p-4 text-center">
+          <div className="hmi-card p-4 text-center">
             <div className={`text-3xl font-bold ${stats.server_running ? 'text-green-400' : 'text-red-400'}`}>
               {stats.server_running ? 'ON' : 'OFF'}
             </div>
-            <div className="text-sm text-gray-400">Server Status</div>
+            <div className="text-sm text-hmi-muted">Server Status</div>
           </div>
-          <div className="scada-panel p-4 text-center">
+          <div className="hmi-card p-4 text-center">
             <div className="text-3xl font-bold text-blue-400">{stats.tcp_connections}</div>
-            <div className="text-sm text-gray-400">TCP Connections</div>
+            <div className="text-sm text-hmi-muted">TCP Connections</div>
           </div>
-          <div className="scada-panel p-4 text-center">
-            <div className="text-3xl font-bold text-white">{stats.total_requests}</div>
-            <div className="text-sm text-gray-400">Total Requests</div>
+          <div className="hmi-card p-4 text-center">
+            <div className="text-3xl font-bold text-hmi-text">{stats.total_requests}</div>
+            <div className="text-sm text-hmi-muted">Total Requests</div>
           </div>
-          <div className="scada-panel p-4 text-center">
+          <div className="hmi-card p-4 text-center">
             <div className="text-3xl font-bold text-red-400">{stats.total_errors}</div>
-            <div className="text-sm text-gray-400">Errors</div>
+            <div className="text-sm text-hmi-muted">Errors</div>
           </div>
-          <div className="scada-panel p-4 text-center">
+          <div className="hmi-card p-4 text-center">
             <div className="text-3xl font-bold text-green-400">{stats.downstream_devices_online}</div>
-            <div className="text-sm text-gray-400">Devices Online</div>
+            <div className="text-sm text-hmi-muted">Devices Online</div>
           </div>
         </div>
       )}
 
       {/* Tabs */}
-      <div className="flex space-x-4 border-b border-gray-700">
+      <div className="flex space-x-4 border-b border-hmi-border">
         {[
           { id: 'server', label: 'Server Config' },
           { id: 'mappings', label: 'Register Mappings' },
@@ -412,7 +412,7 @@ export default function ModbusPage() {
             className={`px-4 py-2 -mb-px ${
               activeTab === tab.id
                 ? 'border-b-2 border-blue-500 text-blue-400'
-                : 'text-gray-400 hover:text-white'
+                : 'text-hmi-muted hover:text-hmi-text'
             }`}
           >
             {tab.label}
@@ -422,13 +422,13 @@ export default function ModbusPage() {
 
       {/* Server Config Tab */}
       {activeTab === 'server' && serverConfig && (
-        <div className="scada-panel p-6">
-          <h2 className="text-lg font-semibold text-white mb-6">Modbus Server Configuration</h2>
+        <div className="hmi-card p-6">
+          <h2 className="text-lg font-semibold text-hmi-text mb-6">Modbus Server Configuration</h2>
 
           <div className="grid grid-cols-2 gap-8">
             {/* TCP Settings */}
             <div className="space-y-4">
-              <h3 className="font-medium text-gray-300 border-b border-gray-700 pb-2">TCP Server</h3>
+              <h3 className="font-medium text-hmi-muted border-b border-hmi-border pb-2">TCP Server</h3>
 
               <label className="flex items-center space-x-3">
                 <input
@@ -437,33 +437,33 @@ export default function ModbusPage() {
                   onChange={(e) => setServerConfig({ ...serverConfig, tcp_enabled: e.target.checked })}
                   className="w-4 h-4"
                 />
-                <span className="text-gray-300">Enable TCP Server</span>
+                <span className="text-hmi-muted">Enable TCP Server</span>
               </label>
 
               <div>
-                <label className="block text-sm text-gray-400 mb-1">Port</label>
+                <label className="block text-sm text-hmi-muted mb-1">Port</label>
                 <input
                   type="number"
                   value={serverConfig.tcp_port}
                   onChange={(e) => setServerConfig({ ...serverConfig, tcp_port: parseInt(e.target.value) })}
-                  className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white"
+                  className="w-full px-3 py-2 bg-hmi-panel border border-hmi-border rounded text-hmi-text"
                 />
               </div>
 
               <div>
-                <label className="block text-sm text-gray-400 mb-1">Bind Address</label>
+                <label className="block text-sm text-hmi-muted mb-1">Bind Address</label>
                 <input
                   type="text"
                   value={serverConfig.tcp_bind_address}
                   onChange={(e) => setServerConfig({ ...serverConfig, tcp_bind_address: e.target.value })}
-                  className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white"
+                  className="w-full px-3 py-2 bg-hmi-panel border border-hmi-border rounded text-hmi-text"
                 />
               </div>
             </div>
 
             {/* RTU Settings */}
             <div className="space-y-4">
-              <h3 className="font-medium text-gray-300 border-b border-gray-700 pb-2">RTU Server (Serial)</h3>
+              <h3 className="font-medium text-hmi-muted border-b border-hmi-border pb-2">RTU Server (Serial)</h3>
 
               <label className="flex items-center space-x-3">
                 <input
@@ -472,26 +472,26 @@ export default function ModbusPage() {
                   onChange={(e) => setServerConfig({ ...serverConfig, rtu_enabled: e.target.checked })}
                   className="w-4 h-4"
                 />
-                <span className="text-gray-300">Enable RTU Server</span>
+                <span className="text-hmi-muted">Enable RTU Server</span>
               </label>
 
               <div>
-                <label className="block text-sm text-gray-400 mb-1">Serial Device</label>
+                <label className="block text-sm text-hmi-muted mb-1">Serial Device</label>
                 <input
                   type="text"
                   value={serverConfig.rtu_device}
                   onChange={(e) => setServerConfig({ ...serverConfig, rtu_device: e.target.value })}
-                  className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white"
+                  className="w-full px-3 py-2 bg-hmi-panel border border-hmi-border rounded text-hmi-text"
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm text-gray-400 mb-1">Baud Rate</label>
+                  <label className="block text-sm text-hmi-muted mb-1">Baud Rate</label>
                   <select
                     value={serverConfig.rtu_baud_rate}
                     onChange={(e) => setServerConfig({ ...serverConfig, rtu_baud_rate: parseInt(e.target.value) })}
-                    className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white"
+                    className="w-full px-3 py-2 bg-hmi-panel border border-hmi-border rounded text-hmi-text"
                   >
                     {[9600, 19200, 38400, 57600, 115200].map((rate) => (
                       <option key={rate} value={rate}>{rate}</option>
@@ -499,14 +499,14 @@ export default function ModbusPage() {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-sm text-gray-400 mb-1">Slave Address</label>
+                  <label className="block text-sm text-hmi-muted mb-1">Slave Address</label>
                   <input
                     type="number"
                     value={serverConfig.rtu_slave_addr}
                     onChange={(e) => setServerConfig({ ...serverConfig, rtu_slave_addr: parseInt(e.target.value) })}
                     min="1"
                     max="247"
-                    className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white"
+                    className="w-full px-3 py-2 bg-hmi-panel border border-hmi-border rounded text-hmi-text"
                   />
                 </div>
               </div>
@@ -517,7 +517,7 @@ export default function ModbusPage() {
             <button
               onClick={saveServerConfig}
               disabled={loading}
-              className="px-6 py-2 bg-blue-600 hover:bg-blue-700 rounded text-white disabled:opacity-50"
+              className="px-6 py-2 bg-status-info hover:bg-status-info rounded text-hmi-text disabled:opacity-50"
             >
               {loading ? 'Saving...' : 'Save Configuration'}
             </button>
@@ -527,45 +527,45 @@ export default function ModbusPage() {
 
       {/* Register Mappings Tab */}
       {activeTab === 'mappings' && (
-        <div className="scada-panel p-6">
+        <div className="hmi-card p-6">
           <div className="flex justify-between items-center mb-6">
-            <h2 className="text-lg font-semibold text-white">Register Mappings</h2>
+            <h2 className="text-lg font-semibold text-hmi-text">Register Mappings</h2>
             <button
               onClick={() => {
                 setEditingMapping(null);
                 setShowMappingModal(true);
               }}
-              className="px-4 py-2 bg-green-600 hover:bg-green-700 rounded text-white"
+              className="px-4 py-2 bg-status-ok hover:bg-status-ok rounded text-hmi-text"
             >
               + Add Mapping
             </button>
           </div>
 
           {registerMappings.length === 0 ? (
-            <p className="text-gray-400">No register mappings configured</p>
+            <p className="text-hmi-muted">No register mappings configured</p>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full">
                 <thead>
-                  <tr className="border-b border-gray-700">
-                    <th className="text-left py-2 px-3 text-gray-400">Address</th>
-                    <th className="text-left py-2 px-3 text-gray-400">Type</th>
-                    <th className="text-left py-2 px-3 text-gray-400">Data Type</th>
-                    <th className="text-left py-2 px-3 text-gray-400">Source</th>
-                    <th className="text-left py-2 px-3 text-gray-400">Description</th>
-                    <th className="text-left py-2 px-3 text-gray-400">Actions</th>
+                  <tr className="border-b border-hmi-border">
+                    <th className="text-left py-2 px-3 text-hmi-muted">Address</th>
+                    <th className="text-left py-2 px-3 text-hmi-muted">Type</th>
+                    <th className="text-left py-2 px-3 text-hmi-muted">Data Type</th>
+                    <th className="text-left py-2 px-3 text-hmi-muted">Source</th>
+                    <th className="text-left py-2 px-3 text-hmi-muted">Description</th>
+                    <th className="text-left py-2 px-3 text-hmi-muted">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
                   {registerMappings.map((mapping) => (
-                    <tr key={mapping.mapping_id} className="border-b border-gray-800">
+                    <tr key={mapping.mapping_id} className="border-b border-hmi-border">
                       <td className="py-2 px-3 font-mono">{mapping.modbus_addr}</td>
                       <td className="py-2 px-3">{mapping.register_type}</td>
                       <td className="py-2 px-3">{mapping.data_type}</td>
                       <td className="py-2 px-3">
                         {mapping.rtu_station}:{mapping.slot}
                       </td>
-                      <td className="py-2 px-3 text-gray-400">{mapping.description}</td>
+                      <td className="py-2 px-3 text-hmi-muted">{mapping.description}</td>
                       <td className="py-2 px-3">
                         <button
                           onClick={() => openEditMapping(mapping)}
@@ -591,54 +591,54 @@ export default function ModbusPage() {
 
       {/* Downstream Devices Tab */}
       {activeTab === 'downstream' && (
-        <div className="scada-panel p-6">
+        <div className="hmi-card p-6">
           <div className="flex justify-between items-center mb-6">
-            <h2 className="text-lg font-semibold text-white">Downstream Modbus Devices</h2>
+            <h2 className="text-lg font-semibold text-hmi-text">Downstream Modbus Devices</h2>
             <button
               onClick={() => {
                 setEditingDevice(null);
                 setShowDeviceModal(true);
               }}
-              className="px-4 py-2 bg-green-600 hover:bg-green-700 rounded text-white"
+              className="px-4 py-2 bg-status-ok hover:bg-status-ok rounded text-hmi-text"
             >
               + Add Device
             </button>
           </div>
 
           {downstreamDevices.length === 0 ? (
-            <p className="text-gray-400">No downstream devices configured</p>
+            <p className="text-hmi-muted">No downstream devices configured</p>
           ) : (
             <div className="space-y-4">
               {downstreamDevices.map((device) => (
                 <div
                   key={device.device_id}
-                  className="bg-gray-800 p-4 rounded-lg flex items-center justify-between"
+                  className="bg-hmi-panel p-4 rounded-lg flex items-center justify-between"
                 >
                   <div>
-                    <div className="font-semibold text-white">{device.name}</div>
-                    <div className="text-sm text-gray-400">
+                    <div className="font-semibold text-hmi-text">{device.name}</div>
+                    <div className="text-sm text-hmi-muted">
                       {device.transport === 'TCP'
                         ? `${device.tcp_host}:${device.tcp_port}`
                         : `${device.rtu_device} @ ${device.rtu_baud_rate}`}
                       {' - '}Slave {device.slave_addr}
                     </div>
                     {device.description && (
-                      <div className="text-sm text-gray-500">{device.description}</div>
+                      <div className="text-sm text-hmi-muted">{device.description}</div>
                     )}
                   </div>
                   <div className="flex items-center space-x-4">
-                    <span className={device.enabled ? 'text-green-400' : 'text-gray-500'}>
+                    <span className={device.enabled ? 'text-green-400' : 'text-hmi-muted'}>
                       {device.enabled ? 'Enabled' : 'Disabled'}
                     </span>
                     <button
                       onClick={() => openEditDevice(device)}
-                      className="px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded text-sm"
+                      className="px-3 py-1 bg-hmi-panel hover:bg-hmi-panel rounded text-sm"
                     >
                       Edit
                     </button>
                     <button
                       onClick={() => deleteDevice(device.device_id!)}
-                      className="px-3 py-1 bg-red-600 hover:bg-red-700 rounded text-sm"
+                      className="px-3 py-1 bg-status-alarm hover:bg-status-alarm rounded text-sm"
                     >
                       Delete
                     </button>
@@ -652,47 +652,47 @@ export default function ModbusPage() {
 
       {/* Statistics Tab */}
       {activeTab === 'stats' && stats && (
-        <div className="scada-panel p-6">
-          <h2 className="text-lg font-semibold text-white mb-6">Gateway Statistics</h2>
+        <div className="hmi-card p-6">
+          <h2 className="text-lg font-semibold text-hmi-text mb-6">Gateway Statistics</h2>
 
           <div className="grid grid-cols-2 gap-6">
-            <div className="bg-gray-800 p-4 rounded-lg">
-              <h3 className="font-medium text-gray-300 mb-4">Server Statistics</h3>
+            <div className="bg-hmi-panel p-4 rounded-lg">
+              <h3 className="font-medium text-hmi-muted mb-4">Server Statistics</h3>
               <div className="space-y-2">
                 <div className="flex justify-between">
-                  <span className="text-gray-400">Status</span>
+                  <span className="text-hmi-muted">Status</span>
                   <span className={stats.server_running ? 'text-green-400' : 'text-red-400'}>
                     {stats.server_running ? 'Running' : 'Stopped'}
                   </span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-gray-400">Active TCP Connections</span>
-                  <span className="text-white">{stats.tcp_connections}</span>
+                  <span className="text-hmi-muted">Active TCP Connections</span>
+                  <span className="text-hmi-text">{stats.tcp_connections}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-gray-400">Total Requests</span>
-                  <span className="text-white">{stats.total_requests}</span>
+                  <span className="text-hmi-muted">Total Requests</span>
+                  <span className="text-hmi-text">{stats.total_requests}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-gray-400">Total Errors</span>
+                  <span className="text-hmi-muted">Total Errors</span>
                   <span className="text-red-400">{stats.total_errors}</span>
                 </div>
               </div>
             </div>
 
-            <div className="bg-gray-800 p-4 rounded-lg">
-              <h3 className="font-medium text-gray-300 mb-4">Downstream Devices</h3>
+            <div className="bg-hmi-panel p-4 rounded-lg">
+              <h3 className="font-medium text-hmi-muted mb-4">Downstream Devices</h3>
               <div className="space-y-2">
                 <div className="flex justify-between">
-                  <span className="text-gray-400">Configured Devices</span>
-                  <span className="text-white">{downstreamDevices.length}</span>
+                  <span className="text-hmi-muted">Configured Devices</span>
+                  <span className="text-hmi-text">{downstreamDevices.length}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-gray-400">Online</span>
+                  <span className="text-hmi-muted">Online</span>
                   <span className="text-green-400">{stats.downstream_devices_online}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-gray-400">Offline</span>
+                  <span className="text-hmi-muted">Offline</span>
                   <span className="text-red-400">{downstreamDevices.length - stats.downstream_devices_online}</span>
                 </div>
               </div>
@@ -704,14 +704,14 @@ export default function ModbusPage() {
       {/* Device Modal */}
       {showDeviceModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-gray-900 p-6 rounded-lg w-full max-w-lg max-h-[90vh] overflow-y-auto">
-            <h2 className="text-xl font-semibold text-white mb-4">
+          <div className="bg-hmi-panel p-6 rounded-lg w-full max-w-lg max-h-[90vh] overflow-y-auto">
+            <h2 className="text-xl font-semibold text-hmi-text mb-4">
               {editingDevice ? 'Edit Device' : 'Add Downstream Device'}
             </h2>
 
             <div className="space-y-4">
               <div>
-                <label className="block text-sm text-gray-300 mb-1">Device Name</label>
+                <label className="block text-sm text-hmi-muted mb-1">Device Name</label>
                 <input
                   type="text"
                   value={editingDevice?.name ?? newDevice.name}
@@ -719,19 +719,19 @@ export default function ModbusPage() {
                     ? setEditingDevice({ ...editingDevice, name: e.target.value })
                     : setNewDevice({ ...newDevice, name: e.target.value })
                   }
-                  className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white"
+                  className="w-full px-3 py-2 bg-hmi-panel border border-hmi-border rounded text-hmi-text"
                 />
               </div>
 
               <div>
-                <label className="block text-sm text-gray-300 mb-1">Transport</label>
+                <label className="block text-sm text-hmi-muted mb-1">Transport</label>
                 <select
                   value={editingDevice?.transport ?? newDevice.transport}
                   onChange={(e) => editingDevice
                     ? setEditingDevice({ ...editingDevice, transport: e.target.value })
                     : setNewDevice({ ...newDevice, transport: e.target.value })
                   }
-                  className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white"
+                  className="w-full px-3 py-2 bg-hmi-panel border border-hmi-border rounded text-hmi-text"
                 >
                   <option value="TCP">TCP</option>
                   <option value="RTU">RTU (Serial)</option>
@@ -741,7 +741,7 @@ export default function ModbusPage() {
               {(editingDevice?.transport ?? newDevice.transport) === 'TCP' ? (
                 <>
                   <div>
-                    <label className="block text-sm text-gray-300 mb-1">Host</label>
+                    <label className="block text-sm text-hmi-muted mb-1">Host</label>
                     <input
                       type="text"
                       value={editingDevice?.tcp_host ?? newDevice.tcp_host}
@@ -749,11 +749,11 @@ export default function ModbusPage() {
                         ? setEditingDevice({ ...editingDevice, tcp_host: e.target.value })
                         : setNewDevice({ ...newDevice, tcp_host: e.target.value })
                       }
-                      className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white"
+                      className="w-full px-3 py-2 bg-hmi-panel border border-hmi-border rounded text-hmi-text"
                     />
                   </div>
                   <div>
-                    <label className="block text-sm text-gray-300 mb-1">Port</label>
+                    <label className="block text-sm text-hmi-muted mb-1">Port</label>
                     <input
                       type="number"
                       value={editingDevice?.tcp_port ?? newDevice.tcp_port}
@@ -761,14 +761,14 @@ export default function ModbusPage() {
                         ? setEditingDevice({ ...editingDevice, tcp_port: parseInt(e.target.value) })
                         : setNewDevice({ ...newDevice, tcp_port: parseInt(e.target.value) })
                       }
-                      className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white"
+                      className="w-full px-3 py-2 bg-hmi-panel border border-hmi-border rounded text-hmi-text"
                     />
                   </div>
                 </>
               ) : (
                 <>
                   <div>
-                    <label className="block text-sm text-gray-300 mb-1">Serial Device</label>
+                    <label className="block text-sm text-hmi-muted mb-1">Serial Device</label>
                     <input
                       type="text"
                       value={editingDevice?.rtu_device ?? newDevice.rtu_device}
@@ -776,18 +776,18 @@ export default function ModbusPage() {
                         ? setEditingDevice({ ...editingDevice, rtu_device: e.target.value })
                         : setNewDevice({ ...newDevice, rtu_device: e.target.value })
                       }
-                      className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white"
+                      className="w-full px-3 py-2 bg-hmi-panel border border-hmi-border rounded text-hmi-text"
                     />
                   </div>
                   <div>
-                    <label className="block text-sm text-gray-300 mb-1">Baud Rate</label>
+                    <label className="block text-sm text-hmi-muted mb-1">Baud Rate</label>
                     <select
                       value={editingDevice?.rtu_baud_rate ?? newDevice.rtu_baud_rate}
                       onChange={(e) => editingDevice
                         ? setEditingDevice({ ...editingDevice, rtu_baud_rate: parseInt(e.target.value) })
                         : setNewDevice({ ...newDevice, rtu_baud_rate: parseInt(e.target.value) })
                       }
-                      className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white"
+                      className="w-full px-3 py-2 bg-hmi-panel border border-hmi-border rounded text-hmi-text"
                     >
                       {[9600, 19200, 38400, 57600, 115200].map((rate) => (
                         <option key={rate} value={rate}>{rate}</option>
@@ -799,7 +799,7 @@ export default function ModbusPage() {
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm text-gray-300 mb-1">Slave Address</label>
+                  <label className="block text-sm text-hmi-muted mb-1">Slave Address</label>
                   <input
                     type="number"
                     value={editingDevice?.slave_addr ?? newDevice.slave_addr}
@@ -809,11 +809,11 @@ export default function ModbusPage() {
                     }
                     min="1"
                     max="247"
-                    className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white"
+                    className="w-full px-3 py-2 bg-hmi-panel border border-hmi-border rounded text-hmi-text"
                   />
                 </div>
                 <div>
-                  <label className="block text-sm text-gray-300 mb-1">Poll Interval (ms)</label>
+                  <label className="block text-sm text-hmi-muted mb-1">Poll Interval (ms)</label>
                   <input
                     type="number"
                     value={editingDevice?.poll_interval_ms ?? newDevice.poll_interval_ms}
@@ -821,13 +821,13 @@ export default function ModbusPage() {
                       ? setEditingDevice({ ...editingDevice, poll_interval_ms: parseInt(e.target.value) })
                       : setNewDevice({ ...newDevice, poll_interval_ms: parseInt(e.target.value) })
                     }
-                    className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white"
+                    className="w-full px-3 py-2 bg-hmi-panel border border-hmi-border rounded text-hmi-text"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="block text-sm text-gray-300 mb-1">Description</label>
+                <label className="block text-sm text-hmi-muted mb-1">Description</label>
                 <input
                   type="text"
                   value={editingDevice?.description ?? newDevice.description}
@@ -835,7 +835,7 @@ export default function ModbusPage() {
                     ? setEditingDevice({ ...editingDevice, description: e.target.value })
                     : setNewDevice({ ...newDevice, description: e.target.value })
                   }
-                  className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white"
+                  className="w-full px-3 py-2 bg-hmi-panel border border-hmi-border rounded text-hmi-text"
                 />
               </div>
 
@@ -849,7 +849,7 @@ export default function ModbusPage() {
                   }
                   className="w-4 h-4"
                 />
-                <span className="text-gray-300">Enabled</span>
+                <span className="text-hmi-muted">Enabled</span>
               </label>
             </div>
 
@@ -859,14 +859,14 @@ export default function ModbusPage() {
                   setShowDeviceModal(false);
                   setEditingDevice(null);
                 }}
-                className="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded text-white"
+                className="px-4 py-2 bg-hmi-panel hover:bg-hmi-panel rounded text-hmi-text"
               >
                 Cancel
               </button>
               <button
                 onClick={saveDevice}
                 disabled={loading}
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded text-white disabled:opacity-50"
+                className="px-4 py-2 bg-status-info hover:bg-status-info rounded text-hmi-text disabled:opacity-50"
               >
                 {loading ? 'Saving...' : 'Save'}
               </button>
@@ -878,15 +878,15 @@ export default function ModbusPage() {
       {/* Mapping Modal */}
       {showMappingModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-gray-900 p-6 rounded-lg w-full max-w-lg max-h-[90vh] overflow-y-auto">
-            <h2 className="text-xl font-semibold text-white mb-4">
+          <div className="bg-hmi-panel p-6 rounded-lg w-full max-w-lg max-h-[90vh] overflow-y-auto">
+            <h2 className="text-xl font-semibold text-hmi-text mb-4">
               {editingMapping ? 'Edit Mapping' : 'Add Register Mapping'}
             </h2>
 
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm text-gray-300 mb-1">Modbus Address</label>
+                  <label className="block text-sm text-hmi-muted mb-1">Modbus Address</label>
                   <input
                     type="number"
                     value={editingMapping?.modbus_addr ?? newMapping.modbus_addr}
@@ -894,18 +894,18 @@ export default function ModbusPage() {
                       ? setEditingMapping({ ...editingMapping, modbus_addr: parseInt(e.target.value) })
                       : setNewMapping({ ...newMapping, modbus_addr: parseInt(e.target.value) })
                     }
-                    className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white"
+                    className="w-full px-3 py-2 bg-hmi-panel border border-hmi-border rounded text-hmi-text"
                   />
                 </div>
                 <div>
-                  <label className="block text-sm text-gray-300 mb-1">Register Type</label>
+                  <label className="block text-sm text-hmi-muted mb-1">Register Type</label>
                   <select
                     value={editingMapping?.register_type ?? newMapping.register_type}
                     onChange={(e) => editingMapping
                       ? setEditingMapping({ ...editingMapping, register_type: e.target.value })
                       : setNewMapping({ ...newMapping, register_type: e.target.value })
                     }
-                    className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white"
+                    className="w-full px-3 py-2 bg-hmi-panel border border-hmi-border rounded text-hmi-text"
                   >
                     <option value="HOLDING">Holding Register</option>
                     <option value="INPUT">Input Register</option>
@@ -916,14 +916,14 @@ export default function ModbusPage() {
               </div>
 
               <div>
-                <label className="block text-sm text-gray-300 mb-1">Data Type</label>
+                <label className="block text-sm text-hmi-muted mb-1">Data Type</label>
                 <select
                   value={editingMapping?.data_type ?? newMapping.data_type}
                   onChange={(e) => editingMapping
                     ? setEditingMapping({ ...editingMapping, data_type: e.target.value })
                     : setNewMapping({ ...newMapping, data_type: e.target.value })
                   }
-                  className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white"
+                  className="w-full px-3 py-2 bg-hmi-panel border border-hmi-border rounded text-hmi-text"
                 >
                   <option value="UINT16">UINT16 (1 register)</option>
                   <option value="INT16">INT16 (1 register)</option>
@@ -936,14 +936,14 @@ export default function ModbusPage() {
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm text-gray-300 mb-1">RTU Station</label>
+                  <label className="block text-sm text-hmi-muted mb-1">RTU Station</label>
                   <select
                     value={editingMapping?.rtu_station ?? newMapping.rtu_station}
                     onChange={(e) => editingMapping
                       ? setEditingMapping({ ...editingMapping, rtu_station: e.target.value })
                       : setNewMapping({ ...newMapping, rtu_station: e.target.value })
                     }
-                    className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white"
+                    className="w-full px-3 py-2 bg-hmi-panel border border-hmi-border rounded text-hmi-text"
                   >
                     <option value="">Select RTU</option>
                     {rtus.map((rtu) => (
@@ -954,7 +954,7 @@ export default function ModbusPage() {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-sm text-gray-300 mb-1">Slot</label>
+                  <label className="block text-sm text-hmi-muted mb-1">Slot</label>
                   <input
                     type="number"
                     value={editingMapping?.slot ?? newMapping.slot}
@@ -962,13 +962,13 @@ export default function ModbusPage() {
                       ? setEditingMapping({ ...editingMapping, slot: parseInt(e.target.value) })
                       : setNewMapping({ ...newMapping, slot: parseInt(e.target.value) })
                     }
-                    className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white"
+                    className="w-full px-3 py-2 bg-hmi-panel border border-hmi-border rounded text-hmi-text"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="block text-sm text-gray-300 mb-1">Description</label>
+                <label className="block text-sm text-hmi-muted mb-1">Description</label>
                 <input
                   type="text"
                   value={editingMapping?.description ?? newMapping.description}
@@ -976,7 +976,7 @@ export default function ModbusPage() {
                     ? setEditingMapping({ ...editingMapping, description: e.target.value })
                     : setNewMapping({ ...newMapping, description: e.target.value })
                   }
-                  className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white"
+                  className="w-full px-3 py-2 bg-hmi-panel border border-hmi-border rounded text-hmi-text"
                 />
               </div>
 
@@ -990,13 +990,13 @@ export default function ModbusPage() {
                   }
                   className="w-4 h-4"
                 />
-                <span className="text-gray-300">Enable Scaling</span>
+                <span className="text-hmi-muted">Enable Scaling</span>
               </label>
 
               {(editingMapping?.scaling_enabled ?? newMapping.scaling_enabled) && (
-                <div className="grid grid-cols-2 gap-4 bg-gray-800 p-4 rounded">
+                <div className="grid grid-cols-2 gap-4 bg-hmi-panel p-4 rounded">
                   <div>
-                    <label className="block text-sm text-gray-400 mb-1">Raw Min</label>
+                    <label className="block text-sm text-hmi-muted mb-1">Raw Min</label>
                     <input
                       type="number"
                       value={editingMapping?.scale_raw_min ?? newMapping.scale_raw_min}
@@ -1004,11 +1004,11 @@ export default function ModbusPage() {
                         ? setEditingMapping({ ...editingMapping, scale_raw_min: parseFloat(e.target.value) })
                         : setNewMapping({ ...newMapping, scale_raw_min: parseFloat(e.target.value) })
                       }
-                      className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white"
+                      className="w-full px-3 py-2 bg-hmi-panel border border-hmi-border rounded text-hmi-text"
                     />
                   </div>
                   <div>
-                    <label className="block text-sm text-gray-400 mb-1">Raw Max</label>
+                    <label className="block text-sm text-hmi-muted mb-1">Raw Max</label>
                     <input
                       type="number"
                       value={editingMapping?.scale_raw_max ?? newMapping.scale_raw_max}
@@ -1016,11 +1016,11 @@ export default function ModbusPage() {
                         ? setEditingMapping({ ...editingMapping, scale_raw_max: parseFloat(e.target.value) })
                         : setNewMapping({ ...newMapping, scale_raw_max: parseFloat(e.target.value) })
                       }
-                      className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white"
+                      className="w-full px-3 py-2 bg-hmi-panel border border-hmi-border rounded text-hmi-text"
                     />
                   </div>
                   <div>
-                    <label className="block text-sm text-gray-400 mb-1">Eng Min</label>
+                    <label className="block text-sm text-hmi-muted mb-1">Eng Min</label>
                     <input
                       type="number"
                       value={editingMapping?.scale_eng_min ?? newMapping.scale_eng_min}
@@ -1028,11 +1028,11 @@ export default function ModbusPage() {
                         ? setEditingMapping({ ...editingMapping, scale_eng_min: parseFloat(e.target.value) })
                         : setNewMapping({ ...newMapping, scale_eng_min: parseFloat(e.target.value) })
                       }
-                      className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white"
+                      className="w-full px-3 py-2 bg-hmi-panel border border-hmi-border rounded text-hmi-text"
                     />
                   </div>
                   <div>
-                    <label className="block text-sm text-gray-400 mb-1">Eng Max</label>
+                    <label className="block text-sm text-hmi-muted mb-1">Eng Max</label>
                     <input
                       type="number"
                       value={editingMapping?.scale_eng_max ?? newMapping.scale_eng_max}
@@ -1040,7 +1040,7 @@ export default function ModbusPage() {
                         ? setEditingMapping({ ...editingMapping, scale_eng_max: parseFloat(e.target.value) })
                         : setNewMapping({ ...newMapping, scale_eng_max: parseFloat(e.target.value) })
                       }
-                      className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white"
+                      className="w-full px-3 py-2 bg-hmi-panel border border-hmi-border rounded text-hmi-text"
                     />
                   </div>
                 </div>
@@ -1053,14 +1053,14 @@ export default function ModbusPage() {
                   setShowMappingModal(false);
                   setEditingMapping(null);
                 }}
-                className="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded text-white"
+                className="px-4 py-2 bg-hmi-panel hover:bg-hmi-panel rounded text-hmi-text"
               >
                 Cancel
               </button>
               <button
                 onClick={saveMapping}
                 disabled={loading}
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded text-white disabled:opacity-50"
+                className="px-4 py-2 bg-status-info hover:bg-status-info rounded text-hmi-text disabled:opacity-50"
               >
                 {loading ? 'Saving...' : 'Save'}
               </button>

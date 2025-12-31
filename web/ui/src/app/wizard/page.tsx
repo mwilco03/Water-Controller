@@ -352,10 +352,10 @@ export default function WizardPage() {
   };
 
   const getStepStatusClass = (stepId: WizardStep) => {
-    if (completedSteps.includes(stepId)) return 'bg-green-600 text-white';
+    if (completedSteps.includes(stepId)) return 'bg-status-ok text-white';
     if (skippedSteps.includes(stepId)) return 'bg-amber-600 text-white';
-    if (stepId === currentStep) return 'bg-blue-600 text-white';
-    return 'bg-gray-700 text-gray-400';
+    if (stepId === currentStep) return 'bg-status-info text-white';
+    return 'bg-hmi-panel text-hmi-muted';
   };
 
   const getStepIcon = (stepId: WizardStep, index: number) => {
@@ -377,21 +377,21 @@ export default function WizardPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-900 text-white p-6">
+    <div className="min-h-screen bg-hmi-bg text-hmi-text p-6">
       <div className="max-w-4xl mx-auto">
         {/* Progress Bar */}
         <div className="mb-8">
           <div className="flex items-center justify-between">
             <button
               onClick={cancelWizard}
-              className="text-gray-400 hover:text-white text-sm flex items-center gap-1"
+              className="text-hmi-muted hover:text-hmi-text text-sm flex items-center gap-1"
             >
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
               </svg>
               Cancel
             </button>
-            <span className="text-sm text-gray-400">Step {currentStepIndex + 1} of {steps.length}</span>
+            <span className="text-sm text-hmi-muted">Step {currentStepIndex + 1} of {steps.length}</span>
           </div>
           <div className="flex items-center justify-between mt-4">
             {steps.map((step, index) => (
@@ -404,8 +404,8 @@ export default function WizardPage() {
                 {index < steps.length - 1 && (
                   <div className={`h-1 w-16 mx-2 ${
                     completedSteps.includes(step.id) || skippedSteps.includes(step.id)
-                      ? completedSteps.includes(step.id) ? 'bg-green-600' : 'bg-amber-600'
-                      : 'bg-gray-700'
+                      ? completedSteps.includes(step.id) ? 'bg-status-ok' : 'bg-amber-600'
+                      : 'bg-hmi-panel'
                   }`} />
                 )}
               </div>
@@ -413,7 +413,7 @@ export default function WizardPage() {
           </div>
           <div className="flex justify-between mt-2">
             {steps.map((step) => (
-              <span key={step.id} className="text-xs text-gray-400 w-20 text-center">
+              <span key={step.id} className="text-xs text-hmi-muted w-20 text-center">
                 {step.label}
               </span>
             ))}
@@ -428,12 +428,12 @@ export default function WizardPage() {
         )}
 
         {/* Step Content */}
-        <div className="bg-gray-800 rounded-lg p-8">
+        <div className="bg-hmi-panel rounded-lg p-8">
           {/* Welcome Step */}
           {currentStep === 'welcome' && (
             <div className="text-center">
               <h1 className="text-3xl font-bold mb-4">Configuration Wizard</h1>
-              <p className="text-gray-400 mb-8">
+              <p className="text-hmi-muted mb-8">
                 This wizard will help you set up your Water Treatment Controller by guiding you through:
               </p>
               <div className="grid grid-cols-2 gap-4 max-w-md mx-auto text-left mb-8">
@@ -464,7 +464,7 @@ export default function WizardPage() {
               </div>
               <button
                 onClick={nextStep}
-                className="px-8 py-3 bg-blue-600 hover:bg-blue-700 rounded-lg font-semibold"
+                className="px-8 py-3 bg-status-info hover:bg-status-info/90 rounded-lg font-semibold"
               >
                 Get Started
               </button>
@@ -475,61 +475,61 @@ export default function WizardPage() {
           {currentStep === 'add-rtu' && (
             <div>
               <h2 className="text-2xl font-bold mb-6">Add RTU Device</h2>
-              <p className="text-gray-400 mb-6">
+              <p className="text-hmi-muted mb-6">
                 Enter the details of your Remote Terminal Unit (RTU). The RTU should be powered on and connected to the network.
               </p>
 
               <div className="space-y-4 max-w-md">
                 <div>
-                  <label className="block text-sm text-gray-300 mb-1">Station Name *</label>
+                  <label className="block text-sm text-hmi-muted mb-1">Station Name *</label>
                   <input
                     type="text"
                     value={rtuConfig.station_name}
                     onChange={(e) => setRtuConfig({ ...rtuConfig, station_name: e.target.value })}
                     placeholder="e.g., water-treat-rtu-1"
-                    className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded text-white"
+                    className="w-full px-4 py-2 bg-hmi-panel border border-hmi-border rounded text-hmi-text"
                   />
                   <p className="text-xs text-gray-500 mt-1">Unique identifier for this RTU</p>
                 </div>
 
                 <div>
-                  <label className="block text-sm text-gray-300 mb-1">IP Address *</label>
+                  <label className="block text-sm text-hmi-muted mb-1">IP Address *</label>
                   <input
                     type="text"
                     value={rtuConfig.ip_address}
                     onChange={(e) => setRtuConfig({ ...rtuConfig, ip_address: e.target.value })}
                     placeholder="e.g., 192.168.1.100"
-                    className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded text-white"
+                    className="w-full px-4 py-2 bg-hmi-panel border border-hmi-border rounded text-hmi-text"
                   />
                 </div>
 
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-sm text-gray-300 mb-1">Vendor ID</label>
+                    <label className="block text-sm text-hmi-muted mb-1">Vendor ID</label>
                     <input
                       type="text"
                       value={`0x${rtuConfig.vendor_id.toString(16).padStart(4, '0')}`}
                       onChange={(e) => setRtuConfig({ ...rtuConfig, vendor_id: parseInt(e.target.value, 16) || 0 })}
-                      className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded text-white font-mono"
+                      className="w-full px-4 py-2 bg-hmi-panel border border-hmi-border rounded text-hmi-text font-mono"
                     />
                   </div>
                   <div>
-                    <label className="block text-sm text-gray-300 mb-1">Device ID</label>
+                    <label className="block text-sm text-hmi-muted mb-1">Device ID</label>
                     <input
                       type="text"
                       value={`0x${rtuConfig.device_id.toString(16).padStart(4, '0')}`}
                       onChange={(e) => setRtuConfig({ ...rtuConfig, device_id: parseInt(e.target.value, 16) || 0 })}
-                      className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded text-white font-mono"
+                      className="w-full px-4 py-2 bg-hmi-panel border border-hmi-border rounded text-hmi-text font-mono"
                     />
                   </div>
                 </div>
 
                 <div>
-                  <label className="block text-sm text-gray-300 mb-1">Initial Slot Count</label>
+                  <label className="block text-sm text-hmi-muted mb-1">Initial Slot Count</label>
                   <select
                     value={rtuConfig.slot_count}
                     onChange={(e) => setRtuConfig({ ...rtuConfig, slot_count: parseInt(e.target.value) })}
-                    className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded text-white"
+                    className="w-full px-4 py-2 bg-hmi-panel border border-hmi-border rounded text-hmi-text"
                   >
                     <option value={8}>8 slots</option>
                     <option value={16}>16 slots</option>
@@ -543,14 +543,14 @@ export default function WizardPage() {
               <div className="flex justify-between mt-8">
                 <button
                   onClick={prevStep}
-                  className="px-6 py-2 bg-gray-700 hover:bg-gray-600 rounded"
+                  className="px-6 py-2 bg-hmi-panel hover:bg-hmi-panel/80 rounded border border-hmi-border"
                 >
                   Back
                 </button>
                 <button
                   onClick={addRtu}
                   disabled={loading}
-                  className="px-6 py-2 bg-blue-600 hover:bg-blue-700 rounded disabled:opacity-50"
+                  className="px-6 py-2 bg-status-info hover:bg-status-info/90 rounded disabled:opacity-50"
                 >
                   {loading ? 'Adding...' : 'Add RTU'}
                 </button>
@@ -562,12 +562,12 @@ export default function WizardPage() {
           {currentStep === 'connect' && (
             <div>
               <h2 className="text-2xl font-bold mb-6">Connect to RTU</h2>
-              <p className="text-gray-400 mb-6">
+              <p className="text-hmi-muted mb-6">
                 Establish a PROFINET connection to <strong>{rtuConfig.station_name}</strong> at {rtuConfig.ip_address}.
               </p>
 
               {/* Connection Status */}
-              <div className="bg-gray-700 p-6 rounded-lg mb-6">
+              <div className="bg-hmi-panel border border-hmi-border p-6 rounded-lg mb-6">
                 <div className="flex items-center justify-between mb-4">
                   <h3 className="font-semibold">Connection Status</h3>
                   <RtuStateBadge state={connectionState} size="md" />
@@ -583,9 +583,9 @@ export default function WizardPage() {
                 )}
               </div>
 
-              <div className="bg-gray-700 p-6 rounded-lg mb-6">
+              <div className="bg-hmi-panel border border-hmi-border p-6 rounded-lg mb-6">
                 <h3 className="font-semibold mb-4">Pre-flight Checklist</h3>
-                <ul className="space-y-2 text-gray-300">
+                <ul className="space-y-2 text-hmi-muted">
                   <li className="flex items-center space-x-2">
                     <span className="text-green-400">&#10003;</span>
                     <span>RTU is powered on</span>
@@ -608,21 +608,21 @@ export default function WizardPage() {
               <div className="flex justify-between">
                 <button
                   onClick={prevStep}
-                  className="px-6 py-2 bg-gray-700 hover:bg-gray-600 rounded"
+                  className="px-6 py-2 bg-hmi-panel hover:bg-hmi-panel/80 rounded border border-hmi-border"
                 >
                   Back
                 </button>
                 <div className="space-x-4">
                   <button
                     onClick={skipStep}
-                    className="px-6 py-2 bg-gray-600 hover:bg-gray-500 rounded"
+                    className="px-6 py-2 bg-hmi-panel hover:bg-hmi-panel/80 rounded border border-hmi-border"
                   >
                     Connect Later
                   </button>
                   <button
                     onClick={connectRtu}
                     disabled={loading}
-                    className="px-6 py-2 bg-blue-600 hover:bg-blue-700 rounded disabled:opacity-50 flex items-center gap-2 inline-flex"
+                    className="px-6 py-2 bg-status-info hover:bg-status-info/90 rounded disabled:opacity-50 flex items-center gap-2 inline-flex"
                   >
                     {loading && (
                       <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
@@ -641,13 +641,13 @@ export default function WizardPage() {
           {currentStep === 'discover' && (
             <div>
               <h2 className="text-2xl font-bold mb-6">Discover Sensors</h2>
-              <p className="text-gray-400 mb-6">
+              <p className="text-hmi-muted mb-6">
                 Scan the RTU&apos;s I2C buses and 1-Wire interfaces to discover connected sensors.
               </p>
 
-              <div className="bg-gray-700 p-6 rounded-lg mb-6">
+              <div className="bg-hmi-panel border border-hmi-border p-6 rounded-lg mb-6">
                 <h3 className="font-semibold mb-4">Supported Sensors</h3>
-                <div className="grid grid-cols-2 gap-4 text-sm text-gray-300">
+                <div className="grid grid-cols-2 gap-4 text-sm text-hmi-muted">
                   <div>
                     <h4 className="text-blue-400 mb-2">I2C Devices</h4>
                     <ul className="space-y-1">
@@ -670,21 +670,21 @@ export default function WizardPage() {
               <div className="flex justify-between">
                 <button
                   onClick={prevStep}
-                  className="px-6 py-2 bg-gray-700 hover:bg-gray-600 rounded"
+                  className="px-6 py-2 bg-hmi-panel hover:bg-hmi-panel/80 rounded border border-hmi-border"
                 >
                   Back
                 </button>
                 <div className="space-x-4">
                   <button
                     onClick={skipStep}
-                    className="px-6 py-2 bg-gray-600 hover:bg-gray-500 rounded"
+                    className="px-6 py-2 bg-hmi-panel hover:bg-hmi-panel/80 rounded border border-hmi-border"
                   >
                     Configure Manually Later
                   </button>
                   <button
                     onClick={discoverSensors}
                     disabled={loading}
-                    className="px-6 py-2 bg-blue-600 hover:bg-blue-700 rounded disabled:opacity-50 inline-flex items-center gap-2"
+                    className="px-6 py-2 bg-status-info hover:bg-status-info/90 rounded disabled:opacity-50 inline-flex items-center gap-2"
                   >
                     {loading && (
                       <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
@@ -706,7 +706,7 @@ export default function WizardPage() {
 
               {discoveredSensors.length > 0 ? (
                 <>
-                  <p className="text-gray-400 mb-6">
+                  <p className="text-hmi-muted mb-6">
                     Found {discoveredSensors.length} sensor(s). Select which ones to configure:
                   </p>
 
@@ -717,7 +717,7 @@ export default function WizardPage() {
                         className={`p-4 rounded-lg border cursor-pointer transition-colors ${
                           selectedSensors.has(index)
                             ? 'bg-blue-900 border-blue-500'
-                            : 'bg-gray-700 border-gray-600 hover:border-gray-500'
+                            : 'bg-hmi-panel border-hmi-border hover:border-gray-500'
                         }`}
                         onClick={() => toggleSensor(index)}
                       >
@@ -731,13 +731,13 @@ export default function WizardPage() {
                             />
                             <div>
                               <div className="font-semibold">{sensor.name}</div>
-                              <div className="text-sm text-gray-400">
+                              <div className="text-sm text-hmi-muted">
                                 {sensor.bus_type.toUpperCase()} @ {sensor.address} | Type: {sensor.device_type}
                               </div>
                             </div>
                           </div>
                           <div className="text-right text-sm">
-                            <div className="text-gray-400">Suggested Slot</div>
+                            <div className="text-hmi-muted">Suggested Slot</div>
                             <div className="font-mono">{sensor.suggested_slot}</div>
                           </div>
                         </div>
@@ -745,7 +745,7 @@ export default function WizardPage() {
                     ))}
                   </div>
 
-                  <div className="bg-gray-700 p-4 rounded-lg mb-6">
+                  <div className="bg-hmi-panel border border-hmi-border p-4 rounded-lg mb-6">
                     <h3 className="font-semibold mb-3">Additional Options</h3>
                     <div className="space-y-3">
                       <label className="flex items-center space-x-3">
@@ -771,21 +771,21 @@ export default function WizardPage() {
                 </>
               ) : (
                 <div className="text-center py-8">
-                  <p className="text-gray-400 mb-4">No sensors discovered. You can configure sensors manually later.</p>
+                  <p className="text-hmi-muted mb-4">No sensors discovered. You can configure sensors manually later.</p>
                 </div>
               )}
 
               <div className="flex justify-between">
                 <button
                   onClick={prevStep}
-                  className="px-6 py-2 bg-gray-700 hover:bg-gray-600 rounded"
+                  className="px-6 py-2 bg-hmi-panel hover:bg-hmi-panel/80 rounded border border-hmi-border"
                 >
                   Back
                 </button>
                 <button
                   onClick={discoveredSensors.length > 0 && selectedSensors.size > 0 ? provisionSensors : nextStep}
                   disabled={loading}
-                  className="px-6 py-2 bg-blue-600 hover:bg-blue-700 rounded disabled:opacity-50"
+                  className="px-6 py-2 bg-status-info hover:bg-status-info/90 rounded disabled:opacity-50"
                 >
                   {loading ? 'Configuring...' : selectedSensors.size > 0 ? 'Configure Selected' : 'Continue'}
                 </button>
@@ -797,7 +797,7 @@ export default function WizardPage() {
           {currentStep === 'test' && (
             <div>
               <h2 className="text-2xl font-bold mb-6">Test RTU</h2>
-              <p className="text-gray-400 mb-6">
+              <p className="text-hmi-muted mb-6">
                 Run a functionality test to verify communication and actuator operation.
                 This will briefly blink all actuator outputs for visual verification.
               </p>
@@ -807,7 +807,7 @@ export default function WizardPage() {
                   <button
                     onClick={runTest}
                     disabled={loading}
-                    className="px-8 py-3 bg-green-600 hover:bg-green-700 rounded-lg font-semibold disabled:opacity-50"
+                    className="px-8 py-3 bg-status-ok hover:bg-status-ok/90 rounded-lg font-semibold disabled:opacity-50"
                   >
                     {loading ? 'Running Test...' : 'Run Test'}
                   </button>
@@ -835,7 +835,7 @@ export default function WizardPage() {
                       >
                         <div>
                           <span className="font-medium capitalize">{result.test}</span>
-                          <span className="text-gray-400 ml-2">- {result.detail}</span>
+                          <span className="text-hmi-muted ml-2">- {result.detail}</span>
                         </div>
                         <span className={`font-semibold ${
                           result.status === 'pass' ? 'text-green-400' :
@@ -850,7 +850,7 @@ export default function WizardPage() {
                   <button
                     onClick={runTest}
                     disabled={loading}
-                    className="mt-4 px-6 py-2 bg-gray-600 hover:bg-gray-500 rounded"
+                    className="mt-4 px-6 py-2 bg-hmi-panel hover:bg-hmi-panel/80 rounded border border-hmi-border"
                   >
                     Run Again
                   </button>
@@ -860,7 +860,7 @@ export default function WizardPage() {
               <div className="flex justify-between mt-8">
                 <button
                   onClick={prevStep}
-                  className="px-6 py-2 bg-gray-700 hover:bg-gray-600 rounded"
+                  className="px-6 py-2 bg-hmi-panel hover:bg-hmi-panel/80 rounded border border-hmi-border"
                 >
                   Back
                 </button>
@@ -868,14 +868,14 @@ export default function WizardPage() {
                   {!testResults && (
                     <button
                       onClick={skipStep}
-                      className="px-6 py-2 bg-gray-600 hover:bg-gray-500 rounded"
+                      className="px-6 py-2 bg-hmi-panel hover:bg-hmi-panel/80 rounded border border-hmi-border"
                     >
                       Skip Test
                     </button>
                   )}
                   <button
                     onClick={nextStep}
-                    className="px-6 py-2 bg-blue-600 hover:bg-blue-700 rounded"
+                    className="px-6 py-2 bg-status-info hover:bg-status-info/90 rounded"
                   >
                     {testResults ? 'Continue' : 'Finish Setup'}
                   </button>
@@ -887,19 +887,19 @@ export default function WizardPage() {
           {/* Complete Step */}
           {currentStep === 'complete' && (
             <div className="text-center">
-              <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-green-600 flex items-center justify-center">
+              <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-status-ok flex items-center justify-center">
                 <svg className="w-10 h-10 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                 </svg>
               </div>
               <h2 className="text-3xl font-bold mb-4">Setup Complete!</h2>
-              <p className="text-gray-400 mb-8">
+              <p className="text-hmi-muted mb-8">
                 Your RTU <strong>{rtuConfig.station_name}</strong> has been configured successfully.
               </p>
 
-              <div className="bg-gray-700 p-6 rounded-lg mb-8 text-left max-w-md mx-auto">
+              <div className="bg-hmi-panel border border-hmi-border p-6 rounded-lg mb-8 text-left max-w-md mx-auto">
                 <h3 className="font-semibold mb-4">Summary</h3>
-                <div className="space-y-2 text-gray-300">
+                <div className="space-y-2 text-hmi-muted">
                   <div className="flex justify-between">
                     <span>Station Name:</span>
                     <span className="font-mono">{rtuConfig.station_name}</span>
@@ -931,7 +931,7 @@ export default function WizardPage() {
                     clearWizardState();
                     router.push('/rtus');
                   }}
-                  className="px-6 py-2 bg-blue-600 hover:bg-blue-700 rounded"
+                  className="px-6 py-2 bg-status-info hover:bg-status-info/90 rounded"
                 >
                   Go to Dashboard
                 </button>
@@ -954,7 +954,7 @@ export default function WizardPage() {
                     setTestResults(null);
                     setError(null);
                   }}
-                  className="px-6 py-2 bg-gray-700 hover:bg-gray-600 rounded"
+                  className="px-6 py-2 bg-hmi-panel hover:bg-hmi-panel/80 rounded border border-hmi-border"
                 >
                   Add Another RTU
                 </button>
