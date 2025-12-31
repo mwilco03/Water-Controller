@@ -34,12 +34,12 @@ function TrendsLoading() {
   return (
     <div className="p-6">
       <div className="animate-pulse">
-        <div className="h-8 bg-slate-700 rounded w-48 mb-6"></div>
-        <div className="h-64 bg-slate-800 rounded mb-4"></div>
+        <div className="h-8 bg-hmi-panel rounded w-48 mb-6"></div>
+        <div className="h-64 bg-hmi-panel rounded mb-4"></div>
         <div className="grid grid-cols-3 gap-4">
-          <div className="h-20 bg-slate-800 rounded"></div>
-          <div className="h-20 bg-slate-800 rounded"></div>
-          <div className="h-20 bg-slate-800 rounded"></div>
+          <div className="h-20 bg-hmi-panel rounded"></div>
+          <div className="h-20 bg-hmi-panel rounded"></div>
+          <div className="h-20 bg-hmi-panel rounded"></div>
         </div>
       </div>
     </div>
@@ -263,8 +263,8 @@ function TrendsContent() {
     const height = canvas.height;
     const padding = { top: 20, right: 60, bottom: 40, left: 60 };
 
-    // Clear canvas
-    ctx.fillStyle = '#1a1a2e';
+    // Clear canvas - ISA-101 light background
+    ctx.fillStyle = '#F5F5F5';
     ctx.fillRect(0, 0, width, height);
 
     // Get all samples and find min/max
@@ -280,7 +280,7 @@ function TrendsContent() {
     });
 
     if (allSamples.length === 0) {
-      ctx.fillStyle = '#888';
+      ctx.fillStyle = '#212121';
       ctx.textAlign = 'center';
       ctx.font = '14px sans-serif';
       ctx.fillText('No data to display', width / 2, height / 2);
@@ -296,8 +296,8 @@ function TrendsContent() {
     const chartWidth = width - padding.left - padding.right;
     const chartHeight = height - padding.top - padding.bottom;
 
-    // Draw grid
-    ctx.strokeStyle = '#333';
+    // Draw grid - ISA-101 light grid lines
+    ctx.strokeStyle = '#E0E0E0';
     ctx.lineWidth = 1;
 
     // Horizontal grid lines
@@ -308,9 +308,9 @@ function TrendsContent() {
       ctx.lineTo(width - padding.right, y);
       ctx.stroke();
 
-      // Y-axis labels
+      // Y-axis labels - ISA-101 dark text
       const value = maxValue - (valueRange / 5) * i;
-      ctx.fillStyle = '#888';
+      ctx.fillStyle = '#212121';
       ctx.textAlign = 'right';
       ctx.font = '12px sans-serif';
       ctx.fillText(value.toFixed(2), padding.left - 10, y + 4);
@@ -324,7 +324,7 @@ function TrendsContent() {
     for (let i = 0; i <= 4; i++) {
       const x = padding.left + (chartWidth / 4) * i;
       const time = new Date(minTime + ((maxTime - minTime) / 4) * i);
-      ctx.fillStyle = '#888';
+      ctx.fillStyle = '#212121';
       ctx.textAlign = 'center';
       ctx.fillText(timeFormat.format(time), x, height - padding.bottom + 20);
     }
@@ -354,7 +354,7 @@ function TrendsContent() {
       ctx.stroke();
     });
 
-    // Draw legend
+    // Draw legend - ISA-101 dark text
     Object.entries(trendData).forEach(([tagId, _], index) => {
       const tag = tags.find((t) => t.tag_id === parseInt(tagId));
       if (!tag) return;
@@ -365,7 +365,7 @@ function TrendsContent() {
       ctx.fillStyle = colors[index % colors.length];
       ctx.fillRect(x, y, 20, 10);
 
-      ctx.fillStyle = '#ccc';
+      ctx.fillStyle = '#212121';
       ctx.textAlign = 'left';
       ctx.font = '12px sans-serif';
       ctx.fillText(tag.tag_name, x + 25, y + 9);
@@ -383,9 +383,9 @@ function TrendsContent() {
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
-        <h1 className="text-2xl font-bold text-white">Historical Trends</h1>
+        <h1 className="text-2xl font-bold text-hmi-text">Historical Trends</h1>
         <div className="flex items-center space-x-4">
-          <label className="flex items-center text-gray-300">
+          <label className="flex items-center text-hmi-muted">
             <input
               type="checkbox"
               checked={autoRefresh}
@@ -397,7 +397,7 @@ function TrendsContent() {
           <select
             value={timeRange}
             onChange={(e) => setTimeRange(e.target.value as any)}
-            className="px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white"
+            className="px-3 py-2 bg-hmi-panel border border-hmi-border rounded text-hmi-text"
           >
             <option value="1h">Last 1 Hour</option>
             <option value="6h">Last 6 Hours</option>
@@ -408,7 +408,7 @@ function TrendsContent() {
           <button
             onClick={fetchTrendData}
             disabled={loading || selectedTags.length === 0}
-            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded text-white disabled:opacity-50"
+            className="px-4 py-2 bg-status-info hover:bg-status-info rounded text-white disabled:opacity-50"
           >
             {loading ? 'Loading...' : 'Refresh'}
           </button>
@@ -435,10 +435,10 @@ function TrendsContent() {
                   className="fixed inset-0 z-40"
                   onClick={() => setShowExportMenu(false)}
                 />
-                <div className="absolute right-0 mt-2 w-48 bg-gray-800 rounded-lg shadow-xl border border-gray-700 py-2 z-50">
+                <div className="absolute right-0 mt-2 w-48 bg-hmi-panel rounded-lg shadow-xl border border-hmi-border py-2 z-50">
                   <button
                     onClick={() => handleExport('csv')}
-                    className="w-full px-4 py-2 text-left text-sm text-gray-300 hover:text-white hover:bg-gray-700 flex items-center gap-3"
+                    className="w-full px-4 py-2 text-left text-sm text-hmi-muted hover:text-hmi-text hover:bg-hmi-bg flex items-center gap-3"
                   >
                     <svg className="w-4 h-4 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
@@ -447,7 +447,7 @@ function TrendsContent() {
                   </button>
                   <button
                     onClick={() => handleExport('excel')}
-                    className="w-full px-4 py-2 text-left text-sm text-gray-300 hover:text-white hover:bg-gray-700 flex items-center gap-3"
+                    className="w-full px-4 py-2 text-left text-sm text-hmi-muted hover:text-hmi-text hover:bg-hmi-bg flex items-center gap-3"
                   >
                     <svg className="w-4 h-4 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2" />
@@ -456,7 +456,7 @@ function TrendsContent() {
                   </button>
                   <button
                     onClick={() => handleExport('json')}
-                    className="w-full px-4 py-2 text-left text-sm text-gray-300 hover:text-white hover:bg-gray-700 flex items-center gap-3"
+                    className="w-full px-4 py-2 text-left text-sm text-hmi-muted hover:text-hmi-text hover:bg-hmi-bg flex items-center gap-3"
                   >
                     <svg className="w-4 h-4 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
@@ -472,17 +472,17 @@ function TrendsContent() {
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
         {/* Tag Selection */}
-        <div className="lg:col-span-1 scada-panel p-4 max-h-[600px] overflow-y-auto">
-          <h2 className="text-lg font-semibold text-white mb-4">Available Tags</h2>
+        <div className="lg:col-span-1 hmi-card p-4 max-h-[600px] overflow-y-auto">
+          <h2 className="text-lg font-semibold text-hmi-text mb-4">Available Tags</h2>
 
           {Object.entries(groupedTags).map(([rtuStation, rtuTags]) => (
             <div key={rtuStation} className="mb-4">
-              <h3 className="text-sm font-medium text-gray-400 mb-2">{rtuStation}</h3>
+              <h3 className="text-sm font-medium text-hmi-muted mb-2">{rtuStation}</h3>
               <div className="space-y-1">
                 {rtuTags.map((tag) => (
                   <label
                     key={tag.tag_id}
-                    className="flex items-center p-2 rounded hover:bg-gray-800 cursor-pointer"
+                    className="flex items-center p-2 rounded hover:bg-hmi-panel cursor-pointer"
                   >
                     <input
                       type="checkbox"
@@ -491,8 +491,8 @@ function TrendsContent() {
                       className="mr-3"
                     />
                     <div>
-                      <div className="text-white text-sm">{tag.tag_name}</div>
-                      <div className="text-gray-500 text-xs">Slot {tag.slot}</div>
+                      <div className="text-hmi-text text-sm">{tag.tag_name}</div>
+                      <div className="text-hmi-muted text-xs">Slot {tag.slot}</div>
                     </div>
                   </label>
                 ))}
@@ -501,22 +501,22 @@ function TrendsContent() {
           ))}
 
           {tags.length === 0 && (
-            <p className="text-gray-400 text-sm">No historian tags configured</p>
+            <p className="text-hmi-muted text-sm">No historian tags configured</p>
           )}
         </div>
 
         {/* Chart */}
-        <div className="lg:col-span-3 scada-panel p-4">
-          <h2 className="text-lg font-semibold text-white mb-4">Trend Chart</h2>
+        <div className="lg:col-span-3 hmi-card p-4">
+          <h2 className="text-lg font-semibold text-hmi-text mb-4">Trend Chart</h2>
           <canvas
             ref={canvasRef}
             width={800}
             height={400}
-            className="w-full rounded bg-gray-900"
+            className="w-full rounded bg-hmi-bg"
           />
 
           {selectedTags.length === 0 && (
-            <div className="text-center text-gray-400 mt-4">
+            <div className="text-center text-hmi-muted mt-4">
               Select one or more tags from the left panel to view trends
             </div>
           )}
@@ -525,18 +525,18 @@ function TrendsContent() {
 
       {/* Data Table */}
       {selectedTags.length > 0 && Object.keys(trendData).length > 0 && (
-        <div className="scada-panel p-4">
-          <h2 className="text-lg font-semibold text-white mb-4">Recent Values</h2>
+        <div className="hmi-card p-4">
+          <h2 className="text-lg font-semibold text-hmi-text mb-4">Recent Values</h2>
           <div className="overflow-x-auto">
             <table className="w-full text-left">
               <thead>
-                <tr className="border-b border-gray-700">
-                  <th className="pb-2 text-gray-400">Tag</th>
-                  <th className="pb-2 text-gray-400">Current Value</th>
-                  <th className="pb-2 text-gray-400">Min</th>
-                  <th className="pb-2 text-gray-400">Max</th>
-                  <th className="pb-2 text-gray-400">Average</th>
-                  <th className="pb-2 text-gray-400">Samples</th>
+                <tr className="border-b border-hmi-border">
+                  <th className="pb-2 text-hmi-muted">Tag</th>
+                  <th className="pb-2 text-hmi-muted">Current Value</th>
+                  <th className="pb-2 text-hmi-muted">Min</th>
+                  <th className="pb-2 text-hmi-muted">Max</th>
+                  <th className="pb-2 text-hmi-muted">Average</th>
+                  <th className="pb-2 text-hmi-muted">Samples</th>
                 </tr>
               </thead>
               <tbody>
@@ -551,13 +551,13 @@ function TrendsContent() {
                   const current = samples[samples.length - 1]?.value;
 
                   return (
-                    <tr key={tagId} className="border-b border-gray-800">
-                      <td className="py-2 text-white">{tag.tag_name}</td>
+                    <tr key={tagId} className="border-b border-hmi-border">
+                      <td className="py-2 text-hmi-text">{tag.tag_name}</td>
                       <td className="py-2 text-green-400 font-mono">{current?.toFixed(3)}</td>
-                      <td className="py-2 text-gray-300 font-mono">{min.toFixed(3)}</td>
-                      <td className="py-2 text-gray-300 font-mono">{max.toFixed(3)}</td>
-                      <td className="py-2 text-gray-300 font-mono">{avg.toFixed(3)}</td>
-                      <td className="py-2 text-gray-400">{samples.length}</td>
+                      <td className="py-2 text-hmi-muted font-mono">{min.toFixed(3)}</td>
+                      <td className="py-2 text-hmi-muted font-mono">{max.toFixed(3)}</td>
+                      <td className="py-2 text-hmi-muted font-mono">{avg.toFixed(3)}</td>
+                      <td className="py-2 text-hmi-muted">{samples.length}</td>
                     </tr>
                   );
                 })}

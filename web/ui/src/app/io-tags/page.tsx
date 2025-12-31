@@ -255,12 +255,12 @@ export default function IOTagsPage() {
 
   const getSlotTypeBadge = (type: string) => {
     const colors: { [key: string]: string } = {
-      sensor: 'bg-blue-900 text-blue-300',
-      actuator: 'bg-green-900 text-green-300',
-      digital_in: 'bg-cyan-900 text-cyan-300',
-      digital_out: 'bg-purple-900 text-purple-300',
+      sensor: 'bg-status-info/10 text-status-info',
+      actuator: 'bg-status-ok/10 text-status-ok',
+      digital_in: 'bg-status-info/10 text-status-info',
+      digital_out: 'bg-status-info/10 text-status-info',
     };
-    return colors[type] || 'bg-gray-700 text-gray-300';
+    return colors[type] || 'bg-hmi-muted/10 text-hmi-muted';
   };
 
   const currentRtu = rtus.find((r) => r.station_name === selectedRtu);
@@ -268,15 +268,15 @@ export default function IOTagsPage() {
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
-        <h1 className="text-2xl font-bold text-white">I/O Configuration</h1>
+        <h1 className="text-2xl font-bold text-hmi-text">I/O Configuration</h1>
         <div className="flex space-x-2">
-          <label className="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded text-white cursor-pointer">
+          <label className="px-4 py-2 bg-hmi-panel hover:bg-hmi-border rounded text-hmi-text cursor-pointer">
             Import
             <input type="file" accept=".json" onChange={importConfig} className="hidden" />
           </label>
           <button
             onClick={exportConfig}
-            className="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded text-white"
+            className="px-4 py-2 bg-hmi-panel hover:bg-hmi-border rounded text-hmi-text"
           >
             Export
           </button>
@@ -287,7 +287,7 @@ export default function IOTagsPage() {
       {message && (
         <div
           className={`p-4 rounded-lg ${
-            message.type === 'success' ? 'bg-green-900 text-green-200' : 'bg-red-900 text-red-200'
+            message.type === 'success' ? 'bg-status-ok/10 text-status-ok' : 'bg-status-alarm/10 text-status-alarm'
           }`}
         >
           {message.text}
@@ -295,13 +295,13 @@ export default function IOTagsPage() {
       )}
 
       {/* RTU Selector */}
-      <div className="scada-panel p-4">
+      <div className="hmi-card p-4">
         <div className="flex items-center gap-4">
-          <label className="text-gray-300">Select RTU:</label>
+          <label className="text-hmi-muted">Select RTU:</label>
           <select
             value={selectedRtu}
             onChange={(e) => setSelectedRtu(e.target.value)}
-            className="px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white min-w-[200px]"
+            className="px-3 py-2 bg-white border border-hmi-border rounded text-hmi-text min-w-[200px]"
           >
             {rtus.map((rtu) => (
               <option key={rtu.station_name} value={rtu.station_name}>
@@ -312,7 +312,7 @@ export default function IOTagsPage() {
           <button
             onClick={autoDiscoverSlots}
             disabled={loading || !selectedRtu}
-            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded text-white disabled:opacity-50"
+            className="px-4 py-2 bg-status-info hover:bg-status-info/90 rounded text-white disabled:opacity-50"
           >
             {loading ? 'Discovering...' : 'Auto-Discover Slots'}
           </button>
@@ -320,7 +320,7 @@ export default function IOTagsPage() {
       </div>
 
       {/* Tabs */}
-      <div className="flex space-x-4 border-b border-gray-700">
+      <div className="flex space-x-4 border-b border-hmi-border">
         {[
           { id: 'slots', label: `Slot Configuration (${currentRtu?.slot_count || 0} slots)` },
           { id: 'historian', label: 'Historian Tags' },
@@ -330,8 +330,8 @@ export default function IOTagsPage() {
             onClick={() => setActiveTab(tab.id as 'slots' | 'historian')}
             className={`px-4 py-2 -mb-px ${
               activeTab === tab.id
-                ? 'border-b-2 border-blue-500 text-blue-400'
-                : 'text-gray-400 hover:text-white'
+                ? 'border-b-2 border-status-info text-status-info'
+                : 'text-hmi-muted hover:text-hmi-text'
             }`}
           >
             {tab.label}
@@ -341,10 +341,10 @@ export default function IOTagsPage() {
 
       {/* Slots Tab */}
       {activeTab === 'slots' && (
-        <div className="scada-panel p-6">
+        <div className="hmi-card p-6">
           <table className="w-full">
             <thead>
-              <tr className="text-left text-gray-400 text-sm border-b border-gray-700">
+              <tr className="text-left text-hmi-muted text-sm border-b border-hmi-border">
                 <th className="pb-3">Slot</th>
                 <th className="pb-3">Type</th>
                 <th className="pb-3">Name</th>
@@ -357,24 +357,24 @@ export default function IOTagsPage() {
             </thead>
             <tbody>
               {slotConfigs.map((slot) => (
-                <tr key={`${slot.rtu_station}-${slot.slot}`} className="border-b border-gray-800">
-                  <td className="py-3 font-mono text-white">{slot.slot}</td>
+                <tr key={`${slot.rtu_station}-${slot.slot}`} className="border-b border-hmi-border">
+                  <td className="py-3 font-mono text-hmi-text">{slot.slot}</td>
                   <td className="py-3">
                     <span className={`px-2 py-1 rounded text-xs ${getSlotTypeBadge(slot.slot_type)}`}>
                       {slot.slot_type}
                     </span>
                   </td>
-                  <td className="py-3 text-white">{slot.name || '-'}</td>
-                  <td className="py-3 text-gray-400">
+                  <td className="py-3 text-hmi-text">{slot.name || '-'}</td>
+                  <td className="py-3 text-hmi-muted">
                     {slot.measurement_type || slot.actuator_type || '-'}
                   </td>
-                  <td className="py-3 text-gray-400 font-mono text-sm">
+                  <td className="py-3 text-hmi-muted font-mono text-sm">
                     {slot.scale_min} - {slot.scale_max}
                   </td>
-                  <td className="py-3 text-gray-400">{slot.unit || '-'}</td>
-                  <td className="py-3 text-gray-400 text-sm">
+                  <td className="py-3 text-hmi-muted">{slot.unit || '-'}</td>
+                  <td className="py-3 text-hmi-muted text-sm">
                     {slot.alarm_low !== null || slot.alarm_high !== null ? (
-                      <span className="text-yellow-400">
+                      <span className="text-status-warning">
                         {slot.alarm_low !== null && `L:${slot.alarm_low}`}
                         {slot.alarm_low !== null && slot.alarm_high !== null && ' / '}
                         {slot.alarm_high !== null && `H:${slot.alarm_high}`}
@@ -386,7 +386,7 @@ export default function IOTagsPage() {
                   <td className="py-3 text-right">
                     <button
                       onClick={() => setShowEditModal(slot)}
-                      className="px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded text-sm text-white"
+                      className="px-3 py-1 bg-hmi-panel hover:bg-hmi-border rounded text-sm text-hmi-text"
                     >
                       Edit
                     </button>
@@ -397,7 +397,7 @@ export default function IOTagsPage() {
           </table>
 
           {slotConfigs.length === 0 && (
-            <p className="text-gray-400 text-center py-8">
+            <p className="text-hmi-muted text-center py-8">
               No slot configurations. Click &quot;Auto-Discover Slots&quot; to detect connected devices.
             </p>
           )}
@@ -406,9 +406,9 @@ export default function IOTagsPage() {
 
       {/* Historian Tab */}
       {activeTab === 'historian' && (
-        <div className="scada-panel p-6">
+        <div className="hmi-card p-6">
           <div className="flex justify-between items-center mb-4">
-            <h2 className="text-lg font-semibold text-white">Historian Tags</h2>
+            <h2 className="text-lg font-semibold text-hmi-text">Historian Tags</h2>
             <button
               onClick={() =>
                 setShowHistorianModal({
@@ -422,7 +422,7 @@ export default function IOTagsPage() {
                   compression: 'swinging_door',
                 })
               }
-              className="px-4 py-2 bg-green-600 hover:bg-green-700 rounded text-white"
+              className="px-4 py-2 bg-status-ok hover:bg-status-ok/90 rounded text-white"
             >
               + Add Tag
             </button>
@@ -430,7 +430,7 @@ export default function IOTagsPage() {
 
           <table className="w-full">
             <thead>
-              <tr className="text-left text-gray-400 text-sm border-b border-gray-700">
+              <tr className="text-left text-hmi-muted text-sm border-b border-hmi-border">
                 <th className="pb-3">Tag Name</th>
                 <th className="pb-3">RTU / Slot</th>
                 <th className="pb-3">Unit</th>
@@ -442,16 +442,16 @@ export default function IOTagsPage() {
             </thead>
             <tbody>
               {historianTags.map((tag) => (
-                <tr key={tag.id} className="border-b border-gray-800">
-                  <td className="py-3 text-white font-medium">{tag.tag_name}</td>
-                  <td className="py-3 text-gray-400">
+                <tr key={tag.id} className="border-b border-hmi-border">
+                  <td className="py-3 text-hmi-text font-medium">{tag.tag_name}</td>
+                  <td className="py-3 text-hmi-muted">
                     {tag.rtu_station} / Slot {tag.slot}
                   </td>
-                  <td className="py-3 text-gray-400">{tag.unit || '-'}</td>
-                  <td className="py-3 text-gray-400">{tag.sample_rate_ms}ms</td>
-                  <td className="py-3 text-gray-400">{tag.deadband}</td>
+                  <td className="py-3 text-hmi-muted">{tag.unit || '-'}</td>
+                  <td className="py-3 text-hmi-muted">{tag.sample_rate_ms}ms</td>
+                  <td className="py-3 text-hmi-muted">{tag.deadband}</td>
                   <td className="py-3">
-                    <span className="px-2 py-1 bg-gray-700 rounded text-xs text-gray-300">
+                    <span className="px-2 py-1 bg-hmi-muted/10 rounded text-xs text-hmi-muted">
                       {tag.compression}
                     </span>
                   </td>
@@ -459,13 +459,13 @@ export default function IOTagsPage() {
                     <div className="flex justify-end space-x-2">
                       <button
                         onClick={() => setShowHistorianModal(tag)}
-                        className="px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded text-sm text-white"
+                        className="px-3 py-1 bg-hmi-panel hover:bg-hmi-border rounded text-sm text-hmi-text"
                       >
                         Edit
                       </button>
                       <button
                         onClick={() => deleteHistorianTag(tag)}
-                        className="px-3 py-1 bg-red-600 hover:bg-red-700 rounded text-sm text-white"
+                        className="px-3 py-1 bg-status-alarm hover:bg-status-alarm/90 rounded text-sm text-white"
                       >
                         Delete
                       </button>
@@ -477,7 +477,7 @@ export default function IOTagsPage() {
           </table>
 
           {historianTags.length === 0 && (
-            <p className="text-gray-400 text-center py-8">
+            <p className="text-hmi-muted text-center py-8">
               No historian tags configured. Add tags to start collecting historical data.
             </p>
           )}
@@ -487,29 +487,29 @@ export default function IOTagsPage() {
       {/* Edit Slot Modal */}
       {showEditModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 overflow-y-auto py-8">
-          <div className="bg-gray-900 p-6 rounded-lg w-full max-w-2xl">
-            <h2 className="text-xl font-semibold text-white mb-4">
+          <div className="bg-white p-6 rounded-lg w-full max-w-2xl">
+            <h2 className="text-xl font-semibold text-hmi-text mb-4">
               Edit Slot {showEditModal.slot} - {showEditModal.rtu_station}
             </h2>
 
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="block text-sm text-gray-300 mb-1">Name</label>
+                <label className="block text-sm text-hmi-muted mb-1">Name</label>
                 <input
                   type="text"
                   value={showEditModal.name || ''}
                   onChange={(e) => setShowEditModal({ ...showEditModal, name: e.target.value })}
                   placeholder="e.g., Tank_1_Level"
-                  className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white"
+                  className="w-full px-3 py-2 bg-white border border-hmi-border rounded text-hmi-text"
                 />
               </div>
 
               <div>
-                <label className="block text-sm text-gray-300 mb-1">Type</label>
+                <label className="block text-sm text-hmi-muted mb-1">Type</label>
                 <select
                   value={showEditModal.slot_type}
                   onChange={(e) => setShowEditModal({ ...showEditModal, slot_type: e.target.value })}
-                  className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white"
+                  className="w-full px-3 py-2 bg-white border border-hmi-border rounded text-hmi-text"
                 >
                   <option value="sensor">Sensor (Analog Input)</option>
                   <option value="actuator">Actuator (Analog Output)</option>
@@ -519,11 +519,11 @@ export default function IOTagsPage() {
               </div>
 
               <div>
-                <label className="block text-sm text-gray-300 mb-1">Measurement Type</label>
+                <label className="block text-sm text-hmi-muted mb-1">Measurement Type</label>
                 <select
                   value={showEditModal.measurement_type || ''}
                   onChange={(e) => setShowEditModal({ ...showEditModal, measurement_type: e.target.value })}
-                  className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white"
+                  className="w-full px-3 py-2 bg-white border border-hmi-border rounded text-hmi-text"
                 >
                   <option value="">Select...</option>
                   <option value="pH">pH</option>
@@ -541,42 +541,42 @@ export default function IOTagsPage() {
               </div>
 
               <div>
-                <label className="block text-sm text-gray-300 mb-1">Unit</label>
+                <label className="block text-sm text-hmi-muted mb-1">Unit</label>
                 <input
                   type="text"
                   value={showEditModal.unit || ''}
                   onChange={(e) => setShowEditModal({ ...showEditModal, unit: e.target.value })}
                   placeholder="e.g., pH, degC, ppm"
-                  className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white"
+                  className="w-full px-3 py-2 bg-white border border-hmi-border rounded text-hmi-text"
                 />
               </div>
 
               <div>
-                <label className="block text-sm text-gray-300 mb-1">Scale Min</label>
+                <label className="block text-sm text-hmi-muted mb-1">Scale Min</label>
                 <input
                   type="number"
                   value={showEditModal.scale_min}
                   onChange={(e) =>
                     setShowEditModal({ ...showEditModal, scale_min: parseFloat(e.target.value) })
                   }
-                  className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white"
+                  className="w-full px-3 py-2 bg-white border border-hmi-border rounded text-hmi-text"
                 />
               </div>
 
               <div>
-                <label className="block text-sm text-gray-300 mb-1">Scale Max</label>
+                <label className="block text-sm text-hmi-muted mb-1">Scale Max</label>
                 <input
                   type="number"
                   value={showEditModal.scale_max}
                   onChange={(e) =>
                     setShowEditModal({ ...showEditModal, scale_max: parseFloat(e.target.value) })
                   }
-                  className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white"
+                  className="w-full px-3 py-2 bg-white border border-hmi-border rounded text-hmi-text"
                 />
               </div>
 
               <div>
-                <label className="block text-sm text-gray-300 mb-1">Alarm Low</label>
+                <label className="block text-sm text-hmi-muted mb-1">Alarm Low</label>
                 <input
                   type="number"
                   value={showEditModal.alarm_low ?? ''}
@@ -587,12 +587,12 @@ export default function IOTagsPage() {
                     })
                   }
                   placeholder="Optional"
-                  className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white"
+                  className="w-full px-3 py-2 bg-white border border-hmi-border rounded text-hmi-text"
                 />
               </div>
 
               <div>
-                <label className="block text-sm text-gray-300 mb-1">Alarm High</label>
+                <label className="block text-sm text-hmi-muted mb-1">Alarm High</label>
                 <input
                   type="number"
                   value={showEditModal.alarm_high ?? ''}
@@ -603,12 +603,12 @@ export default function IOTagsPage() {
                     })
                   }
                   placeholder="Optional"
-                  className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white"
+                  className="w-full px-3 py-2 bg-white border border-hmi-border rounded text-hmi-text"
                 />
               </div>
 
               <div>
-                <label className="block text-sm text-gray-300 mb-1">Alarm Low-Low (Critical)</label>
+                <label className="block text-sm text-hmi-muted mb-1">Alarm Low-Low (Critical)</label>
                 <input
                   type="number"
                   value={showEditModal.alarm_low_low ?? ''}
@@ -619,12 +619,12 @@ export default function IOTagsPage() {
                     })
                   }
                   placeholder="Optional"
-                  className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white"
+                  className="w-full px-3 py-2 bg-white border border-hmi-border rounded text-hmi-text"
                 />
               </div>
 
               <div>
-                <label className="block text-sm text-gray-300 mb-1">Alarm High-High (Critical)</label>
+                <label className="block text-sm text-hmi-muted mb-1">Alarm High-High (Critical)</label>
                 <input
                   type="number"
                   value={showEditModal.alarm_high_high ?? ''}
@@ -635,12 +635,12 @@ export default function IOTagsPage() {
                     })
                   }
                   placeholder="Optional"
-                  className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white"
+                  className="w-full px-3 py-2 bg-white border border-hmi-border rounded text-hmi-text"
                 />
               </div>
 
               <div>
-                <label className="block text-sm text-gray-300 mb-1">Deadband</label>
+                <label className="block text-sm text-hmi-muted mb-1">Deadband</label>
                 <input
                   type="number"
                   step="0.01"
@@ -648,7 +648,7 @@ export default function IOTagsPage() {
                   onChange={(e) =>
                     setShowEditModal({ ...showEditModal, deadband: parseFloat(e.target.value) })
                   }
-                  className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white"
+                  className="w-full px-3 py-2 bg-white border border-hmi-border rounded text-hmi-text"
                 />
               </div>
 
@@ -659,7 +659,7 @@ export default function IOTagsPage() {
                   checked={showEditModal.enabled}
                   onChange={(e) => setShowEditModal({ ...showEditModal, enabled: e.target.checked })}
                 />
-                <label htmlFor="slotEnabled" className="ml-2 text-sm text-gray-300">
+                <label htmlFor="slotEnabled" className="ml-2 text-sm text-hmi-muted">
                   Slot Enabled
                 </label>
               </div>
@@ -668,14 +668,14 @@ export default function IOTagsPage() {
             <div className="flex justify-end space-x-3 mt-6">
               <button
                 onClick={() => setShowEditModal(null)}
-                className="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded text-white"
+                className="px-4 py-2 bg-hmi-panel hover:bg-hmi-border rounded text-hmi-text"
               >
                 Cancel
               </button>
               <button
                 onClick={saveSlotConfig}
                 disabled={loading}
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded text-white disabled:opacity-50"
+                className="px-4 py-2 bg-status-info hover:bg-status-info/90 rounded text-white disabled:opacity-50"
               >
                 {loading ? 'Saving...' : 'Save Changes'}
               </button>
@@ -687,14 +687,14 @@ export default function IOTagsPage() {
       {/* Historian Tag Modal */}
       {showHistorianModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-gray-900 p-6 rounded-lg w-full max-w-md">
-            <h2 className="text-xl font-semibold text-white mb-4">
+          <div className="bg-white p-6 rounded-lg w-full max-w-md">
+            <h2 className="text-xl font-semibold text-hmi-text mb-4">
               {showHistorianModal.id ? 'Edit' : 'Add'} Historian Tag
             </h2>
 
             <div className="space-y-4">
               <div>
-                <label className="block text-sm text-gray-300 mb-1">Tag Name</label>
+                <label className="block text-sm text-hmi-muted mb-1">Tag Name</label>
                 <input
                   type="text"
                   value={showHistorianModal.tag_name}
@@ -702,19 +702,19 @@ export default function IOTagsPage() {
                     setShowHistorianModal({ ...showHistorianModal, tag_name: e.target.value })
                   }
                   placeholder="e.g., TANK1_LEVEL"
-                  className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white"
+                  className="w-full px-3 py-2 bg-white border border-hmi-border rounded text-hmi-text"
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm text-gray-300 mb-1">RTU</label>
+                  <label className="block text-sm text-hmi-muted mb-1">RTU</label>
                   <select
                     value={showHistorianModal.rtu_station}
                     onChange={(e) =>
                       setShowHistorianModal({ ...showHistorianModal, rtu_station: e.target.value })
                     }
-                    className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white"
+                    className="w-full px-3 py-2 bg-white border border-hmi-border rounded text-hmi-text"
                   >
                     {rtus.map((rtu) => (
                       <option key={rtu.station_name} value={rtu.station_name}>
@@ -725,7 +725,7 @@ export default function IOTagsPage() {
                 </div>
 
                 <div>
-                  <label className="block text-sm text-gray-300 mb-1">Slot</label>
+                  <label className="block text-sm text-hmi-muted mb-1">Slot</label>
                   <input
                     type="number"
                     min="1"
@@ -733,13 +733,13 @@ export default function IOTagsPage() {
                     onChange={(e) =>
                       setShowHistorianModal({ ...showHistorianModal, slot: parseInt(e.target.value) })
                     }
-                    className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white"
+                    className="w-full px-3 py-2 bg-white border border-hmi-border rounded text-hmi-text"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="block text-sm text-gray-300 mb-1">Unit</label>
+                <label className="block text-sm text-hmi-muted mb-1">Unit</label>
                 <input
                   type="text"
                   value={showHistorianModal.unit || ''}
@@ -747,13 +747,13 @@ export default function IOTagsPage() {
                     setShowHistorianModal({ ...showHistorianModal, unit: e.target.value })
                   }
                   placeholder="e.g., pH, degC, ppm"
-                  className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white"
+                  className="w-full px-3 py-2 bg-white border border-hmi-border rounded text-hmi-text"
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm text-gray-300 mb-1">Sample Rate (ms)</label>
+                  <label className="block text-sm text-hmi-muted mb-1">Sample Rate (ms)</label>
                   <input
                     type="number"
                     min="100"
@@ -765,12 +765,12 @@ export default function IOTagsPage() {
                         sample_rate_ms: parseInt(e.target.value),
                       })
                     }
-                    className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white"
+                    className="w-full px-3 py-2 bg-white border border-hmi-border rounded text-hmi-text"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-sm text-gray-300 mb-1">Deadband</label>
+                  <label className="block text-sm text-hmi-muted mb-1">Deadband</label>
                   <input
                     type="number"
                     step="0.01"
@@ -781,19 +781,19 @@ export default function IOTagsPage() {
                         deadband: parseFloat(e.target.value),
                       })
                     }
-                    className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white"
+                    className="w-full px-3 py-2 bg-white border border-hmi-border rounded text-hmi-text"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="block text-sm text-gray-300 mb-1">Compression Algorithm</label>
+                <label className="block text-sm text-hmi-muted mb-1">Compression Algorithm</label>
                 <select
                   value={showHistorianModal.compression}
                   onChange={(e) =>
                     setShowHistorianModal({ ...showHistorianModal, compression: e.target.value })
                   }
-                  className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white"
+                  className="w-full px-3 py-2 bg-white border border-hmi-border rounded text-hmi-text"
                 >
                   <option value="none">None (Store All)</option>
                   <option value="deadband">Deadband</option>
@@ -806,14 +806,14 @@ export default function IOTagsPage() {
             <div className="flex justify-end space-x-3 mt-6">
               <button
                 onClick={() => setShowHistorianModal(null)}
-                className="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded text-white"
+                className="px-4 py-2 bg-hmi-panel hover:bg-hmi-border rounded text-hmi-text"
               >
                 Cancel
               </button>
               <button
                 onClick={saveHistorianTag}
                 disabled={loading}
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded text-white disabled:opacity-50"
+                className="px-4 py-2 bg-status-info hover:bg-status-info/90 rounded text-white disabled:opacity-50"
               >
                 {loading ? 'Saving...' : 'Save'}
               </button>

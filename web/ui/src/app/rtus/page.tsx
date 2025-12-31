@@ -192,24 +192,24 @@ export default function RTUsPage() {
   const getStateColor = (state: string) => {
     switch (state) {
       case 'RUNNING':
-        return 'text-green-400';
+        return 'text-status-ok';
       case 'CONNECTING':
-        return 'text-yellow-400';
+        return 'text-status-warning';
       case 'ERROR':
-        return 'text-red-400';
+        return 'text-status-alarm';
       default:
-        return 'text-gray-400';
+        return 'text-hmi-muted';
     }
   };
 
   const getStateBadge = (state: string) => {
     const colors: { [key: string]: string } = {
-      RUNNING: 'bg-green-900 text-green-300',
-      CONNECTING: 'bg-yellow-900 text-yellow-300',
-      ERROR: 'bg-red-900 text-red-300',
-      OFFLINE: 'bg-gray-700 text-gray-300',
+      RUNNING: 'bg-status-ok/10 text-status-ok',
+      CONNECTING: 'bg-status-warning/10 text-status-warning',
+      ERROR: 'bg-status-alarm/10 text-status-alarm',
+      OFFLINE: 'bg-hmi-panel text-hmi-muted',
     };
-    return colors[state] || 'bg-gray-700 text-gray-300';
+    return colors[state] || 'bg-hmi-panel text-hmi-muted';
   };
 
   // Handle device selection from discovery panel
@@ -232,14 +232,14 @@ export default function RTUsPage() {
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
-        <h1 className="text-2xl font-bold text-white">RTU Management</h1>
+        <h1 className="text-2xl font-bold text-hmi-text">RTU Management</h1>
         <div className="flex gap-3">
           <button
             onClick={() => setShowDiscovery(!showDiscovery)}
             className={`px-4 py-2 rounded text-white transition-colors ${
               showDiscovery
-                ? 'bg-blue-600 hover:bg-blue-700'
-                : 'bg-gray-600 hover:bg-gray-500'
+                ? 'bg-status-info hover:bg-status-info/90'
+                : 'bg-hmi-panel hover:bg-hmi-panel/90'
             }`}
           >
             {showDiscovery ? 'Hide Discovery' : 'Scan Network'}
@@ -252,7 +252,7 @@ export default function RTUsPage() {
           </Link>
           <button
             onClick={handleOpenAddModal}
-            className="px-4 py-2 bg-green-600 hover:bg-green-700 rounded text-white flex items-center gap-2"
+            className="px-4 py-2 bg-status-ok hover:bg-status-ok/90 rounded text-white flex items-center gap-2"
           >
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
@@ -264,7 +264,7 @@ export default function RTUsPage() {
 
       {/* Discovery Panel */}
       {showDiscovery && (
-        <div className="scada-panel p-4">
+        <div className="hmi-card p-4">
           <DiscoveryPanel onDeviceSelect={handleDiscoveredDeviceSelect} />
         </div>
       )}
@@ -272,15 +272,15 @@ export default function RTUsPage() {
       {/* RTU Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* RTU List */}
-        <div className="lg:col-span-1 scada-panel p-4">
-          <h2 className="text-lg font-semibold text-white mb-4">Registered RTUs</h2>
+        <div className="lg:col-span-1 hmi-card p-4">
+          <h2 className="text-lg font-semibold text-hmi-text mb-4">Registered RTUs</h2>
 
           {rtus.length === 0 ? (
             <div className="text-center py-8">
-              <p className="text-gray-400 mb-4">No RTUs registered</p>
+              <p className="text-hmi-muted mb-4">No RTUs registered</p>
               <button
                 onClick={handleOpenAddModal}
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded text-white text-sm"
+                className="px-4 py-2 bg-status-info hover:bg-status-info/90 rounded text-white text-sm"
               >
                 Add Your First RTU
               </button>
@@ -293,15 +293,15 @@ export default function RTUsPage() {
                   onClick={() => setSelectedRtu(rtu)}
                   className={`p-3 rounded cursor-pointer transition-all ${
                     selectedRtu?.station_name === rtu.station_name
-                      ? 'bg-blue-900/50 border border-blue-500'
-                      : 'bg-gray-800 hover:bg-gray-700 border border-transparent'
+                      ? 'bg-status-info/10 border border-status-info'
+                      : 'bg-hmi-panel hover:bg-hmi-panel/90 border border-transparent'
                   }`}
                 >
                   <div className="flex justify-between items-center">
                     <div className="min-w-0 flex-1">
-                      <div className="font-medium text-white truncate">{rtu.station_name}</div>
+                      <div className="font-medium text-hmi-text truncate">{rtu.station_name}</div>
                       <div className="flex items-center gap-2 mt-1">
-                        <span className="text-sm text-gray-400">{rtu.ip_address}</span>
+                        <span className="text-sm text-hmi-muted">{rtu.ip_address}</span>
                         {rtu.last_seen && (
                           <StaleIndicator
                             lastUpdated={rtu.last_seen}
@@ -320,13 +320,13 @@ export default function RTUsPage() {
         </div>
 
         {/* RTU Details */}
-        <div className="lg:col-span-2 scada-panel p-4">
+        <div className="lg:col-span-2 hmi-card p-4">
           {selectedRtu ? (
             <div className="space-y-6">
               <div className="flex justify-between items-start">
                 <div>
-                  <h2 className="text-xl font-semibold text-white">{selectedRtu.station_name}</h2>
-                  <p className="text-gray-400">{selectedRtu.ip_address}</p>
+                  <h2 className="text-xl font-semibold text-hmi-text">{selectedRtu.station_name}</h2>
+                  <p className="text-hmi-muted">{selectedRtu.ip_address}</p>
                 </div>
                 <div className="flex items-center space-x-2">
                   <RtuStateBadge state={selectedRtu.connection_state} size="md" />
@@ -334,7 +334,7 @@ export default function RTUsPage() {
                     <button
                       onClick={() => connectRtu(selectedRtu.station_name)}
                       disabled={actionLoading === `connect-${selectedRtu.station_name}`}
-                      className="px-3 py-1.5 bg-green-600 hover:bg-green-500 rounded text-sm text-white flex items-center gap-1.5 disabled:opacity-50"
+                      className="px-3 py-1.5 bg-status-ok hover:bg-status-ok/90 rounded text-sm text-white flex items-center gap-1.5 disabled:opacity-50"
                     >
                       {actionLoading === `connect-${selectedRtu.station_name}` && (
                         <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24">
@@ -348,7 +348,7 @@ export default function RTUsPage() {
                     <button
                       onClick={() => disconnectRtu(selectedRtu.station_name)}
                       disabled={actionLoading === `disconnect-${selectedRtu.station_name}`}
-                      className="px-3 py-1.5 bg-amber-600 hover:bg-amber-500 rounded text-sm text-white flex items-center gap-1.5 disabled:opacity-50"
+                      className="px-3 py-1.5 bg-status-warning hover:bg-status-warning/90 rounded text-sm text-white flex items-center gap-1.5 disabled:opacity-50"
                     >
                       {actionLoading === `disconnect-${selectedRtu.station_name}` && (
                         <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24">
@@ -361,7 +361,7 @@ export default function RTUsPage() {
                   )}
                   <button
                     onClick={() => setShowDeleteModal(selectedRtu.station_name)}
-                    className="px-3 py-1.5 bg-red-600 hover:bg-red-500 rounded text-sm text-white"
+                    className="px-3 py-1.5 bg-status-alarm hover:bg-status-alarm/90 rounded text-sm text-white"
                   >
                     Delete
                   </button>
@@ -370,20 +370,20 @@ export default function RTUsPage() {
 
               {/* Device Info */}
               <div className="grid grid-cols-2 gap-4">
-                <div className="bg-gray-800 p-4 rounded">
-                  <div className="text-sm text-gray-400">Vendor ID</div>
-                  <div className="text-white font-mono">0x{selectedRtu.vendor_id.toString(16).padStart(4, '0')}</div>
+                <div className="bg-hmi-panel p-4 rounded">
+                  <div className="text-sm text-hmi-muted">Vendor ID</div>
+                  <div className="text-hmi-text font-mono">0x{selectedRtu.vendor_id.toString(16).padStart(4, '0')}</div>
                 </div>
-                <div className="bg-gray-800 p-4 rounded">
-                  <div className="text-sm text-gray-400">Device ID</div>
-                  <div className="text-white font-mono">0x{selectedRtu.device_id.toString(16).padStart(4, '0')}</div>
+                <div className="bg-hmi-panel p-4 rounded">
+                  <div className="text-sm text-hmi-muted">Device ID</div>
+                  <div className="text-hmi-text font-mono">0x{selectedRtu.device_id.toString(16).padStart(4, '0')}</div>
                 </div>
-                <div className="bg-gray-800 p-4 rounded">
-                  <div className="text-sm text-gray-400">Slot Count</div>
-                  <div className="text-white">{selectedRtu.slot_count}</div>
+                <div className="bg-hmi-panel p-4 rounded">
+                  <div className="text-sm text-hmi-muted">Slot Count</div>
+                  <div className="text-hmi-text">{selectedRtu.slot_count}</div>
                 </div>
-                <div className="bg-gray-800 p-4 rounded">
-                  <div className="text-sm text-gray-400">Connection State</div>
+                <div className="bg-hmi-panel p-4 rounded">
+                  <div className="text-sm text-hmi-muted">Connection State</div>
                   <div className={getStateColor(selectedRtu.connection_state)}>
                     {selectedRtu.connection_state}
                   </div>
@@ -392,24 +392,24 @@ export default function RTUsPage() {
 
               {/* Health Info */}
               {rtuHealth[selectedRtu.station_name] && (
-                <div className="bg-gray-800 p-4 rounded">
-                  <h3 className="font-medium text-white mb-3">Health Status</h3>
+                <div className="bg-hmi-panel p-4 rounded">
+                  <h3 className="font-medium text-hmi-text mb-3">Health Status</h3>
                   <div className="grid grid-cols-3 gap-4">
                     <div>
-                      <div className="text-sm text-gray-400">Healthy</div>
-                      <div className={rtuHealth[selectedRtu.station_name].healthy ? 'text-green-400' : 'text-red-400'}>
+                      <div className="text-sm text-hmi-muted">Healthy</div>
+                      <div className={rtuHealth[selectedRtu.station_name].healthy ? 'text-status-ok' : 'text-status-alarm'}>
                         {rtuHealth[selectedRtu.station_name].healthy ? 'Yes' : 'No'}
                       </div>
                     </div>
                     <div>
-                      <div className="text-sm text-gray-400">Packet Loss</div>
-                      <div className="text-white">
+                      <div className="text-sm text-hmi-muted">Packet Loss</div>
+                      <div className="text-hmi-text">
                         {rtuHealth[selectedRtu.station_name].packet_loss_percent.toFixed(1)}%
                       </div>
                     </div>
                     <div>
-                      <div className="text-sm text-gray-400">In Failover</div>
-                      <div className={rtuHealth[selectedRtu.station_name].in_failover ? 'text-yellow-400' : 'text-gray-400'}>
+                      <div className="text-sm text-hmi-muted">In Failover</div>
+                      <div className={rtuHealth[selectedRtu.station_name].in_failover ? 'text-status-warning' : 'text-hmi-muted'}>
                         {rtuHealth[selectedRtu.station_name].in_failover ? 'Yes' : 'No'}
                       </div>
                     </div>
@@ -421,20 +421,20 @@ export default function RTUsPage() {
               <div className="flex flex-wrap gap-3">
                 <Link
                   href={`/rtus/${selectedRtu.station_name}`}
-                  className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 rounded text-sm text-white transition-colors"
+                  className="px-3 py-1.5 bg-status-info hover:bg-status-info/90 rounded text-sm text-white transition-colors"
                 >
                   Full Details
                 </Link>
                 <Link
                   href={`/trends?rtu=${selectedRtu.station_name}`}
-                  className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded text-sm text-white transition-colors"
+                  className="px-3 py-1.5 bg-hmi-panel hover:bg-hmi-panel/90 rounded text-sm text-hmi-text transition-colors"
                 >
                   View Trends
                 </Link>
               </div>
             </div>
           ) : (
-            <div className="flex items-center justify-center h-64 text-gray-400">
+            <div className="flex items-center justify-center h-64 text-hmi-muted">
               Select an RTU to view details
             </div>
           )}

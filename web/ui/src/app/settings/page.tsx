@@ -370,25 +370,25 @@ export default function SettingsPage() {
   const getServiceStatusClass = (status: string) => {
     switch (status) {
       case 'active':
-        return 'text-green-400';
+        return 'text-status-ok';
       case 'inactive':
-        return 'text-gray-400';
+        return 'text-hmi-muted';
       case 'failed':
-        return 'text-red-400';
+        return 'text-status-alarm';
       default:
-        return 'text-yellow-400';
+        return 'text-status-warning';
     }
   };
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold text-white">Settings</h1>
+      <h1 className="text-2xl font-bold text-hmi-text">Settings</h1>
 
       {/* Message Banner */}
       {message && (
         <div
           className={`p-4 rounded-lg ${
-            message.type === 'success' ? 'bg-green-900 text-green-200' : 'bg-red-900 text-red-200'
+            message.type === 'success' ? 'bg-status-ok text-white' : 'bg-status-alarm text-white'
           }`}
         >
           {message.text}
@@ -396,7 +396,7 @@ export default function SettingsPage() {
       )}
 
       {/* Tabs */}
-      <div className="flex space-x-4 border-b border-gray-700">
+      <div className="flex space-x-4 border-b border-hmi-border">
         {[
           { id: 'general', label: 'General' },
           { id: 'backup', label: 'Backup & Restore' },
@@ -409,8 +409,8 @@ export default function SettingsPage() {
             onClick={() => setActiveTab(tab.id as any)}
             className={`px-4 py-2 -mb-px ${
               activeTab === tab.id
-                ? 'border-b-2 border-blue-500 text-blue-400'
-                : 'text-gray-400 hover:text-white'
+                ? 'border-b-2 border-status-info text-status-info'
+                : 'text-hmi-muted hover:text-hmi-text'
             }`}
           >
             {tab.label}
@@ -420,29 +420,29 @@ export default function SettingsPage() {
 
       {/* General Tab */}
       {activeTab === 'general' && (
-        <div className="scada-panel p-6 space-y-6">
-          <h2 className="text-lg font-semibold text-white">Configuration Import/Export</h2>
+        <div className="hmi-card p-6 space-y-6">
+          <h2 className="text-lg font-semibold text-hmi-text">Configuration Import/Export</h2>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="space-y-4">
-              <h3 className="text-sm font-medium text-gray-300">Export Configuration</h3>
-              <p className="text-sm text-gray-400">
+              <h3 className="text-sm font-medium text-hmi-text">Export Configuration</h3>
+              <p className="text-sm text-hmi-muted">
                 Download the current system configuration as a JSON file.
               </p>
               <button
                 onClick={exportConfig}
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded text-white"
+                className="px-4 py-2 bg-status-info hover:bg-status-info/80 rounded text-white"
               >
                 Export Configuration
               </button>
             </div>
 
             <div className="space-y-4">
-              <h3 className="text-sm font-medium text-gray-300">Import Configuration</h3>
-              <p className="text-sm text-gray-400">
+              <h3 className="text-sm font-medium text-hmi-text">Import Configuration</h3>
+              <p className="text-sm text-hmi-muted">
                 Upload a configuration file to restore settings.
               </p>
-              <label className="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded text-white cursor-pointer inline-block">
+              <label className="px-4 py-2 bg-hmi-panel hover:bg-hmi-panel/80 rounded text-hmi-text cursor-pointer inline-block">
                 Import Configuration
                 <input
                   type="file"
@@ -460,29 +460,29 @@ export default function SettingsPage() {
       {activeTab === 'backup' && (
         <div className="space-y-6">
           {/* Create Backup */}
-          <div className="scada-panel p-6">
-            <h2 className="text-lg font-semibold text-white mb-4">Create Backup</h2>
-            <p className="text-sm text-gray-400 mb-4">
+          <div className="hmi-card p-6">
+            <h2 className="text-lg font-semibold text-hmi-text mb-4">Create Backup</h2>
+            <p className="text-sm text-hmi-muted mb-4">
               Create a backup of the current configuration. The backup will be downloaded
               as a ZIP file containing database and configuration files.
             </p>
             <button
               onClick={createBackup}
               disabled={loading}
-              className="px-4 py-2 bg-green-600 hover:bg-green-700 rounded text-white disabled:opacity-50"
+              className="px-4 py-2 bg-status-ok hover:bg-status-ok/80 rounded text-white disabled:opacity-50"
             >
               {loading ? 'Creating...' : 'Download Backup'}
             </button>
           </div>
 
           {/* Restore from File */}
-          <div className="scada-panel p-6">
-            <h2 className="text-lg font-semibold text-white mb-4">Restore from Backup</h2>
-            <p className="text-sm text-gray-400 mb-4">
+          <div className="hmi-card p-6">
+            <h2 className="text-lg font-semibold text-hmi-text mb-4">Restore from Backup</h2>
+            <p className="text-sm text-hmi-muted mb-4">
               Select a backup file (.zip) to restore the configuration.
               This will overwrite the current configuration.
             </p>
-            <label className="inline-block px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded text-white cursor-pointer">
+            <label className="inline-block px-4 py-2 bg-status-info hover:bg-status-info/80 rounded text-white cursor-pointer">
               <input
                 type="file"
                 accept=".zip"
@@ -500,12 +500,12 @@ export default function SettingsPage() {
       {activeTab === 'modbus' && modbusConfig && (
         <div className="space-y-6">
           {/* Server Configuration */}
-          <div className="scada-panel p-6">
+          <div className="hmi-card p-6">
             <div className="flex justify-between items-center mb-4">
-              <h2 className="text-lg font-semibold text-white">Modbus Server Configuration</h2>
+              <h2 className="text-lg font-semibold text-hmi-text">Modbus Server Configuration</h2>
               <button
                 onClick={restartModbus}
-                className="px-3 py-1 bg-yellow-600 hover:bg-yellow-700 rounded text-sm text-white"
+                className="px-3 py-1 bg-status-warning hover:bg-status-warning/80 rounded text-sm text-white"
               >
                 Restart Gateway
               </button>
@@ -514,7 +514,7 @@ export default function SettingsPage() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               {/* TCP Settings */}
               <div className="space-y-4">
-                <h3 className="font-medium text-gray-300">TCP Server</h3>
+                <h3 className="font-medium text-hmi-text">TCP Server</h3>
 
                 <div className="flex items-center space-x-2">
                   <input
@@ -525,39 +525,39 @@ export default function SettingsPage() {
                       setModbusConfig({ ...modbusConfig, tcp_enabled: e.target.checked })
                     }
                   />
-                  <label htmlFor="tcpEnabled" className="text-sm text-gray-300">
+                  <label htmlFor="tcpEnabled" className="text-sm text-hmi-text">
                     Enable TCP Server
                   </label>
                 </div>
 
                 <div>
-                  <label className="block text-sm text-gray-400 mb-1">Port</label>
+                  <label className="block text-sm text-hmi-muted mb-1">Port</label>
                   <input
                     type="number"
                     value={modbusConfig.tcp_port}
                     onChange={(e) =>
                       setModbusConfig({ ...modbusConfig, tcp_port: parseInt(e.target.value) })
                     }
-                    className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white"
+                    className="w-full px-3 py-2 bg-hmi-panel border border-hmi-border rounded text-hmi-text"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-sm text-gray-400 mb-1">Bind Address</label>
+                  <label className="block text-sm text-hmi-muted mb-1">Bind Address</label>
                   <input
                     type="text"
                     value={modbusConfig.tcp_bind_address}
                     onChange={(e) =>
                       setModbusConfig({ ...modbusConfig, tcp_bind_address: e.target.value })
                     }
-                    className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white"
+                    className="w-full px-3 py-2 bg-hmi-panel border border-hmi-border rounded text-hmi-text"
                   />
                 </div>
               </div>
 
               {/* RTU Settings */}
               <div className="space-y-4">
-                <h3 className="font-medium text-gray-300">RTU Server (Serial)</h3>
+                <h3 className="font-medium text-hmi-text">RTU Server (Serial)</h3>
 
                 <div className="flex items-center space-x-2">
                   <input
@@ -568,32 +568,32 @@ export default function SettingsPage() {
                       setModbusConfig({ ...modbusConfig, rtu_enabled: e.target.checked })
                     }
                   />
-                  <label htmlFor="rtuEnabled" className="text-sm text-gray-300">
+                  <label htmlFor="rtuEnabled" className="text-sm text-hmi-text">
                     Enable RTU Server
                   </label>
                 </div>
 
                 <div>
-                  <label className="block text-sm text-gray-400 mb-1">Serial Device</label>
+                  <label className="block text-sm text-hmi-muted mb-1">Serial Device</label>
                   <input
                     type="text"
                     value={modbusConfig.rtu_device}
                     onChange={(e) =>
                       setModbusConfig({ ...modbusConfig, rtu_device: e.target.value })
                     }
-                    className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white"
+                    className="w-full px-3 py-2 bg-hmi-panel border border-hmi-border rounded text-hmi-text"
                   />
                 </div>
 
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-sm text-gray-400 mb-1">Baud Rate</label>
+                    <label className="block text-sm text-hmi-muted mb-1">Baud Rate</label>
                     <select
                       value={modbusConfig.rtu_baud_rate}
                       onChange={(e) =>
                         setModbusConfig({ ...modbusConfig, rtu_baud_rate: parseInt(e.target.value) })
                       }
-                      className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white"
+                      className="w-full px-3 py-2 bg-hmi-panel border border-hmi-border rounded text-hmi-text"
                     >
                       {[9600, 19200, 38400, 57600, 115200].map((rate) => (
                         <option key={rate} value={rate}>
@@ -604,7 +604,7 @@ export default function SettingsPage() {
                   </div>
 
                   <div>
-                    <label className="block text-sm text-gray-400 mb-1">Slave Address</label>
+                    <label className="block text-sm text-hmi-muted mb-1">Slave Address</label>
                     <input
                       type="number"
                       value={modbusConfig.rtu_slave_addr}
@@ -613,20 +613,20 @@ export default function SettingsPage() {
                       }
                       min="1"
                       max="247"
-                      className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white"
+                      className="w-full px-3 py-2 bg-hmi-panel border border-hmi-border rounded text-hmi-text"
                     />
                   </div>
                 </div>
 
                 <div className="grid grid-cols-3 gap-4">
                   <div>
-                    <label className="block text-sm text-gray-400 mb-1">Parity</label>
+                    <label className="block text-sm text-hmi-muted mb-1">Parity</label>
                     <select
                       value={modbusConfig.rtu_parity}
                       onChange={(e) =>
                         setModbusConfig({ ...modbusConfig, rtu_parity: e.target.value })
                       }
-                      className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white"
+                      className="w-full px-3 py-2 bg-hmi-panel border border-hmi-border rounded text-hmi-text"
                     >
                       <option value="N">None</option>
                       <option value="E">Even</option>
@@ -635,13 +635,13 @@ export default function SettingsPage() {
                   </div>
 
                   <div>
-                    <label className="block text-sm text-gray-400 mb-1">Data Bits</label>
+                    <label className="block text-sm text-hmi-muted mb-1">Data Bits</label>
                     <select
                       value={modbusConfig.rtu_data_bits}
                       onChange={(e) =>
                         setModbusConfig({ ...modbusConfig, rtu_data_bits: parseInt(e.target.value) })
                       }
-                      className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white"
+                      className="w-full px-3 py-2 bg-hmi-panel border border-hmi-border rounded text-hmi-text"
                     >
                       <option value={7}>7</option>
                       <option value={8}>8</option>
@@ -649,13 +649,13 @@ export default function SettingsPage() {
                   </div>
 
                   <div>
-                    <label className="block text-sm text-gray-400 mb-1">Stop Bits</label>
+                    <label className="block text-sm text-hmi-muted mb-1">Stop Bits</label>
                     <select
                       value={modbusConfig.rtu_stop_bits}
                       onChange={(e) =>
                         setModbusConfig({ ...modbusConfig, rtu_stop_bits: parseInt(e.target.value) })
                       }
-                      className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white"
+                      className="w-full px-3 py-2 bg-hmi-panel border border-hmi-border rounded text-hmi-text"
                     >
                       <option value={1}>1</option>
                       <option value={2}>2</option>
@@ -669,7 +669,7 @@ export default function SettingsPage() {
               <button
                 onClick={saveModbusConfig}
                 disabled={loading}
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded text-white disabled:opacity-50"
+                className="px-4 py-2 bg-status-info hover:bg-status-info/80 rounded text-white disabled:opacity-50"
               >
                 {loading ? 'Saving...' : 'Save Configuration'}
               </button>
@@ -677,21 +677,21 @@ export default function SettingsPage() {
           </div>
 
           {/* Downstream Devices */}
-          <div className="scada-panel p-6">
-            <h2 className="text-lg font-semibold text-white mb-4">Downstream Modbus Devices</h2>
+          <div className="hmi-card p-6">
+            <h2 className="text-lg font-semibold text-hmi-text mb-4">Downstream Modbus Devices</h2>
 
             {downstreamDevices.length === 0 ? (
-              <p className="text-gray-400">No downstream devices configured</p>
+              <p className="text-hmi-muted">No downstream devices configured</p>
             ) : (
               <div className="space-y-3">
                 {downstreamDevices.map((device) => (
                   <div
                     key={device.device_id}
-                    className="flex items-center justify-between p-4 bg-gray-800 rounded"
+                    className="flex items-center justify-between p-4 bg-hmi-panel rounded"
                   >
                     <div>
-                      <div className="font-medium text-white">{device.name}</div>
-                      <div className="text-sm text-gray-400">
+                      <div className="font-medium text-hmi-text">{device.name}</div>
+                      <div className="text-sm text-hmi-muted">
                         {device.transport === 'TCP'
                           ? `${device.tcp_host}:${device.tcp_port}`
                           : `${device.rtu_device} @ ${device.rtu_baud_rate}`}
@@ -699,7 +699,7 @@ export default function SettingsPage() {
                         Slave {device.slave_addr}
                       </div>
                     </div>
-                    <div className={device.enabled ? 'text-green-400' : 'text-gray-500'}>
+                    <div className={device.enabled ? 'text-status-ok' : 'text-hmi-muted'}>
                       {device.enabled ? 'Enabled' : 'Disabled'}
                     </div>
                   </div>
@@ -714,14 +714,14 @@ export default function SettingsPage() {
       {activeTab === 'logging' && logConfig && (
         <div className="space-y-6">
           {/* Destination Configuration */}
-          <div className="scada-panel p-6">
+          <div className="hmi-card p-6">
             <div className="flex justify-between items-center mb-4">
-              <h2 className="text-lg font-semibold text-white">Log Forwarding Configuration</h2>
+              <h2 className="text-lg font-semibold text-hmi-text">Log Forwarding Configuration</h2>
               <div className="flex space-x-2">
                 <button
                   onClick={testLogForwarding}
                   disabled={loading || !logConfig.enabled}
-                  className="px-3 py-1 bg-yellow-600 hover:bg-yellow-700 disabled:opacity-50 rounded text-sm text-white"
+                  className="px-3 py-1 bg-status-warning hover:bg-status-warning/80 disabled:opacity-50 rounded text-sm text-white"
                 >
                   Test Connection
                 </button>
@@ -737,14 +737,14 @@ export default function SettingsPage() {
                   checked={logConfig.enabled}
                   onChange={(e) => setLogConfig({ ...logConfig, enabled: e.target.checked })}
                 />
-                <label htmlFor="logEnabled" className="text-sm text-gray-300">
+                <label htmlFor="logEnabled" className="text-sm text-hmi-text">
                   Enable Log Forwarding
                 </label>
               </div>
 
               {/* Destination Type */}
               <div>
-                <label className="block text-sm text-gray-400 mb-1">Destination Type</label>
+                <label className="block text-sm text-hmi-muted mb-1">Destination Type</label>
                 <select
                   value={logConfig.forward_type}
                   onChange={(e) => {
@@ -756,7 +756,7 @@ export default function SettingsPage() {
                       protocol: dest?.protocols[0] || logConfig.protocol,
                     });
                   }}
-                  className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white"
+                  className="w-full px-3 py-2 bg-hmi-panel border border-hmi-border rounded text-hmi-text"
                 >
                   {logDestinations.map((dest) => (
                     <option key={dest.type} value={dest.type}>
@@ -765,41 +765,41 @@ export default function SettingsPage() {
                   ))}
                 </select>
                 {getSelectedDestination() && (
-                  <p className="text-xs text-gray-500 mt-1">{getSelectedDestination()?.description}</p>
+                  <p className="text-xs text-hmi-muted mt-1">{getSelectedDestination()?.description}</p>
                 )}
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 {/* Host */}
                 <div>
-                  <label className="block text-sm text-gray-400 mb-1">Host</label>
+                  <label className="block text-sm text-hmi-muted mb-1">Host</label>
                   <input
                     type="text"
                     value={logConfig.host}
                     onChange={(e) => setLogConfig({ ...logConfig, host: e.target.value })}
                     placeholder="localhost"
-                    className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white"
+                    className="w-full px-3 py-2 bg-hmi-panel border border-hmi-border rounded text-hmi-text"
                   />
                 </div>
 
                 {/* Port */}
                 <div>
-                  <label className="block text-sm text-gray-400 mb-1">Port</label>
+                  <label className="block text-sm text-hmi-muted mb-1">Port</label>
                   <input
                     type="number"
                     value={logConfig.port}
                     onChange={(e) => setLogConfig({ ...logConfig, port: parseInt(e.target.value) })}
-                    className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white"
+                    className="w-full px-3 py-2 bg-hmi-panel border border-hmi-border rounded text-hmi-text"
                   />
                 </div>
 
                 {/* Protocol */}
                 <div>
-                  <label className="block text-sm text-gray-400 mb-1">Protocol</label>
+                  <label className="block text-sm text-hmi-muted mb-1">Protocol</label>
                   <select
                     value={logConfig.protocol}
                     onChange={(e) => setLogConfig({ ...logConfig, protocol: e.target.value })}
-                    className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white"
+                    className="w-full px-3 py-2 bg-hmi-panel border border-hmi-border rounded text-hmi-text"
                   >
                     {(getSelectedDestination()?.protocols || ['udp', 'tcp']).map((proto) => (
                       <option key={proto} value={proto}>
@@ -814,23 +814,23 @@ export default function SettingsPage() {
               {logConfig.forward_type === 'elastic' && (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-sm text-gray-400 mb-1">Index Name</label>
+                    <label className="block text-sm text-hmi-muted mb-1">Index Name</label>
                     <input
                       type="text"
                       value={logConfig.index || ''}
                       onChange={(e) => setLogConfig({ ...logConfig, index: e.target.value })}
                       placeholder="wtc-logs"
-                      className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white"
+                      className="w-full px-3 py-2 bg-hmi-panel border border-hmi-border rounded text-hmi-text"
                     />
                   </div>
                   <div>
-                    <label className="block text-sm text-gray-400 mb-1">API Key (optional)</label>
+                    <label className="block text-sm text-hmi-muted mb-1">API Key (optional)</label>
                     <input
                       type="password"
                       value={logConfig.api_key || ''}
                       onChange={(e) => setLogConfig({ ...logConfig, api_key: e.target.value })}
                       placeholder="Enter API key"
-                      className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white"
+                      className="w-full px-3 py-2 bg-hmi-panel border border-hmi-border rounded text-hmi-text"
                     />
                   </div>
                 </div>
@@ -845,7 +845,7 @@ export default function SettingsPage() {
                     checked={logConfig.tls_enabled}
                     onChange={(e) => setLogConfig({ ...logConfig, tls_enabled: e.target.checked })}
                   />
-                  <label htmlFor="tlsEnabled" className="text-sm text-gray-300">
+                  <label htmlFor="tlsEnabled" className="text-sm text-hmi-text">
                     Enable TLS
                   </label>
                 </div>
@@ -857,7 +857,7 @@ export default function SettingsPage() {
                     onChange={(e) => setLogConfig({ ...logConfig, tls_verify: e.target.checked })}
                     disabled={!logConfig.tls_enabled}
                   />
-                  <label htmlFor="tlsVerify" className={`text-sm ${logConfig.tls_enabled ? 'text-gray-300' : 'text-gray-500'}`}>
+                  <label htmlFor="tlsVerify" className={`text-sm ${logConfig.tls_enabled ? 'text-hmi-text' : 'text-hmi-muted'}`}>
                     Verify Certificate
                   </label>
                 </div>
@@ -866,16 +866,16 @@ export default function SettingsPage() {
           </div>
 
           {/* Log Content Settings */}
-          <div className="scada-panel p-6">
-            <h2 className="text-lg font-semibold text-white mb-4">Log Content</h2>
+          <div className="hmi-card p-6">
+            <h2 className="text-lg font-semibold text-hmi-text mb-4">Log Content</h2>
 
             <div className="space-y-4">
               <div>
-                <label className="block text-sm text-gray-400 mb-1">Minimum Log Level</label>
+                <label className="block text-sm text-hmi-muted mb-1">Minimum Log Level</label>
                 <select
                   value={logConfig.log_level}
                   onChange={(e) => setLogConfig({ ...logConfig, log_level: e.target.value })}
-                  className="w-full md:w-48 px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white"
+                  className="w-full md:w-48 px-3 py-2 bg-hmi-panel border border-hmi-border rounded text-hmi-text"
                 >
                   <option value="DEBUG">DEBUG</option>
                   <option value="INFO">INFO</option>
@@ -893,7 +893,7 @@ export default function SettingsPage() {
                     checked={logConfig.include_alarms}
                     onChange={(e) => setLogConfig({ ...logConfig, include_alarms: e.target.checked })}
                   />
-                  <label htmlFor="includeAlarms" className="text-sm text-gray-300">
+                  <label htmlFor="includeAlarms" className="text-sm text-hmi-text">
                     Include Alarm Events
                   </label>
                 </div>
@@ -904,7 +904,7 @@ export default function SettingsPage() {
                     checked={logConfig.include_events}
                     onChange={(e) => setLogConfig({ ...logConfig, include_events: e.target.checked })}
                   />
-                  <label htmlFor="includeEvents" className="text-sm text-gray-300">
+                  <label htmlFor="includeEvents" className="text-sm text-hmi-text">
                     Include System Events
                   </label>
                 </div>
@@ -915,7 +915,7 @@ export default function SettingsPage() {
                     checked={logConfig.include_audit}
                     onChange={(e) => setLogConfig({ ...logConfig, include_audit: e.target.checked })}
                   />
-                  <label htmlFor="includeAudit" className="text-sm text-gray-300">
+                  <label htmlFor="includeAudit" className="text-sm text-hmi-text">
                     Include Audit Logs
                   </label>
                 </div>
@@ -926,7 +926,7 @@ export default function SettingsPage() {
               <button
                 onClick={saveLogConfig}
                 disabled={loading}
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded text-white disabled:opacity-50"
+                className="px-4 py-2 bg-status-info hover:bg-status-info/80 rounded text-white disabled:opacity-50"
               >
                 {loading ? 'Saving...' : 'Save Configuration'}
               </button>
@@ -937,17 +937,17 @@ export default function SettingsPage() {
 
       {/* Services Tab */}
       {activeTab === 'services' && (
-        <div className="scada-panel p-6">
-          <h2 className="text-lg font-semibold text-white mb-4">System Services</h2>
+        <div className="hmi-card p-6">
+          <h2 className="text-lg font-semibold text-hmi-text mb-4">System Services</h2>
 
           <div className="space-y-4">
             {Object.entries(services).map(([service, status]) => (
               <div
                 key={service}
-                className="flex items-center justify-between p-4 bg-gray-800 rounded"
+                className="flex items-center justify-between p-4 bg-hmi-panel rounded"
               >
                 <div>
-                  <div className="font-medium text-white">{service}</div>
+                  <div className="font-medium text-hmi-text">{service}</div>
                   <div className={`text-sm ${getServiceStatusClass(status)}`}>
                     {status}
                   </div>
@@ -956,21 +956,21 @@ export default function SettingsPage() {
                   <button
                     onClick={() => controlService(service, 'start')}
                     disabled={loading || status === 'active'}
-                    className="px-3 py-1 bg-green-600 hover:bg-green-700 disabled:opacity-50 rounded text-sm text-white"
+                    className="px-3 py-1 bg-status-ok hover:bg-status-ok/80 disabled:opacity-50 rounded text-sm text-white"
                   >
                     Start
                   </button>
                   <button
                     onClick={() => controlService(service, 'stop')}
                     disabled={loading || status !== 'active'}
-                    className="px-3 py-1 bg-red-600 hover:bg-red-700 disabled:opacity-50 rounded text-sm text-white"
+                    className="px-3 py-1 bg-status-alarm hover:bg-status-alarm/80 disabled:opacity-50 rounded text-sm text-white"
                   >
                     Stop
                   </button>
                   <button
                     onClick={() => controlService(service, 'restart')}
                     disabled={loading}
-                    className="px-3 py-1 bg-yellow-600 hover:bg-yellow-700 disabled:opacity-50 rounded text-sm text-white"
+                    className="px-3 py-1 bg-status-warning hover:bg-status-warning/80 disabled:opacity-50 rounded text-sm text-white"
                   >
                     Restart
                   </button>
@@ -982,7 +982,7 @@ export default function SettingsPage() {
           <div className="mt-6">
             <button
               onClick={fetchServices}
-              className="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded text-white"
+              className="px-4 py-2 bg-hmi-panel hover:bg-hmi-panel/80 rounded text-hmi-text"
             >
               Refresh Status
             </button>

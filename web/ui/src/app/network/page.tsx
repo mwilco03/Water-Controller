@@ -180,26 +180,26 @@ export default function NetworkPage() {
 
   const getInterfaceStateBadge = (state: string) => {
     const colors: { [key: string]: string } = {
-      UP: 'bg-green-900 text-green-300',
-      DOWN: 'bg-red-900 text-red-300',
-      UNKNOWN: 'bg-gray-700 text-gray-300',
+      UP: 'bg-status-ok text-white',
+      DOWN: 'bg-status-alarm text-white',
+      UNKNOWN: 'bg-hmi-panel text-hmi-muted',
     };
-    return colors[state] || 'bg-gray-700 text-gray-300';
+    return colors[state] || 'bg-hmi-panel text-hmi-muted';
   };
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold text-white">Network Configuration</h1>
+      <h1 className="text-2xl font-bold text-hmi-text">Network Configuration</h1>
 
       {/* Message Banner */}
       {message && (
         <div
           className={`p-4 rounded-lg ${
             message.type === 'success'
-              ? 'bg-green-900 text-green-200'
+              ? 'bg-status-ok text-white'
               : message.type === 'warning'
-              ? 'bg-yellow-900 text-yellow-200'
-              : 'bg-red-900 text-red-200'
+              ? 'bg-status-warning text-white'
+              : 'bg-status-alarm text-white'
           }`}
         >
           {message.text}
@@ -207,12 +207,12 @@ export default function NetworkPage() {
       )}
 
       {/* Network Interfaces */}
-      <div className="scada-panel p-6">
+      <div className="hmi-card p-6">
         <div className="flex justify-between items-center mb-4">
-          <h2 className="text-lg font-semibold text-white">Network Interfaces</h2>
+          <h2 className="text-lg font-semibold text-hmi-text">Network Interfaces</h2>
           <button
             onClick={fetchInterfaces}
-            className="px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded text-sm text-white"
+            className="px-3 py-1 bg-hmi-panel hover:bg-hmi-border rounded text-sm text-hmi-text"
           >
             Refresh
           </button>
@@ -220,25 +220,25 @@ export default function NetworkPage() {
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {interfaces.map((iface) => (
-            <div key={iface.name} className="bg-gray-800 p-4 rounded">
+            <div key={iface.name} className="bg-hmi-panel p-4 rounded">
               <div className="flex justify-between items-center mb-2">
-                <span className="font-medium text-white">{iface.name}</span>
+                <span className="font-medium text-hmi-text">{iface.name}</span>
                 <span className={`px-2 py-1 rounded text-xs ${getInterfaceStateBadge(iface.state)}`}>
                   {iface.state}
                 </span>
               </div>
               <div className="space-y-1 text-sm">
                 <div className="flex justify-between">
-                  <span className="text-gray-400">IP Address:</span>
-                  <span className="text-white font-mono">{iface.ip_address || 'Not assigned'}</span>
+                  <span className="text-hmi-muted">IP Address:</span>
+                  <span className="text-hmi-text font-mono">{iface.ip_address || 'Not assigned'}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-gray-400">MAC:</span>
-                  <span className="text-white font-mono">{iface.mac_address}</span>
+                  <span className="text-hmi-muted">MAC:</span>
+                  <span className="text-hmi-text font-mono">{iface.mac_address}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-gray-400">Speed:</span>
-                  <span className="text-white">{iface.speed || 'Unknown'}</span>
+                  <span className="text-hmi-muted">Speed:</span>
+                  <span className="text-hmi-text">{iface.speed || 'Unknown'}</span>
                 </div>
               </div>
             </div>
@@ -246,18 +246,18 @@ export default function NetworkPage() {
         </div>
 
         {interfaces.length === 0 && (
-          <p className="text-gray-400">No network interfaces detected</p>
+          <p className="text-hmi-muted">No network interfaces detected</p>
         )}
       </div>
 
       {/* IP Configuration */}
-      <div className="scada-panel p-6">
-        <h2 className="text-lg font-semibold text-white mb-4">IP Configuration</h2>
+      <div className="hmi-card p-6">
+        <h2 className="text-lg font-semibold text-hmi-text mb-4">IP Configuration</h2>
 
         <div className="space-y-6">
           {/* Mode Selection */}
           <div>
-            <label className="block text-sm text-gray-300 mb-2">Network Mode</label>
+            <label className="block text-sm text-hmi-muted mb-2">Network Mode</label>
             <div className="flex space-x-4">
               <label className="flex items-center">
                 <input
@@ -267,7 +267,7 @@ export default function NetworkPage() {
                   onChange={() => setNetworkConfig({ ...networkConfig, mode: 'dhcp' })}
                   className="mr-2"
                 />
-                <span className="text-white">DHCP (Automatic)</span>
+                <span className="text-hmi-text">DHCP (Automatic)</span>
               </label>
               <label className="flex items-center">
                 <input
@@ -277,7 +277,7 @@ export default function NetworkPage() {
                   onChange={() => setNetworkConfig({ ...networkConfig, mode: 'static' })}
                   className="mr-2"
                 />
-                <span className="text-white">Static IP</span>
+                <span className="text-hmi-text">Static IP</span>
               </label>
             </div>
           </div>
@@ -286,7 +286,7 @@ export default function NetworkPage() {
           {networkConfig.mode === 'static' && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <label className="block text-sm text-gray-300 mb-1">IP Address</label>
+                <label className="block text-sm text-hmi-muted mb-1">IP Address</label>
                 <input
                   type="text"
                   value={networkConfig.ip_address}
@@ -294,45 +294,45 @@ export default function NetworkPage() {
                     setNetworkConfig({ ...networkConfig, ip_address: e.target.value })
                   }
                   placeholder="192.168.1.100"
-                  className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white font-mono"
+                  className="w-full px-3 py-2 bg-hmi-panel border border-hmi-border rounded text-hmi-text font-mono"
                 />
               </div>
 
               <div>
-                <label className="block text-sm text-gray-300 mb-1">Subnet Mask</label>
+                <label className="block text-sm text-hmi-muted mb-1">Subnet Mask</label>
                 <input
                   type="text"
                   value={networkConfig.netmask}
                   onChange={(e) => setNetworkConfig({ ...networkConfig, netmask: e.target.value })}
                   placeholder="255.255.255.0"
-                  className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white font-mono"
+                  className="w-full px-3 py-2 bg-hmi-panel border border-hmi-border rounded text-hmi-text font-mono"
                 />
               </div>
 
               <div>
-                <label className="block text-sm text-gray-300 mb-1">Gateway</label>
+                <label className="block text-sm text-hmi-muted mb-1">Gateway</label>
                 <input
                   type="text"
                   value={networkConfig.gateway}
                   onChange={(e) => setNetworkConfig({ ...networkConfig, gateway: e.target.value })}
                   placeholder="192.168.1.1"
-                  className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white font-mono"
+                  className="w-full px-3 py-2 bg-hmi-panel border border-hmi-border rounded text-hmi-text font-mono"
                 />
               </div>
 
               <div>
-                <label className="block text-sm text-gray-300 mb-1">Hostname</label>
+                <label className="block text-sm text-hmi-muted mb-1">Hostname</label>
                 <input
                   type="text"
                   value={networkConfig.hostname}
                   onChange={(e) => setNetworkConfig({ ...networkConfig, hostname: e.target.value })}
                   placeholder="water-controller"
-                  className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white"
+                  className="w-full px-3 py-2 bg-hmi-panel border border-hmi-border rounded text-hmi-text"
                 />
               </div>
 
               <div>
-                <label className="block text-sm text-gray-300 mb-1">Primary DNS</label>
+                <label className="block text-sm text-hmi-muted mb-1">Primary DNS</label>
                 <input
                   type="text"
                   value={networkConfig.dns_primary}
@@ -340,12 +340,12 @@ export default function NetworkPage() {
                     setNetworkConfig({ ...networkConfig, dns_primary: e.target.value })
                   }
                   placeholder="8.8.8.8"
-                  className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white font-mono"
+                  className="w-full px-3 py-2 bg-hmi-panel border border-hmi-border rounded text-hmi-text font-mono"
                 />
               </div>
 
               <div>
-                <label className="block text-sm text-gray-300 mb-1">Secondary DNS</label>
+                <label className="block text-sm text-hmi-muted mb-1">Secondary DNS</label>
                 <input
                   type="text"
                   value={networkConfig.dns_secondary}
@@ -353,7 +353,7 @@ export default function NetworkPage() {
                     setNetworkConfig({ ...networkConfig, dns_secondary: e.target.value })
                   }
                   placeholder="8.8.4.4"
-                  className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white font-mono"
+                  className="w-full px-3 py-2 bg-hmi-panel border border-hmi-border rounded text-hmi-text font-mono"
                 />
               </div>
             </div>
@@ -362,7 +362,7 @@ export default function NetworkPage() {
           <div className="flex justify-end">
             <button
               onClick={() => setShowApplyConfirm(true)}
-              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded text-white"
+              className="px-4 py-2 bg-status-info hover:bg-status-info/90 rounded text-white"
             >
               Apply Network Settings
             </button>
@@ -371,33 +371,33 @@ export default function NetworkPage() {
       </div>
 
       {/* Web Server Configuration */}
-      <div className="scada-panel p-6">
-        <h2 className="text-lg font-semibold text-white mb-4">Web Server Configuration</h2>
+      <div className="hmi-card p-6">
+        <h2 className="text-lg font-semibold text-hmi-text mb-4">Web Server Configuration</h2>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
-            <label className="block text-sm text-gray-300 mb-1">HTTP Port</label>
+            <label className="block text-sm text-hmi-muted mb-1">HTTP Port</label>
             <input
               type="number"
               value={webConfig.port}
               onChange={(e) => setWebConfig({ ...webConfig, port: parseInt(e.target.value) })}
               min="1"
               max="65535"
-              className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white"
+              className="w-full px-3 py-2 bg-hmi-panel border border-hmi-border rounded text-hmi-text"
             />
-            <p className="text-xs text-gray-500 mt-1">Default: 8080</p>
+            <p className="text-xs text-hmi-muted mt-1">Default: 8080</p>
           </div>
 
           <div>
-            <label className="block text-sm text-gray-300 mb-1">Bind Address</label>
+            <label className="block text-sm text-hmi-muted mb-1">Bind Address</label>
             <input
               type="text"
               value={webConfig.bind_address}
               onChange={(e) => setWebConfig({ ...webConfig, bind_address: e.target.value })}
               placeholder="0.0.0.0"
-              className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white font-mono"
+              className="w-full px-3 py-2 bg-hmi-panel border border-hmi-border rounded text-hmi-text font-mono"
             />
-            <p className="text-xs text-gray-500 mt-1">0.0.0.0 = all interfaces</p>
+            <p className="text-xs text-hmi-muted mt-1">0.0.0.0 = all interfaces</p>
           </div>
 
           <div className="flex items-center space-x-2 pt-4">
@@ -407,14 +407,14 @@ export default function NetworkPage() {
               checked={webConfig.https_enabled}
               onChange={(e) => setWebConfig({ ...webConfig, https_enabled: e.target.checked })}
             />
-            <label htmlFor="httpsEnabled" className="text-sm text-gray-300">
+            <label htmlFor="httpsEnabled" className="text-sm text-hmi-muted">
               Enable HTTPS
             </label>
           </div>
 
           {webConfig.https_enabled && (
             <div>
-              <label className="block text-sm text-gray-300 mb-1">HTTPS Port</label>
+              <label className="block text-sm text-hmi-muted mb-1">HTTPS Port</label>
               <input
                 type="number"
                 value={webConfig.https_port}
@@ -423,7 +423,7 @@ export default function NetworkPage() {
                 }
                 min="1"
                 max="65535"
-                className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white"
+                className="w-full px-3 py-2 bg-hmi-panel border border-hmi-border rounded text-hmi-text"
               />
             </div>
           )}
@@ -433,7 +433,7 @@ export default function NetworkPage() {
           <button
             onClick={applyWebConfig}
             disabled={loading}
-            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded text-white disabled:opacity-50"
+            className="px-4 py-2 bg-status-info hover:bg-status-info/90 rounded text-white disabled:opacity-50"
           >
             {loading ? 'Saving...' : 'Save Web Settings'}
           </button>
@@ -441,16 +441,16 @@ export default function NetworkPage() {
       </div>
 
       {/* Current Connection Info */}
-      <div className="scada-panel p-6">
-        <h2 className="text-lg font-semibold text-white mb-4">Current Connection</h2>
-        <div className="bg-gray-800 p-4 rounded">
-          <p className="text-gray-300">
+      <div className="hmi-card p-6">
+        <h2 className="text-lg font-semibold text-hmi-text mb-4">Current Connection</h2>
+        <div className="bg-hmi-panel p-4 rounded">
+          <p className="text-hmi-muted">
             You are currently connected to this controller at:{' '}
-            <span className="text-white font-mono">
+            <span className="text-hmi-text font-mono">
               {getCurrentHost()}
             </span>
           </p>
-          <p className="text-sm text-gray-500 mt-2">
+          <p className="text-sm text-hmi-muted mt-2">
             If you change the IP address or port, you may need to reconnect using the new address.
           </p>
         </div>
@@ -459,19 +459,19 @@ export default function NetworkPage() {
       {/* Apply Confirmation Modal */}
       {showApplyConfirm && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-gray-900 p-6 rounded-lg w-full max-w-md">
-            <h2 className="text-xl font-semibold text-white mb-4">Apply Network Configuration</h2>
+          <div className="bg-hmi-bg p-6 rounded-lg w-full max-w-md">
+            <h2 className="text-xl font-semibold text-hmi-text mb-4">Apply Network Configuration</h2>
 
-            <div className="bg-yellow-900 text-yellow-200 p-4 rounded mb-4">
+            <div className="bg-status-warning text-white p-4 rounded mb-4">
               <strong>Warning:</strong> Changing network settings may cause you to lose connection to
               this device. Make sure you know the new address before applying.
             </div>
 
             {networkConfig.mode === 'static' && (
-              <div className="bg-gray-800 p-4 rounded mb-4">
-                <p className="text-gray-300 text-sm">
+              <div className="bg-hmi-panel p-4 rounded mb-4">
+                <p className="text-hmi-muted text-sm">
                   New IP address:{' '}
-                  <span className="text-white font-mono">{networkConfig.ip_address}</span>
+                  <span className="text-hmi-text font-mono">{networkConfig.ip_address}</span>
                 </p>
               </div>
             )}
@@ -479,14 +479,14 @@ export default function NetworkPage() {
             <div className="flex justify-end space-x-3">
               <button
                 onClick={() => setShowApplyConfirm(false)}
-                className="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded text-white"
+                className="px-4 py-2 bg-hmi-panel hover:bg-hmi-border rounded text-hmi-text"
               >
                 Cancel
               </button>
               <button
                 onClick={applyNetworkConfig}
                 disabled={loading}
-                className="px-4 py-2 bg-red-600 hover:bg-red-700 rounded text-white disabled:opacity-50"
+                className="px-4 py-2 bg-status-alarm hover:bg-status-alarm/90 rounded text-white disabled:opacity-50"
               >
                 {loading ? 'Applying...' : 'Apply Changes'}
               </button>
