@@ -61,7 +61,8 @@ export function useRTUStatusData(): UseRTUStatusDataReturn {
         getAlarms(),
       ]);
 
-      const rtuList = rtusResponse;
+      // Defensive check - ensure we have arrays before mapping
+      const rtuList = Array.isArray(rtusResponse) ? rtusResponse : [];
 
       // Fetch inventory for each RTU to get sensor/actuator counts
       const rtusWithInventory = await Promise.all(
@@ -97,8 +98,8 @@ export function useRTUStatusData(): UseRTUStatusDataReturn {
         })
       );
 
-      // Process alarms
-      const alarmList = alarmsResponse;
+      // Process alarms - defensive check for array
+      const alarmList = Array.isArray(alarmsResponse) ? alarmsResponse : [];
       const formattedAlarms: AlarmData[] = alarmList.map((alarm: { alarm_id?: number; id?: number; rtu_station?: string; station_name?: string; slot: number; severity?: string; priority?: string; message?: string; description?: string; state?: string; acknowledged?: boolean; timestamp?: string; raised_at?: string }) => ({
         alarm_id: alarm.alarm_id || alarm.id || 0,
         rtu_station: alarm.rtu_station || alarm.station_name || '',
