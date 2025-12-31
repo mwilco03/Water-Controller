@@ -1,13 +1,41 @@
 'use client';
 
+/**
+ * Root Layout - ISA-101 Compliant SCADA HMI
+ *
+ * Design principles:
+ * - Clean, professional industrial interface
+ * - Gray is normal, color is abnormal
+ * - Responsive navigation for all screen sizes
+ * - Minimal visual clutter
+ */
+
 import './globals.css';
 import { useState, useEffect } from 'react';
 import { usePathname } from 'next/navigation';
+import Link from 'next/link';
 import { CommandModeProvider, useCommandMode } from '@/contexts/CommandModeContext';
 import CommandModeBanner from '@/components/CommandModeBanner';
 import { ToastProvider } from '@/components/ui/Toast';
-import { SessionIndicator, AuthenticationModal, DegradedModeBanner, SystemStatusIndicator } from '@/components/hmi';
+import { AuthenticationModal, DegradedModeBanner } from '@/components/hmi';
 import { useWebSocket } from '@/hooks/useWebSocket';
+
+// Navigation items configuration
+const NAV_ITEMS = [
+  { href: '/', label: 'Status', icon: 'grid' },
+  { href: '/rtus', label: 'RTUs', icon: 'server' },
+  { href: '/alarms', label: 'Alarms', icon: 'bell' },
+  { href: '/trends', label: 'Trends', icon: 'chart' },
+  { href: '/control', label: 'Control', icon: 'sliders' },
+] as const;
+
+const CONFIG_ITEMS = [
+  { href: '/io-tags', label: 'I/O Tags' },
+  { href: '/modbus', label: 'Modbus' },
+  { href: '/network', label: 'Network' },
+  { href: '/users', label: 'Users' },
+  { href: '/settings', label: 'Settings' },
+] as const;
 
 export default function RootLayout({
   children,
@@ -17,20 +45,21 @@ export default function RootLayout({
   return (
     <html lang="en">
       <head>
-        <title>Water Treatment Controller - HMI</title>
+        <title>Water Treatment Controller</title>
         <meta name="description" content="SCADA HMI for Water Treatment RTU Network" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
         <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link
-          href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap"
+          href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap"
           rel="stylesheet"
         />
       </head>
-      <body>
+      <body className="bg-hmi-bg text-hmi-text">
         <CommandModeProvider>
           <ToastProvider>
-            <LayoutContent>{children}</LayoutContent>
+            <AppShell>{children}</AppShell>
           </ToastProvider>
         </CommandModeProvider>
       </body>
@@ -38,176 +67,207 @@ export default function RootLayout({
   );
 }
 
-function LayoutContent({ children }: { children: React.ReactNode }) {
+function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const [showConfigMenu, setShowConfigMenu] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [configMenuOpen, setConfigMenuOpen] = useState(false);
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [degradedSince, setDegradedSince] = useState<Date | null>(null);
-  useCommandMode(); // Context provider needed for child components
+  const { isAuthenticated, exitCommandMode } = useCommandMode();
 
-  // Track WebSocket connection status for degraded mode banner
+  // WebSocket connection status
   const { connected } = useWebSocket({
     onConnect: () => setDegradedSince(null),
     onDisconnect: () => setDegradedSince(new Date()),
   });
 
-  const isActive = (path: string) => pathname === path;
-  const isConfigActive = ['/settings', '/io-tags', '/network', '/users'].some(p => pathname.startsWith(p));
+  // Close mobile menu on route change
+  useEffect(() => {
+    setMobileMenuOpen(false);
+    setConfigMenuOpen(false);
+  }, [pathname]);
 
-  // Degraded mode info for banner
+  const isActive = (path: string) => pathname === path;
+  const isConfigActive = CONFIG_ITEMS.some(item => pathname.startsWith(item.href));
+
+  // Degraded mode info
   const degradedInfo = !connected ? {
     reason: 'websocket_disconnected' as const,
-    message: 'Falling back to polling mode. Data updates may be delayed.',
+    message: 'Real-time updates unavailable. Using polling.',
     details: 'Attempting to reconnect...',
     since: degradedSince || undefined,
   } : null;
 
-  // Unified layout for all pages
   return (
     <div className="min-h-screen flex flex-col">
-      {/* Skip link for keyboard navigation accessibility */}
-      <a
-        href="#main-content"
-        className="sr-only focus:not-sr-only focus:absolute focus:z-[100] focus:top-4 focus:left-4 focus:px-4 focus:py-2 focus:bg-sky-600 focus:text-white focus:rounded-lg focus:outline-none"
-      >
+      {/* Skip Link */}
+      <a href="#main-content" className="skip-link">
         Skip to main content
       </a>
-      {/* Command Mode Banner - shows when authenticated in command mode */}
+
+      {/* Command Mode Banner */}
       <CommandModeBanner />
-      {/* Degraded Mode Banner - shows when WebSocket disconnected */}
+
+      {/* Degraded Mode Banner */}
       {degradedInfo && <DegradedModeBanner degradedInfo={degradedInfo} />}
-      <header className="sticky top-0 z-50 bg-slate-900/95 backdrop-blur-lg border-b border-sky-500/20 px-6 py-3">
-        <div className="flex items-center justify-between max-w-[1800px] mx-auto">
-          <div className="flex items-center gap-4">
+
+      {/* Header */}
+      <header className="hmi-nav sticky top-0 z-50">
+        <div className="hmi-container">
+          <div className="flex items-center justify-between h-14">
             {/* Logo */}
-            <a href="/" className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-sky-400 to-blue-600 flex items-center justify-center shadow-lg shadow-sky-500/25">
-                <svg className="w-6 h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
+            <Link href="/" className="flex items-center gap-3 shrink-0">
+              <div className="w-8 h-8 rounded-lg bg-status-info flex items-center justify-center">
+                <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
                 </svg>
               </div>
-              <div>
-                <h1 className="text-lg font-bold text-white leading-tight">
-                  Water Treatment Controller
-                </h1>
-                <span className="text-xs text-sky-400 font-medium">SCADA/HMI v1.0.0</span>
+              <div className="hidden sm:block">
+                <div className="font-semibold text-hmi-text leading-tight">Water Treatment</div>
+                <div className="text-xs text-hmi-muted">SCADA/HMI</div>
               </div>
-            </a>
-          </div>
+            </Link>
 
-          {/* Navigation */}
-          <nav className="flex items-center gap-1">
-            <NavLink href="/" active={isActive('/')}>
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2z" />
-              </svg>
-              RTUs
-            </NavLink>
-            <NavLink href="/rtus" active={isActive('/rtus')}>
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-              </svg>
-              Manage
-            </NavLink>
-            <NavLink href="/alarms" active={isActive('/alarms')}>
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
-              </svg>
-              Alarms
-            </NavLink>
-            <NavLink href="/trends" active={isActive('/trends')}>
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z" />
-              </svg>
-              Trends
-            </NavLink>
-            <NavLink href="/control" active={isActive('/control')}>
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
-              </svg>
-              Control
-            </NavLink>
+            {/* Desktop Navigation */}
+            <nav className="hidden lg:flex items-center gap-1">
+              {NAV_ITEMS.map((item) => (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  className={`hmi-nav-link ${isActive(item.href) ? 'active' : ''}`}
+                >
+                  <NavIcon name={item.icon} />
+                  {item.label}
+                </Link>
+              ))}
 
-            {/* Configuration Dropdown */}
-            <div className="relative">
+              {/* Config Dropdown */}
+              <div className="relative ml-2">
+                <button
+                  onClick={() => setConfigMenuOpen(!configMenuOpen)}
+                  className={`hmi-nav-link ${isConfigActive ? 'active' : ''}`}
+                >
+                  <NavIcon name="cog" />
+                  Config
+                  <svg className="w-3 h-3 ml-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+
+                {configMenuOpen && (
+                  <>
+                    <div className="fixed inset-0 z-40" onClick={() => setConfigMenuOpen(false)} />
+                    <div className="absolute right-0 mt-2 w-48 bg-hmi-panel rounded-lg shadow-card-hover border border-hmi-border py-1 z-50">
+                      {CONFIG_ITEMS.map((item) => (
+                        <Link
+                          key={item.href}
+                          href={item.href}
+                          className="block px-4 py-2 text-sm text-hmi-text hover:bg-hmi-bg"
+                        >
+                          {item.label}
+                        </Link>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+
+              <Link href="/system" className={`hmi-nav-link ${isActive('/system') ? 'active' : ''}`}>
+                <NavIcon name="activity" />
+                System
+              </Link>
+            </nav>
+
+            {/* Right Side - Status & Auth */}
+            <div className="flex items-center gap-3">
+              {/* Connection Status */}
+              <div className="hidden sm:flex items-center gap-2 text-sm">
+                <span className={`status-dot ${connected ? 'ok' : 'offline'}`} />
+                <span className="text-hmi-muted">{connected ? 'Online' : 'Offline'}</span>
+              </div>
+
+              {/* Auth Button */}
+              {isAuthenticated ? (
+                <button
+                  onClick={exitCommandMode}
+                  className="hmi-btn hmi-btn-secondary text-sm"
+                >
+                  Logout
+                </button>
+              ) : (
+                <button
+                  onClick={() => setShowLoginModal(true)}
+                  className="hmi-btn hmi-btn-primary text-sm"
+                >
+                  Login
+                </button>
+              )}
+
+              {/* Mobile Menu Button */}
               <button
-                onClick={() => setShowConfigMenu(!showConfigMenu)}
-                className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-all ${
-                  isConfigActive
-                    ? 'text-white bg-slate-800'
-                    : 'text-slate-300 hover:text-white hover:bg-slate-800/50'
-                }`}
+                onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+                className="lg:hidden p-2 rounded-md hover:bg-hmi-bg"
+                aria-label="Toggle menu"
               >
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                </svg>
-                Configuration
-                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                <svg className="w-6 h-6 text-hmi-text" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  {mobileMenuOpen ? (
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  ) : (
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+                  )}
                 </svg>
               </button>
-
-              {showConfigMenu && (
-                <div className="absolute right-0 mt-2 w-48 bg-slate-800 rounded-lg shadow-xl border border-slate-700 py-2 z-50">
-                  <a href="/io-tags" className="block px-4 py-2 text-sm text-slate-300 hover:text-white hover:bg-slate-700">
-                    I/O Tags
-                  </a>
-                  <a href="/modbus" className="block px-4 py-2 text-sm text-slate-300 hover:text-white hover:bg-slate-700">
-                    Modbus Gateway
-                  </a>
-                  <a href="/network" className="block px-4 py-2 text-sm text-slate-300 hover:text-white hover:bg-slate-700">
-                    Network
-                  </a>
-                  <a href="/users" className="block px-4 py-2 text-sm text-slate-300 hover:text-white hover:bg-slate-700">
-                    Users
-                  </a>
-                  <div className="border-t border-slate-700 my-1" />
-                  <a href="/settings" className="block px-4 py-2 text-sm text-slate-300 hover:text-white hover:bg-slate-700">
-                    Backup & Settings
-                  </a>
-                </div>
-              )}
             </div>
+          </div>
 
-            <NavLink href="/system" active={isActive('/system')}>
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-              </svg>
-              System
-            </NavLink>
-
-            {/* Divider */}
-            <div className="w-px h-6 bg-slate-700 mx-2" />
-
-            {/* System Status - Shows health and data freshness */}
-            <SystemStatusIndicator compact />
-
-            {/* Divider */}
-            <div className="w-px h-6 bg-slate-700 mx-2" />
-
-            {/* Session Indicator */}
-            <SessionIndicator onLoginClick={() => setShowLoginModal(true)} />
-          </nav>
+          {/* Mobile Navigation */}
+          {mobileMenuOpen && (
+            <nav className="lg:hidden py-4 border-t border-hmi-border">
+              <div className="grid gap-1">
+                {NAV_ITEMS.map((item) => (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    className={`hmi-nav-link ${isActive(item.href) ? 'active' : ''}`}
+                  >
+                    <NavIcon name={item.icon} />
+                    {item.label}
+                  </Link>
+                ))}
+                <div className="border-t border-hmi-border my-2" />
+                <div className="text-xs font-medium text-hmi-muted uppercase px-4 py-2">Configuration</div>
+                {CONFIG_ITEMS.map((item) => (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    className={`hmi-nav-link ${isActive(item.href) ? 'active' : ''}`}
+                  >
+                    {item.label}
+                  </Link>
+                ))}
+                <div className="border-t border-hmi-border my-2" />
+                <Link href="/system" className={`hmi-nav-link ${isActive('/system') ? 'active' : ''}`}>
+                  <NavIcon name="activity" />
+                  System
+                </Link>
+              </div>
+            </nav>
+          )}
         </div>
       </header>
 
-      {/* Click outside to close config menu */}
-      {showConfigMenu && (
-        <div
-          className="fixed inset-0 z-40"
-          onClick={() => setShowConfigMenu(false)}
-        />
-      )}
-
-      <main id="main-content" className="flex-1 p-6 max-w-[1800px] mx-auto w-full">
-        {children}
+      {/* Main Content */}
+      <main id="main-content" className="flex-1">
+        <div className="hmi-container py-6">
+          {children}
+        </div>
       </main>
 
-      <footer className="border-t border-slate-800/50 py-4 px-6">
-        <div className="max-w-[1800px] mx-auto flex items-center justify-between text-xs text-slate-500">
+      {/* Footer */}
+      <footer className="border-t border-hmi-border py-4 mt-auto">
+        <div className="hmi-container flex flex-col sm:flex-row items-center justify-between gap-2 text-xs text-hmi-muted">
           <span>Water Treatment Controller SCADA/HMI</span>
-          <span>PROFINET I/O Controller - Browser Configuration</span>
+          <span>PROFINET I/O Controller v1.0</span>
         </div>
       </footer>
 
@@ -222,26 +282,45 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
   );
 }
 
-function NavLink({
-  href,
-  children,
-  active = false,
-}: {
-  href: string;
-  children: React.ReactNode;
-  active?: boolean;
-}) {
-  return (
-    <a
-      href={href}
-      className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-all ${
-        active
-          ? 'text-white bg-slate-800'
-          : 'text-slate-300 hover:text-white hover:bg-slate-800/50'
-      }`}
-    >
-      {children}
-    </a>
-  );
+// Simple icon component
+function NavIcon({ name }: { name: string }) {
+  const icons: Record<string, React.ReactNode> = {
+    grid: (
+      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
+      </svg>
+    ),
+    server: (
+      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01" />
+      </svg>
+    ),
+    bell: (
+      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+      </svg>
+    ),
+    chart: (
+      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z" />
+      </svg>
+    ),
+    sliders: (
+      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
+      </svg>
+    ),
+    cog: (
+      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+        <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+      </svg>
+    ),
+    activity: (
+      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+      </svg>
+    ),
+  };
+  return icons[name] || null;
 }
-

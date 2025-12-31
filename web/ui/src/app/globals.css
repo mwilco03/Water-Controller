@@ -2,332 +2,386 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * ISA-101 Compliant SCADA HMI Stylesheet
+ *
+ * Design Principles:
+ * - Gray is Normal, Color is Abnormal
+ * - High contrast for readability
+ * - Minimal animation (only for critical alerts)
+ * - Clean, professional industrial look
+ * - Responsive across all screen sizes
+ */
+
 :root {
-  --foreground-rgb: 255, 255, 255;
-  --background-start-rgb: 15, 23, 42;
-  --background-end-rgb: 9, 14, 28;
-  --scada-blue: #0ea5e9;
-  --scada-cyan: #22d3d1;
-  --scada-green: #10b981;
-  --scada-amber: #f59e0b;
-  --scada-red: #ef4444;
-  --scada-purple: #8b5cf6;
-  --water-blue: #38bdf8;
-  --water-dark: #0284c7;
+  /* ISA-101 Core Palette */
+  --hmi-bg: #F5F5F5;
+  --hmi-panel: #FFFFFF;
+  --hmi-border: #E0E0E0;
+  --hmi-text: #212121;
+  --hmi-text-muted: #757575;
+  --hmi-equipment: #9E9E9E;
+
+  /* Status Colors (use sparingly - color = abnormal) */
+  --status-ok: #4CAF50;
+  --status-warning: #FF9800;
+  --status-alarm: #F44336;
+  --status-info: #2196F3;
+  --status-offline: #9E9E9E;
+}
+
+/* Base Styles */
+html {
+  font-size: 16px;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 body {
-  color: rgb(var(--foreground-rgb));
-  background: linear-gradient(
-    135deg,
-    rgb(var(--background-start-rgb)),
-    rgb(var(--background-end-rgb))
-  );
+  background-color: var(--hmi-bg);
+  color: var(--hmi-text);
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  line-height: 1.5;
   min-height: 100vh;
-  font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
 }
 
-/* SCADA Panel Styles */
-.scada-panel {
-  background: linear-gradient(145deg, rgba(30, 41, 59, 0.95) 0%, rgba(15, 23, 42, 0.98) 100%);
-  border: 1px solid rgba(56, 189, 248, 0.2);
-  border-radius: 16px;
-  box-shadow:
-    0 4px 24px rgba(0, 0, 0, 0.4),
-    0 0 40px rgba(56, 189, 248, 0.05),
-    inset 0 1px 0 rgba(255, 255, 255, 0.05);
-  backdrop-filter: blur(12px);
+/* Typography - Monospace for values */
+.font-mono {
+  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
 }
 
-.scada-panel-highlight {
-  background: linear-gradient(145deg, rgba(30, 41, 59, 0.95) 0%, rgba(15, 23, 42, 0.98) 100%);
-  border: 1px solid rgba(56, 189, 248, 0.4);
-  border-radius: 16px;
-  box-shadow:
-    0 4px 24px rgba(0, 0, 0, 0.4),
-    0 0 60px rgba(56, 189, 248, 0.1),
-    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+/* ========================================
+   LAYOUT COMPONENTS
+   ======================================== */
+
+/* Main container with responsive padding */
+.hmi-container {
+  width: 100%;
+  max-width: 1600px;
+  margin: 0 auto;
+  padding: 0 1rem;
 }
 
-.scada-value {
-  font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
-  font-size: 1.75rem;
-  font-weight: 700;
-  text-shadow: 0 0 20px currentColor;
-  letter-spacing: -0.02em;
+@media (min-width: 640px) {
+  .hmi-container {
+    padding: 0 1.5rem;
+  }
 }
 
-.scada-value.good { color: #10b981; text-shadow: 0 0 25px rgba(16, 185, 129, 0.5); }
-.scada-value.warning { color: #f59e0b; text-shadow: 0 0 25px rgba(245, 158, 11, 0.5); }
-.scada-value.bad { color: #ef4444; text-shadow: 0 0 25px rgba(239, 68, 68, 0.5); }
-
-/* Glassmorphism cards */
-.glass-card {
-  background: rgba(30, 41, 59, 0.7);
-  backdrop-filter: blur(20px);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 12px;
+@media (min-width: 1024px) {
+  .hmi-container {
+    padding: 0 2rem;
+  }
 }
 
-/* Alarm Styles */
-.alarm-row {
-  border-left: 4px solid transparent;
-  transition: all 0.3s ease;
+/* ========================================
+   CARD / PANEL STYLES
+   ======================================== */
+
+.hmi-card {
+  background: var(--hmi-panel);
+  border: 1px solid var(--hmi-border);
   border-radius: 8px;
-}
-.alarm-row:hover {
-  background-color: rgba(255, 255, 255, 0.08);
-  transform: translateX(4px);
-}
-.alarm-row.critical {
-  border-left-color: #ef4444;
-  background: linear-gradient(90deg, rgba(239, 68, 68, 0.1) 0%, transparent 100%);
-}
-.alarm-row.warning {
-  border-left-color: #f59e0b;
-  background: linear-gradient(90deg, rgba(245, 158, 11, 0.1) 0%, transparent 100%);
-}
-.alarm-row.info {
-  border-left-color: #0ea5e9;
-  background: linear-gradient(90deg, rgba(14, 165, 233, 0.1) 0%, transparent 100%);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
 }
 
-/* Pulsing animation for active alarms */
-@keyframes pulse-alarm {
-  0%, 100% { opacity: 1; box-shadow: 0 0 20px rgba(239, 68, 68, 0.3); }
-  50% { opacity: 0.85; box-shadow: 0 0 40px rgba(239, 68, 68, 0.5); }
-}
-.alarm-active {
-  animation: pulse-alarm 1.5s ease-in-out infinite;
+.hmi-card-header {
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid var(--hmi-border);
+  font-weight: 600;
+  color: var(--hmi-text);
 }
 
-/* Status indicator with glow */
-.status-indicator {
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  display: inline-block;
-  position: relative;
-}
-.status-indicator::after {
-  content: '';
-  position: absolute;
-  inset: -3px;
-  border-radius: 50%;
-  opacity: 0.4;
-}
-.status-indicator.online {
-  background-color: #10b981;
-  box-shadow: 0 0 12px rgba(16, 185, 129, 0.6);
-}
-.status-indicator.online::after { background: radial-gradient(circle, rgba(16, 185, 129, 0.4) 0%, transparent 70%); }
-.status-indicator.offline {
-  background-color: #ef4444;
-  box-shadow: 0 0 12px rgba(239, 68, 68, 0.6);
-}
-.status-indicator.connecting {
-  background-color: #f59e0b;
-  box-shadow: 0 0 12px rgba(245, 158, 11, 0.6);
-  animation: pulse-connecting 1s ease-in-out infinite;
+.hmi-card-body {
+  padding: 1.25rem;
 }
 
-@keyframes pulse-connecting {
-  0%, 100% { transform: scale(1); opacity: 1; }
-  50% { transform: scale(1.2); opacity: 0.7; }
+/* ========================================
+   NAVIGATION
+   ======================================== */
+
+.hmi-nav {
+  background: var(--hmi-panel);
+  border-bottom: 1px solid var(--hmi-border);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
 }
 
-/* Tank visualization */
-.tank-container {
-  position: relative;
-  background: linear-gradient(180deg, rgba(15, 23, 42, 0.9) 0%, rgba(30, 41, 59, 0.8) 100%);
-  border: 2px solid rgba(56, 189, 248, 0.3);
-  border-radius: 8px 8px 16px 16px;
-  overflow: hidden;
-}
-
-.tank-water {
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  background: linear-gradient(180deg, rgba(56, 189, 248, 0.7) 0%, rgba(2, 132, 199, 0.9) 100%);
-  transition: height 0.5s ease-out;
-}
-
-.tank-water::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 8px;
-  background: linear-gradient(90deg,
-    transparent 0%,
-    rgba(255, 255, 255, 0.3) 25%,
-    rgba(255, 255, 255, 0.5) 50%,
-    rgba(255, 255, 255, 0.3) 75%,
-    transparent 100%
-  );
-  animation: wave 3s ease-in-out infinite;
-}
-
-@keyframes wave {
-  0%, 100% { transform: translateX(-20px); }
-  50% { transform: translateX(20px); }
-}
-
-/* Gauge styles */
-.gauge-ring {
-  stroke-linecap: round;
-  transition: stroke-dashoffset 0.5s ease-out;
-}
-
-.gauge-glow {
-  filter: drop-shadow(0 0 8px currentColor);
-}
-
-/* Pump animation */
-@keyframes pump-running {
-  0% { transform: rotate(0deg); }
-  100% { transform: rotate(360deg); }
-}
-
-.pump-icon.running {
-  animation: pump-running 1s linear infinite;
-}
-
-/* Flow lines */
-@keyframes flow {
-  0% { stroke-dashoffset: 20; }
-  100% { stroke-dashoffset: 0; }
-}
-
-.flow-line {
-  stroke-dasharray: 5 5;
-  animation: flow 0.5s linear infinite;
-}
-
-.flow-line.reverse {
-  animation-direction: reverse;
-}
-
-/* Sensor value display */
-.sensor-card {
-  background: linear-gradient(145deg, rgba(30, 41, 59, 0.9) 0%, rgba(15, 23, 42, 0.95) 100%);
-  border: 1px solid rgba(56, 189, 248, 0.15);
-  border-radius: 12px;
-  padding: 16px;
-  transition: all 0.3s ease;
-}
-
-.sensor-card:hover {
-  border-color: rgba(56, 189, 248, 0.4);
-  transform: translateY(-2px);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3), 0 0 40px rgba(56, 189, 248, 0.1);
-}
-
-/* Process mimic diagram styles */
-.mimic-container {
-  position: relative;
-  background: radial-gradient(ellipse at center, rgba(30, 41, 59, 0.5) 0%, rgba(15, 23, 42, 0.9) 100%);
-  border-radius: 16px;
-  overflow: hidden;
-}
-
-.mimic-container::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%2338bdf8' fill-opacity='0.03'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
-  pointer-events: none;
-}
-
-/* Button styles */
-.btn-primary {
-  background: linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%);
-  color: white;
-  padding: 8px 16px;
-  border-radius: 8px;
+.hmi-nav-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  color: var(--hmi-text-muted);
   font-weight: 500;
-  transition: all 0.2s ease;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  font-size: 0.875rem;
+  text-decoration: none;
+  border-radius: 6px;
+  transition: color 0.15s, background-color 0.15s;
 }
 
-.btn-primary:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 20px rgba(14, 165, 233, 0.4);
+.hmi-nav-link:hover {
+  color: var(--hmi-text);
+  background-color: #F0F0F0;
 }
 
-.btn-danger {
-  background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
-  color: white;
-  padding: 8px 16px;
-  border-radius: 8px;
+.hmi-nav-link.active {
+  color: var(--status-info);
+  background-color: #E3F2FD;
+}
+
+/* ========================================
+   STATUS INDICATORS (ISA-101)
+   ======================================== */
+
+/* Status dot - base */
+.status-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.status-dot.normal { background-color: var(--hmi-equipment); }
+.status-dot.ok { background-color: var(--status-ok); }
+.status-dot.warning { background-color: var(--status-warning); }
+.status-dot.alarm { background-color: var(--status-alarm); }
+.status-dot.info { background-color: var(--status-info); }
+.status-dot.offline { background-color: var(--status-offline); }
+
+/* Status badge */
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.25rem 0.75rem;
+  font-size: 0.75rem;
   font-weight: 500;
-  transition: all 0.2s ease;
+  border-radius: 9999px;
+  text-transform: uppercase;
+  letter-spacing: 0.025em;
 }
 
-.btn-danger:hover {
-  box-shadow: 0 4px 20px rgba(239, 68, 68, 0.4);
+.status-badge.normal {
+  background-color: #EEEEEE;
+  color: #616161;
 }
 
-/* Scrollbar styling */
+.status-badge.ok {
+  background-color: #E8F5E9;
+  color: #2E7D32;
+}
+
+.status-badge.warning {
+  background-color: #FFF3E0;
+  color: #E65100;
+}
+
+.status-badge.alarm {
+  background-color: #FFEBEE;
+  color: #C62828;
+}
+
+.status-badge.info {
+  background-color: #E3F2FD;
+  color: #1565C0;
+}
+
+/* ========================================
+   BUTTONS
+   ======================================== */
+
+.hmi-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.hmi-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.hmi-btn-primary {
+  background-color: var(--status-info);
+  color: white;
+  border-color: var(--status-info);
+}
+
+.hmi-btn-primary:hover:not(:disabled) {
+  background-color: #1976D2;
+}
+
+.hmi-btn-secondary {
+  background-color: white;
+  color: var(--hmi-text);
+  border-color: var(--hmi-border);
+}
+
+.hmi-btn-secondary:hover:not(:disabled) {
+  background-color: #F5F5F5;
+}
+
+.hmi-btn-danger {
+  background-color: var(--status-alarm);
+  color: white;
+  border-color: var(--status-alarm);
+}
+
+.hmi-btn-danger:hover:not(:disabled) {
+  background-color: #D32F2F;
+}
+
+/* ========================================
+   DATA DISPLAY
+   ======================================== */
+
+/* Process value display */
+.process-value {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: var(--hmi-text);
+}
+
+.process-value.normal { color: var(--hmi-text); }
+.process-value.warning { color: var(--status-warning); }
+.process-value.alarm { color: var(--status-alarm); }
+
+.process-unit {
+  font-size: 0.875rem;
+  color: var(--hmi-text-muted);
+  margin-left: 0.25rem;
+}
+
+/* ========================================
+   RESPONSIVE GRID SYSTEM
+   ======================================== */
+
+.hmi-grid {
+  display: grid;
+  gap: 1rem;
+}
+
+/* Single column on mobile */
+.hmi-grid-auto {
+  grid-template-columns: 1fr;
+}
+
+/* Responsive columns */
+@media (min-width: 640px) {
+  .hmi-grid-auto {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (min-width: 1024px) {
+  .hmi-grid-auto {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+@media (min-width: 1280px) {
+  .hmi-grid-auto {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
+
+/* ========================================
+   ALARM ANIMATIONS (ISA-101: 1Hz flash)
+   ======================================== */
+
+@keyframes alarm-flash {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.alarm-flash {
+  animation: alarm-flash 1s step-end infinite;
+}
+
+/* Spinning loader */
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.spinner {
+  animation: spin 1s linear infinite;
+}
+
+/* ========================================
+   SCROLLBAR (subtle, professional)
+   ======================================== */
+
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
 
 ::-webkit-scrollbar-track {
-  background: rgba(15, 23, 42, 0.5);
-  border-radius: 4px;
+  background: #F0F0F0;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(56, 189, 248, 0.3);
+  background: #BDBDBD;
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(56, 189, 248, 0.5);
+  background: #9E9E9E;
 }
 
-/* Tooltip */
-.tooltip {
-  background: rgba(15, 23, 42, 0.95);
-  border: 1px solid rgba(56, 189, 248, 0.3);
-  border-radius: 8px;
-  padding: 8px 12px;
-  font-size: 13px;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+/* ========================================
+   ACCESSIBILITY
+   ======================================== */
+
+/* Focus styles */
+*:focus-visible {
+  outline: 2px solid var(--status-info);
+  outline-offset: 2px;
 }
 
-/* Nav styles */
-.nav-link {
-  position: relative;
-  padding: 8px 16px;
-  color: rgba(255, 255, 255, 0.7);
-  transition: all 0.2s ease;
-  border-radius: 8px;
-}
-
-.nav-link:hover {
-  color: white;
-  background: rgba(56, 189, 248, 0.1);
-}
-
-.nav-link.active {
-  color: #38bdf8;
-  background: rgba(56, 189, 248, 0.15);
-}
-
-.nav-link.active::after {
-  content: '';
+/* Skip link */
+.skip-link {
   position: absolute;
-  bottom: -1px;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 20px;
-  height: 3px;
-  background: #38bdf8;
-  border-radius: 3px;
+  top: -100%;
+  left: 0;
+  padding: 1rem;
+  background: var(--status-info);
+  color: white;
+  z-index: 100;
+  transition: top 0.2s;
 }
+
+.skip-link:focus {
+  top: 0;
+}
+
+/* Screen reader only */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ========================================
+   UTILITY CLASSES
+   ======================================== */
+
+.text-muted { color: var(--hmi-text-muted); }
+.text-normal { color: var(--hmi-text); }
+.bg-panel { background-color: var(--hmi-panel); }
+.border-subtle { border-color: var(--hmi-border); }

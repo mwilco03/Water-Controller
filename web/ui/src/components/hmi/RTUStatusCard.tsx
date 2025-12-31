@@ -70,8 +70,8 @@ export default function RTUStatusCard({
 
   // Card border style based on state
   const getCardBorderStyle = () => {
-    if (hasUnacknowledged) return 'border-2 border-alarm-red';
-    if (hasAlarms) return 'border border-alarm-red';
+    if (hasUnacknowledged) return 'border-2 border-status-alarm';
+    if (hasAlarms) return 'border border-status-alarm';
     if (isOffline) return 'border border-hmi-border';
     return 'border border-hmi-border';
   };
@@ -134,7 +134,7 @@ export default function RTUStatusCard({
           <div className={`text-lg font-bold font-mono ${getTextStyle()}`}>
             {getLastSeenText()}
             {isStale() && !isOffline && (
-              <span className="text-alarm-yellow ml-1">!</span>
+              <span className="text-status-warning ml-1">!</span>
             )}
           </div>
           <div className="text-xs text-hmi-text-secondary">last seen</div>
@@ -144,7 +144,7 @@ export default function RTUStatusCard({
       {/* Alarm indicator */}
       <div className={`
         rounded px-2 py-1.5 text-sm flex items-center justify-between
-        ${hasAlarms ? (hasUnacknowledged ? 'bg-alarm-red text-white' : 'bg-quality-bad-bg text-alarm-red') : 'bg-hmi-bg-alt text-hmi-text-secondary'}
+        ${hasAlarms ? (hasUnacknowledged ? 'bg-status-alarm text-white' : 'bg-quality-bad text-status-alarm') : 'bg-hmi-bg text-hmi-muted'}
       `}>
         {hasAlarms ? (
           <>
