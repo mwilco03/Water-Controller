@@ -99,14 +99,14 @@ static app_config_t g_config = {
     .web_port = 8080,
     .daemon_mode = false,
     .modbus_tcp_enabled = true,
-    .modbus_tcp_port = 502,
+    .modbus_tcp_port = 1502,  /* Non-privileged port, matches WTC_MODBUS_TCP_PORT */
     .modbus_rtu_enabled = false,
     .modbus_rtu_device = "",
     .modbus_slave_addr = 1,
     /* Database defaults */
     .db_host = "localhost",
     .db_port = 5432,
-    .db_name = "water_controller",
+    .db_name = "water_treatment",  /* Matches WTC_DB_NAME across codebase */
     .db_user = "wtc",
     .db_password = "",
     .db_enabled = true,

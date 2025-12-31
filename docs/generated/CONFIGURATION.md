@@ -481,7 +481,7 @@ FastAPI backend configuration
 | `api.cors_origins` | `string` | `""` | Comma-separated list of allowed CORS origins (Env: `WTC_CORS_ORIGINS`) |
 | `api.debug` | `boolean` | `false` | Enable API debug mode (Env: `WTC_API_DEBUG`) |
 | `api.host` | `string` | `"0.0.0.0"` | API server bind address (Env: `WTC_API_HOST`) |
-| `api.port` | `integer` (min: 1, max: 65535) | `8080` | API server port (Env: `WTC_API_PORT`, CLI: `-p, --port`) |
+| `api.port` | `integer` (min: 1, max: 65535) | `8000` | API server port (Env: `WTC_API_PORT`, CLI: `-p, --port`) |
 | `api.workers` | `integer` (min: 1, max: 32) | `4` | Number of API worker processes |
 
 ### authentication
@@ -571,7 +571,7 @@ WebSocket streaming configuration
 | `WTC_API_DEBUG` | `false` | Enable API debug mode |
 | `WTC_API_HOST` | `"0.0.0.0"` | API server bind address |
 | `WTC_API_ONLY` | `false` | Run API only (no UI serving) |
-| `WTC_API_PORT` | `8080` | API server port |
+| `WTC_API_PORT` | `8000` | API server port |
 | `WTC_AUTH_ENABLED` | `true` | Enable authentication |
 | `WTC_CB_FAILURE_THRESHOLD` | `5` | Failures before opening circuit |
 | `WTC_CB_RESET_TIMEOUT` | `30` | Time before attempting reset |

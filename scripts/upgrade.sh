@@ -637,7 +637,14 @@ phase_validate() {
 
     # Health check
     log_info "Running health check..."
-    local health_url="http://localhost:8000/health"
+    # Source port configuration if available
+    local ports_file="${INSTALL_BASE}/config/ports.env"
+    if [[ -f "$ports_file" ]]; then
+        # shellcheck source=/dev/null
+        source "$ports_file"
+    fi
+    local api_port="${WTC_API_PORT:-8000}"
+    local health_url="http://localhost:${api_port}/health"
     local health_ok=false
 
     for ((i=0; i<$HEALTH_CHECK_TIMEOUT; i++)); do

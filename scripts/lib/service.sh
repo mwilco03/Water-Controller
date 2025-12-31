@@ -45,9 +45,9 @@ readonly SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 : "${LOG_DIR:=/var/log/water-controller}"
 : "${RUN_DIR:=/run/water-controller}"
 
-# Default ports
-: "${DEFAULT_API_PORT:=8000}"
-: "${DEFAULT_HMI_PORT:=8080}"
+# Default ports - use WTC_* from ports.env if available, otherwise defaults
+: "${DEFAULT_API_PORT:=${WTC_API_PORT:-8000}}"
+: "${DEFAULT_HMI_PORT:=${WTC_UI_PORT:-8080}}"
 
 # Frontend service configuration
 readonly FRONTEND_SERVICE_NAME="${SERVICE_NAME}-frontend"

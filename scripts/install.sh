@@ -1733,8 +1733,21 @@ show_completion_message() {
         return
     fi
 
-    local api_port=8000
-    local hmi_port=8080
+    # Source port configuration from installed config file
+    local config_file="${INSTALL_DIR}/config/ports.env"
+    if [[ -f "$config_file" ]]; then
+        # shellcheck source=/dev/null
+        source "$config_file"
+    fi
+
+    # Use configured ports with fallback defaults
+    local api_port="${WTC_API_PORT:-8000}"
+    local hmi_port="${WTC_UI_PORT:-8080}"
+
+    # Get primary IP address
+    local ip_addr
+    ip_addr=$(hostname -I 2>/dev/null | awk '{print $1}')
+    [[ -z "$ip_addr" ]] && ip_addr="localhost"
 
     echo ""
     echo "============================================================"
@@ -1743,18 +1756,31 @@ show_completion_message() {
     echo ""
     echo "Installation completed successfully!"
     echo ""
+    echo "Port Configuration (from ${config_file}):"
+    echo "  API Port:  ${api_port}"
+    echo "  HMI Port:  ${hmi_port}"
+    echo ""
     echo "Service Status:"
     echo "  systemctl status water-controller"
     echo ""
     echo "Access Points:"
-    echo "  API:  http://$(hostname -I 2>/dev/null | awk '{print $1}' || echo 'localhost'):${api_port}"
-    echo "  HMI:  http://$(hostname -I 2>/dev/null | awk '{print $1}' || echo 'localhost'):${hmi_port}"
+    echo "  API:       http://${ip_addr}:${api_port}"
+    echo "  HMI:       http://${ip_addr}:${hmi_port}"
+    echo "  API Docs:  http://${ip_addr}:${api_port}/api/docs"
+    echo "  Health:    http://${ip_addr}:${api_port}/health"
     echo ""
     echo "Useful Commands:"
     echo "  Start:    systemctl start water-controller"
     echo "  Stop:     systemctl stop water-controller"
     echo "  Restart:  systemctl restart water-controller"
     echo "  Logs:     journalctl -u water-controller -f"
+    echo "  Health:   curl http://localhost:${api_port}/health"
+    echo ""
+    echo "Configuration Files:"
+    echo "  Ports:    ${config_file}"
+    echo "  Main:     /etc/water-controller/config.yaml"
+    echo ""
+    echo "To customize ports, edit ${config_file} and restart services."
     echo ""
     echo "Documentation:"
     echo "  Report:   /usr/share/doc/water-controller/installation-report.txt"

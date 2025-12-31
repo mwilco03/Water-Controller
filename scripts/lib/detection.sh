@@ -26,7 +26,7 @@ readonly INSTALL_LOG_FILE="${INSTALL_LOG_FILE:-/var/log/water-controller-install
 readonly MIN_DISK_SPACE_MB=2048
 readonly MIN_RAM_MB=512
 readonly WARN_RAM_MB=1024
-readonly DEFAULT_PORT=8000
+readonly DEFAULT_PORT="${WTC_API_PORT:-8000}"
 
 # Minimum version requirements
 readonly MIN_PYTHON_MAJOR=3
