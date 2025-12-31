@@ -27,12 +27,13 @@ ProtectHome=true
 PrivateTmp=true
 ReadWritePaths=/var/lib/water-controller /var/log/water-controller
 
-# Environment - API on 8000, UI on 8080
+# Environment - Ports from centralized config
+# See config/ports.env for the single source of truth
 Environment=DATA_DIR=/var/lib/water-controller
-Environment=API_PORT=8000
-Environment=UI_PORT=8080
 Environment=PYTHONUNBUFFERED=1
 Environment=NODE_ENV=production
+# Load centralized port configuration
+EnvironmentFile=-/opt/water-controller/config/ports.env
 EnvironmentFile=-/etc/water-controller/environment
 
 [Install]

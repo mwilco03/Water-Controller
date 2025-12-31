@@ -4,14 +4,14 @@
   "description": "Water Treatment Controller HMI - React Frontend",
   "private": true,
   "scripts": {
-    "dev": "next dev -p 8080",
+    "dev": "next dev -p ${WTC_UI_PORT:-8080}",
     "build": "next build",
-    "start": "next start -p 8080",
+    "start": "next start -p ${WTC_UI_PORT:-8080}",
     "lint": "next lint",
     "test": "jest",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
-    "generate:types": "openapi-typescript http://localhost:8000/api/openapi.json -o src/lib/api-types.generated.ts",
+    "generate:types": "openapi-typescript http://localhost:${WTC_API_PORT:-8000}/api/openapi.json -o src/lib/api-types.generated.ts",
     "generate:types:file": "openapi-typescript ../api/openapi.json -o src/lib/api-types.generated.ts"
   },
   "dependencies": {

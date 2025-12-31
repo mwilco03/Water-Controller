@@ -21,8 +21,8 @@ ExecStartPre=/bin/bash -c 'test -d /var/lib/water-controller || (echo "ERROR: Da
 ExecStartPre=/bin/bash -c 'test -w /var/lib/water-controller || (echo "ERROR: Data directory not writable" && exit 1)'
 ExecStartPre=/bin/bash -c '/opt/water-controller/venv/bin/python3 -c "import fastapi, uvicorn, pydantic, sqlalchemy" || (echo "ERROR: Python dependencies missing" && exit 1)'
 
-# Main service
-ExecStart=/opt/water-controller/venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1 --proxy-headers
+# Main service - Port from WTC_API_PORT environment variable
+ExecStart=/bin/bash -c '/opt/water-controller/venv/bin/uvicorn app.main:app --host 0.0.0.0 --port ${WTC_API_PORT:-8000} --workers 1 --proxy-headers'
 ExecReload=/bin/kill -HUP $MAINPID
 
 # Graceful restart with health check validation
@@ -48,13 +48,16 @@ ReadWritePaths=/var/lib/water-controller /var/log/water-controller /run/water-co
 RuntimeDirectory=water-controller
 RuntimeDirectoryMode=0755
 
-# Environment
+# Environment - Ports from centralized config
+# See config/ports.env for the single source of truth
 Environment=PYTHONUNBUFFERED=1
 Environment=PYTHONDONTWRITEBYTECODE=1
 Environment=CONFIG_PATH=/etc/water-controller/config.yaml
 Environment=DATA_DIR=/var/lib/water-controller
 Environment=LOG_DIR=/var/log/water-controller
 Environment=WTC_STARTUP_MODE=production
+# Load centralized port configuration first
+EnvironmentFile=-/opt/water-controller/config/ports.env
 EnvironmentFile=-/etc/water-controller/environment
 
 # Resource limits

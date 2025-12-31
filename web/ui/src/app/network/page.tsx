@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { networkLogger } from '@/lib/logger';
+import { PORTS, getCurrentHost } from '@/config/ports';
 
 interface NetworkConfig {
   mode: 'dhcp' | 'static';
@@ -40,10 +41,10 @@ export default function NetworkPage() {
     hostname: 'water-controller',
   });
   const [webConfig, setWebConfig] = useState<WebConfig>({
-    port: 8080,
+    port: PORTS.ui,
     bind_address: '0.0.0.0',
     https_enabled: false,
-    https_port: 8443,
+    https_port: PORTS.uiHttps,
   });
   const [interfaces, setInterfaces] = useState<NetworkInterface[]>([]);
   const [loading, setLoading] = useState(false);
@@ -446,7 +447,7 @@ export default function NetworkPage() {
           <p className="text-gray-300">
             You are currently connected to this controller at:{' '}
             <span className="text-white font-mono">
-              {typeof window !== 'undefined' ? window.location.host : 'localhost:8080'}
+              {getCurrentHost()}
             </span>
           </p>
           <p className="text-sm text-gray-500 mt-2">

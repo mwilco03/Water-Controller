@@ -21,8 +21,8 @@ ExecStartPre=/bin/bash -c 'test -f /opt/water-controller/web/ui/.next/build-mani
 ExecStartPre=/bin/bash -c 'test -d /opt/water-controller/web/ui/.next/static || (echo "ERROR: UI static assets missing" && exit 1)'
 ExecStartPre=/bin/bash -c 'test -d /opt/water-controller/web/ui/.next/server || (echo "ERROR: UI server build missing" && exit 1)'
 
-# Main service
-ExecStart=/usr/bin/node /opt/water-controller/web/ui/node_modules/.bin/next start -p 8080 -H 0.0.0.0
+# Main service - Port from WTC_UI_PORT environment variable
+ExecStart=/bin/bash -c '/usr/bin/node /opt/water-controller/web/ui/node_modules/.bin/next start -p ${WTC_UI_PORT:-8080} -H 0.0.0.0'
 ExecReload=/bin/kill -HUP $MAINPID
 
 Restart=on-failure
@@ -38,11 +38,13 @@ ProtectHome=true
 PrivateTmp=true
 ReadWritePaths=/var/lib/water-controller /var/log/water-controller
 
-# Environment
+# Environment - Ports from centralized config
+# See config/ports.env for the single source of truth
 Environment=NODE_ENV=production
-Environment=PORT=8080
 Environment=HOSTNAME=0.0.0.0
 Environment=NEXT_TELEMETRY_DISABLED=1
+# Load centralized port configuration first
+EnvironmentFile=-/opt/water-controller/config/ports.env
 EnvironmentFile=-/etc/water-controller/environment
 
 # Resource limits

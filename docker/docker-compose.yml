@@ -1,6 +1,16 @@
 # Water Treatment Controller - Docker Compose
 # Copyright (C) 2024
 # SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Port Configuration:
+# All ports are configurable via environment variables.
+# See config/ports.env for the single source of truth.
+#
+# Usage:
+#   docker compose --env-file ../config/ports.env up -d
+#
+# Or set variables directly:
+#   WTC_API_PORT=8000 WTC_UI_PORT=8080 docker compose up -d
 
 version: "3.9"
 
@@ -68,19 +78,20 @@ services:
     # DCK-H1 fix: Run as non-root user
     user: "1000:1000"
     environment:
-      DATABASE_URL: postgresql://wtc:${DB_PASSWORD:-wtc_password}@database:5432/water_treatment
-      REDIS_URL: redis://redis:6379
+      DATABASE_URL: postgresql://wtc:${DB_PASSWORD:-wtc_password}@database:${WTC_DB_PORT:-5432}/water_treatment
+      REDIS_URL: redis://redis:${WTC_REDIS_PORT:-6379}
       API_HOST: 0.0.0.0
-      API_PORT: 8080
+      WTC_API_PORT: ${WTC_API_PORT:-8000}
+      WTC_UI_PORT: ${WTC_UI_PORT:-8080}
     ports:
-      - "8080:8080"
+      - "${WTC_API_PORT:-8000}:${WTC_API_PORT:-8000}"
     depends_on:
       database:
         condition: service_healthy
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/api/v1/system/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:${WTC_API_PORT:-8000}/health"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -140,15 +151,21 @@ services:
     # DCK-H1 fix: Run as non-root user
     user: "1000:1000"
     environment:
-      NEXT_PUBLIC_API_URL: http://api:8080
+      # API URL for server-side requests (container name resolution)
+      API_URL: http://api:${WTC_API_PORT:-8000}
+      # Public API URL for client-side (empty = use same origin with rewrites)
+      NEXT_PUBLIC_API_URL: ""
+      WTC_UI_PORT: ${WTC_UI_PORT:-8080}
+      WTC_API_PORT: ${WTC_API_PORT:-8000}
     ports:
-      - "3001:3000"
+      # Map external UI port to internal container port (3000)
+      - "${WTC_UI_PORT:-8080}:${WTC_DOCKER_UI_INTERNAL_PORT:-3000}"
     depends_on:
       api:
         condition: service_healthy
     # DCK-H2 fix: Add health check
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000"]
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:${WTC_DOCKER_UI_INTERNAL_PORT:-3000}"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -172,16 +189,17 @@ services:
       GF_SECURITY_ADMIN_USER: admin
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
       GF_INSTALL_PLUGINS: grafana-clock-panel,grafana-simple-json-datasource
+      GF_SERVER_HTTP_PORT: ${WTC_GRAFANA_PORT:-3000}
     volumes:
       - grafana_data:/var/lib/grafana
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
     ports:
-      - "3000:3000"
+      - "${WTC_GRAFANA_PORT:-3000}:${WTC_GRAFANA_PORT:-3000}"
     depends_on:
       - database
     # DCK-H2 fix: Add health check
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000/api/health"]
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:${WTC_GRAFANA_PORT:-3000}/api/health"]
       interval: 30s
       timeout: 10s
       retries: 3

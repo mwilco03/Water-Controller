@@ -7,7 +7,8 @@
 #
 # After installation:
 #   sudo systemctl start water-controller-hmi
-#   Access HMI at http://localhost:8080
+#   Access HMI at the URL shown at the end of installation
+#   (Default: http://localhost:8080)
 #
 
 set -e
@@ -67,14 +68,26 @@ if ! build_nodejs_ui; then
     exit 1
 fi
 
-# Create default configuration
-log_step "Step 6: Creating default configuration..."
+# Copy centralized port configuration
+log_step "Step 6: Installing port configuration..."
+mkdir -p "$INSTALL_DIR/config"
+cp "$PROJECT_DIR/config/ports.env" "$INSTALL_DIR/config/"
+cp "$PROJECT_DIR/config/ports.sh" "$INSTALL_DIR/config/"
+chmod +x "$INSTALL_DIR/config/ports.sh"
+echo "  Installed: $INSTALL_DIR/config/ports.env"
+echo "  Installed: $INSTALL_DIR/config/ports.sh"
+
+# Create default environment file (extends centralized config)
+log_step "Step 7: Creating default configuration..."
 if [ ! -f "$CONFIG_DIR/environment" ]; then
     cat > "$CONFIG_DIR/environment" << EOF
 # Water Treatment Controller HMI Configuration
+# Port configuration is loaded from $INSTALL_DIR/config/ports.env
+# Override specific ports here if needed:
+# WTC_API_PORT=8000
+# WTC_UI_PORT=8080
+
 DATA_DIR=$DATA_DIR
-API_PORT=8000
-UI_PORT=8080
 LOG_LEVEL=INFO
 WT_LOG_LEVEL=INFO
 WT_CONFIG_DIR=$CONFIG_DIR
@@ -88,24 +101,24 @@ else
 fi
 
 # Set permissions
-log_step "Step 7: Setting permissions..."
+log_step "Step 8: Setting permissions..."
 chown -R "$SERVICE_USER:$SERVICE_GROUP" "$INSTALL_DIR"
 set_permissions
 echo "  Set ownership and permissions"
 
 # Install systemd service
-log_step "Step 8: Installing systemd service..."
+log_step "Step 9: Installing systemd service..."
 cp "$PROJECT_DIR/systemd/water-controller-hmi.service" "$SYSTEMD_DIR/"
 systemctl daemon-reload
 echo "  Installed: $SYSTEMD_DIR/water-controller-hmi.service"
 
 # Enable service
-log_step "Step 9: Enabling service..."
+log_step "Step 10: Enabling service..."
 systemctl enable water-controller-hmi
 echo "  Enabled: water-controller-hmi.service"
 
 # Start service
-log_step "Step 10: Starting service..."
+log_step "Step 11: Starting service..."
 systemctl start water-controller-hmi
 sleep 3
 
