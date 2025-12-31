@@ -24,7 +24,9 @@ from datetime import datetime
 from typing import Optional
 
 # Configuration
-API_BASE_URL = os.environ.get("API_BASE_URL", "http://localhost:8080")
+# API runs on port 8000 (see config/ports.env)
+# UI runs on port 8080 - do not confuse them
+API_BASE_URL = os.environ.get("API_BASE_URL", f"http://localhost:{os.environ.get('WTC_API_PORT', '8000')}")
 API_TIMEOUT = 10.0
 POLL_INTERVAL = 0.5
 MAX_WAIT_TIME = 30.0

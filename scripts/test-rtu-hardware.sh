@@ -21,7 +21,8 @@ RTU_IP="${RTU_IP:-192.168.1.100}"
 RTU_STATION="${RTU_STATION:-water-treat-rtu}"
 CONTROLLER_IP="${CONTROLLER_IP:-192.168.1.1}"
 PROFINET_INTERFACE="${PROFINET_INTERFACE:-eth0}"
-API_URL="${API_URL:-http://localhost:8080}"
+# API runs on port 8000, UI on port 8080 (see config/ports.env)
+API_URL="${API_URL:-http://localhost:${WTC_API_PORT:-8000}}"
 TEST_TIMEOUT="${TEST_TIMEOUT:-10}"
 VERBOSE="${VERBOSE:-false}"
 

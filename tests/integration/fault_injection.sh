@@ -22,7 +22,9 @@
 set -e
 
 # Configuration
-API_URL="${API_URL:-http://localhost:8080}"
+# API runs on port 8000, UI on port 8080 (see config/ports.env)
+API_PORT="${WTC_API_PORT:-8000}"
+API_URL="${API_URL:-http://localhost:${API_PORT}}"
 PROFINET_INTERFACE="${PROFINET_INTERFACE:-eth0}"
 TEST_DURATION="${TEST_DURATION:-10}"
 RECOVERY_WAIT="${RECOVERY_WAIT:-30}"
@@ -111,9 +113,9 @@ cleanup() {
     # Remove tc qdisc
     tc qdisc del dev $PROFINET_INTERFACE root 2>/dev/null || true
 
-    # Remove iptables rules
-    iptables -D INPUT -p tcp --dport 8080 -j DROP 2>/dev/null || true
-    iptables -D OUTPUT -p tcp --sport 8080 -j DROP 2>/dev/null || true
+    # Remove iptables rules (API port from config)
+    iptables -D INPUT -p tcp --dport ${API_PORT} -j DROP 2>/dev/null || true
+    iptables -D OUTPUT -p tcp --sport ${API_PORT} -j DROP 2>/dev/null || true
     iptables -D INPUT -i $PROFINET_INTERFACE -j DROP 2>/dev/null || true
     iptables -D OUTPUT -o $PROFINET_INTERFACE -j DROP 2>/dev/null || true
 
@@ -233,18 +235,18 @@ test_high_latency() {
 # Test: API Server Disconnect
 test_api_disconnect() {
     log_info "=== TEST: API Server Disconnect ==="
-    log_info "Blocking API port 8080 for ${TEST_DURATION}s..."
+    log_info "Blocking API port ${API_PORT} for ${TEST_DURATION}s..."
 
-    # Block API port
-    iptables -A INPUT -p tcp --dport 8080 -j DROP
-    iptables -A OUTPUT -p tcp --sport 8080 -j DROP
+    # Block API port (uses API_PORT from config, default 8000)
+    iptables -A INPUT -p tcp --dport ${API_PORT} -j DROP
+    iptables -A OUTPUT -p tcp --sport ${API_PORT} -j DROP
 
     log_info "API port blocked. Sleeping ${TEST_DURATION}s..."
     sleep $TEST_DURATION
 
     # Remove block
-    iptables -D INPUT -p tcp --dport 8080 -j DROP
-    iptables -D OUTPUT -p tcp --sport 8080 -j DROP
+    iptables -D INPUT -p tcp --dport ${API_PORT} -j DROP
+    iptables -D OUTPUT -p tcp --sport ${API_PORT} -j DROP
 
     log_info "API port unblocked."
 
