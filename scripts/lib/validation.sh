@@ -43,8 +43,8 @@ readonly VALIDATION_VERSION="1.0.0"
 : "${SERVICE_NAME:=water-controller}"
 : "${SERVICE_USER:=water-controller}"
 
-# Network
-: "${DEFAULT_API_PORT:=8000}"
+# Network - use WTC_API_PORT from ports.env if available, otherwise default to 8000
+: "${DEFAULT_API_PORT:=${WTC_API_PORT:-8000}}"
 
 # Test timeouts (seconds)
 readonly HTTP_TIMEOUT=5
