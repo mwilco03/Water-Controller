@@ -47,3 +47,19 @@ export {
   SkeletonPage,
   SkeletonStats,
 } from './Skeleton';
+
+// New components
+export { default as StatusHeader } from './StatusHeader';
+export type { SystemStatus } from './StatusHeader';
+
+export { default as ActionBar } from './ActionBar';
+export type { Action, ActionGroup, ActionVariant } from './ActionBar';
+
+export { default as ValueDisplay } from './ValueDisplay';
+export type { ValueQuality, ValueTrend, ValueSize } from './ValueDisplay';
+
+export { default as MetricCard } from './MetricCard';
+export type { MetricStatus } from './MetricCard';
+
+// Form components
+export * from './forms';
