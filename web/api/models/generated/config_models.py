@@ -629,7 +629,7 @@ class ApiConfig(BaseModel):
     cors_origins: str = Field(default="", description="Comma-separated list of allowed CORS origins")
     debug: bool = Field(default=False, description="Enable API debug mode")
     host: str = Field(default="0.0.0.0", description="API server bind address")
-    port: int = Field(default=8080, ge=1, le=65535, description="API server port")
+    port: int = Field(default=8000, ge=1, le=65535, description="API server port")
     workers: int = Field(default=4, ge=1, le=32, description="Number of API worker processes")
 
     model_config = {
@@ -642,7 +642,7 @@ class UiConfig(BaseModel):
 
     api_url: str = Field(default="", description="API URL for UI to connect to")
     dist_dir: str = Field(default="", description="Static UI distribution directory")
-    port: int = Field(default=3000, ge=1, le=65535, description="UI server port (when running separately)")
+    port: int = Field(default=8080, ge=1, le=65535, description="UI server port (when running separately)")
 
     model_config = {
         "extra": "forbid",
