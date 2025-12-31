@@ -3,12 +3,11 @@
 # ============================================================================
 # Purpose: Build, test, and validate code quality on every push and PR
 #
-# Jobs (consolidated to reduce redundant setup):
-#   - quality-c         - cppcheck + build + tests (~4 min)
-#   - quality-python    - ruff + mypy + pytest (~3 min)
-#   - quality-typescript - eslint + jest + next build (~4 min)
-#   - security          - pip-audit + npm audit (~1 min)
-#   - build-arm         - Cross-compilation (main/release only)
+# Jobs (consolidated to reduce check noise):
+#   - quality-c          - cppcheck + build + tests (~4 min)
+#   - quality-python     - ruff + mypy + pytest + pip-audit (~3 min)
+#   - quality-typescript - eslint + jest + next build + npm audit (~4 min)
+#   - build-arm          - Cross-compilation (main/release only)
 #
 # Quality Gates (per DEVELOPMENT_GUIDELINES.md):
 #   - C:          -Wall -Wextra -Werror, cppcheck blocking
@@ -99,7 +98,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -r web/api/requirements.txt
-          pip install mypy ruff pytest-cov types-psutil
+          pip install mypy ruff pytest-cov types-psutil pip-audit
 
       - name: Lint (ruff)
         run: cd web/api && ruff check . --output-format=github
@@ -111,6 +110,9 @@ jobs:
         run: |
           cd web/api
           pytest tests/ --cov=app --cov-report=term-missing -v || true
+
+      - name: Security audit (pip-audit)
+        run: pip-audit -r web/api/requirements.txt || true
 
   # ============================================================================
   # TypeScript Quality - Lint, test, build in single job (one npm ci)
@@ -140,6 +142,9 @@ jobs:
       - name: Build (Next.js)
         run: cd web/ui && npm run build
 
+      - name: Security audit (npm audit)
+        run: cd web/ui && npm audit --audit-level=high || true
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -149,24 +154,6 @@ jobs:
             web/ui/public
             web/ui/package.json
           retention-days: 7
-
-  # ============================================================================
-  # Security - Dependency vulnerability scanning
-  # ============================================================================
-  security:
-    name: Security Scan
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Audit Python deps
-        run: |
-          pip install pip-audit
-          pip-audit -r web/api/requirements.txt || true
-
-      - name: Audit npm deps
-        run: cd web/ui && npm audit --audit-level=high || true
 
   # ============================================================================
   # ARM Cross-Compilation (main/release only)
