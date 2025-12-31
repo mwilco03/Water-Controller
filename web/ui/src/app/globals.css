@@ -28,6 +28,49 @@
   --status-alarm: #F44336;
   --status-info: #2196F3;
   --status-offline: #9E9E9E;
+
+  /* Mobile-First Touch Targets & Spacing */
+  --touch-target-min: 48px;
+  --touch-target-comfortable: 56px;
+  --button-min-height: 48px;
+  --list-item-min-height: 56px;
+  --nav-item-min-height: 56px;
+
+  /* Spacing Scale */
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 16px;
+  --space-lg: 24px;
+  --space-xl: 32px;
+  --space-2xl: 48px;
+
+  /* Safe Areas for Mobile */
+  --safe-area-inset-top: env(safe-area-inset-top, 0px);
+  --safe-area-inset-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-area-inset-left: env(safe-area-inset-left, 0px);
+  --safe-area-inset-right: env(safe-area-inset-right, 0px);
+
+  /* Bottom Navigation Height */
+  --bottom-nav-height: 64px;
+
+  /* Typography Scale */
+  --font-size-xs: 0.75rem;
+  --font-size-sm: 0.875rem;
+  --font-size-base: 1rem;
+  --font-size-lg: 1.125rem;
+  --font-size-xl: 1.25rem;
+  --font-size-2xl: 1.5rem;
+
+  /* Animation Timing */
+  --transition-fast: 100ms;
+  --transition-normal: 150ms;
+  --transition-slow: 300ms;
+
+  /* Data Quality Borders */
+  --quality-good-border: transparent;
+  --quality-uncertain-border: var(--status-warning);
+  --quality-bad-border: var(--status-alarm);
+  --quality-stale-border: var(--hmi-equipment);
 }
 
 /* Base Styles */
@@ -194,14 +237,26 @@ body {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 0.5rem;
-  padding: 0.5rem 1rem;
-  font-size: 0.875rem;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  min-height: var(--button-min-height);
+  min-width: var(--touch-target-min);
+  font-size: var(--font-size-sm);
   font-weight: 500;
   border-radius: 6px;
   border: 1px solid transparent;
   cursor: pointer;
-  transition: all 0.15s;
+  transition: all var(--transition-normal);
+  /* Touch feedback */
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  user-select: none;
+}
+
+/* Active/pressed state for immediate feedback */
+.hmi-btn:active:not(:disabled) {
+  transform: scale(0.97);
+  transition: transform 16ms;
 }
 
 .hmi-btn:disabled {
@@ -385,3 +440,437 @@ body {
 .text-normal { color: var(--hmi-text); }
 .bg-panel { background-color: var(--hmi-panel); }
 .border-subtle { border-color: var(--hmi-border); }
+
+/* ========================================
+   BOTTOM NAVIGATION (Mobile)
+   ======================================== */
+
+.bottom-nav {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: var(--bottom-nav-height);
+  padding-bottom: var(--safe-area-inset-bottom);
+  background: var(--hmi-panel);
+  border-top: 1px solid var(--hmi-border);
+  box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.08);
+  z-index: 100;
+  display: flex;
+  justify-content: space-around;
+  align-items: stretch;
+}
+
+.bottom-nav-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  min-height: var(--touch-target-min);
+  padding: var(--space-xs) var(--space-sm);
+  color: var(--hmi-text-muted);
+  text-decoration: none;
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  transition: color var(--transition-fast);
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
+.bottom-nav-item:active {
+  background-color: rgba(0, 0, 0, 0.05);
+}
+
+.bottom-nav-item.active {
+  color: var(--status-info);
+}
+
+.bottom-nav-item .nav-icon {
+  width: 24px;
+  height: 24px;
+  margin-bottom: 2px;
+}
+
+.bottom-nav-item .nav-label {
+  line-height: 1.2;
+}
+
+/* Badge on nav item (for alarm count) */
+.bottom-nav-badge {
+  position: absolute;
+  top: 4px;
+  right: calc(50% - 20px);
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  background: var(--status-alarm);
+  color: white;
+  font-size: 10px;
+  font-weight: 600;
+  border-radius: 9px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Hide bottom nav on larger screens */
+@media (min-width: 1024px) {
+  .bottom-nav {
+    display: none;
+  }
+}
+
+/* Add padding to main content for bottom nav */
+@media (max-width: 1023px) {
+  .has-bottom-nav {
+    padding-bottom: calc(var(--bottom-nav-height) + var(--safe-area-inset-bottom) + var(--space-md));
+  }
+}
+
+/* ========================================
+   DATA QUALITY STATES
+   ======================================== */
+
+.data-quality-good {
+  /* Normal display - no special styling */
+}
+
+.data-quality-uncertain {
+  border-style: dashed;
+  border-color: var(--quality-uncertain-border);
+  font-style: italic;
+}
+
+.data-quality-bad {
+  border-color: var(--quality-bad-border);
+  text-decoration: line-through;
+}
+
+.data-quality-stale {
+  color: var(--hmi-text-muted);
+  border-color: var(--quality-stale-border);
+}
+
+.data-quality-not-connected {
+  background-color: #FAFAFA;
+  color: var(--hmi-equipment);
+}
+
+/* Quality indicator badge */
+.quality-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+}
+
+.quality-badge.uncertain {
+  background: #FFF8E1;
+  color: #E65100;
+}
+
+.quality-badge.bad {
+  background: #FFEBEE;
+  color: #C62828;
+}
+
+.quality-badge.stale {
+  background: #FAFAFA;
+  color: #616161;
+}
+
+/* ========================================
+   DATA STALENESS INDICATOR
+   ======================================== */
+
+.stale-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  font-size: var(--font-size-xs);
+  color: var(--hmi-text-muted);
+}
+
+.stale-indicator.warning {
+  color: var(--status-warning);
+}
+
+.stale-indicator.critical {
+  color: var(--status-alarm);
+}
+
+.stale-indicator svg {
+  width: 12px;
+  height: 12px;
+}
+
+/* ========================================
+   TOUCH-FRIENDLY LIST ITEMS
+   ======================================== */
+
+.touch-list-item {
+  min-height: var(--list-item-min-height);
+  padding: var(--space-md);
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  border-bottom: 1px solid var(--hmi-border);
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
+.touch-list-item:active {
+  background-color: rgba(0, 0, 0, 0.03);
+}
+
+.touch-list-item:last-child {
+  border-bottom: none;
+}
+
+/* ========================================
+   SKELETON LOADING
+   ======================================== */
+
+@keyframes skeleton-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.skeleton {
+  background: linear-gradient(90deg, #EEEEEE 25%, #E0E0E0 50%, #EEEEEE 75%);
+  background-size: 200% 100%;
+  animation: skeleton-pulse 1.5s ease-in-out infinite;
+  border-radius: 4px;
+}
+
+.skeleton-text {
+  height: 1em;
+  border-radius: 4px;
+}
+
+.skeleton-text.sm {
+  height: 0.875em;
+  width: 60%;
+}
+
+.skeleton-text.lg {
+  height: 1.5em;
+  width: 40%;
+}
+
+.skeleton-circle {
+  border-radius: 50%;
+}
+
+.skeleton-card {
+  height: 160px;
+}
+
+/* ========================================
+   STATUS WITH ICON + TEXT (Never color alone)
+   ======================================== */
+
+.status-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+  font-weight: 500;
+}
+
+.status-indicator .status-icon {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+}
+
+.status-indicator.running {
+  color: var(--status-ok);
+}
+
+.status-indicator.warning {
+  color: var(--status-warning);
+}
+
+.status-indicator.fault {
+  color: var(--status-alarm);
+}
+
+.status-indicator.offline {
+  color: var(--status-offline);
+}
+
+/* ========================================
+   CONFIRMATION DIALOG
+   ======================================== */
+
+.confirm-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-md);
+  z-index: 200;
+}
+
+.confirm-dialog {
+  background: var(--hmi-panel);
+  border-radius: 12px;
+  max-width: 400px;
+  width: 100%;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.2);
+  overflow: hidden;
+}
+
+.confirm-dialog-header {
+  padding: var(--space-lg);
+  border-bottom: 1px solid var(--hmi-border);
+}
+
+.confirm-dialog-header h2 {
+  font-size: var(--font-size-lg);
+  font-weight: 600;
+  color: var(--hmi-text);
+  margin: 0;
+}
+
+.confirm-dialog-body {
+  padding: var(--space-lg);
+}
+
+.confirm-dialog-body p {
+  color: var(--hmi-text-muted);
+  margin: 0;
+}
+
+.confirm-dialog-actions {
+  padding: var(--space-md) var(--space-lg);
+  background: var(--hmi-bg);
+  display: flex;
+  gap: var(--space-md);
+  justify-content: flex-end;
+}
+
+/* Destructive action warning */
+.confirm-dialog.destructive .confirm-dialog-header {
+  background: #FFEBEE;
+}
+
+.confirm-dialog.destructive .confirm-dialog-header h2 {
+  color: var(--status-alarm);
+}
+
+/* ========================================
+   OFFLINE/PENDING BANNER
+   ======================================== */
+
+.pending-banner {
+  position: fixed;
+  bottom: calc(var(--bottom-nav-height) + var(--safe-area-inset-bottom) + var(--space-md));
+  left: var(--space-md);
+  right: var(--space-md);
+  padding: var(--space-md);
+  background: #FFF8E1;
+  border: 1px solid var(--status-warning);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  z-index: 90;
+}
+
+@media (min-width: 1024px) {
+  .pending-banner {
+    bottom: var(--space-md);
+    left: auto;
+    right: var(--space-md);
+    max-width: 400px;
+  }
+}
+
+.pending-banner .pending-icon {
+  width: 24px;
+  height: 24px;
+  color: var(--status-warning);
+  flex-shrink: 0;
+}
+
+.pending-banner .pending-count {
+  font-weight: 600;
+  color: var(--hmi-text);
+}
+
+.pending-banner .pending-message {
+  font-size: var(--font-size-sm);
+  color: var(--hmi-text-muted);
+}
+
+/* ========================================
+   REDUCED MOTION
+   ======================================== */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+
+  .alarm-flash {
+    animation: none;
+    opacity: 1;
+  }
+
+  .skeleton {
+    animation: none;
+  }
+}
+
+/* ========================================
+   HIGH CONTRAST MODE
+   ======================================== */
+
+@media (prefers-contrast: more) {
+  :root {
+    --hmi-border: #9E9E9E;
+    --hmi-text-muted: #424242;
+  }
+
+  .hmi-btn {
+    border-width: 2px;
+  }
+
+  .status-dot {
+    border: 2px solid currentColor;
+  }
+}
+
+/* ========================================
+   PRINT STYLES
+   ======================================== */
+
+@media print {
+  .bottom-nav,
+  .pending-banner,
+  .hmi-nav,
+  .skip-link {
+    display: none !important;
+  }
+
+  body {
+    background: white;
+  }
+
+  .hmi-card {
+    box-shadow: none;
+    border: 1px solid #000;
+  }
+}
