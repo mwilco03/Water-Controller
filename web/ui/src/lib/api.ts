@@ -176,7 +176,10 @@ export interface DiscoveredDevice {
   added_to_registry: boolean;
 }
 
-// Generic fetch wrapper with error handling and automatic auth
+// API request timeout in milliseconds
+const API_TIMEOUT_MS = 10000;
+
+// Generic fetch wrapper with error handling, timeout, and automatic auth
 async function apiFetch<T>(
   endpoint: string,
   options?: RequestInit
@@ -192,25 +195,47 @@ async function apiFetch<T>(
     (headers as Record<string, string>)['Authorization'] = `Bearer ${authToken}`;
   }
 
-  const res = await fetch(`${API_BASE}${endpoint}`, {
-    ...options,
-    headers,
-  });
+  // Create abort controller for timeout
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
 
-  if (!res.ok) {
-    const errorText = await res.text().catch(() => 'Unknown error');
+  try {
+    const res = await fetch(`${API_BASE}${endpoint}`, {
+      ...options,
+      headers,
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
 
-    // Handle 401 specifically for auth errors
-    if (res.status === 401) {
-      // Clear invalid token
-      authToken = null;
-      throw new Error('Authentication required. Please log in.');
+    if (!res.ok) {
+      const errorText = await res.text().catch(() => 'Unknown error');
+
+      // Handle 401 specifically for auth errors
+      if (res.status === 401) {
+        // Clear invalid token
+        authToken = null;
+        throw new Error('Authentication required. Please log in.');
+      }
+
+      throw new Error(`API Error ${res.status}: ${errorText}`);
     }
 
-    throw new Error(`API Error ${res.status}: ${errorText}`);
-  }
+    return res.json();
+  } catch (error) {
+    clearTimeout(timeoutId);
 
-  return res.json();
+    // Handle timeout/abort errors
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new Error('API request timed out. Server may be unavailable.');
+    }
+
+    // Handle network errors (failed to connect)
+    if (error instanceof TypeError && error.message.includes('fetch')) {
+      throw new Error('Cannot connect to API server. Please check if the backend is running.');
+    }
+
+    throw error;
+  }
 }
 
 // RTU API
