@@ -41,6 +41,7 @@ from .persistence.base import initialize as init_persistence
 from .persistence.base import is_initialized
 from .persistence.users import ensure_default_admin
 from .services.profinet_client import get_profinet_client
+from .core.ports import get_allowed_origins
 
 # Setup logging
 LOG_LEVEL = os.environ.get("WTC_LOG_LEVEL", "INFO")
@@ -117,19 +118,12 @@ app = FastAPI(
     openapi_url="/api/openapi.json",
 )
 
-# CORS configuration from environment
+# CORS configuration from centralized port config
 # Production: Set WTC_CORS_ORIGINS to comma-separated list of allowed origins
 # Example: WTC_CORS_ORIGINS=https://scada.example.com,https://backup.example.com
-CORS_ORIGINS = os.environ.get("WTC_CORS_ORIGINS", "").strip()
-if CORS_ORIGINS:
-    allowed_origins = [origin.strip() for origin in CORS_ORIGINS.split(",") if origin.strip()]
-else:
-    # Development fallback - localhost only
-    # UI runs on port 8080 (see web/ui/package.json)
-    allowed_origins = [
-        "http://localhost:8080",
-        "http://127.0.0.1:8080",
-    ]
+# Default: Uses UI port from WTC_UI_PORT (default 8080)
+# See: app/core/ports.py for centralized port configuration
+allowed_origins = get_allowed_origins()
 
 app.add_middleware(
     CORSMiddleware,

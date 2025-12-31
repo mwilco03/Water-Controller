@@ -1,5 +1,11 @@
 # Water Treatment Controller - React HMI Frontend
-# Uses Next.js with vulnerable react-server-components
+# Copyright (C) 2024
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Port Configuration:
+# The container listens on port 3000 internally (Next.js standalone server).
+# Map to external port via docker-compose: ${WTC_UI_PORT:-8080}:3000
+# See config/ports.env for the single source of truth.
 
 FROM node:18-alpine AS base
 
@@ -17,7 +23,7 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY web/ui/ .
 
-# Build with vulnerable RSC package
+# Build configuration
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
 
@@ -37,9 +43,12 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 
 USER nextjs
 
-EXPOSE 3000
-
+# Internal container port (Next.js standalone default)
+# External port mapping handled by docker-compose
+ENV WTC_DOCKER_UI_INTERNAL_PORT=3000
 ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"
+
+EXPOSE 3000
 
 CMD ["node", "server.js"]

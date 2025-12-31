@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { wsLogger as logger } from '@/lib/logger';
 import { TIMING } from '@/constants';
+import { getWebSocketUrl, getCurrentHost } from '@/config/ports';
 
 type MessageHandler = (event: string, data: any) => void;
 
@@ -93,11 +94,9 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
       return;
     }
 
-    // Determine WebSocket URL
-    // Backend WebSocket endpoint is at /api/v1/ws/live
-    const protocol = typeof window !== 'undefined' && window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const host = typeof window !== 'undefined' ? window.location.host : 'localhost:8080';
-    const wsUrl = `${protocol}//${host}/api/v1/ws/live`;
+    // Determine WebSocket URL from centralized config
+    // See: src/config/ports.ts for port configuration
+    const wsUrl = getWebSocketUrl();
 
     try {
       const ws = new WebSocket(wsUrl);

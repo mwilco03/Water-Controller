@@ -26,6 +26,37 @@ export SYSTEMD_DIR="/etc/systemd/system"
 export BIN_DIR="/usr/local/bin"
 
 # =============================================================================
+# Port Configuration - CENTRALIZED
+# =============================================================================
+# Source the centralized port configuration if available
+# See config/ports.env for the single source of truth
+#
+# All port values should use the WTC_* variables defined below.
+# DO NOT hardcode port values elsewhere in the codebase.
+
+_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+_REPO_ROOT="$(cd "$_SCRIPT_DIR/../.." && pwd)"
+
+# Try to load from repository config first (development)
+if [[ -f "${_REPO_ROOT}/config/ports.sh" ]]; then
+    source "${_REPO_ROOT}/config/ports.sh"
+# Then try installed location (production)
+elif [[ -f "${INSTALL_DIR}/config/ports.sh" ]]; then
+    source "${INSTALL_DIR}/config/ports.sh"
+# Fallback to hardcoded defaults if no config file available
+else
+    export WTC_API_PORT="${WTC_API_PORT:-8000}"
+    export WTC_UI_PORT="${WTC_UI_PORT:-8080}"
+    export WTC_DB_PORT="${WTC_DB_PORT:-5432}"
+    export WTC_PROFINET_UDP_PORT="${WTC_PROFINET_UDP_PORT:-34964}"
+    export WTC_MODBUS_TCP_PORT="${WTC_MODBUS_TCP_PORT:-1502}"
+fi
+
+# Derived URLs (if not already set)
+export WTC_API_URL="${WTC_API_URL:-http://localhost:${WTC_API_PORT}}"
+export WTC_UI_URL="${WTC_UI_URL:-http://localhost:${WTC_UI_PORT}}"
+
+# =============================================================================
 # Service User Configuration
 # =============================================================================
 
@@ -339,8 +370,8 @@ print_completion_message() {
     log_info "Next steps:"
     log_info "  1. Edit configuration: $CONFIG_DIR/controller.conf"
     log_info "  2. Start services: systemctl start water-controller"
-    log_info "  3. Access web UI: http://localhost:8080"
-    log_info "  4. API documentation: http://localhost:8000/api/docs"
+    log_info "  3. Access web UI: ${WTC_UI_URL}"
+    log_info "  4. API documentation: ${WTC_API_URL}/api/docs"
     log_info ""
     log_info "Management commands:"
     log_info "  wtc-ctl start|stop|restart|status|logs|backup|restore"
@@ -356,7 +387,7 @@ print_hmi_completion_message() {
     echo "  Check status: sudo systemctl status water-controller-hmi"
     echo ""
     echo "Access the HMI at:"
-    echo "  http://localhost:8080"
+    echo "  ${WTC_UI_URL}"
     echo ""
     echo "Default credentials:"
     echo "  Username: admin"
