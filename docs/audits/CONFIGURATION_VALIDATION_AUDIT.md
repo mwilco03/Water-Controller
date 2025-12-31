@@ -1,21 +1,28 @@
-# Configuration Validation Audit
+# Configuration Hygiene and DRY Compliance Audit
 
 **Date:** 2024-01-XX
 **Auditor:** Claude Code
-**Scope:** Runtime configuration validation, magic value inventory, DRY compliance
+**Scope:** Complete configuration audit including magic values, DRY compliance, environment variables, and runtime validation
 
 ---
 
 ## TABLE OF CONTENTS
 
+**Part I: Analysis**
 1. [Executive Summary](#executive-summary)
-2. [Section 5.3: Runtime Configuration Validation](#section-53-runtime-configuration-validation)
-3. [Section 6: Remediation Roadmap](#section-6-remediation-roadmap)
-4. [Deliverable 1: Magic Value Inventory](#deliverable-1-magic-value-inventory)
-5. [Deliverable 2: DRY Violation Report](#deliverable-2-dry-violation-report)
-6. [Deliverable 3: Configuration Architecture Diagram](#deliverable-3-configuration-architecture-diagram)
-7. [Deliverable 4: install.sh Enhancement Spec](#deliverable-4-installsh-enhancement-spec)
-8. [Deliverable 5: Migration Checklist](#deliverable-5-migration-checklist)
+2. [Section 1: Magic Value Detection](#section-1-magic-value-detection)
+3. [Section 2: DRY Violation Analysis](#section-2-dry-violation-analysis)
+4. [Section 3: Environment Variable Audit](#section-3-environment-variable-audit)
+5. [Section 4: Configuration Centralization Assessment](#section-4-configuration-centralization-assessment)
+6. [Section 5: Install.sh Integration Requirements](#section-5-installsh-integration-requirements)
+7. [Section 6: Remediation Roadmap](#section-6-remediation-roadmap)
+
+**Part II: Deliverables**
+8. [Deliverable 1: Magic Value Inventory](#deliverable-1-magic-value-inventory)
+9. [Deliverable 2: DRY Violation Report](#deliverable-2-dry-violation-report)
+10. [Deliverable 3: Configuration Architecture Diagram](#deliverable-3-configuration-architecture-diagram)
+11. [Deliverable 4: install.sh Enhancement Spec](#deliverable-4-installsh-enhancement-spec)
+12. [Deliverable 5: Migration Checklist](#deliverable-5-migration-checklist)
 
 ---
 
@@ -38,7 +45,542 @@ The **install.sh completion message** (lines 1736-1737) uses hardcoded ports `80
 
 ---
 
-## SECTION 5.3: RUNTIME CONFIGURATION VALIDATION
+## SECTION 1: MAGIC VALUE DETECTION
+
+### 1.1 Network Configuration Values
+
+#### Port Numbers Found
+
+| Value | Context | Files | Occurrences |
+|-------|---------|-------|-------------|
+| `8000` | API server port | 15 files | 23 |
+| `8080` | UI server port | 12 files | 19 |
+| `5432` | PostgreSQL port | 8 files | 12 |
+| `3000` | Grafana/Docker internal | 6 files | 11 |
+| `502` | Modbus TCP (standard) | 6 files | 8 |
+| `1502` | Modbus TCP (non-root) | 3 files | 4 |
+| `34964` | PROFINET UDP discovery | 5 files | 9 |
+| `34962-34963` | PROFINET TCP range | 4 files | 6 |
+| `6379` | Redis | 4 files | 5 |
+| `12201` | Graylog GELF | 3 files | 4 |
+| `8443` | HTTPS UI | 2 files | 3 |
+
+**Detailed Occurrences:**
+
+```
+# Port 8000 (API) - 23 occurrences in 15 files
+config/ports.env:22
+config/ports.sh:29
+docker/Dockerfile.web:28,32,35,38
+docker/docker-compose.yml:84,87,94
+scripts/install.sh:1736
+scripts/upgrade.sh:640
+scripts/setup-credentials.sh:201
+scripts/lib/detection.sh:29
+scripts/lib/install-files.sh:711
+web/api/app/core/ports.py:30
+web/ui/next.config.js:12
+web/ui/src/config/ports.ts:24
+web/ui/package.json:14
+
+# Port 8080 (UI) - 19 occurrences in 12 files
+config/ports.env:31
+config/ports.sh:33
+src/main.c:99
+docker/Dockerfile.ui:7
+docker/docker-compose.yml:85,158,162
+scripts/install.sh:1737
+web/api/app/core/ports.py:33
+web/ui/next.config.js:13
+web/ui/src/config/ports.ts:27
+web/ui/package.json:7,9
+docs/generated/CONFIGURATION.md:484 (INCORRECT - says API default)
+```
+
+#### IP Addresses and Hostnames
+
+| Value | Context | Files | Occurrences |
+|-------|---------|-------|-------------|
+| `localhost` | Default host for all services | 35+ files | 100+ |
+| `127.0.0.1` | Localhost IP | 5 files | 8 |
+| `0.0.0.0` | Bind all interfaces | 10 files | 15 |
+
+**Key Locations:**
+- `config/ports.env:53` - `WTC_DB_HOST=localhost`
+- `src/main.c:107` - `db_host = "localhost"`
+- `src/config/config_manager.c:348` - Parser default
+- `web/api/app/core/ports.py:88,115,129` - Python defaults
+- `web/ui/src/config/ports.ts:92,116,126` - TypeScript defaults
+
+#### URL Paths and Endpoints
+
+| Path | Context | Files | Occurrences |
+|------|---------|-------|-------------|
+| `/api/v1/` | API version prefix | 25+ files | 60+ |
+| `/api/v1/ws/live` | WebSocket endpoint | 6 files | 10 |
+| `/health` | Health check endpoint | 15 files | 25 |
+| `/api/docs` | OpenAPI documentation | 8 files | 12 |
+| `http://localhost:8000` | Full API URL | 30+ files | 100+ |
+| `ws://localhost:8000/api/v1/ws/live` | WebSocket URL | 5 files | 8 |
+
+### 1.2 Timing and Interval Values
+
+| Value | Unit | Context | Files | Occurrences |
+|-------|------|---------|-------|-------------|
+| `1000` | ms | Default cycle time | 8 files | 15 |
+| `5000` | ms | Failover timeout, discovery timeout | 10 files | 18 |
+| `30` | sec | Service timeouts | 6 files | 12 |
+| `100` | ms | Scan rate, poll timeout | 8 files | 14 |
+| `3000` | ms | WebSocket reconnect interval | 4 files | 6 |
+| `10` | count | Max reconnect attempts | 4 files | 5 |
+| `300` | sec | APT lock timeout | 1 file | 1 |
+| `600` | sec | npm/pip install timeout | 1 file | 2 |
+| `500` | ms | Latency test value | 3 files | 4 |
+
+**Detailed Occurrences:**
+
+```bash
+# Timeout values
+scripts/upgrade.sh:58-60     SERVICE_STOP_TIMEOUT=30, SERVICE_START_TIMEOUT=30, HEALTH_CHECK_TIMEOUT=30
+scripts/lib/service.sh:58-60 SERVICE_START_TIMEOUT=30, SERVICE_STOP_TIMEOUT=30, HEALTH_CHECK_TIMEOUT=5
+scripts/lib/validation.sh:50-51 HTTP_TIMEOUT=5, DB_TIMEOUT=10
+scripts/lib/dependencies.sh:39 APT_LOCK_TIMEOUT=300
+scripts/lib/build.sh:47-49   PIP_INSTALL_TIMEOUT=600, NPM_INSTALL_TIMEOUT=600, NPM_BUILD_TIMEOUT=900
+
+# Polling intervals
+docker/docker-compose.yml:35,59,95,128,169,203 interval: 10s/30s (healthchecks)
+web/ui/src/constants/timing.ts:12-18 FAST:1000, NORMAL:5000, SLOW:30000, VERY_SLOW:60000
+```
+
+**Centralized Timing Constants (web/ui/src/constants/timing.ts):**
+```typescript
+POLLING: { FAST: 1000, NORMAL: 5000, SLOW: 30000, VERY_SLOW: 60000 }
+STALE_THRESHOLDS: { WARNING_MS: 5000, CRITICAL_MS: 30000 }
+TOAST: { DEFAULT_MS: 5000, ERROR_MS: 8000 }
+ANIMATION: { TRANSITION_MS: 150, ALARM_FLASH_MS: 500, FADE_MS: 200 }
+TIMEOUTS: { API_REQUEST_MS: 10000, DISCOVERY_MS: 5000, CONTROL_COMMAND_MS: 5000, DEBOUNCE_MS: 300 }
+WEBSOCKET: { RECONNECT_INTERVAL_MS: 3000, MAX_RECONNECT_ATTEMPTS: 10 }
+```
+
+### 1.3 Size and Capacity Values
+
+| Value | Context | Files | Occurrences |
+|-------|---------|-------|-------------|
+| `256` | Max RTUs, max alarms | 5 files | 8 |
+| `64` | Max PID loops, default slots | 4 files | 6 |
+| `128` | Max interlocks | 3 files | 4 |
+| `1024` | Max historian tags | 2 files | 2 |
+| `1000` | Buffer size, history limit | 6 files | 10 |
+| `100` | Max active alarms, alarm limit | 8 files | 12 |
+| `32` | Max sensors/actuators per RTU | 5 files | 8 |
+| `10` | Max retries, max connections | 6 files | 10 |
+| `5` | Max backup files, log rotation | 4 files | 6 |
+
+**C Header Constants (src/types.h):**
+```c
+#define WTC_MAX_STATION_NAME    64
+#define WTC_MAX_IP_ADDRESS      16
+#define WTC_MAX_NAME            64
+#define WTC_MAX_UNIT            16
+#define WTC_MAX_MESSAGE         256
+#define WTC_MAX_USERNAME        64
+#define WTC_MAX_RTUS            256
+#define WTC_MAX_PID_LOOPS       64
+#define WTC_MAX_INTERLOCKS      128
+#define WTC_MAX_SEQUENCES       32
+#define WTC_MAX_ALARM_RULES     512
+#define WTC_MAX_HISTORIAN_TAGS  1024
+#define WTC_DEFAULT_SLOTS       64
+#define WTC_DEFAULT_SENSORS     32
+#define WTC_DEFAULT_ACTUATORS   32
+#define WTC_MAX_SLOTS           256
+```
+
+**Shared Memory Limits (web/api/shm_client.py):**
+```python
+MAX_SHM_RTUS = 64
+MAX_SHM_ALARMS = 256
+MAX_SHM_SENSORS = 32
+MAX_SHM_ACTUATORS = 32
+```
+
+### 1.4 SCADA/ICS-Specific Values
+
+#### PROFINET Cycle Times
+| Value | Context | Location |
+|-------|---------|----------|
+| `1000` ms | Default cycle time | `src/main.c:98`, `docker/Dockerfile.controller:98`, `docker/docker-compose.yml:120` |
+| `100` ms | Fast scan rate | `src/control/control_engine.c:412`, `src/alarms/alarm_manager.c:126` |
+| `100-10000` ms | DCP discovery range | `src/profinet/dcp_discovery.h:139-140` |
+
+#### Alarm Configurations
+| Value | Context | Location |
+|-------|---------|----------|
+| `100` | Max alarms per 10 min (ISA-18.2) | `src/main.c:527`, `src/alarms/alarm_manager.c:158` |
+| `256` | Max active alarms | `src/main.c:525` |
+| `10000` | Max history entries | `src/main.c:526` |
+| `192` | Quality threshold (GOOD) | `src/historian/historian.c:467`, `web/ui/src/components/rtu/RTUCard.tsx:30` |
+
+#### Sensor/Actuator Ranges
+| Value | Context | Location |
+|-------|---------|----------|
+| `0-14` | pH scale | `docker/config/water-controller.json:16` |
+| `0-100` | Temperature (C), Level (%) | `docker/config/water-controller.json:17,22` |
+| `0-1000` | Turbidity (NTU) | `docker/config/water-controller.json:18` |
+| `0-2000` | TDS (ppm) | `docker/config/water-controller.json:19` |
+| `0-20` | Dissolved oxygen (mg/L) | `docker/config/water-controller.json:20` |
+| `0-500` | Flow rate (L/min) | `docker/config/water-controller.json:21` |
+| `0-10` | Pressure (bar) | `docker/config/water-controller.json:23` |
+
+#### Control Setpoints (PID defaults)
+| Process | Setpoint | Location |
+|---------|----------|----------|
+| pH control | 7.0 | `src/control/pid_loop.c:37` |
+| Temperature | 25.0-50.0 C | `src/control/pid_loop.c:68,130` |
+| Flow rate | 5.0 L/min | `src/control/pid_loop.c:99` |
+| Dissolved O2 | 6.0 mg/L | `src/control/pid_loop.c:161` |
+| Chlorine | 1.0 ppm | `src/control/pid_loop.c:192` |
+
+#### Interlock Thresholds
+| Value | Context | Location |
+|-------|---------|----------|
+| `10.0%` | Low level threshold | `src/control/interlock_manager.c:29` |
+| `90.0%` | High level threshold | `src/control/interlock_manager.c:54` |
+| `10.0` bar | High pressure threshold | `src/control/interlock_manager.c:79` |
+| `50.0` C | Max temperature | `src/control/interlock_manager.c:104` |
+
+---
+
+## SECTION 2: DRY VIOLATION ANALYSIS
+
+### 2.1 Duplicate Constant Definitions
+
+| Value | Occurrences | Files | Should Be Named |
+|-------|-------------|-------|-----------------|
+| `8000` | 23 | 15 | `WTC_API_PORT` |
+| `8080` | 19 | 12 | `WTC_UI_PORT` |
+| `5432` | 12 | 8 | `WTC_DB_PORT` |
+| `localhost` | 100+ | 35+ | `WTC_DEFAULT_HOST` |
+| `1000` (ms) | 15 | 8 | `WTC_DEFAULT_CYCLE_TIME` |
+| `5000` (ms) | 18 | 10 | `WTC_DEFAULT_TIMEOUT_MS` |
+| `/api/v1` | 60+ | 25+ | `WTC_API_VERSION_PATH` |
+| `water_treatment` | 20+ | 12 | `WTC_DB_NAME` |
+| `wtc` | 15+ | 10 | `WTC_DB_USER` |
+
+### 2.2 Inconsistent Value Usage
+
+| Value Pair | Issue | Files |
+|------------|-------|-------|
+| `8080` vs `8000` | API port documented as 8080 in CONFIGURATION.md:484 | `docs/generated/CONFIGURATION.md` vs `config/ports.env` |
+| `502` vs `1502` | Modbus TCP port differs between C and config | `src/main.c:102` vs `config/ports.env:66` |
+| `water_controller` vs `water_treatment` | Database name inconsistent | `src/main.c:109` vs everywhere else |
+| `api_port=8080` vs `API: 8000` | C code uses different naming | `src/config/config_manager.c:364` |
+| `SERVICE_START_TIMEOUT=30` vs `HEALTH_CHECK_TIMEOUT=5` | Inconsistent between upgrade.sh and service.sh | `scripts/upgrade.sh:59` vs `scripts/lib/service.sh:60` |
+
+### 2.3 Configuration Drift Candidates
+
+**Cross-Boundary Duplications:**
+
+| Configuration | Frontend | Backend | C Code | Match? |
+|--------------|----------|---------|--------|--------|
+| API Port | `8000` (next.config.js) | `8000` (ports.py) | `8080` (main.c) | **NO** |
+| UI Port | `8080` (ports.ts) | `8080` (ports.py) | N/A | YES |
+| DB Port | `5432` (ports.ts) | `5432` (ports.py) | `5432` (main.c) | YES |
+| Modbus Port | `1502` (modbus/page.tsx shows 502) | `1502` (ports.py) | `502` (main.c) | **NO** |
+| WS Path | `/api/v1/ws/live` (ports.ts) | `/api/v1/ws/live` (implicit) | N/A | YES |
+
+**Test vs Production Differences:**
+
+| Configuration | Test Value | Production Value | Location |
+|---------------|------------|------------------|----------|
+| WebSocket URL | `ws://localhost:8080` | Dynamic | `web/ui/src/__tests__/hooks.test.tsx:63-92` |
+| Buffer size | `1000` | `1000` | Tests match production |
+| Max alarms | `100` | `256` | Test uses smaller value |
+
+---
+
+## SECTION 3: ENVIRONMENT VARIABLE AUDIT
+
+### 3.1 Current Environment Variable Usage
+
+| Variable | Read Location | Default | Documented | Validated |
+|----------|---------------|---------|------------|-----------|
+| `WTC_API_PORT` | `ports.py:73`, `ports.ts:56`, `next.config.js:17` | `8000` | Yes | No |
+| `WTC_UI_PORT` | `ports.py:78`, `ports.ts:66` | `8080` | Yes | No |
+| `WTC_DB_PORT` | `ports.py:83` | `5432` | Yes | No |
+| `WTC_DB_HOST` | `ports.py:88` | `localhost` | Yes | No |
+| `WTC_API_URL` | `next.config.js:23` | Constructed | Yes | No |
+| `WTC_LOG_LEVEL` | `main.py:47` | `INFO` | Yes | No |
+| `WTC_DB_PATH` | `base.py:17`, `persistence/base.py:18` | `/var/lib/water-controller/wtc.db` | Yes | No |
+| `DATABASE_URL` | `base.py:18` | Constructed | Yes | No |
+| `WTC_TIMESCALE_HOST` | `historian.py:20` | `localhost` | No | No |
+| `WTC_TIMESCALE_PORT` | `historian.py:21` | `5432` | No | No |
+| `WTC_TIMESCALE_DB` | `historian.py:22` | `wtc_historian` | No | No |
+| `WTC_TIMESCALE_USER` | `historian.py:23` | `wtc` | No | No |
+| `WTC_TIMESCALE_PASSWORD` | `historian.py:24` | `wtc_password` | No | No |
+| `WTC_HISTORIAN_DB` | `historian.py:27` | `/var/lib/water-controller/historian.db` | No | No |
+| `WTC_API_ONLY` | `main.py:64,233`, `system.py:301` | `false` | Yes | No |
+| `WTC_SIMULATION_MODE` | `main.py:65` | `false` | No | No |
+| `WTC_DEBUG` | `startup.py:383` | `false` | Yes | No |
+| `WTC_STARTUP_MODE` | `startup.py:378` | Empty | No | No |
+| `WTC_DB_ECHO` | `base.py:29` | `false` | Yes | No |
+| `WTC_DB_AUTO_INIT` | `persistence/__init__.py:167` | `1` | No | No |
+| `WTC_CORS_ORIGINS` | `ports.py:141` | Empty | Yes | No |
+| `WTC_SHM_NAME` | `paths.py:233` | `/wtc_shared_memory` | No | No |
+| `WTC_UI_DIST_DIR` | `paths.py:171` | Auto-detected | No | No |
+| `WTC_CONFIG_DIR` | `paths.py:107` | `/etc/water-controller` | Yes | No |
+| `WTC_DATA_DIR` | `paths.py:110` | `/var/lib/water-controller` | Yes | No |
+| `WTC_LOG_DIR` | `paths.py:113` | `/var/log/water-controller` | No | No |
+| `WTC_INSTALL_DIR` | `paths.py:104` | `/opt/water-controller` | No | No |
+| `NODE_ENV` | Multiple TS files | Varies | N/A | N/A |
+| `NEXT_PUBLIC_API_URL` | `ports.ts:82`, `api.ts:11` | Empty | Yes | No |
+| `NEXT_PUBLIC_API_PORT` | `ports.ts:56` | `8000` | Yes | No |
+| `NEXT_PUBLIC_UI_PORT` | `ports.ts:66` | `8080` | Yes | No |
+| `NEXT_PUBLIC_WS_URL` | `ports.ts:105` | Constructed | Yes | No |
+
+### 3.2 Missing Environment Variables
+
+**Values that SHOULD be environment variables:**
+
+| Hardcoded Value | Context | Proposed Variable |
+|-----------------|---------|-------------------|
+| `502` | Modbus standard port in C | `WTC_MODBUS_STANDARD_PORT` |
+| `1000` | Default cycle time | `WTC_CYCLE_TIME` (exists but not used everywhere) |
+| `5000` | Failover timeout | `WTC_FAILOVER_TIMEOUT_MS` |
+| `/api/v1` | API version path | `WTC_API_VERSION` |
+| `30` | Service timeout | `WTC_SERVICE_TIMEOUT` |
+| `10` | Max reconnect attempts | `WTC_MAX_RECONNECT_ATTEMPTS` |
+| `3000` | Reconnect interval | `WTC_RECONNECT_INTERVAL_MS` |
+| `100` | Alarm rate limit | `WTC_ALARM_RATE_LIMIT` |
+| `256` | Max active alarms | `WTC_MAX_ACTIVE_ALARMS` |
+
+### 3.3 Environment Variable Hygiene Issues
+
+**Variables read but never documented:**
+- `WTC_TIMESCALE_*` (5 variables in historian.py)
+- `WTC_SHM_NAME`
+- `WTC_SIMULATION_MODE`
+- `WTC_STARTUP_MODE`
+- `WTC_DB_AUTO_INIT`
+
+**Variables with no default and no startup validation:**
+- All variables have defaults, but NONE have startup validation
+
+**Variables read in multiple places:**
+- `WTC_API_PORT`: 3 locations (ports.py, ports.ts, next.config.js)
+- `WTC_DB_PATH`: 2 locations (base.py, persistence/base.py)
+- `WTC_API_ONLY`: 3 locations (main.py x2, system.py)
+
+**Naming inconsistencies:**
+- `API_PORT` vs `WTC_API_PORT` (next.config.js accepts both)
+- `API_URL` vs `WTC_API_URL` (next.config.js accepts both)
+- `API_HOST` vs `WTC_API_HOST` (next.config.js accepts both)
+- `DATABASE_URL` (no WTC_ prefix)
+
+---
+
+## SECTION 4: CONFIGURATION CENTRALIZATION ASSESSMENT
+
+### 4.1 Current Configuration Architecture
+
+**Configuration Files:**
+
+| File | Format | Purpose | Layer |
+|------|--------|---------|-------|
+| `config/ports.env` | Shell env | Port definitions (canonical) | All |
+| `config/ports.sh` | Bash | Helper functions | Shell scripts |
+| `schemas/config/*.yaml` | YAML | Configuration schemas | Build-time |
+| `docker/config/water-controller.json` | JSON | Sample RTU config | Runtime |
+| `.env.example` files | Shell env | Templates | Development |
+| `web/ui/src/constants/timing.ts` | TypeScript | UI timing constants | Frontend |
+| `src/types.h` | C header | Max sizes, enums | C code |
+| `src/generated/config_defaults.h` | C header | Generated defaults | C code |
+
+**Configuration Hierarchy (Precedence):**
+```
+1. Environment variables (highest)
+2. /etc/water-controller/config.yaml (if exists)
+3. config/ports.env (installed copy)
+4. Language-specific defaults (lowest)
+   ├── Python: PortDefaults dataclass
+   ├── TypeScript: PORT_DEFAULTS object
+   ├── JavaScript: PORT_DEFAULTS object
+   └── C: static struct initializers
+```
+
+**Loading Mechanisms:**
+- **Shell**: `source config/ports.env`
+- **Python**: `os.environ.get()` in module-level code
+- **TypeScript**: `process.env.*` in getter functions
+- **Docker**: `--env-file` or environment section
+- **Systemd**: `EnvironmentFile=`
+- **C**: `getenv()` or hardcoded defaults
+
+### 4.2 Configuration Scattered Across Layers
+
+**FRONTEND (Next.js):**
+```
+├── Hardcoded in components:
+│   ├── web/ui/src/components/TankLevel.tsx:21-22 (lowThreshold=20, highThreshold=90)
+│   ├── web/ui/src/components/ProcessDiagram.tsx:68-69 (slot numbers 9, 10)
+│   ├── web/ui/src/app/modbus/page.tsx:84,237 (tcp_port: 502)
+│   └── web/ui/src/app/system/page.tsx:77,113 (limit=100, limit=50)
+│
+├── In next.config.js:
+│   └── PORT_DEFAULTS: { API: 8000, UI: 8080 }
+│
+├── In src/config/ports.ts:
+│   └── PORT_DEFAULTS object (duplicates next.config.js)
+│
+├── In src/constants/timing.ts:
+│   └── TIMING object (good centralization)
+│
+└── Inline in API calls:
+    └── fetch('/api/v1/...') - path hardcoded throughout
+```
+
+**BACKEND (FastAPI):**
+```
+├── Hardcoded in route handlers:
+│   └── Various limit defaults in query params
+│
+├── In app/core/ports.py:
+│   └── PortDefaults dataclass (duplicates config/ports.env)
+│
+├── In app/core/config.py:
+│   └── Environment variable readers (good)
+│
+├── In historian.py:
+│   └── WTC_TIMESCALE_* defaults (undocumented)
+│
+└── In app/models/base.py:
+    └── DB_PATH, DATABASE_URL defaults
+```
+
+**C CONTROLLER:**
+```
+├── In src/main.c:
+│   ├── web_port = 8080 (DIFFERENT from API port)
+│   ├── modbus_tcp_port = 502 (DIFFERENT from config)
+│   ├── db_host = "localhost"
+│   ├── db_port = 5432
+│   ├── db_name = "water_controller" (DIFFERENT name)
+│   └── cycle_time_ms = 1000
+│
+├── In src/config/config_manager.c:
+│   └── Independent default values
+│
+└── In src/generated/config_defaults.h:
+    └── Generated from schemas (may be stale)
+```
+
+**DEPLOYMENT/SCRIPTS:**
+```
+├── In scripts/install.sh:
+│   └── Lines 1736-1737: api_port=8000, hmi_port=8080 (HARDCODED)
+│
+├── In docker/docker-compose.yml:
+│   └── ${WTC_*:-default} pattern (good)
+│
+├── In systemd/water-controller-*.service:
+│   └── References EnvironmentFile (good)
+│
+├── In scripts/upgrade.sh:
+│   └── Line 640: http://localhost:8000/health (HARDCODED)
+│
+└── In scripts/lib/*.sh:
+    ├── service.sh: DEFAULT_API_PORT, health URLs
+    ├── validation.sh: HTTP_TIMEOUT=5, hardcoded URLs
+    └── detection.sh: DEFAULT_PORT=8000
+```
+
+### 4.3 Cross-Boundary Configuration
+
+**Values that MUST match across boundaries:**
+
+| Configuration | Frontend | Backend | Scripts | Docker | Match? |
+|--------------|----------|---------|---------|--------|--------|
+| API Port | 8000 | 8000 | 8000 | ${WTC_API_PORT:-8000} | YES |
+| UI Port | 8080 | 8080 | 8080 | ${WTC_UI_PORT:-8080} | YES |
+| API Path | /api/v1 | /api/v1 | N/A | N/A | YES |
+| WS Path | /api/v1/ws/live | /api/v1/ws/live | N/A | N/A | YES |
+| CORS Origins | Dynamic | ports.py | N/A | N/A | Must verify |
+| Health Path | /health | /health | /health | /health | YES |
+
+**Shared Constants Between Systems:**
+- API version path (`/api/v1`)
+- WebSocket endpoint path
+- Health check endpoint
+- Database name (inconsistent!)
+- Port numbers (mostly consistent)
+
+---
+
+## SECTION 5: INSTALL.SH INTEGRATION REQUIREMENTS
+
+### 5.1 Values That Should Be Announced at Install
+
+| Value | Detect | Prompt | Validate | Write | Export |
+|-------|--------|--------|----------|-------|--------|
+| `WTC_API_PORT` | Yes | Optional | Range 1-65535 | Yes | Yes |
+| `WTC_UI_PORT` | Yes | Optional | Range 1-65535, != API | Yes | Yes |
+| `WTC_DB_HOST` | Yes | Optional | Resolvable | Yes | Yes |
+| `WTC_DB_PORT` | Yes | Optional | Range 1-65535 | Yes | Yes |
+| `WTC_DB_NAME` | Yes | Optional | Valid identifier | Yes | Yes |
+| `WTC_CYCLE_TIME` | Yes | No | Range 100-60000 | Yes | Yes |
+| `WTC_LOG_LEVEL` | Yes | Optional | Valid level | Yes | Yes |
+| Network interface | Yes | **Yes** | Exists | Yes | Yes |
+
+### 5.2 Proposed Configuration Echo Block
+
+```bash
+========================================================================
+                WATER-CONTROLLER CONFIGURATION SUMMARY
+========================================================================
+
+Network Configuration:
+  WTC_API_PORT           = ${WTC_API_PORT:-8000}
+  WTC_UI_PORT            = ${WTC_UI_PORT:-8080}
+  WTC_API_HOST           = ${WTC_API_HOST:-0.0.0.0}
+  WTC_UI_HTTPS_PORT      = ${WTC_UI_HTTPS_PORT:-8443}
+
+Database Configuration:
+  WTC_DB_HOST            = ${WTC_DB_HOST:-localhost}
+  WTC_DB_PORT            = ${WTC_DB_PORT:-5432}
+  WTC_DB_NAME            = ${WTC_DB_NAME:-water_treatment}
+  WTC_DB_USER            = ${WTC_DB_USER:-wtc}
+
+Timing Configuration:
+  WTC_CYCLE_TIME         = ${WTC_CYCLE_TIME:-1000} ms
+  WTC_FAILOVER_TIMEOUT   = ${WTC_FAILOVER_TIMEOUT_MS:-5000} ms
+  WTC_POLL_INTERVAL      = ${WTC_POLL_INTERVAL_MS:-5000} ms
+
+Industrial Protocols:
+  WTC_PROFINET_UDP_PORT  = ${WTC_PROFINET_UDP_PORT:-34964}
+  WTC_PROFINET_INTERFACE = ${PROFINET_INTERFACE:-eth0}
+  WTC_MODBUS_TCP_PORT    = ${WTC_MODBUS_TCP_PORT:-1502}
+
+Logging Configuration:
+  WTC_LOG_LEVEL          = ${WTC_LOG_LEVEL:-INFO}
+  WTC_GRAYLOG_PORT       = ${WTC_GRAYLOG_PORT:-12201}
+
+Access Points:
+  API:       http://${IP_ADDR}:${WTC_API_PORT}
+  HMI:       http://${IP_ADDR}:${WTC_UI_PORT}
+  API Docs:  http://${IP_ADDR}:${WTC_API_PORT}/api/docs
+  Health:    http://${IP_ADDR}:${WTC_API_PORT}/health
+
+Configuration file written to: /opt/water-controller/config/ports.env
+System configuration:          /etc/water-controller/config.yaml
+
+To modify configuration:
+  1. Edit the configuration files above
+  2. Run: systemctl restart water-controller
+
+========================================================================
+```
+
+### 5.3 Runtime Configuration Validation
 
 ### Proposed Startup Checks
 
