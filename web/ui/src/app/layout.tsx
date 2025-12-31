@@ -17,8 +17,9 @@ import Link from 'next/link';
 import { CommandModeProvider, useCommandMode } from '@/contexts/CommandModeContext';
 import CommandModeBanner from '@/components/CommandModeBanner';
 import { ToastProvider } from '@/components/ui/Toast';
-import { AuthenticationModal, DegradedModeBanner } from '@/components/hmi';
+import { AuthenticationModal, DegradedModeBanner, BottomNavigation } from '@/components/hmi';
 import { useWebSocket } from '@/hooks/useWebSocket';
+import { useRTUStatusData } from '@/hooks/useRTUStatusData';
 
 // Navigation items configuration
 const NAV_ITEMS = [
@@ -74,6 +75,10 @@ function AppShell({ children }: { children: React.ReactNode }) {
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [degradedSince, setDegradedSince] = useState<Date | null>(null);
   const { isAuthenticated, exitCommandMode } = useCommandMode();
+
+  // Get alarm data for bottom nav badge
+  const { alarms } = useRTUStatusData();
+  const activeAlarmCount = alarms.filter(a => a.state !== 'CLEARED').length;
 
   // WebSocket connection status
   const { connected } = useWebSocket({
@@ -257,7 +262,7 @@ function AppShell({ children }: { children: React.ReactNode }) {
       </header>
 
       {/* Main Content */}
-      <main id="main-content" className="flex-1">
+      <main id="main-content" className="flex-1 has-bottom-nav">
         <div className="hmi-container py-6">
           {children}
         </div>
@@ -278,6 +283,9 @@ function AppShell({ children }: { children: React.ReactNode }) {
         onClose={() => setShowLoginModal(false)}
         onSuccess={() => setShowLoginModal(false)}
       />
+
+      {/* Bottom Navigation (Mobile) */}
+      <BottomNavigation activeAlarmCount={activeAlarmCount} />
     </div>
   );
 }

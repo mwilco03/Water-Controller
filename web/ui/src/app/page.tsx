@@ -5,16 +5,25 @@
  * ISA-101 Compliant SCADA HMI for Water Treatment Controller
  *
  * Design principles:
- * - Gray is normal, color is abnormal
- * - Clean, minimal interface
- * - Responsive grid layout
- * - High-contrast process values
+ * - Mobile-first (360-390px width primary)
+ * - Touch-friendly (48px+ targets)
+ * - Status uses color + icon + text (never color alone)
+ * - Progressive disclosure
+ * - Skeleton loading for stable layout
  */
 
 import { useEffect } from 'react';
 import { useRTUStatusData } from '@/hooks/useRTUStatusData';
-import { AlarmBanner } from '@/components/hmi';
+import {
+  AlarmBanner,
+  SkeletonRTUCard,
+  SkeletonStats,
+  ErrorMessage,
+  ErrorPresets,
+  LiveTimestamp,
+} from '@/components/hmi';
 import type { RTUStatusData } from '@/components/hmi';
+import Link from 'next/link';
 
 const PAGE_TITLE = 'RTU Status - Water Treatment Controller';
 
@@ -33,33 +42,38 @@ export default function RTUStatusPage() {
     document.title = PAGE_TITLE;
   }, []);
 
-  // Loading state
+  // Loading state - use skeleton for stable layout
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-20">
-        <div className="flex flex-col items-center gap-4">
-          <div className="w-10 h-10 border-3 border-status-info border-t-transparent rounded-full spinner" />
-          <p className="text-hmi-muted">Loading RTU Status...</p>
+      <div className="space-y-6" aria-label="Loading RTU status...">
+        {/* Header skeleton */}
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div>
+            <div className="skeleton h-7 w-32 mb-2" />
+            <div className="skeleton h-4 w-64" />
+          </div>
+          <SkeletonStats />
+        </div>
+
+        {/* RTU grid skeleton */}
+        <div className="hmi-grid hmi-grid-auto">
+          {[1, 2, 3, 4].map((i) => (
+            <SkeletonRTUCard key={i} />
+          ))}
         </div>
       </div>
     );
   }
 
-  // Error state
+  // Error state - use actionable ErrorMessage
   if (error && rtus.length === 0) {
     return (
-      <div className="flex items-center justify-center py-20">
-        <div className="hmi-card max-w-md w-full text-center p-8">
-          <div className="w-12 h-12 mx-auto mb-4 rounded-full bg-quality-bad flex items-center justify-center">
-            <svg className="w-6 h-6 text-status-alarm" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-            </svg>
-          </div>
-          <h2 className="text-lg font-semibold text-hmi-text mb-2">Connection Error</h2>
-          <p className="text-hmi-muted mb-6">{error}</p>
-          <button onClick={refetch} className="hmi-btn hmi-btn-primary">
-            Retry Connection
-          </button>
+      <div className="flex items-center justify-center py-12">
+        <div className="max-w-md w-full">
+          <ErrorMessage
+            {...ErrorPresets.connectionFailed(refetch)}
+            description={error}
+          />
         </div>
       </div>
     );
@@ -158,20 +172,64 @@ export default function RTUStatusPage() {
   );
 }
 
-// RTU Card Component
+// Status icons for ISA-101 compliance (never color alone)
+const StatusIcon = ({ state }: { state: string }) => {
+  const isOnline = state === 'RUNNING';
+  const isOffline = state === 'STOPPED' || state === 'OFFLINE';
+  const isFault = state === 'FAULT' || state === 'ERROR';
+
+  if (isOnline) {
+    return (
+      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+      </svg>
+    );
+  }
+  if (isFault) {
+    return (
+      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+      </svg>
+    );
+  }
+  if (isOffline) {
+    return (
+      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+        <circle cx="12" cy="12" r="9" />
+      </svg>
+    );
+  }
+  // Warning/connecting
+  return (
+    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+    </svg>
+  );
+};
+
+// RTU Card Component - Touch-friendly with 48px+ targets
 function RTUCard({ rtu }: { rtu: RTUStatusData }) {
   const isOnline = rtu.state === 'RUNNING';
   const isOffline = rtu.state === 'STOPPED' || rtu.state === 'OFFLINE';
-  const stateClass = isOnline ? 'ok' : isOffline ? 'offline' : 'warning';
+  const isFault = rtu.state === 'FAULT' || rtu.state === 'ERROR';
+  const stateClass = isOnline ? 'ok' : isOffline ? 'offline' : isFault ? 'alarm' : 'warning';
   const hasAlarms = (rtu.alarm_count ?? 0) > 0;
 
+  // State label for accessibility
+  const stateLabel = isOnline ? 'Running' :
+    isFault ? 'Fault' :
+    isOffline ? 'Offline' : rtu.state;
+
   return (
-    <div className={`hmi-card overflow-hidden ${hasAlarms ? 'border-status-alarm' : ''}`}>
-      {/* Header */}
+    <div className={`hmi-card overflow-hidden ${hasAlarms ? 'border-l-4 border-l-status-alarm' : ''}`}>
+      {/* Header - Status with icon + color + text */}
       <div className="p-4 border-b border-hmi-border">
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-3 min-w-0">
-            <span className={`status-dot ${stateClass}`} />
+            {/* Status indicator with icon */}
+            <div className={`status-indicator ${stateClass}`} aria-hidden="true">
+              <StatusIcon state={rtu.state} />
+            </div>
             <div className="min-w-0">
               <h3 className="font-medium text-hmi-text truncate">{rtu.station_name}</h3>
               {rtu.ip_address && (
@@ -179,29 +237,37 @@ function RTUCard({ rtu }: { rtu: RTUStatusData }) {
               )}
             </div>
           </div>
-          <span className={`status-badge ${stateClass}`}>
-            {rtu.state}
+          {/* Status badge with icon + text */}
+          <span className={`status-badge ${stateClass} flex items-center gap-1`}>
+            <StatusIcon state={rtu.state} />
+            <span className="sr-only">{stateLabel}</span>
+            <span aria-hidden="true">{stateLabel}</span>
           </span>
         </div>
       </div>
 
-      {/* Stats */}
+      {/* Stats - Touch-friendly spacing */}
       <div className="p-4">
         <div className="grid grid-cols-3 gap-3 text-center">
-          <div>
+          <div className="py-1">
             <div className="text-lg font-semibold font-mono text-hmi-text">
               {isOffline ? '--' : (rtu.sensor_count ?? 0)}
             </div>
             <div className="text-xs text-hmi-muted">Sensors</div>
           </div>
-          <div>
+          <div className="py-1">
             <div className="text-lg font-semibold font-mono text-hmi-text">
               {isOffline ? '--' : (rtu.actuator_count ?? 0)}
             </div>
             <div className="text-xs text-hmi-muted">Actuators</div>
           </div>
-          <div>
-            <div className={`text-lg font-semibold font-mono ${hasAlarms ? 'text-status-alarm' : 'text-hmi-text'}`}>
+          <div className="py-1">
+            <div className={`text-lg font-semibold font-mono flex items-center justify-center gap-1 ${hasAlarms ? 'text-status-alarm' : 'text-hmi-text'}`}>
+              {hasAlarms && (
+                <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true">
+                  <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                </svg>
+              )}
               {rtu.alarm_count ?? 0}
             </div>
             <div className="text-xs text-hmi-muted">Alarms</div>
@@ -209,18 +275,16 @@ function RTUCard({ rtu }: { rtu: RTUStatusData }) {
         </div>
       </div>
 
-      {/* Footer - View Details Link */}
-      <div className="px-4 py-3 bg-hmi-bg border-t border-hmi-border">
-        <a
-          href={`/rtus/${encodeURIComponent(rtu.station_name)}`}
-          className="text-sm text-status-info hover:underline flex items-center gap-1"
-        >
-          View Details
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-          </svg>
-        </a>
-      </div>
+      {/* Footer - Touch-friendly link (48px+ height) */}
+      <Link
+        href={`/rtus/${encodeURIComponent(rtu.station_name)}`}
+        className="flex items-center justify-between px-4 py-3 bg-hmi-bg border-t border-hmi-border min-h-[48px] hover:bg-hmi-border/50 transition-colors touch-list-item"
+      >
+        <span className="text-sm text-status-info font-medium">View Details</span>
+        <svg className="w-5 h-5 text-hmi-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+        </svg>
+      </Link>
     </div>
   );
 }
