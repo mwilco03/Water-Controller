@@ -875,6 +875,50 @@ YAML
         chmod 640 "$logging_file"
     fi
 
+    # Copy ports.env if it exists in source
+    local ports_env_src=""
+    if [ -n "$SOURCE_DIR" ]; then
+        if [ -f "$SOURCE_DIR/config/ports.env" ]; then
+            ports_env_src="$SOURCE_DIR/config/ports.env"
+        fi
+    fi
+
+    local ports_env_file="$CONFIG_DIR/ports.env"
+    if [ -n "$ports_env_src" ] && [ -f "$ports_env_src" ]; then
+        log_debug "Installing ports.env configuration..."
+        cp "$ports_env_src" "$ports_env_file" || {
+            log_warn "Failed to copy ports.env"
+        }
+        chown root:"$SERVICE_GROUP" "$ports_env_file"
+        chmod 640 "$ports_env_file"
+    elif [ ! -f "$ports_env_file" ]; then
+        # Create minimal ports.env if not from source
+        log_debug "Creating default ports.env..."
+        cat > "$ports_env_file" << 'ENV'
+# Water Treatment Controller - Port Configuration
+# Centralized port definitions
+
+# API Server (FastAPI)
+WTC_API_PORT=8000
+
+# HMI / Web UI (Next.js)
+WTC_UI_PORT=8080
+
+# PROFINET ports
+WTC_PROFINET_UDP_PORT=34964
+WTC_PROFINET_TCP_PORT_START=34962
+WTC_PROFINET_TCP_PORT_END=34963
+
+# Modbus TCP port (non-root)
+WTC_MODBUS_TCP_PORT=1502
+
+# Database port
+WTC_DB_PORT=5432
+ENV
+        chown root:"$SERVICE_GROUP" "$ports_env_file"
+        chmod 640 "$ports_env_file"
+    fi
+
     log_info "Configuration files installed"
     _log_write "INFO" "Configuration installed to $CONFIG_DIR"
 
