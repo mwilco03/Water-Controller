@@ -33,6 +33,11 @@ interface StatusItem {
   onClick?: () => void;
 }
 
+interface ConnectionLabels {
+  connected: string;
+  disconnected: string;
+}
+
 interface StatusHeaderProps {
   /** Overall system status */
   systemStatus: SystemStatus;
@@ -46,8 +51,14 @@ interface StatusHeaderProps {
   lastUpdate?: Date | string;
   /** Connection state */
   connected?: boolean;
+  /** Custom connection state labels */
+  connectionLabels?: ConnectionLabels;
   /** Show when data is stale */
   isStale?: boolean;
+  /** Hide connection indicator */
+  hideConnection?: boolean;
+  /** Hide last update timestamp */
+  hideTimestamp?: boolean;
   /** Additional class names */
   className?: string;
 }
@@ -123,6 +134,11 @@ const itemStatusColors: Record<string, string> = {
   offline: 'text-hmi-muted',
 };
 
+const defaultConnectionLabels: ConnectionLabels = {
+  connected: 'Connected',
+  disconnected: 'Disconnected',
+};
+
 export function StatusHeader({
   systemStatus,
   headline,
@@ -130,11 +146,15 @@ export function StatusHeader({
   statusItems = [],
   lastUpdate,
   connected = true,
+  connectionLabels = defaultConnectionLabels,
   isStale = false,
+  hideConnection = false,
+  hideTimestamp = false,
   className,
 }: StatusHeaderProps) {
   const config = statusConfig[systemStatus];
   const displayHeadline = headline || config.defaultHeadline;
+  const labels = { ...defaultConnectionLabels, ...connectionLabels };
 
   const formatLastUpdate = (date: Date | string | undefined): string => {
     if (!date) return '--';
@@ -178,35 +198,39 @@ export function StatusHeader({
         </div>
 
         {/* Connection and timestamp */}
-        <div className="flex items-center gap-4 text-sm">
-          {/* Connection status */}
-          <div className="flex items-center gap-1.5">
-            <span
-              className={clsx(
-                'w-2 h-2 rounded-full',
-                connected ? 'bg-status-ok' : 'bg-status-alarm'
-              )}
-              aria-hidden="true"
-            />
-            <span className={connected ? 'text-status-ok-dark' : 'text-status-alarm-dark'}>
-              {connected ? 'Connected' : 'Disconnected'}
-            </span>
-          </div>
+        {(!hideConnection || (!hideTimestamp && lastUpdate)) && (
+          <div className="flex items-center gap-4 text-sm">
+            {/* Connection status */}
+            {!hideConnection && (
+              <div className="flex items-center gap-1.5">
+                <span
+                  className={clsx(
+                    'w-2 h-2 rounded-full',
+                    connected ? 'bg-status-ok' : 'bg-status-alarm'
+                  )}
+                  aria-hidden="true"
+                />
+                <span className={connected ? 'text-status-ok-dark' : 'text-status-alarm-dark'}>
+                  {connected ? labels.connected : labels.disconnected}
+                </span>
+              </div>
+            )}
 
-          {/* Last update */}
-          {lastUpdate && (
-            <div className={clsx('flex items-center gap-1.5', isStale && 'text-status-warning-dark')}>
-              {isStale && (
-                <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clipRule="evenodd" />
-                </svg>
-              )}
-              <span className={isStale ? undefined : 'text-hmi-muted'}>
-                {formatLastUpdate(lastUpdate)}
-              </span>
-            </div>
-          )}
-        </div>
+            {/* Last update */}
+            {!hideTimestamp && lastUpdate && (
+              <div className={clsx('flex items-center gap-1.5', isStale && 'text-status-warning-dark')}>
+                {isStale && (
+                  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clipRule="evenodd" />
+                  </svg>
+                )}
+                <span className={isStale ? undefined : 'text-hmi-muted'}>
+                  {formatLastUpdate(lastUpdate)}
+                </span>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Quick status items */}

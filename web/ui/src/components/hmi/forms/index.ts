@@ -11,11 +11,20 @@
 export { Input } from './Input';
 export type { InputSize, InputVariant, InputState } from './Input';
 
+export { Textarea } from './Textarea';
+export type { TextareaSize, TextareaState } from './Textarea';
+
 export { Toggle } from './Toggle';
 export type { ToggleSize } from './Toggle';
 
 export { Select } from './Select';
 export type { SelectSize } from './Select';
+
+export { Checkbox } from './Checkbox';
+export type { CheckboxSize } from './Checkbox';
+
+export { Radio, RadioGroup } from './Radio';
+export type { RadioSize } from './Radio';
 
 export { Button, IconButton } from './Button';
 export type { ButtonSize, ButtonVariant } from './Button';
