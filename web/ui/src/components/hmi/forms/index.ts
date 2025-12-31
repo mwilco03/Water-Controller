@@ -28,3 +28,6 @@ export type { RadioSize } from './Radio';
 
 export { Button, IconButton } from './Button';
 export type { ButtonSize, ButtonVariant } from './Button';
+
+export { NumericStepper } from './NumericStepper';
+export type { StepperSize } from './NumericStepper';

@@ -151,6 +151,7 @@ module.exports = {
         'slide-up': 'slide-up 0.25s ease-out',
         'slide-down': 'slide-down 0.25s ease-out',
         'fade-in': 'fade-in 0.15s ease-out',
+        'scale-in': 'scale-in 0.2s ease-out',
       },
       keyframes: {
         'alarm-flash': {
@@ -172,6 +173,10 @@ module.exports = {
         'fade-in': {
           '0%': { opacity: '0' },
           '100%': { opacity: '1' },
+        },
+        'scale-in': {
+          '0%': { transform: 'scale(0.95)', opacity: '0' },
+          '100%': { transform: 'scale(1)', opacity: '1' },
         },
       },
 
@@ -205,6 +210,7 @@ module.exports = {
         'dropdown': '30',
         'fixed': '40',
         'overlay': '50',
+        'modal-backdrop': '55',
         'modal': '60',
         'toast': '70',
         'tooltip': '80',
@@ -221,6 +227,13 @@ module.exports = {
 
       // Min-height for touch targets
       minHeight: {
+        'touch': '2.75rem',     // 44px
+        'touch-lg': '3rem',     // 48px
+        'touch-xl': '3.5rem',   // 56px
+      },
+
+      // Min-width for touch targets
+      minWidth: {
         'touch': '2.75rem',     // 44px
         'touch-lg': '3rem',     // 48px
         'touch-xl': '3.5rem',   // 56px
