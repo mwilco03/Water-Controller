@@ -15,11 +15,14 @@ module.exports = {
         // Background & Surface
         'hmi': {
           'bg': '#F5F5F5',           // Page background (light gray)
+          'bg-alt': '#EEEEEE',       // Alternate background
           'panel': '#FFFFFF',         // Cards, panels
           'border': '#E0E0E0',        // Borders, dividers
           'text': '#212121',          // Primary text
+          'text-secondary': '#757575', // Secondary text (alias)
           'muted': '#757575',         // Secondary text
           'equipment': '#9E9E9E',     // Normal equipment state
+          'offline': '#9E9E9E',       // Offline state
         },
         // Status Colors (ISA-101 compliant)
         'status': {
@@ -29,11 +32,26 @@ module.exports = {
           'info': '#2196F3',          // Informational, manual
           'offline': '#9E9E9E',       // Disconnected, inactive
         },
+        // Alarm colors (backward compatibility aliases)
+        'alarm': {
+          'red': '#F44336',           // Critical alarm
+          'yellow': '#FF9800',        // Warning alarm
+          'blue': '#2196F3',          // Informational/action
+          'green': '#388E3C',         // Good/online state
+        },
+        // SCADA accent colors (backward compatibility)
+        'scada': {
+          'accent': '#2196F3',        // Primary accent
+          'highlight': '#1976D2',     // Highlighted elements
+        },
         // Data quality backgrounds
         'quality': {
           'good': '#FFFFFF',
+          'good-bg': '#E8F5E9',       // Light green background
           'uncertain': '#FFF8E1',     // Light amber
+          'uncertain-bg': '#FFF8E1',  // Light amber background
           'bad': '#FFEBEE',           // Light red
+          'bad-bg': '#FFEBEE',        // Light red background
           'stale': '#FAFAFA',         // Light gray
         },
       },
