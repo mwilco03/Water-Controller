@@ -95,9 +95,9 @@ services:
     volumes:
       - ./config:/etc/water-controller:ro
       - controller_logs:/var/log/water-controller
-    # DCK-H2 fix: Add health check
+    # DCK-H2 fix: Add health check (matches Dockerfile.controller)
     healthcheck:
-      test: ["CMD", "/opt/water-controller/bin/health_check"]
+      test: ["CMD", "pgrep", "water_treat_controller"]
       interval: 30s
       timeout: 10s
       retries: 3
