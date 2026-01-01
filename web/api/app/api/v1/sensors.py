@@ -15,6 +15,7 @@ from ...models.base import get_db
 from ...models.rtu import RtuState, Sensor
 from ...schemas.common import DataQuality
 from ...schemas.sensor import SensorListMeta, SensorValue
+from ...services.profinet_client import get_profinet_client
 
 router = APIRouter()
 
@@ -44,23 +45,48 @@ async def get_sensors(
     quality = get_data_quality(rtu.state)
     now = datetime.now(UTC)
 
+    # Get live sensor values from controller via shared memory
+    profinet = get_profinet_client()
+    live_sensors = profinet.get_sensor_values(rtu.station_name)
+
+    # Build lookup by slot for efficient matching
+    live_by_slot = {s["slot"]: s for s in live_sensors}
+
     result = []
     for sensor in sensors:
-        # In a real implementation, values would come from shared memory
-        # For now, return placeholder values based on RTU state
-        if quality == DataQuality.GOOD:
-            value = 50.0  # Placeholder - would come from real I/O
-            raw_value = 32768
+        # Try to get live value from controller
+        live = live_by_slot.get(sensor.slot)
+
+        if live and quality == DataQuality.GOOD:
+            value = live.get("value")
+            raw_value = int(live.get("value", 0) * 655.35) if live.get("value") is not None else None
+            # Use quality from controller if available
+            live_quality_code = live.get("quality_code", 0)
+            if live_quality_code == 0:
+                sensor_quality = DataQuality.GOOD
+            elif live_quality_code == 0x40:
+                sensor_quality = DataQuality.UNCERTAIN
+            else:
+                sensor_quality = DataQuality.NOT_CONNECTED
+            quality_reason = None if sensor_quality == DataQuality.GOOD else live.get("quality", "unknown")
+        elif quality == DataQuality.GOOD:
+            # Controller connected but no data for this sensor yet
+            value = None
+            raw_value = None
+            sensor_quality = DataQuality.UNCERTAIN
+            quality_reason = "No data from controller"
         else:
             value = None
             raw_value = None
+            sensor_quality = quality
+            quality_reason = f"RTU state: {rtu.state}"
 
         sensor_value = SensorValue(
             tag=sensor.tag,
             value=value,
             unit=sensor.unit,
-            quality=quality,
-            quality_reason=None if quality == DataQuality.GOOD else f"RTU state: {rtu.state}",
+            quality=sensor_quality,
+            quality_reason=quality_reason,
             timestamp=now,
             raw_value=raw_value,
         )

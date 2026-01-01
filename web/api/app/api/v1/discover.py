@@ -7,13 +7,16 @@ SPDX-License-Identifier: GPL-3.0-or-later
 import time
 from typing import Any
 
+import ipaddress
+
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 
 from ...core.errors import build_success_response
 from ...models.base import get_db
 from ...models.rtu import RTU
+from ...services.profinet_client import get_profinet_client
 
 router = APIRouter()
 
@@ -23,6 +26,18 @@ class DiscoveryRequest(BaseModel):
 
     subnet: str | None = Field(None, description="Subnet to scan (e.g., '192.168.1.0/24')")
     timeout_seconds: int = Field(10, ge=1, le=60, description="Discovery timeout")
+
+    @field_validator("subnet")
+    @classmethod
+    def validate_subnet_cidr(cls, v: str | None) -> str | None:
+        """Validate subnet is valid CIDR notation."""
+        if v is None:
+            return None
+        try:
+            ipaddress.ip_network(v, strict=False)
+            return v
+        except ValueError as e:
+            raise ValueError(f"Invalid CIDR notation: {v}. {e}")
 
 
 class DiscoveredDevice(BaseModel):
@@ -55,34 +70,59 @@ async def discover_rtus(
     Scan network for PROFINET devices.
 
     Uses PROFINET DCP (Discovery and Configuration Protocol).
+    When the C controller is running, performs real network discovery.
+    Otherwise, returns configured RTUs for testing.
     """
     start_time = time.time()
+    timeout_ms = (request.timeout_seconds * 1000) if request else 10000
 
-    # Get list of already configured RTUs
+    # Get list of already configured RTUs for matching
     existing_rtus = db.query(RTU).all()
+    configured_stations = {rtu.station_name.lower(): rtu for rtu in existing_rtus}
+    configured_macs = {getattr(rtu, 'mac_address', '').lower() for rtu in existing_rtus if hasattr(rtu, 'mac_address')}
 
-    # In a real implementation, this would:
-    # 1. Send DCP Identify All multicast
-    # 2. Wait for responses
-    # 3. Parse device info from responses
-
-    # For now, return empty list (no controller running)
     devices = []
 
-    # Mock: if there are configured RTUs, show them as "discoverable"
-    # This helps test the HMI without real hardware
-    for rtu in existing_rtus:
-        devices.append(DiscoveredDevice(
-            ip_address=rtu.ip_address,
-            mac_address="00:00:00:00:00:00",  # Unknown without real scan
-            name_of_station=rtu.station_name,
-            vendor="Unknown",
-            vendor_id=rtu.vendor_id,
-            device_type="Water Treatment RTU",
-            device_id=rtu.device_id,
-            already_configured=True,
-            rtu_name=rtu.station_name,
-        ))
+    # Try real DCP discovery via controller
+    profinet = get_profinet_client()
+    if profinet.is_controller_running():
+        discovered = profinet.dcp_discover(timeout_ms)
+
+        for dev in discovered:
+            device_name = dev.get("device_name", "").lower()
+            mac = dev.get("mac_address", "").lower()
+
+            # Check if already configured
+            already_configured = device_name in configured_stations or mac in configured_macs
+            rtu_name = None
+            if device_name in configured_stations:
+                rtu_name = configured_stations[device_name].station_name
+
+            devices.append(DiscoveredDevice(
+                ip_address=dev.get("ip_address") or "0.0.0.0",
+                mac_address=dev.get("mac_address", "00:00:00:00:00:00"),
+                name_of_station=dev.get("device_name", "unknown"),
+                vendor=dev.get("vendor_name", "Unknown"),
+                vendor_id=hex(dev.get("profinet_vendor_id", 0)),
+                device_type=dev.get("device_type", "PROFINET Device"),
+                device_id=hex(dev.get("profinet_device_id", 0)),
+                already_configured=already_configured,
+                rtu_name=rtu_name,
+            ))
+    else:
+        # Controller not running - return configured RTUs for HMI testing
+        for rtu in existing_rtus:
+            devices.append(DiscoveredDevice(
+                ip_address=rtu.ip_address,
+                mac_address="00:00:00:00:00:00",
+                name_of_station=rtu.station_name,
+                vendor="Unknown (simulation mode)",
+                vendor_id=rtu.vendor_id,
+                device_type="Water Treatment RTU",
+                device_id=rtu.device_id,
+                already_configured=True,
+                rtu_name=rtu.station_name,
+            ))
 
     duration = time.time() - start_time
 
