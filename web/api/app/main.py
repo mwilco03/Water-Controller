@@ -36,7 +36,7 @@ from .core.startup import (
     set_startup_result,
     validate_startup,
 )
-from .models.base import Base, engine, get_db
+from .models.base import engine, get_db
 from .persistence.base import initialize as init_persistence
 from .persistence.base import is_initialized
 from .persistence.users import ensure_default_admin
@@ -82,13 +82,10 @@ async def lifespan(app: FastAPI):
         else:
             logger.warning("Continuing despite failures (development mode)")
 
-    # Create database tables (SQLAlchemy ORM)
-    Base.metadata.create_all(bind=engine)
-    logger.info("SQLAlchemy tables initialized")
-
-    # Initialize persistence layer (SQLite direct) for auth/sessions
+    # Initialize database (unified SQLAlchemy for both SQLite and PostgreSQL)
+    # This creates all tables and initializes singleton configs
     init_persistence()
-    logger.info("Persistence layer initialized")
+    logger.info("Database initialized (SQLAlchemy)")
 
     # Ensure default admin user exists
     ensure_default_admin()
