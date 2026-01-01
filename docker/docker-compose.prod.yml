@@ -66,10 +66,17 @@ services:
     user: "1000:1000"
     environment:
       DATABASE_URL: postgresql://wtc:${DB_PASSWORD:-wtc_password}@database:5432/water_treatment
+      # API-only mode: skip UI asset validation (UI runs in separate container)
+      WTC_API_ONLY: "true"
       # Shared memory name for IPC with host PROFINET controller
-      WTC_SHM_NAME: /wtc_shared_memory
+      WTC_SHM_NAME: ${WTC_SHM_NAME:-/wtc_shared_memory}
       # Enable simulation mode for testing without controller hardware
       WTC_SIMULATION_MODE: ${WTC_SIMULATION_MODE:-false}
+      # CORS: Allow requests from UI container (port 3001 mapped to 3000)
+      WTC_CORS_ORIGINS: ${WTC_CORS_ORIGINS:-http://localhost:3001,http://localhost:3000}
+      # Logging configuration
+      WTC_LOG_LEVEL: ${WTC_LOG_LEVEL:-INFO}
+      WTC_LOG_STRUCTURED: ${WTC_LOG_STRUCTURED:-false}
       # Debug mode for verbose logging
       WTC_DEBUG: ${WTC_DEBUG:-false}
     ports:
