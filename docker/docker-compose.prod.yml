@@ -5,19 +5,16 @@
 # This compose file uses PRE-BUILT container images from GitHub Container Registry.
 # For development with local builds, use docker-compose.yml instead.
 #
+# Port Configuration:
+# All ports are configurable via environment variables.
+# See config/ports.env for the single source of truth.
+#
 # Usage:
-#   # Set version (defaults to 'latest' if not specified)
-#   export VERSION=1.2.0
+#   # Load port configuration and start
+#   docker compose --env-file ../config/ports.env -f docker-compose.prod.yml up -d
 #
-#   # Pull and start all services
-#   docker-compose -f docker-compose.prod.yml pull
-#   docker-compose -f docker-compose.prod.yml up -d
-#
-#   # View logs
-#   docker-compose -f docker-compose.prod.yml logs -f
-#
-#   # Stop all services
-#   docker-compose -f docker-compose.prod.yml down
+#   # Or with version tag
+#   VERSION=1.2.0 docker compose -f docker-compose.prod.yml up -d
 #
 # Note: PROFINET controller should run on the host via systemd, not in a container.
 # See ../systemd/water-controller.service for the controller service.
@@ -57,6 +54,32 @@ services:
       - wtc-internal
 
   # ============================================================================
+  # Redis for caching and pub/sub
+  # ============================================================================
+  redis:
+    image: redis:7-alpine
+    container_name: wtc-redis
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    expose:
+      - "6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          memory: 64M
+    networks:
+      - wtc-internal
+
+  # ============================================================================
   # Web API - FastAPI Backend (PRE-BUILT IMAGE)
   # ============================================================================
   api:
@@ -65,22 +88,19 @@ services:
     restart: unless-stopped
     user: "1000:1000"
     environment:
-      DATABASE_URL: postgresql://wtc:${DB_PASSWORD:-wtc_password}@database:5432/water_treatment
-      # API-only mode: skip UI asset validation (UI runs in separate container)
+      DATABASE_URL: postgresql://wtc:${DB_PASSWORD:-wtc_password}@database:${WTC_DB_PORT:-5432}/water_treatment
+      REDIS_URL: redis://redis:${WTC_REDIS_PORT:-6379}
+      API_HOST: 0.0.0.0
+      WTC_API_PORT: ${WTC_API_PORT:-8000}
+      WTC_UI_PORT: ${WTC_UI_PORT:-8080}
+      # Additional runtime configuration
       WTC_API_ONLY: "true"
-      # Shared memory name for IPC with host PROFINET controller
       WTC_SHM_NAME: ${WTC_SHM_NAME:-/wtc_shared_memory}
-      # Enable simulation mode for testing without controller hardware
       WTC_SIMULATION_MODE: ${WTC_SIMULATION_MODE:-false}
-      # CORS: Allow requests from UI (port 8080 per config/ports.env)
-      WTC_CORS_ORIGINS: ${WTC_CORS_ORIGINS:-http://localhost:8080}
-      # Logging configuration
       WTC_LOG_LEVEL: ${WTC_LOG_LEVEL:-INFO}
-      WTC_LOG_STRUCTURED: ${WTC_LOG_STRUCTURED:-false}
-      # Debug mode for verbose logging
       WTC_DEBUG: ${WTC_DEBUG:-false}
     ports:
-      - "8000:8000"
+      - "${WTC_API_PORT:-8000}:${WTC_API_PORT:-8000}"
     volumes:
       # Shared memory for IPC with PROFINET controller on host
       - /dev/shm/wtc:/dev/shm/wtc:rw
@@ -89,8 +109,10 @@ services:
     depends_on:
       database:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:${WTC_API_PORT:-8000}/health"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -113,18 +135,22 @@ services:
     image: ghcr.io/mwilco03/water-controller/ui:${VERSION:-latest}
     container_name: wtc-ui
     restart: unless-stopped
-    user: "1001:1001"  # Matches nextjs user in Dockerfile.ui
+    user: "1000:1000"
     environment:
-      # API URL per config/ports.env - API on 8000, UI on 8080
-      NEXT_PUBLIC_API_URL: ${API_URL:-http://localhost:8000}
+      # API URL for server-side requests (container name resolution)
+      API_URL: http://api:${WTC_API_PORT:-8000}
+      # Public API URL for client-side (empty = use same origin with rewrites)
+      NEXT_PUBLIC_API_URL: ""
+      WTC_UI_PORT: ${WTC_UI_PORT:-8080}
+      WTC_API_PORT: ${WTC_API_PORT:-8000}
     ports:
-      # UI external:internal per config/ports.env (8080:3000)
-      - "8080:3000"
+      # Map external UI port to internal container port (3000)
+      - "${WTC_UI_PORT:-8080}:${WTC_DOCKER_UI_INTERNAL_PORT:-3000}"
     depends_on:
       api:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000"]
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:${WTC_DOCKER_UI_INTERNAL_PORT:-3000}"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -151,16 +177,17 @@ services:
       GF_SECURITY_ADMIN_USER: admin
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
       GF_INSTALL_PLUGINS: grafana-clock-panel,grafana-simple-json-datasource
+      GF_SERVER_HTTP_PORT: ${WTC_GRAFANA_PORT:-3000}
       GF_SERVER_ROOT_URL: ${GRAFANA_ROOT_URL:-http://localhost:3000}
     volumes:
       - grafana_data:/var/lib/grafana
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
     ports:
-      - "3000:3000"
+      - "${WTC_GRAFANA_PORT:-3000}:${WTC_GRAFANA_PORT:-3000}"
     depends_on:
       - database
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000/api/health"]
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:${WTC_GRAFANA_PORT:-3000}/api/health"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -181,6 +208,8 @@ services:
 volumes:
   db_data:
     name: wtc-db-data
+  redis_data:
+    name: wtc-redis-data
   grafana_data:
     name: wtc-grafana-data
 

@@ -2,62 +2,37 @@
 # Copyright (C) 2024
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Multi-architecture build supporting:
-#   - linux/amd64  (x86_64)
-#   - linux/arm64  (Raspberry Pi 4/5, ARM servers)
-#   - linux/arm/v7 (Raspberry Pi 3, older ARM)
+# Port Configuration:
+# The API port is configurable via WTC_API_PORT environment variable.
+# Default: 8000 (matches config/ports.env)
 
-FROM python:3.11-slim AS base
-
-# Build arguments for OCI labels
-ARG BUILD_DATE
-ARG VCS_REF
-ARG VERSION
-
-# OCI Image Labels (https://github.com/opencontainers/image-spec/blob/main/annotations.md)
-LABEL org.opencontainers.image.created="${BUILD_DATE}" \
-      org.opencontainers.image.authors="Water Controller Team" \
-      org.opencontainers.image.url="https://github.com/mwilco03/Water-Controller" \
-      org.opencontainers.image.documentation="https://github.com/mwilco03/Water-Controller/blob/main/docs/DEPLOYMENT.md" \
-      org.opencontainers.image.source="https://github.com/mwilco03/Water-Controller" \
-      org.opencontainers.image.version="${VERSION}" \
-      org.opencontainers.image.revision="${VCS_REF}" \
-      org.opencontainers.image.vendor="Water Controller Project" \
-      org.opencontainers.image.licenses="GPL-3.0-or-later" \
-      org.opencontainers.image.title="Water Controller API" \
-      org.opencontainers.image.description="FastAPI backend for Water Treatment Controller SCADA system"
+FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system dependencies for psycopg2 and curl for healthcheck
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
-    libpq5 \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install Python dependencies
+# Install dependencies
 COPY web/api/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application code
+# Copy application
 COPY web/api/ .
 
 # Create non-root user
 RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
-
-# Switch to non-root user
 USER appuser
 
-# Environment configuration
-# Port 8000 per config/ports.env (single source of truth)
-ENV PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1
+# Environment - use centralized port defaults
+ENV PYTHONUNBUFFERED=1
+ENV API_HOST=0.0.0.0
+# Port configured via WTC_API_PORT at runtime (default: 8000)
+ENV WTC_API_PORT=8000
 
-# Health check using the /health endpoint (defined in app/main.py)
-HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
-    CMD curl -f http://localhost:8000/health || exit 1
+# Health check uses environment variable
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD python -c "import os; import httpx; httpx.get(f'http://localhost:{os.environ.get(\"WTC_API_PORT\", \"8000\")}/health')" || exit 1
 
+# Expose default port (actual port may differ at runtime)
 EXPOSE 8000
 
-# Run with uvicorn on port 8000 (per config/ports.env)
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Start uvicorn with port from environment variable
+CMD uvicorn app.main:app --host 0.0.0.0 --port ${WTC_API_PORT:-8000}
