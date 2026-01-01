@@ -1,64 +1,46 @@
 # Water-Controller
 
-SCADA system for water treatment: PROFINET IO Controller, FastAPI backend, Next.js HMI.
+SCADA system: C11 PROFINET controller, FastAPI backend, Next.js 14 HMI.
 
-## Tech Stack
+## Structure
 
-| Layer | Technology |
-|-------|------------|
-| Controller | C11 (CMake), PROFINET RT |
-| Backend | Python 3, FastAPI, PostgreSQL |
-| Frontend | Next.js 14, React 18, TypeScript, Tailwind |
-| Infra | Docker, systemd |
-
-## Directory Structure
-
-- `/src` - C controller code (PROFINET, Modbus, alarms, historian)
-- `/web/api` - FastAPI backend
-- `/web/ui` - Next.js frontend
-- `/schemas` - YAML schemas (source of truth for code generation)
-- `/docker` - Container definitions
-- `/docs` - See `/docs/development/GUIDELINES.md` for full standards
-
-## Key Commands
-
-```bash
-# Controller (C)
-make build              # Build controller
-make test               # Run C tests
-make validate           # Validate schemas + sync check
-make generate           # Regenerate code from schemas
-
-# Frontend (web/ui)
-npm run build           # Production build
-npm run test            # Jest tests
-npm run lint            # ESLint
-
-# Docker
-docker compose up       # Start all services
+```
+/src          C controller (PROFINET, Modbus, alarms, historian)
+/web/api      FastAPI backend
+/web/ui       Next.js + React 18 + TypeScript + Tailwind
+/schemas      YAML schemas (source of truth)
+/docs         Full standards at /docs/development/GUIDELINES.md
 ```
 
-## Commit Message Format
+## Commands
 
-Use Conventional Commits: `type(scope): description`
+```bash
+make build && make test      # Build and test controller
+make validate                # Validate schemas before committing
+make generate                # Regenerate code after schema changes
+cd web/ui && npm run build   # Build frontend
+docker compose up            # Start all services
+```
 
-**Types:** `feat`, `fix`, `docs`, `chore`, `refactor`, `test`, `ci`
+## Commits
 
-**Examples:**
-- `feat(profinet): Add device discovery timeout`
-- `fix(api): Resolve race condition in alarm queries`
-- `docs(readme): Update installation steps`
+Conventional Commits: `type(scope): description`
 
-## Critical Rules
+Types: `feat`, `fix`, `docs`, `chore`, `refactor`, `test`, `ci`
 
-- IMPORTANT: This is industrial control software. Code must fail safely.
-- IMPORTANT: Schemas in `/schemas` are the source of truth. Run `make generate` after schema changes.
-- Do not modify files in `/src/generated` or `/web/api/models/generated` directly.
-- No stubs, placeholders, or TODO markers in production code.
-- Build must succeed with zero warnings (`-Wall -Wextra -Werror`).
-- Always run `make validate` before committing schema changes.
+## Rules
 
-## Architecture Reference
+IMPORTANT: Industrial control software. Code must fail safely.
 
-See `/docs/architecture/SYSTEM_DESIGN.md` for full architecture.
-See `/docs/development/GUIDELINES.md` for coding standards.
+IMPORTANT: `/schemas` is the source of truth. Run `make generate` after changes.
+
+- Never modify `/src/generated` or `/web/api/models/generated` directly
+- No stubs, placeholders, or TODOs in production code
+- Zero warnings required (`-Wall -Wextra -Werror`)
+- Run `make validate` before committing schema changes
+
+## References
+
+- Architecture: `/docs/architecture/SYSTEM_DESIGN.md`
+- Coding standards: `/docs/development/GUIDELINES.md`
+- Alarm philosophy: `/docs/architecture/ALARM_PHILOSOPHY.md`
