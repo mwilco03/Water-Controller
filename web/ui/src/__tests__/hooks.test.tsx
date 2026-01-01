@@ -11,6 +11,11 @@
 
 import { renderHook, act, waitFor } from '@testing-library/react';
 
+// Test configuration - uses centralized port defaults
+// API runs on port 8000, UI/WebSocket on port 8080 (see config/ports.env)
+const TEST_WS_PORT = process.env.WTC_UI_PORT || '8080';
+const TEST_WS_URL = `ws://localhost:${TEST_WS_PORT}`;
+
 // Mock WebSocket for testing
 class MockWebSocket {
   static OPEN = 1;
@@ -60,12 +65,12 @@ describe('useWebSocket Hook', () => {
 
   it('should create WebSocket connection with correct URL', () => {
     // Verify MockWebSocket constructor is called
-    const ws = new (global as any).WebSocket('ws://localhost:8080/api/v1/ws/live');
+    const ws = new (global as any).WebSocket(`${TEST_WS_URL}/api/v1/ws/live`);
     expect(ws).toBeInstanceOf(MockWebSocket);
   });
 
   it('should handle WebSocket open event', () => {
-    const ws = new MockWebSocket('ws://localhost:8080');
+    const ws = new MockWebSocket(TEST_WS_URL);
     const openHandler = jest.fn();
 
     ws.onopen = openHandler;
@@ -78,7 +83,7 @@ describe('useWebSocket Hook', () => {
   });
 
   it('should handle WebSocket close event', () => {
-    const ws = new MockWebSocket('ws://localhost:8080');
+    const ws = new MockWebSocket(TEST_WS_URL);
     const closeHandler = jest.fn();
 
     ws.onclose = closeHandler;
@@ -89,7 +94,7 @@ describe('useWebSocket Hook', () => {
   });
 
   it('should handle WebSocket message parsing', () => {
-    const ws = new MockWebSocket('ws://localhost:8080');
+    const ws = new MockWebSocket(TEST_WS_URL);
     const messageHandler = jest.fn();
 
     ws.onmessage = messageHandler;

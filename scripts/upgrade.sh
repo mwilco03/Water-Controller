@@ -635,9 +635,10 @@ phase_validate() {
         return 1
     fi
 
-    # Health check
+    # Health check (API port from centralized config, see config/ports.env)
     log_info "Running health check..."
-    local health_url="http://localhost:8000/health"
+    local api_port="${WTC_API_PORT:-8000}"
+    local health_url="http://localhost:${api_port}/health"
     local health_ok=false
 
     for ((i=0; i<$HEALTH_CHECK_TIMEOUT; i++)); do
