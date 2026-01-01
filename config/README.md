@@ -88,7 +88,6 @@ origins = get_allowed_origins()  # Returns CORS origins
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `WTC_GRAFANA_PORT` | 3000 | Grafana dashboard |
-| `WTC_REDIS_PORT` | 6379 | Redis cache |
 | `WTC_GRAYLOG_PORT` | 12201 | Graylog GELF input |
 
 ### Derived URLs

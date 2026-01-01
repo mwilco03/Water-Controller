@@ -21,10 +21,3 @@ datasources:
       postgresVersion: 1500
       timescaledb: true
     isDefault: true
-
-  - name: Redis
-    type: redis-datasource
-    access: proxy
-    url: redis:6379
-    jsonData:
-      client: standalone

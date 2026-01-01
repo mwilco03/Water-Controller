@@ -82,7 +82,7 @@ sudo apt install -y \
     libpq-dev libjson-c-dev \
     python3 python3-pip python3-venv \
     nodejs npm \
-    postgresql redis-server nginx
+    postgresql nginx
 ```
 
 ---
@@ -270,9 +270,6 @@ connection_string = postgresql://wtc:PASSWORD@localhost/water_controller
 pool_size = 10
 connection_timeout = 5
 
-[redis]
-url = redis://localhost:6379/0
-
 [historian]
 enabled = true
 retention_days = 365
@@ -358,7 +355,6 @@ Location: `/etc/water-controller/environment`
 | `WT_CONFIG_DIR` | Configuration directory | `/etc/water-controller` |
 | `WT_DATA_DIR` | Data directory | `/var/lib/water-controller` |
 | `DATABASE_URL` | PostgreSQL connection string | - |
-| `REDIS_URL` | Redis connection URL | `redis://localhost:6379` |
 
 ### Modbus Configuration
 
@@ -423,7 +419,7 @@ Location: `/etc/water-controller/auth.conf`
 ```ini
 [authentication]
 method = LOCAL                # LOCAL | LDAP | AD
-session_store = redis
+session_store = database      # Sessions stored in PostgreSQL
 password_min_length = 12
 lockout_threshold = 5
 lockout_duration_minutes = 30
@@ -1250,7 +1246,7 @@ SCADA systems. This is critical infrastructure - deployment errors have real con
 
 SYSTEM CONTEXT:
 - Water-Controller runs on SBC #1, communicates with Water-Treat RTUs via PROFINET
-- Components: C PROFINET stack, FastAPI backend, React HMI, PostgreSQL historian, Redis cache
+- Components: C PROFINET stack, FastAPI backend, React HMI, PostgreSQL historian
 - Two-plane architecture: controller commands flow THROUGH RTU, never direct to actuators
 - RTUs maintain safe state during controller disconnect - this is by design
 

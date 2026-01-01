@@ -54,9 +54,6 @@ class PortDefaults:
     # Graylog GELF
     GRAYLOG: int = 12201
 
-    # Redis cache
-    REDIS: int = 6379
-
     # Grafana
     GRAFANA: int = 3000
 

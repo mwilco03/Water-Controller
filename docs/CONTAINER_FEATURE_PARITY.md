@@ -124,7 +124,6 @@ RUN npm ci --legacy-peer-deps
 ```yaml
 volumes:
   - db_data:/var/lib/postgresql/data          # Database
-  - redis_data:/data                          # Redis cache
   - grafana_data:/var/lib/grafana             # Grafana
   - ./config:/etc/water-controller:ro          # Config (read-only)
   - /dev/shm/wtc:/dev/shm/wtc:rw              # Shared memory IPC
@@ -491,7 +490,6 @@ AmbientCapabilities=CAP_NET_RAW CAP_NET_ADMIN
 - ✅ API (FastAPI)
 - ✅ UI (Next.js)
 - ✅ Database (TimescaleDB - upgrade from SQLite)
-- ✅ Cache (Redis - for caching and pub/sub)
 - ✅ Visualization (Grafana)
 - ✅ Logging
 - ✅ Health monitoring

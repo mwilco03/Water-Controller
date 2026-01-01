@@ -44,30 +44,6 @@ services:
         reservations:
           memory: 256M
 
-  # Redis for caching and pub/sub
-  redis:
-    image: redis:7-alpine
-    container_name: wtc-redis
-    restart: unless-stopped
-    volumes:
-      - redis_data:/data
-    # DCK-C2 fix: Remove exposed ports - use internal network only
-    expose:
-      - "6379"
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    # DCK-H3 fix: Add resource limits
-    deploy:
-      resources:
-        limits:
-          cpus: '0.5'
-          memory: 256M
-        reservations:
-          memory: 64M
-
   # Web API
   api:
     build:
@@ -79,7 +55,6 @@ services:
     user: "1000:1000"
     environment:
       DATABASE_URL: postgresql://wtc:${DB_PASSWORD:-wtc_password}@database:${WTC_DB_PORT:-5432}/water_treatment
-      REDIS_URL: redis://redis:${WTC_REDIS_PORT:-6379}
       API_HOST: 0.0.0.0
       WTC_API_PORT: ${WTC_API_PORT:-8000}
       WTC_UI_PORT: ${WTC_UI_PORT:-8080}
@@ -87,8 +62,6 @@ services:
       - "${WTC_API_PORT:-8000}:${WTC_API_PORT:-8000}"
     depends_on:
       database:
-        condition: service_healthy
-      redis:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:${WTC_API_PORT:-8000}/health"]
@@ -214,7 +187,6 @@ services:
 
 volumes:
   db_data:
-  redis_data:
   controller_logs:
   grafana_data:
 
