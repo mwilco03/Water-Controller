@@ -66,10 +66,7 @@ services:
     user: "1000:1000"
     environment:
       DATABASE_URL: postgresql://wtc:${DB_PASSWORD:-wtc_password}@database:5432/water_treatment
-      API_HOST: 0.0.0.0
-      API_PORT: 8080
-      # Shared memory path for IPC with host controller
-      SHM_PATH: /dev/shm/wtc
+      # Note: Port 8080 is hardcoded in Dockerfile CMD
     ports:
       - "8080:8080"
     volumes:
