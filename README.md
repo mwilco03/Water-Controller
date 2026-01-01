@@ -12,6 +12,7 @@ This project implements a complete SCADA/DCS system for water treatment faciliti
 - **Alarm Management**: ISA-18.2 compliant alarm system with acknowledgment, suppression, and shelving
 - **Data Historian**: Time-series data storage with deadband and swinging-door compression
 - **Modbus Gateway**: Protocol bridge for PROFINET-to-Modbus TCP/RTU translation
+- **OpenPLC Integration**: Import and execute ladder logic with Modbus ↔ PROFINET translation
 - **Web HMI**: FastAPI backend with REST API and WebSocket real-time streaming
 - **Backup/Restore**: Configuration backup with import/export functionality
 - **systemd Integration**: Full service management with systemctl
@@ -125,6 +126,84 @@ When communication is lost to an RTU:
 2. **RTU Side**: Maintains last known state or enters safe mode (RTU firmware responsibility)
 3. **On Reconnection**: Controller detects RTU online, resumes cyclic data exchange, clears communication alarms
 
+## OpenPLC Integration (Modbus ↔ PROFINET Translation)
+
+This system supports **OpenPLC** as an optional ladder logic runtime with a clear architectural boundary:
+
+### Architecture Overview
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         EXTERNAL SYSTEM                                  │
+│              (Ladder logic developed on engineering workstation)         │
+│                                    │                                     │
+│                            .st / .ld files                               │
+│                                    ▼                                     │
+├─────────────────────────────────────────────────────────────────────────┤
+│                          WATER-CONTROLLER                                │
+│                                                                          │
+│  ┌──────────────────┐       ┌─────────────────┐       ┌───────────────┐ │
+│  │    OpenPLC       │  R/W  │     Modbus      │       │   PROFINET    │ │
+│  │    Container     │◄─────►│   (TCP:1502)    │◄─────►│  Controller   │ │
+│  │                  │       │                 │       │               │ │
+│  │  • Import .st    │       │  Translation    │       │ • Device I/O  │ │
+│  │  • Execute logic │       │     Layer       │       │ • RTU Comm    │ │
+│  │  • Display state │       │                 │       │ • Cyclic Data │ │
+│  └──────────────────┘       └─────────────────┘       └───────────────┘ │
+│                                                               │          │
+└───────────────────────────────────────────────────────────────┼──────────┘
+                                                                │
+                                                                ▼
+                                                    ┌───────────────────┐
+                                                    │   RTUs / PLCs     │
+                                                    │   (Field Layer)   │
+                                                    └───────────────────┘
+```
+
+### Key Design Principles
+
+| Principle | Description |
+|-----------|-------------|
+| **Import Only** | Ladder logic (.st/.ld files) is developed on external engineering workstations, NOT on the controller |
+| **No On-Controller Development** | The controller is a runtime environment, not a development environment |
+| **Modbus as Bridge** | OpenPLC communicates via Modbus TCP; the controller translates to/from PROFINET |
+| **Bidirectional Data** | Modbus R/W operations flow through the translation layer to PROFINET I/O |
+| **Display & Translate** | Controller displays ladder state and translates protocol; logic executes in OpenPLC |
+
+### Data Flow
+
+```
+1. Engineer develops ladder logic on external workstation
+2. Ladder file (.st/.ld) exported and imported into OpenPLC container
+3. OpenPLC executes logic, reads/writes Modbus registers
+4. Controller translates Modbus ↔ PROFINET cyclic I/O
+5. PROFINET communicates with field RTUs
+6. Web HMI displays real-time state from both layers
+```
+
+### Enabling OpenPLC
+
+```bash
+# Start with OpenPLC profile
+docker compose --profile openplc up -d
+
+# Access OpenPLC web interface
+open http://localhost:8081
+```
+
+### Modbus Register Mapping
+
+The Modbus gateway exposes PROFINET I/O as Modbus registers:
+
+| Register Range | Type | Mapping |
+|----------------|------|---------|
+| 0-999 | Holding | RTU sensor values (read) |
+| 1000-1999 | Holding | RTU actuator commands (write) |
+| 2000-2999 | Input | RTU status registers |
+| 3000-3999 | Coils | Discrete I/O points |
+
+See [Modbus Gateway Guide](docs/guides/MODBUS_GATEWAY_GUIDE.md) for complete mapping.
+
 ## Dynamic Slot Configuration
 
 **The RTU dictates slot configuration; the controller adapts dynamically.**
@@ -208,13 +287,24 @@ make test
 ### Docker Deployment
 
 ```bash
-# Start all services
+# Install using bootstrap script
+./bootstrap.sh install --mode docker
+
+# Or manually with docker compose
 cd docker
-docker-compose up -d
+docker compose up -d
 
 # Start with PROFINET controller (requires host network)
-docker-compose --profile profinet up -d
+docker compose --profile profinet up -d
+
+# Start with OpenPLC ladder logic runtime
+docker compose --profile openplc up -d
+
+# Start with both profiles
+docker compose --profile profinet --profile openplc up -d
 ```
+
+For detailed Docker instructions, see [Docker Deployment Guide](docs/guides/DOCKER_DEPLOYMENT.md).
 
 ## Configuration
 
@@ -235,8 +325,12 @@ docker-compose --profile profinet up -d
 |------|---------|-------------|
 | 8000 | API | FastAPI backend REST/WebSocket |
 | 8080 | Web UI | Next.js frontend application |
-| 502 | Modbus | Modbus TCP gateway |
+| 8081 | OpenPLC | OpenPLC web interface (optional) |
+| 1502 | Modbus | Modbus TCP gateway (non-root) |
+| 3000 | Grafana | Visualization dashboards |
 | 34962-34964 | PROFINET | PROFINET RT communication |
+
+All ports are configurable via `config/ports.env`. See [Configuration Guide](docs/guides/DEPLOYMENT.md) for details.
 
 ### Command Line Options
 
