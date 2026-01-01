@@ -49,17 +49,15 @@ RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
 USER appuser
 
 # Environment configuration
-# Note: Port 8080 is the Docker standard for this container
-# app/core/ports.py defaults to 8000 for non-containerized deployments
+# Port 8000 per config/ports.env (single source of truth)
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
 
 # Health check using the /health endpoint (defined in app/main.py)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
-    CMD curl -f http://localhost:8080/health || exit 1
+    CMD curl -f http://localhost:8000/health || exit 1
 
-EXPOSE 8080
+EXPOSE 8000
 
-# Run with uvicorn
-# Note: app.main:app because the FastAPI app is at web/api/app/main.py
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]
+# Run with uvicorn on port 8000 (per config/ports.env)
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

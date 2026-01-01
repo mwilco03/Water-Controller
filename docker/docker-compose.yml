@@ -63,20 +63,20 @@ services:
       WTC_SHM_NAME: ${WTC_SHM_NAME:-/wtc_shared_memory}
       # Enable simulation mode for testing without controller hardware
       WTC_SIMULATION_MODE: ${WTC_SIMULATION_MODE:-false}
-      # CORS: Allow requests from UI container (port 3001 mapped to 3000)
-      WTC_CORS_ORIGINS: ${WTC_CORS_ORIGINS:-http://localhost:3001,http://localhost:3000}
+      # CORS: Allow requests from UI (port 8080 per config/ports.env)
+      WTC_CORS_ORIGINS: ${WTC_CORS_ORIGINS:-http://localhost:8080}
       # Logging configuration
       WTC_LOG_LEVEL: ${WTC_LOG_LEVEL:-INFO}
       WTC_LOG_STRUCTURED: ${WTC_LOG_STRUCTURED:-false}
       # Debug mode for verbose logging
       WTC_DEBUG: ${WTC_DEBUG:-false}
     ports:
-      - "8080:8080"
+      - "8000:8000"
     depends_on:
       database:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -136,9 +136,11 @@ services:
     # DCK-H1 fix: Run as non-root user (matches nextjs user in Dockerfile.ui)
     user: "1001:1001"
     environment:
-      NEXT_PUBLIC_API_URL: http://api:8080
+      # API on port 8000 per config/ports.env
+      NEXT_PUBLIC_API_URL: http://api:8000
     ports:
-      - "3001:3000"
+      # UI external:internal per config/ports.env (8080:3000)
+      - "8080:3000"
     depends_on:
       api:
         condition: service_healthy

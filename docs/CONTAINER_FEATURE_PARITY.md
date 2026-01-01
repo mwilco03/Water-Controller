@@ -179,7 +179,7 @@ services:
         reservations:
           memory: 128M
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/api/v1/system/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
