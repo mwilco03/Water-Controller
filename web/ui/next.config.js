@@ -1,25 +1,75 @@
 /** @type {import('next').NextConfig} */
 
 // -----------------------------------------------------------------------------
-// Port Configuration - CENTRALIZED
+// DRY-COMPLIANT PORT CONFIGURATION
 // -----------------------------------------------------------------------------
-// All port values should come from environment variables or the central config.
-// See: config/ports.env for the single source of truth.
+// Port values are loaded from config/ports.env using dotenv.
+// This ensures config/ports.env is the SINGLE SOURCE OF TRUTH.
+//
+// The hardcoded fallbacks (8000, 8080) are only used if:
+// 1. config/ports.env cannot be found
+// 2. The environment variables are not set
 // -----------------------------------------------------------------------------
 
-// Port defaults (must match config/ports.env)
-const PORT_DEFAULTS = {
-  API: 8000,
-  UI: 8080,
-};
+const path = require('path');
+const fs = require('fs');
 
-// Get API port from environment (WTC_API_PORT) or use default
-const apiPort = process.env.WTC_API_PORT || process.env.API_PORT || PORT_DEFAULTS.API;
+/**
+ * Find and load the ports.env configuration file
+ */
+function loadPortsEnv() {
+  // Possible locations for ports.env
+  const searchPaths = [
+    // Explicit config directory
+    process.env.WTC_CONFIG_DIR && path.join(process.env.WTC_CONFIG_DIR, 'ports.env'),
+    // Production location
+    '/opt/water-controller/config/ports.env',
+    // Development: relative to this file (web/ui/next.config.js -> config/ports.env)
+    path.resolve(__dirname, '../../config/ports.env'),
+    // Docker: mounted config
+    '/app/config/ports.env',
+  ].filter(Boolean);
 
-// Get API host from environment or default to localhost
+  for (const envPath of searchPaths) {
+    if (fs.existsSync(envPath)) {
+      try {
+        const content = fs.readFileSync(envPath, 'utf8');
+        const result = {};
+        for (const line of content.split('\n')) {
+          const trimmed = line.trim();
+          // Skip comments and empty lines
+          if (!trimmed || trimmed.startsWith('#')) continue;
+          // Parse KEY=VALUE
+          const match = trimmed.match(/^([A-Z_][A-Z0-9_]*)=(.*)$/);
+          if (match) {
+            let [, key, value] = match;
+            // Strip quotes if present
+            value = value.replace(/^["']|["']$/g, '');
+            // Only set if not already in environment
+            if (!process.env[key]) {
+              process.env[key] = value;
+            }
+            result[key] = value;
+          }
+        }
+        console.log(`[next.config.js] Loaded port configuration from ${envPath}`);
+        return result;
+      } catch (err) {
+        console.warn(`[next.config.js] Could not read ${envPath}: ${err.message}`);
+      }
+    }
+  }
+  console.warn('[next.config.js] ports.env not found, using hardcoded fallbacks');
+  return {};
+}
+
+// Load configuration from ports.env
+loadPortsEnv();
+
+// Get port values from environment (now populated from ports.env)
+// Hardcoded fallbacks (8000, 8080) are last resort only
+const apiPort = process.env.WTC_API_PORT || process.env.API_PORT || '8000';
 const apiHost = process.env.WTC_API_HOST || process.env.API_HOST || 'localhost';
-
-// Construct API URL from components (prefer explicit URL if provided)
 const apiUrl = process.env.API_URL || process.env.WTC_API_URL || `http://${apiHost}:${apiPort}`;
 
 const nextConfig = {

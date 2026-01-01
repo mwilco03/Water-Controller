@@ -1,48 +1,85 @@
 /**
  * Water Treatment Controller - Centralized Port Configuration
  *
- * SINGLE SOURCE OF TRUTH for all network ports used by the frontend.
+ * DRY-COMPLIANT PORT CONFIGURATION
+ * ================================
+ * Port values are read from environment variables set by config/ports.env.
+ * The hardcoded fallbacks are only used if environment variables are not set.
  *
- * All ports should be accessed through this module. Never hardcode port values
- * elsewhere in the codebase.
- *
- * Environment variables can override defaults:
- * - NEXT_PUBLIC_API_PORT: API server port (default: 8000)
- * - NEXT_PUBLIC_UI_PORT: UI server port (default: 8080)
+ * Environment variables:
+ * - WTC_API_PORT / NEXT_PUBLIC_API_PORT: API server port (default: 8000)
+ * - WTC_UI_PORT / NEXT_PUBLIC_UI_PORT: UI server port (default: 8080)
  * - NEXT_PUBLIC_API_URL: Full API URL (default: constructed from host + port)
+ *
+ * IMPORTANT: config/ports.env is the SINGLE SOURCE OF TRUTH.
+ * Ensure ports.env is loaded before Next.js starts (via dotenv in next.config.js).
  */
 
 // -----------------------------------------------------------------------------
-// Port Defaults
+// Environment Variable Helpers
 // -----------------------------------------------------------------------------
 
 /**
- * Default port numbers - MODIFY ONLY HERE if changing defaults
+ * Safely get an environment variable as an integer
+ */
+function getEnvInt(key: string, fallback: number): number {
+  if (typeof process !== 'undefined' && process.env[key]) {
+    const parsed = parseInt(process.env[key] as string, 10);
+    return isNaN(parsed) ? fallback : parsed;
+  }
+  return fallback;
+}
+
+// -----------------------------------------------------------------------------
+// Port Defaults (loaded from environment, with hardcoded fallbacks)
+// -----------------------------------------------------------------------------
+
+/**
+ * Port defaults - values come from environment variables (set by config/ports.env)
+ * The hardcoded fallbacks (8000, 8080, etc.) are only used if env vars are not set.
+ *
+ * IMPORTANT: If you change default ports, update config/ports.env - NOT this file.
  */
 export const PORT_DEFAULTS = {
-  /** FastAPI backend port */
-  API: 8000,
+  /** FastAPI backend port - from WTC_API_PORT */
+  get API() {
+    return getEnvInt('WTC_API_PORT', 8000);
+  },
 
-  /** Next.js UI port */
-  UI: 8080,
+  /** Next.js UI port - from WTC_UI_PORT */
+  get UI() {
+    return getEnvInt('WTC_UI_PORT', 8080);
+  },
 
-  /** UI HTTPS port (when TLS enabled) */
-  UI_HTTPS: 8443,
+  /** UI HTTPS port (when TLS enabled) - from WTC_UI_HTTPS_PORT */
+  get UI_HTTPS() {
+    return getEnvInt('WTC_UI_HTTPS_PORT', 8443);
+  },
 
-  /** Docker internal UI port (container listens here) */
-  DOCKER_UI_INTERNAL: 3000,
+  /** Docker internal UI port - from WTC_DOCKER_UI_INTERNAL_PORT */
+  get DOCKER_UI_INTERNAL() {
+    return getEnvInt('WTC_DOCKER_UI_INTERNAL_PORT', 3000);
+  },
 
-  /** PostgreSQL database port */
-  DATABASE: 5432,
+  /** PostgreSQL database port - from WTC_DB_PORT */
+  get DATABASE() {
+    return getEnvInt('WTC_DB_PORT', 5432);
+  },
 
-  /** PROFINET UDP discovery */
-  PROFINET_UDP: 34964,
+  /** PROFINET UDP discovery - from WTC_PROFINET_UDP_PORT */
+  get PROFINET_UDP() {
+    return getEnvInt('WTC_PROFINET_UDP_PORT', 34964);
+  },
 
-  /** Modbus TCP */
-  MODBUS_TCP: 1502,
+  /** Modbus TCP - from WTC_MODBUS_TCP_PORT */
+  get MODBUS_TCP() {
+    return getEnvInt('WTC_MODBUS_TCP_PORT', 1502);
+  },
 
-  /** Grafana */
-  GRAFANA: 3000,
+  /** Grafana - from WTC_GRAFANA_PORT */
+  get GRAFANA() {
+    return getEnvInt('WTC_GRAFANA_PORT', 3000);
+  },
 } as const;
 
 // -----------------------------------------------------------------------------
