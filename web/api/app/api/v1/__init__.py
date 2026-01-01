@@ -9,6 +9,7 @@ from fastapi import APIRouter
 from .alarms import router as alarms_router
 from .auth import router as auth_router
 from .backup import router as backup_router
+from .demo import router as demo_router
 from .discover import router as discover_router
 from .rtus import router as rtus_router
 from .system import router as system_router
@@ -28,5 +29,8 @@ api_router.include_router(discover_router, prefix="/discover", tags=["Network Di
 api_router.include_router(system_router, prefix="/system", tags=["System"])
 api_router.include_router(backup_router, prefix="/system", tags=["Backup/Restore"])
 api_router.include_router(templates_router, prefix="/templates", tags=["Configuration Templates"])
+
+# Demo mode for E2E testing and training
+api_router.include_router(demo_router, prefix="/demo", tags=["Demo Mode"])
 
 __all__ = ["api_router"]
