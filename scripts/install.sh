@@ -33,7 +33,7 @@ readonly DEFAULT_LOG_DIR="/var/log/water-controller"
 readonly DEFAULT_BACKUP_DIR="/var/backups/water-controller"
 
 # Source repository
-readonly DEFAULT_SOURCE_REPO="https://github.com/water-controller/water-controller.git"
+readonly DEFAULT_SOURCE_REPO="https://github.com/mwilco03/Water-Controller.git"
 readonly DEFAULT_SOURCE_BRANCH="main"
 
 # =============================================================================
