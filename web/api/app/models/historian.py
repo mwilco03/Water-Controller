@@ -3,11 +3,13 @@ Water Treatment Controller - Historian Models
 Copyright (C) 2024
 SPDX-License-Identifier: GPL-3.0-or-later
 
-SQLAlchemy models for historian data and PROFINET diagnostics.
+SQLAlchemy models for historian data, slot configuration, and PROFINET diagnostics.
 """
 
+from datetime import UTC, datetime
 
 from sqlalchemy import (
+    Boolean,
     Column,
     DateTime,
     Float,
@@ -15,6 +17,7 @@ from sqlalchemy import (
     Index,
     Integer,
     String,
+    UniqueConstraint,
 )
 from sqlalchemy.dialects.sqlite import JSON
 
@@ -71,4 +74,60 @@ class ProfinetDiagnostic(Base):
     __table_args__ = (
         Index("ix_profinet_diag_rtu_time", "rtu_id", "timestamp"),
         Index("ix_profinet_diag_level", "level"),
+    )
+
+
+class SlotConfig(Base):
+    """Slot configuration for RTU I/O modules."""
+
+    __tablename__ = "slot_configs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    rtu_station = Column(String(32), nullable=False, index=True)
+    slot = Column(Integer, nullable=False)
+    subslot = Column(Integer, default=1)
+    slot_type = Column(String(16), nullable=False)  # AI, AO, DI, DO
+    name = Column(String(64), nullable=True)
+    unit = Column(String(16), nullable=True)
+    measurement_type = Column(String(32), nullable=True)  # level, flow, temp, pressure
+    actuator_type = Column(String(32), nullable=True)  # pump, valve, vfd
+
+    # Scaling
+    scale_min = Column(Float, default=0)
+    scale_max = Column(Float, default=100)
+
+    # Alarm setpoints
+    alarm_low = Column(Float, nullable=True)
+    alarm_high = Column(Float, nullable=True)
+    alarm_low_low = Column(Float, nullable=True)
+    alarm_high_high = Column(Float, nullable=True)
+    warning_low = Column(Float, nullable=True)
+    warning_high = Column(Float, nullable=True)
+    deadband = Column(Float, default=0)
+
+    enabled = Column(Boolean, default=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
+
+    __table_args__ = (
+        UniqueConstraint("rtu_station", "slot", name="uix_slot_config_rtu_slot"),
+    )
+
+
+class HistorianTag(Base):
+    """Historian tag configuration for data trending."""
+
+    __tablename__ = "historian_tags"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    rtu_station = Column(String(32), nullable=False, index=True)
+    slot = Column(Integer, nullable=False)
+    tag_name = Column(String(64), unique=True, nullable=False, index=True)
+    unit = Column(String(16), nullable=True)
+    sample_rate_ms = Column(Integer, default=1000)
+    deadband = Column(Float, default=0.1)
+    compression = Column(String(16), default="swinging_door")  # swinging_door, none
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
+
+    __table_args__ = (
+        UniqueConstraint("rtu_station", "slot", name="uix_historian_tag_rtu_slot"),
     )

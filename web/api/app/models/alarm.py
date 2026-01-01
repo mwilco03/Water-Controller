@@ -3,7 +3,7 @@ Water Treatment Controller - Alarm Models
 Copyright (C) 2024
 SPDX-License-Identifier: GPL-3.0-or-later
 
-SQLAlchemy models for alarm rules and events.
+SQLAlchemy models for alarm rules, events, and shelving.
 """
 
 from datetime import UTC, datetime
@@ -42,21 +42,24 @@ class AlarmState:
 
 
 class AlarmRule(Base):
-    """Alarm rule configuration."""
+    """
+    Alarm rule configuration.
+
+    Note: These rules generate NOTIFICATIONS only.
+    Interlocks are configured on the RTU directly.
+    """
 
     __tablename__ = "alarm_rules"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    rtu_id = Column(Integer, ForeignKey("rtus.id", ondelete="CASCADE"), nullable=False)
-    sensor_id = Column(Integer, ForeignKey("sensors.id", ondelete="SET NULL"), nullable=True)
-
-    tag = Column(String(32), nullable=False)
-    alarm_type = Column(String(32), nullable=False)  # HIGH, LOW, HIGH_HIGH, etc.
-    priority = Column(String(16), nullable=False, default=AlarmPriority.MEDIUM)
-
-    setpoint = Column(Float, nullable=False)
-    deadband = Column(Float, default=0.0)
-    message_template = Column(String(256), nullable=True)
+    name = Column(String(64), nullable=False)
+    rtu_station = Column(String(32), nullable=False, index=True)
+    slot = Column(Integer, nullable=False)
+    condition = Column(String(16), nullable=False)  # >, <, >=, <=, ==
+    threshold = Column(Float, nullable=False)
+    severity = Column(String(16), nullable=False)  # LOW, MEDIUM, HIGH, CRITICAL
+    delay_ms = Column(Integer, default=0)
+    message = Column(Text, nullable=True)
     enabled = Column(Boolean, default=True)
 
     # Timestamps
@@ -67,19 +70,16 @@ class AlarmRule(Base):
         onupdate=lambda: datetime.now(UTC)
     )
 
-    # Relationships
-    rtu = relationship("RTU", back_populates="alarm_rules")
-    events = relationship("AlarmEvent", back_populates="rule", cascade="all, delete-orphan")
-
 
 class AlarmEvent(Base):
-    """Alarm event instance."""
+    """Alarm event instance (runtime alarm occurrences)."""
 
     __tablename__ = "alarm_events"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    alarm_id = Column(Integer, ForeignKey("alarm_rules.id", ondelete="CASCADE"), nullable=False)
-    rtu_id = Column(Integer, ForeignKey("rtus.id", ondelete="CASCADE"), nullable=False)
+    alarm_rule_id = Column(Integer, ForeignKey("alarm_rules.id", ondelete="CASCADE"), nullable=True)
+    rtu_station = Column(String(32), nullable=False, index=True)
+    slot = Column(Integer, nullable=False)
 
     state = Column(String(16), nullable=False, default=AlarmState.ACTIVE)
     value_at_activation = Column(Float, nullable=True)
@@ -92,15 +92,11 @@ class AlarmEvent(Base):
     cleared_at = Column(DateTime(timezone=True), nullable=True)
     note = Column(Text, nullable=True)
 
-    # Relationships
-    rule = relationship("AlarmRule", back_populates="events")
-    rtu = relationship("RTU", back_populates="alarm_events")
-
     # Indexes for efficient queries
     __table_args__ = (
         Index("ix_alarm_events_state", "state"),
         Index("ix_alarm_events_activated_at", "activated_at"),
-        Index("ix_alarm_events_rtu_state", "rtu_id", "state"),
+        Index("ix_alarm_events_rtu_station", "rtu_station"),
     )
 
     def acknowledge(self, user: str, note: str | None = None):
@@ -115,3 +111,24 @@ class AlarmEvent(Base):
         """Clear the alarm."""
         self.state = AlarmState.CLEARED
         self.cleared_at = datetime.now(UTC)
+
+
+class ShelvedAlarm(Base):
+    """Shelved alarm entry per ISA-18.2 alarm management."""
+
+    __tablename__ = "shelved_alarms"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    rtu_station = Column(String(32), nullable=False, index=True)
+    slot = Column(Integer, nullable=False)
+    shelved_by = Column(String(64), nullable=False)
+    shelved_at = Column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
+    shelf_duration_minutes = Column(Integer, nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    reason = Column(Text, nullable=True)
+    active = Column(Boolean, default=True)
+
+    __table_args__ = (
+        Index("ix_shelved_alarms_active_expires", "active", "expires_at"),
+        Index("ix_shelved_alarms_rtu_slot", "rtu_station", "slot"),
+    )

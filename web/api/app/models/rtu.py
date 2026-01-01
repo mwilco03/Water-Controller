@@ -152,8 +152,6 @@ class RTU(Base):
     slots = relationship("Slot", back_populates="rtu", cascade="all, delete-orphan")
     sensors = relationship("Sensor", back_populates="rtu", cascade="all, delete-orphan")
     controls = relationship("Control", back_populates="rtu", cascade="all, delete-orphan")
-    alarm_rules = relationship("AlarmRule", back_populates="rtu", cascade="all, delete-orphan")
-    alarm_events = relationship("AlarmEvent", back_populates="rtu", cascade="all, delete-orphan")
 
     def update_state(self, new_state: str, error: str | None = None,
                      reason: str | None = None):

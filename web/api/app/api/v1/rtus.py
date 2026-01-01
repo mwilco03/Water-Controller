@@ -19,6 +19,7 @@ from ...core.exceptions import (
     RtuBusyError,
     RtuNotConnectedError,
 )
+from ...core.rtu_utils import get_rtu_or_404
 from ...models.alarm import AlarmRule
 from ...models.base import get_db
 from ...models.historian import HistorianSample
@@ -42,12 +43,6 @@ from ...schemas.rtu import (
 from ...services.rtu_service import get_rtu_service
 
 router = APIRouter()
-
-
-def get_rtu_or_404(db: Session, name: str) -> RTU:
-    """Get RTU by station name or raise 404."""
-    service = get_rtu_service(db)
-    return service.get_by_name(name)
 
 
 def build_rtu_stats(db: Session, rtu: RTU) -> RtuStats:

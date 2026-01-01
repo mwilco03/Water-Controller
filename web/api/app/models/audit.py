@@ -59,3 +59,27 @@ class CommandAudit(Base):
         Index("ix_command_audit_user", "user"),
         Index("ix_command_audit_rtu", "rtu_name"),
     )
+
+
+class CommandLog(Base):
+    """Command execution log for operator actions."""
+
+    __tablename__ = "command_log"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    timestamp = Column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
+    username = Column(String(64), nullable=False, index=True)
+    rtu_station = Column(String(32), nullable=False, index=True)
+    control_id = Column(String(32), nullable=False)
+    command = Column(String(32), nullable=False)
+    command_value = Column(Float, nullable=True)
+    result = Column(String(16), nullable=True)
+    error_message = Column(String(256), nullable=True)
+    source_ip = Column(String(45), nullable=True)
+    session_token = Column(String(64), nullable=True)
+
+    # Indexes for efficient queries
+    __table_args__ = (
+        Index("ix_command_log_timestamp", "timestamp"),
+        Index("ix_command_log_rtu", "rtu_station"),
+    )

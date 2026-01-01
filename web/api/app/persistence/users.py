@@ -3,12 +3,14 @@ Water Treatment Controller - Users Persistence Module
 Copyright (C) 2024
 SPDX-License-Identifier: GPL-3.0-or-later
 
-User management and authentication operations.
+User management and authentication operations using SQLAlchemy.
 """
 
 import logging
+from datetime import UTC, datetime
 from typing import Any
 
+from ..models.user import User
 from .audit import log_audit
 from .base import get_db
 
@@ -57,142 +59,133 @@ def verify_password(password: str, stored_hash: str) -> bool:
         return False
 
 
+def _user_to_dict(user: User) -> dict[str, Any]:
+    """Convert User model to dictionary."""
+    return {
+        "id": user.id,
+        "username": user.username,
+        "password_hash": user.password_hash,
+        "role": user.role,
+        "active": user.active,
+        "sync_to_rtus": user.sync_to_rtus,
+        "created_at": user.created_at.isoformat() if user.created_at else None,
+        "updated_at": user.updated_at.isoformat() if user.updated_at else None,
+        "last_login": user.last_login.isoformat() if user.last_login else None,
+    }
+
+
 def get_users(include_inactive: bool = False) -> list[dict[str, Any]]:
     """Get all users"""
-    with get_db() as conn:
-        cursor = conn.cursor()
-        if include_inactive:
-            cursor.execute('SELECT * FROM users ORDER BY username')
-        else:
-            cursor.execute('SELECT * FROM users WHERE active = 1 ORDER BY username')
-        return [dict(row) for row in cursor.fetchall()]
+    with get_db() as db:
+        query = db.query(User)
+        if not include_inactive:
+            query = query.filter(User.active == True)
+        users = query.order_by(User.username).all()
+        return [_user_to_dict(u) for u in users]
 
 
 def get_user(user_id: int) -> dict[str, Any] | None:
     """Get a single user by ID"""
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute('SELECT * FROM users WHERE id = ?', (user_id,))
-        row = cursor.fetchone()
-        return dict(row) if row else None
+    with get_db() as db:
+        user = db.query(User).filter(User.id == user_id).first()
+        return _user_to_dict(user) if user else None
 
 
 def get_user_by_username(username: str) -> dict[str, Any] | None:
     """Get a user by username"""
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute('SELECT * FROM users WHERE username = ?', (username,))
-        row = cursor.fetchone()
-        return dict(row) if row else None
+    with get_db() as db:
+        user = db.query(User).filter(User.username == username).first()
+        return _user_to_dict(user) if user else None
 
 
 def create_user(user: dict[str, Any]) -> int:
     """Create a new user"""
-    with get_db() as conn:
-        cursor = conn.cursor()
-        # Hash the password
+    with get_db() as db:
         password_hash = hash_password(user['password'])
-        cursor.execute('''
-            INSERT INTO users (username, password_hash, role, active, sync_to_rtus)
-            VALUES (?, ?, ?, ?, ?)
-        ''', (user['username'], password_hash, user.get('role', 'viewer'),
-              user.get('active', True), user.get('sync_to_rtus', True)))
-        conn.commit()
+        new_user = User(
+            username=user['username'],
+            password_hash=password_hash,
+            role=user.get('role', 'viewer'),
+            active=user.get('active', True),
+            sync_to_rtus=user.get('sync_to_rtus', True),
+        )
+        db.add(new_user)
+        db.commit()
+        db.refresh(new_user)
         log_audit('system', 'create', 'user', user['username'],
                   f"Created user {user['username']} with role {user.get('role', 'viewer')}")
-        return cursor.lastrowid
+        return new_user.id
 
 
 def update_user(user_id: int, user: dict[str, Any]) -> bool:
     """Update a user"""
-    with get_db() as conn:
-        cursor = conn.cursor()
-
-        # Build update fields
-        fields = []
-        values = []
-
-        if 'role' in user:
-            fields.append('role = ?')
-            values.append(user['role'])
-
-        if 'active' in user:
-            fields.append('active = ?')
-            values.append(1 if user['active'] else 0)
-
-        if 'sync_to_rtus' in user:
-            fields.append('sync_to_rtus = ?')
-            values.append(1 if user['sync_to_rtus'] else 0)
-
-        # Handle password change
-        if user.get('password'):
-            fields.append('password_hash = ?')
-            values.append(hash_password(user['password']))
-
-        if not fields:
+    with get_db() as db:
+        existing = db.query(User).filter(User.id == user_id).first()
+        if not existing:
             return False
 
-        fields.append('updated_at = CURRENT_TIMESTAMP')
-        values.append(user_id)
+        if 'role' in user:
+            existing.role = user['role']
 
-        cursor.execute(f'''
-            UPDATE users SET {', '.join(fields)} WHERE id = ?
-        ''', tuple(values))
-        conn.commit()
-        return cursor.rowcount > 0
+        if 'active' in user:
+            existing.active = user['active']
+
+        if 'sync_to_rtus' in user:
+            existing.sync_to_rtus = user['sync_to_rtus']
+
+        if user.get('password'):
+            existing.password_hash = hash_password(user['password'])
+
+        existing.updated_at = datetime.now(UTC)
+        db.commit()
+        return True
 
 
 def delete_user(user_id: int) -> bool:
     """Delete a user"""
-    with get_db() as conn:
-        cursor = conn.cursor()
-        # Get username for audit log
-        cursor.execute('SELECT username FROM users WHERE id = ?', (user_id,))
-        row = cursor.fetchone()
-        username = row['username'] if row else 'unknown'
+    with get_db() as db:
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            return False
 
-        cursor.execute('DELETE FROM users WHERE id = ?', (user_id,))
-        conn.commit()
-        if cursor.rowcount > 0:
-            log_audit('system', 'delete', 'user', username, f"Deleted user {username}")
-            return True
-        return False
+        username = user.username
+        db.delete(user)
+        db.commit()
+        log_audit('system', 'delete', 'user', username, f"Deleted user {username}")
+        return True
 
 
 def authenticate_user(username: str, password: str) -> dict[str, Any] | None:
     """Authenticate user with username and password"""
-    user = get_user_by_username(username)
-    if not user:
-        return None
+    with get_db() as db:
+        user = db.query(User).filter(User.username == username).first()
+        if not user:
+            return None
 
-    if not user.get('active', False):
-        return None
+        if not user.active:
+            return None
 
-    if not verify_password(password, user['password_hash']):
-        return None
+        if not verify_password(password, user.password_hash):
+            return None
 
-    # Update last login
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute('''
-            UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = ?
-        ''', (user['id'],))
-        conn.commit()
+        # Update last login
+        user.last_login = datetime.now(UTC)
+        db.commit()
 
-    return user
+        return _user_to_dict(user)
 
 
 def get_users_for_sync() -> list[dict[str, Any]]:
     """Get all users that should be synced to RTUs"""
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT id, username, password_hash, role, active
-            FROM users
-            WHERE sync_to_rtus = 1
-            ORDER BY username
-        ''')
-        return [dict(row) for row in cursor.fetchall()]
+    with get_db() as db:
+        users = db.query(User).filter(User.sync_to_rtus == True).order_by(User.username).all()
+        return [{
+            "id": u.id,
+            "username": u.username,
+            "password_hash": u.password_hash,
+            "role": u.role,
+            "active": u.active,
+        } for u in users]
 
 
 def ensure_default_admin():

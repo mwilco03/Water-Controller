@@ -13,11 +13,9 @@ from sqlalchemy import (
     Column,
     DateTime,
     Float,
-    ForeignKey,
     Integer,
     String,
 )
-from sqlalchemy.orm import relationship
 
 from .base import Base
 
@@ -36,29 +34,30 @@ class PidLoop(Base):
     __tablename__ = "pid_loops"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    rtu_id = Column(Integer, ForeignKey("rtus.id", ondelete="CASCADE"), nullable=False)
-
     name = Column(String(64), nullable=False)
     enabled = Column(Boolean, default=True)
 
-    # Process variable (input)
-    pv_sensor_tag = Column(String(32), nullable=False)
-
-    # Control variable (output)
-    cv_control_tag = Column(String(32), nullable=False)
+    # I/O references (by RTU station and slot)
+    input_rtu = Column(String(32), nullable=False)
+    input_slot = Column(Integer, nullable=False)
+    output_rtu = Column(String(32), nullable=False)
+    output_slot = Column(Integer, nullable=False)
 
     # Tuning parameters
-    kp = Column(Float, nullable=False, default=1.0)
-    ki = Column(Float, nullable=False, default=0.0)
-    kd = Column(Float, nullable=False, default=0.0)
+    kp = Column(Float, default=1.0)
+    ki = Column(Float, default=0.0)
+    kd = Column(Float, default=0.0)
 
     # Setpoint and limits
-    setpoint = Column(Float, nullable=False, default=0.0)
-    output_min = Column(Float, nullable=False, default=0.0)
-    output_max = Column(Float, nullable=False, default=100.0)
+    setpoint = Column(Float, default=0)
+    output_min = Column(Float, default=0)
+    output_max = Column(Float, default=100)
+    deadband = Column(Float, default=0)
+    integral_limit = Column(Float, default=100)
+    derivative_filter = Column(Float, default=0.1)
 
     # Operating mode
-    mode = Column(String(16), nullable=False, default=PidMode.AUTO)
+    mode = Column(String(16), default=PidMode.AUTO)
 
     # Timestamps
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
@@ -67,6 +66,3 @@ class PidLoop(Base):
         default=lambda: datetime.now(UTC),
         onupdate=lambda: datetime.now(UTC)
     )
-
-    # Relationship
-    rtu = relationship("RTU")

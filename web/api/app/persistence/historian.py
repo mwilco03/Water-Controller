@@ -3,149 +3,224 @@ Water Treatment Controller - Historian Persistence Module
 Copyright (C) 2024
 SPDX-License-Identifier: GPL-3.0-or-later
 
-Historian tags and slot configuration operations.
+Historian tags and slot configuration operations using SQLAlchemy.
 """
 
+from datetime import UTC, datetime
 from typing import Any
 
+from ..models.historian import HistorianTag, SlotConfig
 from .audit import log_audit
 from .base import get_db
+
+
+def _slot_to_dict(slot: SlotConfig) -> dict[str, Any]:
+    """Convert SlotConfig to dictionary."""
+    return {
+        "id": slot.id,
+        "rtu_station": slot.rtu_station,
+        "slot": slot.slot,
+        "subslot": slot.subslot,
+        "slot_type": slot.slot_type,
+        "name": slot.name,
+        "unit": slot.unit,
+        "measurement_type": slot.measurement_type,
+        "actuator_type": slot.actuator_type,
+        "scale_min": slot.scale_min,
+        "scale_max": slot.scale_max,
+        "alarm_low": slot.alarm_low,
+        "alarm_high": slot.alarm_high,
+        "alarm_low_low": slot.alarm_low_low,
+        "alarm_high_high": slot.alarm_high_high,
+        "warning_low": slot.warning_low,
+        "warning_high": slot.warning_high,
+        "deadband": slot.deadband,
+        "enabled": slot.enabled,
+        "created_at": slot.created_at.isoformat() if slot.created_at else None,
+    }
+
+
+def _tag_to_dict(tag: HistorianTag) -> dict[str, Any]:
+    """Convert HistorianTag to dictionary."""
+    return {
+        "id": tag.id,
+        "rtu_station": tag.rtu_station,
+        "slot": tag.slot,
+        "tag_name": tag.tag_name,
+        "unit": tag.unit,
+        "sample_rate_ms": tag.sample_rate_ms,
+        "deadband": tag.deadband,
+        "compression": tag.compression,
+        "created_at": tag.created_at.isoformat() if tag.created_at else None,
+    }
+
 
 # ============== Slot Configuration Operations ==============
 
 def get_all_slot_configs() -> list[dict[str, Any]]:
     """Get all slot configurations"""
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute('SELECT * FROM slot_configs ORDER BY rtu_station, slot')
-        return [dict(row) for row in cursor.fetchall()]
+    with get_db() as db:
+        slots = db.query(SlotConfig).order_by(
+            SlotConfig.rtu_station, SlotConfig.slot
+        ).all()
+        return [_slot_to_dict(s) for s in slots]
 
 
 def get_slot_configs_by_rtu(rtu_station: str) -> list[dict[str, Any]]:
     """Get slot configurations for a specific RTU"""
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute('SELECT * FROM slot_configs WHERE rtu_station = ? ORDER BY slot',
-                       (rtu_station,))
-        return [dict(row) for row in cursor.fetchall()]
+    with get_db() as db:
+        slots = db.query(SlotConfig).filter(
+            SlotConfig.rtu_station == rtu_station
+        ).order_by(SlotConfig.slot).all()
+        return [_slot_to_dict(s) for s in slots]
 
 
 def get_slot_config(rtu_station: str, slot: int) -> dict[str, Any] | None:
     """Get a specific slot configuration"""
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute('SELECT * FROM slot_configs WHERE rtu_station = ? AND slot = ?',
-                       (rtu_station, slot))
-        row = cursor.fetchone()
-        return dict(row) if row else None
+    with get_db() as db:
+        config = db.query(SlotConfig).filter(
+            SlotConfig.rtu_station == rtu_station,
+            SlotConfig.slot == slot
+        ).first()
+        return _slot_to_dict(config) if config else None
 
 
 def upsert_slot_config(config: dict[str, Any]) -> int:
     """Create or update a slot configuration"""
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute('''
-            INSERT INTO slot_configs (rtu_station, slot, subslot, slot_type, name, unit,
-                measurement_type, actuator_type, scale_min, scale_max,
-                alarm_low, alarm_high, alarm_low_low, alarm_high_high,
-                warning_low, warning_high, deadband, enabled)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(rtu_station, slot) DO UPDATE SET
-                subslot = excluded.subslot,
-                slot_type = excluded.slot_type,
-                name = excluded.name,
-                unit = excluded.unit,
-                measurement_type = excluded.measurement_type,
-                actuator_type = excluded.actuator_type,
-                scale_min = excluded.scale_min,
-                scale_max = excluded.scale_max,
-                alarm_low = excluded.alarm_low,
-                alarm_high = excluded.alarm_high,
-                alarm_low_low = excluded.alarm_low_low,
-                alarm_high_high = excluded.alarm_high_high,
-                warning_low = excluded.warning_low,
-                warning_high = excluded.warning_high,
-                deadband = excluded.deadband,
-                enabled = excluded.enabled
-        ''', (config['rtu_station'], config['slot'], config.get('subslot', 1),
-              config['slot_type'], config.get('name'), config.get('unit'),
-              config.get('measurement_type'), config.get('actuator_type'),
-              config.get('scale_min', 0), config.get('scale_max', 100),
-              config.get('alarm_low'), config.get('alarm_high'),
-              config.get('alarm_low_low'), config.get('alarm_high_high'),
-              config.get('warning_low'), config.get('warning_high'),
-              config.get('deadband', 0), config.get('enabled', True)))
-        conn.commit()
-        return cursor.lastrowid
+    with get_db() as db:
+        existing = db.query(SlotConfig).filter(
+            SlotConfig.rtu_station == config['rtu_station'],
+            SlotConfig.slot == config['slot']
+        ).first()
+
+        if existing:
+            existing.subslot = config.get('subslot', 1)
+            existing.slot_type = config['slot_type']
+            existing.name = config.get('name')
+            existing.unit = config.get('unit')
+            existing.measurement_type = config.get('measurement_type')
+            existing.actuator_type = config.get('actuator_type')
+            existing.scale_min = config.get('scale_min', 0)
+            existing.scale_max = config.get('scale_max', 100)
+            existing.alarm_low = config.get('alarm_low')
+            existing.alarm_high = config.get('alarm_high')
+            existing.alarm_low_low = config.get('alarm_low_low')
+            existing.alarm_high_high = config.get('alarm_high_high')
+            existing.warning_low = config.get('warning_low')
+            existing.warning_high = config.get('warning_high')
+            existing.deadband = config.get('deadband', 0)
+            existing.enabled = config.get('enabled', True)
+            db.commit()
+            return existing.id
+        else:
+            new_config = SlotConfig(
+                rtu_station=config['rtu_station'],
+                slot=config['slot'],
+                subslot=config.get('subslot', 1),
+                slot_type=config['slot_type'],
+                name=config.get('name'),
+                unit=config.get('unit'),
+                measurement_type=config.get('measurement_type'),
+                actuator_type=config.get('actuator_type'),
+                scale_min=config.get('scale_min', 0),
+                scale_max=config.get('scale_max', 100),
+                alarm_low=config.get('alarm_low'),
+                alarm_high=config.get('alarm_high'),
+                alarm_low_low=config.get('alarm_low_low'),
+                alarm_high_high=config.get('alarm_high_high'),
+                warning_low=config.get('warning_low'),
+                warning_high=config.get('warning_high'),
+                deadband=config.get('deadband', 0),
+                enabled=config.get('enabled', True),
+            )
+            db.add(new_config)
+            db.commit()
+            db.refresh(new_config)
+            return new_config.id
 
 
 def delete_slot_config(rtu_station: str, slot: int) -> bool:
     """Delete a slot configuration"""
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute('DELETE FROM slot_configs WHERE rtu_station = ? AND slot = ?',
-                       (rtu_station, slot))
-        conn.commit()
-        return cursor.rowcount > 0
+    with get_db() as db:
+        config = db.query(SlotConfig).filter(
+            SlotConfig.rtu_station == rtu_station,
+            SlotConfig.slot == slot
+        ).first()
+        if not config:
+            return False
+        db.delete(config)
+        db.commit()
+        return True
 
 
 # ============== Historian Tag Operations ==============
 
 def get_historian_tags() -> list[dict[str, Any]]:
     """Get all historian tags"""
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute('SELECT * FROM historian_tags ORDER BY tag_name')
-        return [dict(row) for row in cursor.fetchall()]
+    with get_db() as db:
+        tags = db.query(HistorianTag).order_by(HistorianTag.tag_name).all()
+        return [_tag_to_dict(t) for t in tags]
 
 
 def get_historian_tag(tag_id: int) -> dict[str, Any] | None:
     """Get a specific historian tag by ID"""
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute('SELECT * FROM historian_tags WHERE id = ?', (tag_id,))
-        row = cursor.fetchone()
-        return dict(row) if row else None
+    with get_db() as db:
+        tag = db.query(HistorianTag).filter(HistorianTag.id == tag_id).first()
+        return _tag_to_dict(tag) if tag else None
 
 
 def get_historian_tag_by_name(tag_name: str) -> dict[str, Any] | None:
     """Get a historian tag by name"""
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute('SELECT * FROM historian_tags WHERE tag_name = ?', (tag_name,))
-        row = cursor.fetchone()
-        return dict(row) if row else None
+    with get_db() as db:
+        tag = db.query(HistorianTag).filter(HistorianTag.tag_name == tag_name).first()
+        return _tag_to_dict(tag) if tag else None
 
 
 def upsert_historian_tag(tag: dict[str, Any]) -> int:
     """Create or update a historian tag"""
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute('''
-            INSERT INTO historian_tags (rtu_station, slot, tag_name, unit,
-                sample_rate_ms, deadband, compression)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(rtu_station, slot) DO UPDATE SET
-                tag_name = excluded.tag_name,
-                unit = excluded.unit,
-                sample_rate_ms = excluded.sample_rate_ms,
-                deadband = excluded.deadband,
-                compression = excluded.compression
-        ''', (tag['rtu_station'], tag['slot'], tag['tag_name'], tag.get('unit'),
-              tag.get('sample_rate_ms', 1000), tag.get('deadband', 0.1),
-              tag.get('compression', 'swinging_door')))
-        conn.commit()
-        log_audit('system', 'upsert', 'historian_tag', tag['tag_name'],
-                  f"Upserted historian tag {tag['tag_name']}")
-        return cursor.lastrowid
+    with get_db() as db:
+        existing = db.query(HistorianTag).filter(
+            HistorianTag.rtu_station == tag['rtu_station'],
+            HistorianTag.slot == tag['slot']
+        ).first()
+
+        if existing:
+            existing.tag_name = tag['tag_name']
+            existing.unit = tag.get('unit')
+            existing.sample_rate_ms = tag.get('sample_rate_ms', 1000)
+            existing.deadband = tag.get('deadband', 0.1)
+            existing.compression = tag.get('compression', 'swinging_door')
+            db.commit()
+            log_audit('system', 'upsert', 'historian_tag', tag['tag_name'],
+                      f"Upserted historian tag {tag['tag_name']}")
+            return existing.id
+        else:
+            new_tag = HistorianTag(
+                rtu_station=tag['rtu_station'],
+                slot=tag['slot'],
+                tag_name=tag['tag_name'],
+                unit=tag.get('unit'),
+                sample_rate_ms=tag.get('sample_rate_ms', 1000),
+                deadband=tag.get('deadband', 0.1),
+                compression=tag.get('compression', 'swinging_door'),
+            )
+            db.add(new_tag)
+            db.commit()
+            db.refresh(new_tag)
+            log_audit('system', 'upsert', 'historian_tag', tag['tag_name'],
+                      f"Upserted historian tag {tag['tag_name']}")
+            return new_tag.id
 
 
 def delete_historian_tag(tag_id: int) -> bool:
     """Delete a historian tag"""
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute('DELETE FROM historian_tags WHERE id = ?', (tag_id,))
-        conn.commit()
+    with get_db() as db:
+        tag = db.query(HistorianTag).filter(HistorianTag.id == tag_id).first()
+        if not tag:
+            return False
+        tag_name = tag.tag_name
+        db.delete(tag)
+        db.commit()
         log_audit('system', 'delete', 'historian_tag', str(tag_id),
-                  f"Deleted historian tag {tag_id}")
-        return cursor.rowcount > 0
+                  f"Deleted historian tag {tag_name}")
+        return True

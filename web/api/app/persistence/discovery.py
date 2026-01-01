@@ -3,61 +3,91 @@ Water Treatment Controller - Discovery Persistence Module
 Copyright (C) 2024
 SPDX-License-Identifier: GPL-3.0-or-later
 
-DCP discovery cache operations.
+DCP discovery cache operations using SQLAlchemy.
 """
 
+from datetime import UTC, datetime
 from typing import Any
 
+from ..models.discovery import DCPDiscoveryCache
 from .base import get_db
+
+
+def _device_to_dict(device: DCPDiscoveryCache) -> dict[str, Any]:
+    """Convert DCPDiscoveryCache to dictionary."""
+    return {
+        "id": device.id,
+        "mac_address": device.mac_address,
+        "ip_address": device.ip_address,
+        "device_name": device.device_name,
+        "vendor_name": device.vendor_name,
+        "device_type": device.device_type,
+        "profinet_device_id": device.profinet_device_id,
+        "profinet_vendor_id": device.profinet_vendor_id,
+        "first_seen": device.first_seen.isoformat() if device.first_seen else None,
+        "last_seen": device.last_seen.isoformat() if device.last_seen else None,
+        "added_as_rtu": device.added_as_rtu,
+    }
 
 
 def get_discovered_devices() -> list[dict[str, Any]]:
     """Get all devices in the discovery cache"""
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute('SELECT * FROM dcp_discovery_cache ORDER BY last_seen DESC')
-        return [dict(row) for row in cursor.fetchall()]
+    with get_db() as db:
+        devices = db.query(DCPDiscoveryCache).order_by(
+            DCPDiscoveryCache.last_seen.desc()
+        ).all()
+        return [_device_to_dict(d) for d in devices]
 
 
 def upsert_discovered_device(device: dict[str, Any]) -> int:
     """Insert or update a discovered device"""
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute('''
-            INSERT INTO dcp_discovery_cache (mac_address, ip_address, device_name,
-                vendor_name, device_type, profinet_device_id, profinet_vendor_id,
-                last_seen)
-            VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-            ON CONFLICT(mac_address) DO UPDATE SET
-                ip_address = excluded.ip_address,
-                device_name = excluded.device_name,
-                vendor_name = excluded.vendor_name,
-                device_type = excluded.device_type,
-                profinet_device_id = excluded.profinet_device_id,
-                profinet_vendor_id = excluded.profinet_vendor_id,
-                last_seen = CURRENT_TIMESTAMP
-        ''', (device['mac_address'], device.get('ip_address'), device.get('device_name'),
-              device.get('vendor_name'), device.get('device_type'),
-              device.get('profinet_device_id'), device.get('profinet_vendor_id')))
-        conn.commit()
-        return cursor.lastrowid
+    with get_db() as db:
+        existing = db.query(DCPDiscoveryCache).filter(
+            DCPDiscoveryCache.mac_address == device['mac_address']
+        ).first()
+
+        if existing:
+            existing.ip_address = device.get('ip_address')
+            existing.device_name = device.get('device_name')
+            existing.vendor_name = device.get('vendor_name')
+            existing.device_type = device.get('device_type')
+            existing.profinet_device_id = device.get('profinet_device_id')
+            existing.profinet_vendor_id = device.get('profinet_vendor_id')
+            existing.last_seen = datetime.now(UTC)
+            db.commit()
+            return existing.id
+        else:
+            new_device = DCPDiscoveryCache(
+                mac_address=device['mac_address'],
+                ip_address=device.get('ip_address'),
+                device_name=device.get('device_name'),
+                vendor_name=device.get('vendor_name'),
+                device_type=device.get('device_type'),
+                profinet_device_id=device.get('profinet_device_id'),
+                profinet_vendor_id=device.get('profinet_vendor_id'),
+            )
+            db.add(new_device)
+            db.commit()
+            db.refresh(new_device)
+            return new_device.id
 
 
 def mark_device_as_added(mac_address: str) -> bool:
     """Mark a discovered device as added to RTU configuration"""
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute('''
-            UPDATE dcp_discovery_cache SET added_as_rtu = 1 WHERE mac_address = ?
-        ''', (mac_address,))
-        conn.commit()
-        return cursor.rowcount > 0
+    with get_db() as db:
+        device = db.query(DCPDiscoveryCache).filter(
+            DCPDiscoveryCache.mac_address == mac_address
+        ).first()
+        if not device:
+            return False
+        device.added_as_rtu = True
+        db.commit()
+        return True
 
 
 def clear_discovery_cache() -> int:
     """Clear the discovery cache"""
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute('DELETE FROM dcp_discovery_cache')
-        conn.commit()
-        return cursor.rowcount
+    with get_db() as db:
+        count = db.query(DCPDiscoveryCache).delete()
+        db.commit()
+        return count
