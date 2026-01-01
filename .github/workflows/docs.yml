@@ -52,6 +52,11 @@ on:
     # Weekly on Monday at 9am UTC - check for stale documentation
     - cron: '0 9 * * 1'
 
+# Cancel in-progress runs when a new commit is pushed
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   PYTHON_VERSION: '3.11'
   NODE_VERSION: '20'

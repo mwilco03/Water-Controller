@@ -9,10 +9,10 @@
 #   - quality-typescript - eslint + jest + next build + npm audit (~4 min)
 #   - build-arm          - Cross-compilation (main/release only)
 #
-# Quality Gates (per DEVELOPMENT_GUIDELINES.md):
-#   - C:          -Wall -Wextra -Werror, cppcheck blocking
-#   - Python:     mypy, ruff, pytest with coverage
-#   - TypeScript: ESLint, Jest with coverage
+# Optimizations:
+#   - Concurrency: Cancels in-progress runs when new commits are pushed
+#   - Path filtering: Jobs only run when relevant files change
+#   - Artifacts: Only uploaded on main/develop branches
 # ============================================================================
 
 name: CI
@@ -23,16 +23,51 @@ on:
   pull_request:
     branches: [main, master]
 
+# Cancel in-progress runs when a new commit is pushed
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   BUILD_TYPE: Release
 
 jobs:
+  # ============================================================================
+  # Detect which files changed (for path filtering)
+  # ============================================================================
+  changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    outputs:
+      c: ${{ steps.filter.outputs.c }}
+      python: ${{ steps.filter.outputs.python }}
+      typescript: ${{ steps.filter.outputs.typescript }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            c:
+              - 'src/**'
+              - 'CMakeLists.txt'
+              - 'cmake/**'
+              - '.github/workflows/ci.yml'
+            python:
+              - 'web/api/**'
+              - '.github/workflows/ci.yml'
+            typescript:
+              - 'web/ui/**'
+              - '.github/workflows/ci.yml'
+
   # ============================================================================
   # C Quality - Static analysis, build, and tests (single job)
   # ============================================================================
   quality-c:
     name: C (cppcheck + build + test)
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.c == 'true'
 
     steps:
       - uses: actions/checkout@v4
@@ -73,6 +108,7 @@ jobs:
         run: cd build && ctest --output-on-failure
 
       - name: Upload artifact
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' || github.ref == 'refs/heads/develop'
         uses: actions/upload-artifact@v4
         with:
           name: water-controller-x86_64
@@ -85,6 +121,8 @@ jobs:
   quality-python:
     name: Python (ruff + mypy + pytest)
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.python == 'true'
 
     steps:
       - uses: actions/checkout@v4
@@ -120,6 +158,8 @@ jobs:
   quality-typescript:
     name: TypeScript (eslint + jest + build)
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.typescript == 'true'
 
     steps:
       - uses: actions/checkout@v4
@@ -146,6 +186,7 @@ jobs:
         run: cd web/ui && npm audit --audit-level=high || true
 
       - name: Upload artifact
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' || github.ref == 'refs/heads/develop'
         uses: actions/upload-artifact@v4
         with:
           name: water-controller-web-ui
@@ -156,13 +197,16 @@ jobs:
           retention-days: 7
 
   # ============================================================================
-  # ARM Cross-Compilation (main/release only)
+  # ARM Cross-Compilation (main/release only, after C quality passes)
   # ============================================================================
   build-arm:
     name: ARM (${{ matrix.arch }})
     runs-on: ubuntu-latest
-    needs: [quality-c]
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' || github.ref == 'refs/heads/develop')
+    needs: [changes, quality-c]
+    if: |
+      github.event_name == 'push' &&
+      (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' || github.ref == 'refs/heads/develop') &&
+      needs.changes.outputs.c == 'true'
 
     strategy:
       fail-fast: false
