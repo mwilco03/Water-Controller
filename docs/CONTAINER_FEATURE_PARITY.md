@@ -124,7 +124,6 @@ RUN npm ci --legacy-peer-deps
 ```yaml
 volumes:
   - db_data:/var/lib/postgresql/data          # Database
-  - redis_data:/data                           # Redis
   - grafana_data:/var/lib/grafana             # Grafana
   - ./config:/etc/water-controller:ro          # Config (read-only)
   - /dev/shm/wtc:/dev/shm/wtc:rw              # Shared memory IPC
@@ -216,7 +215,7 @@ services:
 ```yaml
 networks:
   wtc-internal:
-    internal: true  # Database/Redis isolated - no external access
+    internal: true  # Database isolated - no external access
   wtc-external:
     # API/UI/Grafana accessible from host
 ```
@@ -419,8 +418,8 @@ AmbientCapabilities=CAP_NET_RAW CAP_NET_ADMIN
 │   │ Controller     │◄───────────►│  API (ghcr.io/.../api:v1.0.0)   ││
 │   │ (C binary)     │  IPC/shm    │  UI  (ghcr.io/.../ui:v1.0.0)    ││
 │   │                │             │  TimescaleDB                    ││
-│   │ Capabilities:  │             │  Redis                          ││
-│   │ - NET_RAW      │             │  Grafana                        ││
+│   │ Capabilities:  │             │  Grafana                        ││
+│   │ - NET_RAW      │             │                                 ││
 │   │ - NET_ADMIN    │             │                                 ││
 │   └────────────────┘             └─────────────────────────────────┘│
 │          │                                      │                    │
@@ -491,7 +490,6 @@ AmbientCapabilities=CAP_NET_RAW CAP_NET_ADMIN
 - ✅ API (FastAPI)
 - ✅ UI (Next.js)
 - ✅ Database (TimescaleDB - upgrade from SQLite)
-- ✅ Cache (Redis)
 - ✅ Visualization (Grafana)
 - ✅ Logging
 - ✅ Health monitoring
