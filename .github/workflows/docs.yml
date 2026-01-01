@@ -3,18 +3,10 @@
 # ============================================================================
 # Purpose: Maintain documentation quality and generate API references
 #
-# Triggers:
-#   - Push to main, master, develop branches
-#   - Pull requests targeting main or master
-#   - Manual dispatch
-#   - Weekly schedule (documentation staleness check)
-#
-# Jobs:
-#   1. validate-docs     - Check markdown links and formatting
-#   2. generate-api-docs - Generate OpenAPI spec from FastAPI
-#   3. generate-c-docs   - Generate C API docs with Doxygen
-#   4. deploy-pages      - Deploy to GitHub Pages (on release only)
-#   5. version-snapshot  - Create versioned docs snapshot (on release)
+# Jobs (consolidated to reduce check noise):
+#   - validate-and-generate : Validate docs + generate API docs (PRs/push)
+#   - deploy-pages          : Deploy to GitHub Pages (on release only)
+#   - health-check          : Weekly staleness check (scheduled)
 # ============================================================================
 
 name: Documentation
@@ -60,17 +52,23 @@ on:
     # Weekly on Monday at 9am UTC - check for stale documentation
     - cron: '0 9 * * 1'
 
+# Cancel in-progress runs when a new commit is pushed
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   PYTHON_VERSION: '3.11'
   NODE_VERSION: '20'
 
 jobs:
   # ============================================================================
-  # Validate Documentation - Link checking and markdown linting
+  # Validate and Generate Documentation (consolidated job for PRs/push)
   # ============================================================================
-  validate-docs:
-    name: Validate Documentation
+  validate-and-generate:
+    name: Validate & Generate Docs
     runs-on: ubuntu-latest
+    if: github.event_name != 'schedule'
 
     steps:
       - name: Checkout repository
@@ -81,9 +79,22 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
 
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+          cache-dependency-path: web/api/requirements.txt
+
+      - name: Install Doxygen
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y doxygen graphviz
+
       - name: Install markdown-link-check
         run: npm install -g markdown-link-check
 
+      # --- Validate markdown links ---
       - name: Check markdown links
         run: |
           echo "Checking markdown links..."
@@ -98,72 +109,21 @@ jobs:
           grep -rn "TODO\|FIXME\|TBD\|XXX\|PLACEHOLDER" docs/ README.md 2>/dev/null || echo "No placeholders found"
 
           echo ""
-          echo "=== Checking for broken internal references ==="
-          # Check for references to files that don't exist
-          grep -rhoE '\[.*\]\(([^)]+)\)' docs/ README.md 2>/dev/null | \
-            grep -oE '\(([^)]+)\)' | \
-            tr -d '()' | \
-            grep -v '^http' | \
-            grep -v '^#' | \
-            while read ref; do
-              if [ -n "$ref" ] && [ ! -f "$ref" ] && [ ! -f "docs/$ref" ]; then
-                echo "Possibly broken reference: $ref"
-              fi
-            done || echo "No broken internal references found"
-
-          echo ""
           echo "=== Documentation files found ==="
           find . -name '*.md' -not -path './node_modules/*' -not -path './.git/*' | wc -l
           echo "markdown files"
 
-      - name: Generate documentation report
-        run: |
-          echo "# Documentation Validation Report" > doc-report.md
-          echo "" >> doc-report.md
-          echo "Generated: $(date -Iseconds)" >> doc-report.md
-          echo "" >> doc-report.md
-          echo "## Files Checked" >> doc-report.md
-          find . -name '*.md' -not -path './node_modules/*' -not -path './.git/*' >> doc-report.md
-          echo "" >> doc-report.md
-          echo "## Summary" >> doc-report.md
-          echo "- Total markdown files: $(find . -name '*.md' -not -path './node_modules/*' -not -path './.git/*' | wc -l)" >> doc-report.md
-
-      - name: Upload validation report
-        uses: actions/upload-artifact@v4
-        with:
-          name: documentation-validation-report
-          path: doc-report.md
-          retention-days: 14
-
-  # ============================================================================
-  # Generate OpenAPI Documentation from FastAPI
-  # ============================================================================
-  generate-api-docs:
-    name: Generate API Documentation
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-          cache: 'pip'
-          cache-dependency-path: web/api/requirements.txt
-
-      - name: Install dependencies
+      # --- Generate OpenAPI spec ---
+      - name: Install Python dependencies
         run: |
           cd web/api
           pip install -r requirements.txt
-          pip install pyyaml  # For YAML export
+          pip install pyyaml
 
       - name: Generate OpenAPI spec
         run: |
           cd web/api
 
-          # Create a script to export the OpenAPI schema
           cat > export_openapi.py << 'EOF'
           import json
           import yaml
@@ -172,34 +132,16 @@ jobs:
 
           try:
               from main import app
-
-              # Get OpenAPI schema
               openapi_schema = app.openapi()
-
-              # Export as JSON
               with open('openapi.json', 'w') as f:
                   json.dump(openapi_schema, f, indent=2)
-
-              # Export as YAML
               with open('openapi.yaml', 'w') as f:
                   yaml.dump(openapi_schema, f, default_flow_style=False, sort_keys=False)
-
               print(f"Generated OpenAPI spec version: {openapi_schema.get('openapi', 'unknown')}")
-              print(f"API title: {openapi_schema.get('info', {}).get('title', 'unknown')}")
               print(f"Endpoints documented: {len(openapi_schema.get('paths', {}))}")
-
           except Exception as e:
               print(f"Warning: Could not generate OpenAPI spec: {e}")
-              # Create minimal placeholder
-              placeholder = {
-                  "openapi": "3.0.0",
-                  "info": {
-                      "title": "Water-Controller API",
-                      "version": "0.0.1",
-                      "description": "API documentation generation failed. See source code."
-                  },
-                  "paths": {}
-              }
+              placeholder = {"openapi": "3.0.0", "info": {"title": "Water-Controller API", "version": "0.0.1"}, "paths": {}}
               with open('openapi.json', 'w') as f:
                   json.dump(placeholder, f, indent=2)
               with open('openapi.yaml', 'w') as f:
@@ -207,118 +149,58 @@ jobs:
           EOF
 
           python export_openapi.py || echo "OpenAPI generation completed with warnings"
-
-          # Move to docs directory
           mkdir -p ../../docs/generated/api
           cp openapi.json openapi.yaml ../../docs/generated/api/ 2>/dev/null || true
 
-      - name: Upload OpenAPI spec
-        uses: actions/upload-artifact@v4
-        with:
-          name: openapi-spec
-          path: |
-            web/api/openapi.json
-            web/api/openapi.yaml
-          retention-days: 30
-
-  # ============================================================================
-  # Generate C API Documentation with Doxygen
-  # ============================================================================
-  generate-c-docs:
-    name: Generate C API Documentation
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Install Doxygen
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y doxygen graphviz
-
+      # --- Generate C API docs with Doxygen ---
       - name: Create Doxyfile
         run: |
           cat > Doxyfile << 'EOF'
-          # Doxygen configuration for Water-Controller
-
           PROJECT_NAME           = "Water-Controller"
           PROJECT_NUMBER         = "0.1.0"
           PROJECT_BRIEF          = "PROFINET IO Controller for Water Treatment Systems"
           OUTPUT_DIRECTORY       = docs/generated/c-api
-
-          # Input
           INPUT                  = src
           FILE_PATTERNS          = *.c *.h
           RECURSIVE              = YES
           EXCLUDE_PATTERNS       = */tests/*
-
-          # Output
           GENERATE_HTML          = YES
           GENERATE_LATEX         = NO
           HTML_OUTPUT            = html
-
-          # Extraction
           EXTRACT_ALL            = NO
-          EXTRACT_PRIVATE        = NO
           EXTRACT_STATIC         = YES
-          EXTRACT_LOCAL_CLASSES  = YES
-
-          # Documentation
           JAVADOC_AUTOBRIEF      = YES
           OPTIMIZE_OUTPUT_FOR_C  = YES
-          TYPEDEF_HIDES_STRUCT   = YES
-
-          # Graphs
           HAVE_DOT               = YES
           DOT_IMAGE_FORMAT       = svg
           CALL_GRAPH             = YES
           CALLER_GRAPH           = YES
           DOT_GRAPH_MAX_NODES    = 50
-
-          # Warnings
           WARN_IF_UNDOCUMENTED   = YES
           WARN_NO_PARAMDOC       = YES
           WARN_LOGFILE           = doxygen-warnings.log
-
-          # Source browsing
           SOURCE_BROWSER         = YES
-          INLINE_SOURCES         = NO
-          STRIP_CODE_COMMENTS    = YES
-          REFERENCED_BY_RELATION = YES
-          REFERENCES_RELATION    = YES
           EOF
 
       - name: Generate Doxygen documentation
         run: |
           mkdir -p docs/generated/c-api
           doxygen Doxyfile 2>&1 | tee doxygen-output.log
-
-          # Report undocumented items
-          echo ""
-          echo "=== Undocumented Items ==="
           if [ -f doxygen-warnings.log ]; then
-            cat doxygen-warnings.log | head -100
             WARN_COUNT=$(wc -l < doxygen-warnings.log)
-            echo ""
-            echo "Total warnings: $WARN_COUNT"
+            echo "Doxygen warnings: $WARN_COUNT"
           fi
 
-      - name: Upload Doxygen documentation
+      # --- Upload artifacts ---
+      - name: Upload documentation artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: c-api-documentation
-          path: docs/generated/c-api
-          retention-days: 30
-
-      - name: Upload Doxygen warnings
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: doxygen-warnings
+          name: documentation
           path: |
+            web/api/openapi.json
+            web/api/openapi.yaml
+            docs/generated/
             doxygen-warnings.log
-            doxygen-output.log
           retention-days: 14
 
   # ============================================================================
@@ -327,7 +209,7 @@ jobs:
   deploy-pages:
     name: Deploy to GitHub Pages
     runs-on: ubuntu-latest
-    needs: [validate-docs, generate-api-docs, generate-c-docs]
+    needs: [validate-and-generate]
     if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.deploy == 'true')
 
     permissions:
@@ -342,46 +224,27 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Download OpenAPI spec
+      - name: Download documentation artifacts
         uses: actions/download-artifact@v4
         with:
-          name: openapi-spec
-          path: docs/generated/api
-
-      - name: Download C API docs
-        uses: actions/download-artifact@v4
-        with:
-          name: c-api-documentation
-          path: docs/generated/c-api
+          name: documentation
+          path: docs/
 
       - name: Prepare pages content
         run: |
           mkdir -p _site
-
-          # Copy main documentation
           cp -r docs/* _site/ 2>/dev/null || true
           cp README.md _site/
-          cp CHANGELOG.md _site/
+          cp CHANGELOG.md _site/ 2>/dev/null || true
 
-          # Create index page
           cat > _site/index.md << 'EOF'
           # Water-Controller Documentation
-
-          Welcome to the Water-Controller documentation.
 
           ## Quick Links
 
           - [README](README.md) - Project overview
-          - [CHANGELOG](CHANGELOG.md) - Version history
           - [API Reference](generated/api/openapi.yaml) - OpenAPI specification
           - [C API Reference](generated/c-api/html/index.html) - Doxygen documentation
-
-          ## Documentation Sections
-
-          - [Deployment Guide](DEPLOYMENT.md)
-          - [Development Guidelines](DEVELOPMENT_GUIDELINES.md)
-          - [Alarm Architecture](ALARM_ARCHITECTURE.md)
-          - [PROFINET Data Format](specifications/PROFINET_DATA_FORMAT_SPECIFICATION.md)
           EOF
 
       - name: Setup Pages
@@ -395,66 +258,6 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
-
-  # ============================================================================
-  # Create Versioned Documentation Snapshot (on release)
-  # ============================================================================
-  version-snapshot:
-    name: Create Versioned Snapshot
-    runs-on: ubuntu-latest
-    needs: [validate-docs]
-    if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.version != '')
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Determine version
-        id: version
-        run: |
-          if [ "${{ github.event_name }}" == "release" ]; then
-            VERSION="${{ github.event.release.tag_name }}"
-          else
-            VERSION="${{ inputs.version }}"
-          fi
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "Version: $VERSION"
-
-      - name: Create versioned snapshot
-        run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          SNAPSHOT_DIR="docs/versioned/$VERSION"
-
-          mkdir -p "$SNAPSHOT_DIR"
-
-          # Copy versioned documentation
-          cp docs/DEPLOYMENT.md "$SNAPSHOT_DIR/operations-manual.md" 2>/dev/null || true
-          cp docs/ALARM_ARCHITECTURE.md "$SNAPSHOT_DIR/alarm-reference.md" 2>/dev/null || true
-
-          # Create version marker
-          cat > "$SNAPSHOT_DIR/VERSION.md" << EOF
-          # Version $VERSION Documentation
-
-          This documentation snapshot was created for version $VERSION.
-
-          - Release date: $(date -Iseconds)
-          - Git ref: ${{ github.sha }}
-
-          ## Contents
-
-          - [Operations Manual](operations-manual.md)
-          - [Alarm Reference](alarm-reference.md)
-          EOF
-
-          echo "Created versioned snapshot at $SNAPSHOT_DIR"
-          ls -la "$SNAPSHOT_DIR"
-
-      - name: Upload versioned snapshot
-        uses: actions/upload-artifact@v4
-        with:
-          name: versioned-docs-${{ steps.version.outputs.version }}
-          path: docs/versioned/${{ steps.version.outputs.version }}
-          retention-days: 90
 
   # ============================================================================
   # Weekly Documentation Health Check
@@ -471,7 +274,6 @@ jobs:
       - name: Check documentation freshness
         run: |
           echo "# Documentation Health Check" > health-report.md
-          echo "" >> health-report.md
           echo "Generated: $(date -Iseconds)" >> health-report.md
           echo "" >> health-report.md
 
@@ -481,16 +283,6 @@ jobs:
 
           echo "## Stale Documentation (>90 days)" >> health-report.md
           find . -name '*.md' -mtime +90 -not -path './node_modules/*' -not -path './.git/*' >> health-report.md || echo "None" >> health-report.md
-          echo "" >> health-report.md
-
-          echo "## Undocumented Public Headers" >> health-report.md
-          for header in $(find src -name '*.h' -type f); do
-            # Check if header has any documentation comments
-            if ! grep -q '/\*\*' "$header" 2>/dev/null && ! grep -q '///' "$header" 2>/dev/null; then
-              echo "- $header" >> health-report.md
-            fi
-          done
-          echo "" >> health-report.md
 
           cat health-report.md
 
