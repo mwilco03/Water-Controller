@@ -11,8 +11,8 @@
 | Part | Description | Status | Effort | Risk | Suggested PR Order |
 |------|-------------|--------|--------|------|-------------------|
 | PART 1 | Merge container-image-builds | ✅ **COMPLETED** | - | - | N/A (PR #65 merged) |
-| PART 7 | OpenPLC Integration | ❌ Not Started | **High** | Medium-High | 4th |
-| PART 8 | Bootstrap Script Updates | ⚠️ Partial | **Medium** | Low | 1st |
+| PART 7 | OpenPLC Viewer (Read-Only) | ❌ Not Started | **Low-Medium** | Low | 4th |
+| PART 8 | Bootstrap Script (Boolean Mode) | ⚠️ Partial | **Low** | Low | 1st |
 | PART 10 | Documentation | ⚠️ Gaps Exist | **Low-Medium** | Low | 2nd |
 | PART 11 | Integration Tests | ⚠️ Foundation Only | **Medium-High** | Low | 3rd |
 
@@ -37,521 +37,232 @@
 
 ---
 
-## PART 7: OpenPLC Integration
+## PART 7: OpenPLC Viewer (Read-Only)
 
 ### Status: ❌ NOT STARTED
 
 ### Overview
-Integrate OpenPLC runtime to support IEC 61131-3 ladder logic programming alongside the existing PROFINET IO controller.
+Add a **read-only** ladder logic viewer that renders in the browser and communicates with Modbus. This is NOT a full PLC runtime - it's a visualization/monitoring tool.
 
-### Prerequisites
-- Integration tests for IPC must be in place first (PART 11)
-- Bootstrap dual-mode support should be complete (PART 8)
-- Documentation framework updated (PART 10)
+### Approach: Containerized OpenPLC Editor (Read-Only Mode)
 
-### Scope
+Use an existing containerized solution to provide browser-based ladder logic viewing with Modbus communication.
 
-#### 1. Backend Components (C Layer)
+### Option A: OpenPLC Editor in Container (Recommended)
 
-**New Source Files:**
-```
-src/openplc/
-├── openplc.h           # Public interface
-├── interpreter.c       # Ladder logic interpreter
-├── loader.c            # .st/.ld file loader
-├── runtime.c           # Execution engine
-├── io_mapper.c         # Maps ladder variables to PROFINET I/O
-└── cycle_manager.c     # Synchronizes with PROFINET cycle
-```
-
-**CMakeLists.txt Updates:**
-```cmake
-# Add to src/CMakeLists.txt
-add_library(openplc
-    openplc/interpreter.c
-    openplc/loader.c
-    openplc/runtime.c
-    openplc/io_mapper.c
-    openplc/cycle_manager.c
-)
-target_link_libraries(openplc PRIVATE profinet control)
-```
-
-**Integration Points:**
-- `src/control/control.c` - Add OpenPLC runtime calls
-- `src/profinet/profinet.c` - I/O data exchange with ladder variables
-- `src/ipc/ipc.c` - Expose ladder state to API layer
-
-#### 2. Backend API (Python FastAPI)
-
-**New API Endpoints:**
-```
-web/api/app/api/v1/
-├── ladder.py           # Ladder logic management
-└── openplc.py          # Runtime control
-```
-
-**Endpoint Definitions:**
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/v1/ladder/programs` | List uploaded ladder programs |
-| POST | `/api/v1/ladder/upload` | Upload .st or .ld file |
-| GET | `/api/v1/ladder/programs/{id}` | Get program details |
-| DELETE | `/api/v1/ladder/programs/{id}` | Delete program |
-| POST | `/api/v1/ladder/programs/{id}/activate` | Set active program |
-| GET | `/api/v1/ladder/runtime/status` | Runtime status |
-| POST | `/api/v1/ladder/runtime/start` | Start execution |
-| POST | `/api/v1/ladder/runtime/stop` | Stop execution |
-| GET | `/api/v1/ladder/runtime/variables` | Live variable state |
-| PUT | `/api/v1/ladder/runtime/variables/{name}` | Force variable value |
-
-**New Models:**
-```python
-# web/api/app/models/ladder.py
-class LadderProgram(Base):
-    __tablename__ = "ladder_programs"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    name: Mapped[str] = mapped_column(String(255))
-    source_type: Mapped[str]  # "structured_text" or "ladder"
-    source_code: Mapped[str] = mapped_column(Text)
-    compiled_code: Mapped[bytes] = mapped_column(LargeBinary, nullable=True)
-    is_active: Mapped[bool] = mapped_column(default=False)
-    created_at: Mapped[datetime]
-    updated_at: Mapped[datetime]
-
-class LadderVariable(Base):
-    __tablename__ = "ladder_variables"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    program_id: Mapped[int] = mapped_column(ForeignKey("ladder_programs.id"))
-    name: Mapped[str]
-    data_type: Mapped[str]  # BOOL, INT, REAL, etc.
-    io_binding: Mapped[str] = mapped_column(nullable=True)  # PROFINET I/O mapping
-    initial_value: Mapped[str]
-```
-
-#### 3. Frontend UI (Next.js)
-
-**New Components:**
-```
-web/ui/src/
-├── components/ladder/
-│   ├── LadderEditor.tsx       # Visual ladder editor
-│   ├── LadderCanvas.tsx       # Rung rendering
-│   ├── LadderToolbox.tsx      # Drag-drop elements
-│   ├── VariableInspector.tsx  # Live variable view
-│   └── IOMapper.tsx           # Variable-to-PROFINET mapping
-├── pages/ladder/
-│   ├── index.tsx              # Program list
-│   ├── [id]/edit.tsx          # Editor page
-│   └── [id]/runtime.tsx       # Runtime monitoring
-└── hooks/
-    └── useLadderRuntime.ts    # WebSocket hook for live data
-```
-
-**Navigation Update:**
-- Add "Ladder Logic" section to main navigation
-- Add runtime status indicator to header
-
-#### 4. Database Schema
-
-**New Tables:**
-```sql
--- In docker/init.sql or migrations
-
-CREATE TABLE ladder_programs (
-    id SERIAL PRIMARY KEY,
-    name VARCHAR(255) NOT NULL,
-    source_type VARCHAR(50) NOT NULL CHECK (source_type IN ('structured_text', 'ladder')),
-    source_code TEXT NOT NULL,
-    compiled_code BYTEA,
-    is_active BOOLEAN DEFAULT FALSE,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW()
-);
-
-CREATE TABLE ladder_variables (
-    id SERIAL PRIMARY KEY,
-    program_id INTEGER REFERENCES ladder_programs(id) ON DELETE CASCADE,
-    name VARCHAR(255) NOT NULL,
-    data_type VARCHAR(50) NOT NULL,
-    io_binding VARCHAR(255),
-    initial_value TEXT,
-    UNIQUE(program_id, name)
-);
-
-CREATE TABLE ladder_execution_log (
-    id SERIAL PRIMARY KEY,
-    program_id INTEGER REFERENCES ladder_programs(id),
-    started_at TIMESTAMPTZ,
-    stopped_at TIMESTAMPTZ,
-    cycles_executed BIGINT,
-    avg_cycle_time_us INTEGER,
-    errors TEXT[]
-);
-```
-
-#### 5. Configuration Schema
-
-**New Schema File:**
+**Container Setup:**
 ```yaml
-# schemas/config/openplc.schema.yaml
-$schema: "https://json-schema.org/draft/2020-12/schema"
-title: OpenPLC Configuration
-type: object
-properties:
-  enabled:
-    type: boolean
-    default: false
-    description: Enable OpenPLC runtime
-  cycle_time_ms:
-    type: integer
-    minimum: 1
-    maximum: 1000
-    default: 10
-    description: Ladder logic cycle time in milliseconds
-  max_programs:
-    type: integer
-    minimum: 1
-    maximum: 100
-    default: 10
-  variable_table_size:
-    type: integer
-    default: 1000
-  sync_with_profinet:
-    type: boolean
-    default: true
-    description: Synchronize ladder cycle with PROFINET cycle
+# docker/docker-compose.yml - add service
+services:
+  openplc-editor:
+    image: openplcproject/openplc_v3:latest
+    container_name: wtc-openplc
+    ports:
+      - "${WTC_OPENPLC_PORT:-8081}:8080"
+    volumes:
+      - openplc_data:/workdir
+    environment:
+      - MODBUS_ENABLED=true
+      - MODBUS_PORT=${WTC_MODBUS_TCP_PORT:-1502}
+    restart: unless-stopped
+    networks:
+      - wtc-network
 ```
 
-#### 6. IPC Shared Memory Extension
+**Integration with Water-Controller:**
+- OpenPLC Editor container runs alongside existing stack
+- Connects to same Modbus port as existing controller
+- Read-only access to I/O state via Modbus
+- UI accessible at separate port (8081)
 
-**New IPC Structures:**
-```c
-// src/ipc/openplc_ipc.h
-typedef struct {
-    uint32_t cycle_count;
-    uint32_t cycle_time_us;
-    uint8_t  running;
-    uint8_t  error_code;
-    uint16_t active_program_id;
-} openplc_status_t;
+### Option B: Embedded Ladder Viewer Component
 
-typedef struct {
-    char name[64];
-    uint8_t data_type;
-    union {
-        int32_t i;
-        float f;
-        uint8_t b;
-    } value;
-    uint8_t forced;
-} openplc_variable_t;
+If a lighter-weight solution is preferred:
+
+**New UI Component:**
 ```
+web/ui/src/components/ladder/
+├── LadderViewer.tsx      # Read-only ladder diagram viewer
+├── ModbusStatus.tsx      # Live Modbus register display
+└── LadderDiagram.tsx     # SVG rendering of ladder rungs
+```
+
+**API Endpoint (Read-Only):**
+```python
+# web/api/app/api/v1/ladder.py
+@router.get("/ladder/view")
+async def get_ladder_diagram():
+    """Return ladder diagram for display (read-only)."""
+    pass
+
+@router.get("/ladder/modbus/registers")
+async def get_modbus_registers():
+    """Read current Modbus register values."""
+    pass
+```
+
+### Scope (Simplified)
+
+| Component | Action | Notes |
+|-----------|--------|-------|
+| Docker Compose | Add OpenPLC container | Pre-built image |
+| config/ports.env | Add WTC_OPENPLC_PORT | Default: 8081 |
+| UI Navigation | Add link to OpenPLC | External link or iframe |
+| Documentation | Add OpenPLC section | How to access viewer |
+
+### No Changes Required
+
+- ❌ No C code changes
+- ❌ No new database tables
+- ❌ No ladder execution engine
+- ❌ No IPC extensions
 
 ### Implementation Steps
 
-1. **Phase 1: Core Runtime** (Estimated: ~3 days effort)
-   - Implement C interpreter for structured text subset
-   - Create loader for .st files
-   - Basic execution engine without I/O
-
-2. **Phase 2: PROFINET Integration** (~2 days)
-   - I/O mapper connecting variables to PROFINET data
-   - Cycle synchronization
-   - IPC structures for API access
-
-3. **Phase 3: API Layer** (~2 days)
-   - FastAPI endpoints for program management
-   - WebSocket for live variable streaming
-   - Database models and migrations
-
-4. **Phase 4: Frontend** (~3 days)
-   - Program list and upload
-   - Visual ladder editor (basic)
-   - Runtime monitoring dashboard
-
-5. **Phase 5: Testing & Documentation** (~2 days)
-   - Integration tests
-   - API documentation
-   - User guide
+1. Add OpenPLC container to docker-compose.yml
+2. Configure Modbus connection to existing controller
+3. Add port configuration to ports.env
+4. Add navigation link in UI
+5. Document access and usage
 
 ### Acceptance Criteria
 
-- [ ] Upload structured text program via API
-- [ ] Activate program and start execution
-- [ ] View live variable values via WebSocket
-- [ ] Force variable values from UI
-- [ ] Map variables to PROFINET I/O points
-- [ ] Cycle time < 10ms when synchronized
-- [ ] Graceful degradation if OpenPLC disabled
-- [ ] All integration tests pass
+- [ ] OpenPLC Editor container starts with docker compose
+- [ ] Connects to Modbus and shows register values
+- [ ] Ladder diagrams viewable in browser
+- [ ] Read-only (no writes to controller)
+- [ ] Documentation updated
 
 ---
 
-## PART 8: Bootstrap Script Updates (Dual Deployment Mode)
+## PART 8: Bootstrap Script (Boolean Deployment Mode)
 
 ### Status: ⚠️ PARTIAL - Enhancement Needed
 
 ### Overview
-Enhance `bootstrap.sh` and installation scripts to support explicit deployment mode selection with clear separation between bare-metal and containerized deployments.
+Simple boolean deployment mode: **bare-metal** OR **docker**. This is a POC - keep it simple.
 
 ### Current State
 
 **Existing Files:**
 - `bootstrap.sh` - Entry point with install/upgrade/remove commands
 - `scripts/install.sh` - Full installation script
-- `scripts/install-hmi.sh` - HMI-only installation
-
-**Current Modes (Implicit):**
-- Fresh install vs upgrade
-- Dry-run mode
-- Component skip flags (SKIP_DEPS, SKIP_BUILD, etc.)
 
 ### Proposed Enhancement
 
-#### 1. Deployment Modes
+#### Simple Boolean Mode
 
 ```bash
-# New deployment mode options
-DEPLOYMENT_MODE="auto"  # auto, baremetal, docker, hybrid
+# Two modes only:
+# 1. baremetal - Full system installed on host via systemd
+# 2. docker    - Everything runs in containers
 
-# Sub-modes
-BAREMETAL_FULL       # Full system on host
-BAREMETAL_WEB_ONLY   # Web stack only (no controller)
-DOCKER_FULL          # Everything containerized
-DOCKER_WEB_ONLY      # Containerized web, no controller
-HYBRID               # Host controller + containerized web
+DEPLOYMENT_MODE="${DEPLOYMENT_MODE:-baremetal}"  # Default to bare-metal
 ```
 
-#### 2. New Files to Create
+#### Bootstrap.sh Updates
 
-**`scripts/lib/deployment-modes.sh`:**
 ```bash
 #!/usr/bin/env bash
-# Deployment mode detection and configuration
+# bootstrap.sh - Simple deployment mode selection
 
-detect_deployment_environment() {
-    local score_baremetal=0
-    local score_docker=0
+DEPLOYMENT_MODE="${1:-baremetal}"
 
-    # Check for Docker
-    command -v docker &>/dev/null && ((score_docker+=2))
-    docker compose version &>/dev/null && ((score_docker+=1))
+show_help() {
+    cat <<EOF
+Water-Controller Bootstrap
 
-    # Check for bare-metal indicators
-    systemctl --version &>/dev/null && ((score_baremetal+=1))
-    [[ -d /opt ]] && ((score_baremetal+=1))
+Usage: bootstrap.sh [MODE] [OPTIONS]
 
-    # Check for PROFINET requirements
-    has_profinet_nic && ((score_baremetal+=2))
+MODES:
+    baremetal    Install directly on host (systemd services)
+    docker       Install using Docker containers
 
-    # Check memory (containers need more)
-    local mem_gb=$(free -g | awk '/^Mem:/{print $2}')
-    [[ $mem_gb -lt 2 ]] && ((score_baremetal+=1))
-    [[ $mem_gb -ge 4 ]] && ((score_docker+=1))
+OPTIONS:
+    --dry-run    Show what would be installed
+    --help       Show this help
 
-    echo "baremetal:$score_baremetal docker:$score_docker"
+Examples:
+    bootstrap.sh baremetal    # Install on host
+    bootstrap.sh docker       # Install with Docker
+EOF
 }
 
-recommend_deployment_mode() {
-    local env=$(detect_deployment_environment)
-    local baremetal=$(echo "$env" | cut -d: -f2 | cut -d' ' -f1)
-    local docker=$(echo "$env" | cut -d: -f3)
-
-    if [[ $docker -gt $baremetal ]]; then
-        echo "docker"
-    elif has_profinet_nic; then
-        echo "hybrid"
-    else
-        echo "baremetal"
-    fi
-}
-
-validate_mode_requirements() {
-    local mode=$1
-
-    case $mode in
-        baremetal|hybrid)
-            check_build_deps || return 1
-            check_profinet_nic || warn "No PROFINET NIC detected"
-            ;;
-        docker|docker-web)
-            command -v docker &>/dev/null || fatal "Docker not installed"
-            docker compose version &>/dev/null || fatal "Docker Compose not available"
-            ;;
-    esac
-    return 0
-}
-
-apply_mode_configuration() {
-    local mode=$1
-
-    case $mode in
+main() {
+    case "$1" in
         baremetal)
-            export SKIP_DOCKER=1
-            export ENABLE_SYSTEMD=1
-            export BUILD_CONTROLLER=1
+            validate_baremetal_requirements
+            run_baremetal_install
             ;;
         docker)
-            export SKIP_BUILD=1
-            export SKIP_NETWORK=1
-            export USE_DOCKER=1
+            validate_docker_requirements
+            run_docker_install
             ;;
-        docker-web)
-            export SKIP_BUILD=1
-            export SKIP_CONTROLLER=1
-            export USE_DOCKER=1
+        --help|-h)
+            show_help
+            exit 0
             ;;
-        hybrid)
-            export BUILD_CONTROLLER=1
-            export USE_DOCKER=1
-            export ENABLE_SYSTEMD=1
-            export CONTROLLER_HOST=1
+        *)
+            echo "Error: Invalid mode '$1'. Use 'baremetal' or 'docker'"
+            show_help
+            exit 1
             ;;
     esac
 }
+
+validate_baremetal_requirements() {
+    command -v systemctl &>/dev/null || fatal "systemd required for bare-metal mode"
+    command -v gcc &>/dev/null || fatal "gcc required for bare-metal mode"
+}
+
+validate_docker_requirements() {
+    command -v docker &>/dev/null || fatal "Docker not installed"
+    docker compose version &>/dev/null || fatal "Docker Compose not available"
+}
+
+run_baremetal_install() {
+    export USE_DOCKER=0
+    ./scripts/install.sh
+}
+
+run_docker_install() {
+    export USE_DOCKER=1
+    cd docker && docker compose up -d
+}
+
+main "$@"
 ```
 
-#### 3. Bootstrap.sh Updates
+#### Install.sh Mode Check
 
 ```bash
-# Add to bootstrap.sh help text
-MODE COMMANDS:
-    detect                  Detect recommended deployment mode
-    install baremetal       Install full system on host (systemd)
-    install docker          Install using Docker containers
-    install docker-web      Install web stack only (containers)
-    install hybrid          Host controller + containerized web
+# Add to scripts/install.sh
+if [[ "${USE_DOCKER:-0}" == "1" ]]; then
+    log_info "Docker mode selected - skipping host installation"
+    log_info "Use: cd docker && docker compose up -d"
+    exit 0
+fi
 
-MODE OPTIONS:
-    --mode <mode>           Force deployment mode
-    --detect                Auto-detect and prompt
-
-# Add mode selection to main()
-main() {
-    local mode="${DEPLOYMENT_MODE:-auto}"
-
-    case "$1" in
-        detect)
-            detect_deployment_environment
-            echo "Recommended: $(recommend_deployment_mode)"
-            return 0
-            ;;
-        install)
-            if [[ "$2" =~ ^(baremetal|docker|docker-web|hybrid)$ ]]; then
-                mode="$2"
-                shift 2
-            elif [[ "$mode" == "auto" ]]; then
-                mode=$(recommend_deployment_mode)
-                echo "Auto-detected mode: $mode"
-                read -p "Continue with $mode? [Y/n] " confirm
-                [[ "$confirm" =~ ^[Nn] ]] && exit 0
-            fi
-            apply_mode_configuration "$mode"
-            run_install "$@"
-            ;;
-    esac
-}
-```
-
-#### 4. Install.sh Updates
-
-```bash
-# Add mode-aware installation sections
-
-install_components() {
-    # Controller build (bare-metal and hybrid only)
-    if [[ "${BUILD_CONTROLLER:-0}" == "1" ]]; then
-        log_info "Building PROFINET controller..."
-        install_pnet
-        build_controller
-    fi
-
-    # Web stack
-    if [[ "${USE_DOCKER:-0}" == "1" ]]; then
-        log_info "Setting up Docker containers..."
-        setup_docker_compose
-        docker compose up -d
-    else
-        log_info "Installing web stack on host..."
-        install_python_deps
-        install_node_deps
-        setup_systemd_services
-    fi
-}
-
-setup_docker_compose() {
-    local compose_file="docker-compose.yml"
-
-    # Select appropriate compose file
-    if [[ "${CONTROLLER_HOST:-0}" == "1" ]]; then
-        # Hybrid mode: exclude controller from compose
-        compose_file="docker-compose.web-only.yml"
-    fi
-
-    # Copy compose file to install location
-    cp "docker/$compose_file" "$INSTALL_DIR/docker-compose.yml"
-
-    # Generate .env from configuration
-    generate_docker_env > "$INSTALL_DIR/.env"
-}
-```
-
-#### 5. New Docker Compose Variant
-
-**`docker/docker-compose.web-only.yml`:**
-```yaml
-# Web stack only - for hybrid deployments
-version: "3.8"
-
-services:
-  database:
-    image: timescale/timescaledb:latest-pg15
-    # ... (same as main compose)
-
-  api:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile.web
-    environment:
-      - CONTROLLER_HOST=host.docker.internal  # Connect to host controller
-    # ...
-
-  ui:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile.ui
-    # ...
-
-# No controller service - runs on host
+# Continue with bare-metal installation...
 ```
 
 ### Files to Modify
 
 | File | Changes |
 |------|---------|
-| `bootstrap.sh` | Add mode commands, detection, mode-aware flow |
-| `scripts/install.sh` | Add mode checks, conditional component install |
-| `scripts/lib/dependencies.sh` | Mode-aware dependency lists |
-| `scripts/lib/pnet.sh` | Skip if not needed for mode |
+| `bootstrap.sh` | Add simple mode argument (baremetal/docker) |
+| `scripts/install.sh` | Add USE_DOCKER check at top |
 
-### Files to Create
+### No New Files Required
 
-| File | Purpose |
-|------|---------|
-| `scripts/lib/deployment-modes.sh` | Mode detection and configuration |
-| `docker/docker-compose.web-only.yml` | Web-only Docker stack |
+The existing docker-compose.yml handles the Docker case. No additional compose variants needed for POC.
 
 ### Acceptance Criteria
 
-- [ ] `bootstrap.sh detect` shows environment analysis
-- [ ] Each mode installs only required components
-- [ ] Mode requirements are validated before install
-- [ ] Upgrade preserves deployment mode
-- [ ] Documentation updated with mode selection guide
-- [ ] Hybrid mode: host controller talks to containerized API
+- [ ] `bootstrap.sh baremetal` runs host installation
+- [ ] `bootstrap.sh docker` runs docker compose
+- [ ] Invalid mode shows error and help
+- [ ] Documentation updated with mode examples
 
 ---
 
@@ -848,91 +559,61 @@ class TestSQLiteToPostgres:
         pass
 ```
 
-#### 3. OpenPLC Integration Tests
+#### 3. OpenPLC Viewer Tests (Read-Only)
 
 **Path:** `tests/integration/test_openplc.py`
 
 ```python
-"""OpenPLC runtime integration tests.
+"""OpenPLC viewer integration tests.
 
-Tests ladder logic execution and PROFINET integration.
+Tests read-only ladder logic viewing and Modbus communication.
 """
 import pytest
+import httpx
 
-class TestLadderProgramManagement:
-    """Test ladder program CRUD operations."""
+class TestOpenPLCContainer:
+    """Test OpenPLC container deployment."""
 
-    def test_upload_structured_text(self, client):
-        """Test uploading structured text program."""
+    def test_container_starts(self, docker_compose):
+        """Test OpenPLC container starts successfully."""
         pass
 
-    def test_upload_ladder_diagram(self, client):
-        """Test uploading ladder diagram (.ld)."""
+    def test_web_ui_accessible(self):
+        """Test OpenPLC web UI is accessible at configured port."""
+        response = httpx.get("http://localhost:8081")
+        assert response.status_code == 200
+
+    def test_modbus_connection(self):
+        """Test OpenPLC connects to Modbus."""
         pass
 
-    def test_delete_program(self, client, sample_program):
-        """Test deleting a ladder program."""
+class TestModbusReadOnly:
+    """Test Modbus read operations (no writes)."""
+
+    def test_read_holding_registers(self, modbus_client):
+        """Test reading holding registers."""
         pass
 
-    def test_activate_program(self, client, sample_program):
-        """Test activating a program for execution."""
+    def test_read_input_registers(self, modbus_client):
+        """Test reading input registers."""
         pass
 
-class TestLadderExecution:
-    """Test ladder logic execution."""
-
-    def test_start_runtime(self, client, active_program):
-        """Test starting ladder runtime."""
-        pass
-
-    def test_stop_runtime(self, client, running_runtime):
-        """Test stopping ladder runtime."""
-        pass
-
-    def test_variable_read(self, client, running_runtime):
-        """Test reading variable values."""
-        pass
-
-    def test_variable_force(self, client, running_runtime):
-        """Test forcing variable values."""
-        pass
-
-    def test_cycle_time_constraint(self, client, running_runtime):
-        """Verify cycle time stays within limits."""
-        pass
-
-class TestPROFINETIntegration:
-    """Test OpenPLC integration with PROFINET."""
-
-    def test_io_variable_mapping(self, runtime_with_io):
-        """Test mapping ladder variables to PROFINET I/O."""
-        pass
-
-    def test_io_read_from_ladder(self, runtime_with_rtu):
-        """Test reading PROFINET inputs in ladder logic."""
-        pass
-
-    def test_io_write_from_ladder(self, runtime_with_rtu):
-        """Test writing PROFINET outputs from ladder."""
-        pass
-
-    def test_cycle_synchronization(self, runtime_with_rtu):
-        """Test ladder/PROFINET cycle sync."""
+    def test_read_coils(self, modbus_client):
+        """Test reading coil status."""
         pass
 ```
 
-#### 4. Deployment Mode Tests
+#### 4. Deployment Mode Tests (Boolean: Bare-Metal OR Docker)
 
 **Path:** `tests/integration/test_deployment_modes.py`
 
 ```python
 """Deployment mode integration tests.
 
-Tests different deployment configurations.
+Tests the two deployment modes: bare-metal and docker.
 """
 import pytest
 import subprocess
-import docker
 
 class TestBareMetalDeployment:
     """Test bare-metal deployment mode."""
@@ -968,29 +649,6 @@ class TestDockerDeployment:
     @pytest.mark.docker
     def test_volume_persistence(self, docker_compose):
         """Test data persists across restarts."""
-        pass
-
-    @pytest.mark.docker
-    def test_container_resource_limits(self, docker_compose):
-        """Test containers respect resource limits."""
-        pass
-
-class TestHybridDeployment:
-    """Test hybrid deployment mode."""
-
-    @pytest.mark.hybrid
-    def test_host_controller_startup(self):
-        """Test host controller starts."""
-        pass
-
-    @pytest.mark.hybrid
-    def test_container_api_connects_to_host(self):
-        """Test containerized API connects to host controller."""
-        pass
-
-    @pytest.mark.hybrid
-    def test_ipc_across_boundary(self):
-        """Test IPC works across host/container boundary."""
         pass
 ```
 
@@ -1034,18 +692,13 @@ def v1_db(tmp_path):
     return db_path
 
 @pytest.fixture
-def sample_ladder_program():
-    """Sample structured text program."""
-    return """
-    PROGRAM main
-    VAR
-        input1 : BOOL;
-        output1 : BOOL;
-    END_VAR
-
-    output1 := input1;
-    END_PROGRAM
-    """
+def modbus_client():
+    """Create Modbus client for read-only tests."""
+    from pymodbus.client import ModbusTcpClient
+    client = ModbusTcpClient('localhost', port=1502)
+    client.connect()
+    yield client
+    client.close()
 ```
 
 ### Test Organization
@@ -1080,21 +733,18 @@ markers =
     e2e: End-to-end tests (full stack)
     bare_metal: Requires bare-metal environment
     docker: Requires Docker environment
-    hybrid: Requires hybrid environment
     slow: Slow tests (>10s)
-    openplc: OpenPLC-related tests
 addopts = -v --tb=short
 asyncio_mode = auto
 ```
 
 ### Acceptance Criteria
 
-- [ ] IPC tests cover all shared memory operations
+- [ ] IPC tests cover shared memory operations
 - [ ] Migration tests verify data integrity
-- [ ] OpenPLC tests cover full lifecycle
-- [ ] Deployment mode tests for each mode
+- [ ] OpenPLC container tests verify read-only Modbus access
+- [ ] Deployment mode tests for bare-metal and docker
 - [ ] All tests pass in CI
-- [ ] Test coverage report generated
 - [ ] Tests documented in README
 
 ---
@@ -1106,31 +756,30 @@ asyncio_mode = auto
 │                    PR DEPENDENCY GRAPH                       │
 ├─────────────────────────────────────────────────────────────┤
 │                                                              │
-│   PART 8: Bootstrap                                          │
-│   (Dual Mode)                                                │
+│   PART 8: Bootstrap (Boolean Mode)                           │
+│   ───────────────────────────────                            │
 │        │                                                     │
 │        ▼                                                     │
-│   PART 10: Documentation ◄──────────┐                        │
-│   (DOCKER_DEPLOYMENT.md,            │                        │
-│    MIGRATION.md)                    │                        │
-│        │                            │                        │
-│        ▼                            │                        │
-│   PART 11: Integration Tests ───────┤                        │
-│   (IPC, Migrations)                 │                        │
-│        │                            │                        │
-│        ▼                            │                        │
-│   PART 7: OpenPLC ──────────────────┘                        │
-│   (Full Integration)                                         │
+│   PART 10: Documentation                                     │
+│   (DOCKER_DEPLOYMENT.md, MIGRATION.md)                       │
+│        │                                                     │
+│        ▼                                                     │
+│   PART 11: Integration Tests                                 │
+│   (IPC, Migrations, Deployment Modes)                        │
+│        │                                                     │
+│        ▼                                                     │
+│   PART 7: OpenPLC Viewer                                     │
+│   (Read-Only Container + Modbus)                             │
 │                                                              │
 └─────────────────────────────────────────────────────────────┘
 ```
 
 ### Rationale
 
-1. **PART 8 First**: Foundation for all deployment-related changes
-2. **PART 10 Second**: Documents the modes before tests validate them
-3. **PART 11 Third**: Tests infrastructure in place before major feature
-4. **PART 7 Last**: Depends on all other parts being stable
+1. **PART 8 First**: Simple boolean mode (baremetal/docker) - foundation
+2. **PART 10 Second**: Document the two deployment modes
+3. **PART 11 Third**: Test infrastructure for both modes
+4. **PART 7 Last**: Add OpenPLC container (simple addition to docker-compose)
 
 ---
 
