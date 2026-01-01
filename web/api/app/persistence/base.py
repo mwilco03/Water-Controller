@@ -14,6 +14,7 @@ import os
 from contextlib import contextmanager
 from typing import Generator
 
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from ..models.base import Base, SessionLocal, engine
@@ -107,12 +108,20 @@ def initialize() -> bool:
         _db_state.mark_initialized()
         logger.info("Database initialized successfully")
         return True
-    except Exception as e:
+    except SQLAlchemyError as e:
         # [CONDITION] + [CONSEQUENCE] + [ACTION] per Section 1.9
         logger.critical(
             f"Database initialization failed: {e}. "
             "Application cannot persist data. "
             "Check database path permissions and disk space, then restart."
+        )
+        return False
+    except OSError as e:
+        # File system errors (permissions, disk full, etc.)
+        logger.critical(
+            f"Database file system error: {e}. "
+            "Cannot access database file. "
+            "Check permissions and available disk space."
         )
         return False
 

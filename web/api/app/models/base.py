@@ -13,9 +13,10 @@ from datetime import UTC, datetime
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, declarative_base, sessionmaker
 
-# Database configuration
-DB_PATH = os.environ.get("WTC_DB_PATH", "/var/lib/water-controller/wtc.db")
-DATABASE_URL = os.environ.get("DATABASE_URL", f"sqlite:///{DB_PATH}")
+from ..core.ports import get_database_url
+
+# Database configuration - single source of truth in core/ports.py
+DATABASE_URL = get_database_url()
 
 # Create engine
 # For SQLite, use check_same_thread=False for async compatibility

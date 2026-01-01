@@ -11,6 +11,8 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+
 from ..models.user import UserSession
 from .audit import log_audit
 from .base import get_db
@@ -38,7 +40,16 @@ def create_session(token: str, username: str, role: str, groups: list[str],
             log_audit(username, 'login', 'session', token[:8],
                       f"User {username} logged in", ip_address)
             return True
-        except Exception as e:
+        except IntegrityError as e:
+            # Duplicate token (extremely unlikely with UUIDs)
+            logger.error(
+                f"Session token collision: {e}. "
+                "Could not create unique session. "
+                "Have user retry login."
+            )
+            db.rollback()
+            return False
+        except SQLAlchemyError as e:
             # [CONDITION] + [CONSEQUENCE] + [ACTION] per Section 1.9
             logger.error(
                 f"Session creation failed: {e}. "

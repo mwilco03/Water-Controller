@@ -11,10 +11,10 @@ from fastapi import APIRouter, Depends, Path, Query
 from sqlalchemy.orm import Session
 
 from ...core.errors import build_success_response
-from ...core.exceptions import RtuNotFoundError
+from ...core.rtu_utils import get_rtu_or_404
 from ...models.base import get_db
 from ...models.historian import ProfinetDiagnostic
-from ...models.rtu import RTU, RtuState, Slot, SlotStatus
+from ...models.rtu import RtuState, Slot, SlotStatus
 from ...schemas.common import DataQuality
 from ...schemas.profinet import (
     CycleTimeStats,
@@ -30,14 +30,6 @@ from ...schemas.profinet import (
 )
 
 router = APIRouter()
-
-
-def get_rtu_or_404(db: Session, name: str) -> RTU:
-    """Get RTU by station name or raise 404."""
-    rtu = db.query(RTU).filter(RTU.station_name == name).first()
-    if not rtu:
-        raise RtuNotFoundError(name)
-    return rtu
 
 
 @router.get("/status")

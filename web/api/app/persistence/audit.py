@@ -11,6 +11,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import func
+from sqlalchemy.exc import SQLAlchemyError
 
 from ..models.audit import CommandLog
 from ..models.user import AuditLog
@@ -65,7 +66,7 @@ def log_audit(user: str, action: str, resource_type: str, resource_id: str,
             )
             db.add(entry)
             db.commit()
-    except Exception as e:
+    except SQLAlchemyError as e:
         # [CONDITION] + [CONSEQUENCE] + [ACTION] per Section 1.9
         logger.error(
             f"Audit log write failed: {e}. "

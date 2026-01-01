@@ -11,13 +11,10 @@ from fastapi import APIRouter, Depends, Path
 from sqlalchemy.orm import Session
 
 from ...core.errors import build_success_response
-from ...core.exceptions import (
-    SlotNotFoundError,
-    ValidationError,
-)
-from ...core.rtu_utils import get_rtu_or_404
+from ...core.exceptions import ValidationError
+from ...core.rtu_utils import get_rtu_or_404, get_slot_or_404
 from ...models.base import get_db
-from ...models.rtu import RTU, Control, Sensor, Slot, SlotStatus
+from ...models.rtu import Control, Sensor, Slot, SlotStatus
 from ...schemas.slot import (
     SlotConfig,
     SlotConfigUpdate,
@@ -26,17 +23,6 @@ from ...schemas.slot import (
 )
 
 router = APIRouter()
-
-
-def get_slot_or_404(db: Session, rtu: RTU, slot_number: int) -> Slot:
-    """Get slot by number or raise 404."""
-    slot = db.query(Slot).filter(
-        Slot.rtu_id == rtu.id,
-        Slot.slot_number == slot_number
-    ).first()
-    if not slot:
-        raise SlotNotFoundError(rtu.station_name, slot_number, rtu.slot_count)
-    return slot
 
 
 @router.get("")

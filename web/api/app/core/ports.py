@@ -154,23 +154,41 @@ def get_database_url() -> str:
     """
     Get the full database connection URL.
 
-    Uses WTC_DATABASE_URL if set, otherwise constructs from components.
+    Priority order:
+    1. DATABASE_URL (Docker/production standard)
+    2. WTC_DATABASE_URL (explicit override)
+    3. Construct PostgreSQL URL from WTC_DB_* components
+    4. Fall back to SQLite with WTC_DB_PATH
+
+    For SQLite (development): sqlite:////var/lib/water-controller/wtc.db
+    For PostgreSQL (production): postgresql://user:pass@host:port/database
     """
-    # Check for explicit database URL
+    # Check for explicit DATABASE_URL (Docker standard)
+    db_url = os.environ.get("DATABASE_URL")
+    if db_url:
+        return db_url
+
+    # Check for WTC-prefixed override
     db_url = os.environ.get("WTC_DATABASE_URL")
     if db_url:
         return db_url
 
-    # Construct from components
-    host = get_db_host()
-    port = get_db_port()
-    user = os.environ.get("WTC_DB_USER", "wtc")
-    password = os.environ.get("WTC_DB_PASSWORD", "")
-    database = os.environ.get("WTC_DB_NAME", "water_treatment")
+    # Check if PostgreSQL components are configured
+    db_host = os.environ.get("WTC_DB_HOST")
+    if db_host:
+        # Construct PostgreSQL URL from components
+        port = get_db_port()
+        user = os.environ.get("WTC_DB_USER", "wtc")
+        password = os.environ.get("WTC_DB_PASSWORD", "")
+        database = os.environ.get("WTC_DB_NAME", "water_treatment")
 
-    if password:
-        return f"postgresql://{user}:{password}@{host}:{port}/{database}"
-    return f"postgresql://{user}@{host}:{port}/{database}"
+        if password:
+            return f"postgresql://{user}:{password}@{db_host}:{port}/{database}"
+        return f"postgresql://{user}@{db_host}:{port}/{database}"
+
+    # Fall back to SQLite for local development
+    db_path = os.environ.get("WTC_DB_PATH", "/var/lib/water-controller/wtc.db")
+    return f"sqlite:///{db_path}"
 
 
 # -----------------------------------------------------------------------------

@@ -10,10 +10,10 @@ from fastapi import APIRouter, Depends, Path
 from sqlalchemy.orm import Session
 
 from ...core.errors import build_success_response
-from ...core.exceptions import PidLoopNotFoundError, RtuNotFoundError, ValidationError
+from ...core.exceptions import PidLoopNotFoundError, ValidationError
+from ...core.rtu_utils import get_rtu_or_404
 from ...models.base import get_db
 from ...models.pid import PidLoop
-from ...models.rtu import RTU
 from ...schemas.pid import (
     AutoTuneRequest,
     AutoTuneResponse,
@@ -27,14 +27,6 @@ from ...schemas.pid import (
 from ...services.profinet_client import get_profinet_client
 
 router = APIRouter()
-
-
-def get_rtu_or_404(db: Session, name: str) -> RTU:
-    """Get RTU by station name or raise 404."""
-    rtu = db.query(RTU).filter(RTU.station_name == name).first()
-    if not rtu:
-        raise RtuNotFoundError(name)
-    return rtu
 
 
 def pid_not_found(loop_id: int):
