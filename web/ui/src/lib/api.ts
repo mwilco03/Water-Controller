@@ -230,17 +230,20 @@ export async function getSensors(stationName: string): Promise<SensorData[]> {
   return data.sensors || [];
 }
 
-export async function commandActuator(
+export async function commandControl(
   stationName: string,
-  slot: number,
-  command: 'ON' | 'OFF' | 'PWM',
-  pwmDuty?: number
+  controlTag: string,
+  command: 'ON' | 'OFF' | 'OPEN' | 'CLOSE' | 'START' | 'STOP',
+  value?: number
 ): Promise<void> {
-  await apiFetch(`/api/v1/rtus/${encodeURIComponent(stationName)}/actuators/${slot}`, {
+  await apiFetch(`/api/v1/rtus/${encodeURIComponent(stationName)}/controls/${encodeURIComponent(controlTag)}/command`, {
     method: 'POST',
-    body: JSON.stringify({ command, pwm_duty: pwmDuty }),
+    body: JSON.stringify({ command, value }),
   });
 }
+
+// Legacy alias for backward compatibility
+export const commandActuator = commandControl;
 
 // Alarm API
 export async function getAlarms(): Promise<Alarm[]> {
@@ -293,11 +296,9 @@ export async function shelveAlarm(
   durationMinutes: number,
   reason?: string
 ): Promise<{ shelf_id: number }> {
-  return apiFetch('/api/v1/alarms/shelve', {
+  return apiFetch(`/api/v1/alarms/shelve/${encodeURIComponent(rtuStation)}/${slot}`, {
     method: 'POST',
     body: JSON.stringify({
-      rtu_station: rtuStation,
-      slot: slot,
       duration_minutes: durationMinutes,
       reason: reason || null,
     }),
@@ -305,14 +306,14 @@ export async function shelveAlarm(
 }
 
 export async function unshelveAlarm(shelfId: number): Promise<void> {
-  await apiFetch(`/api/v1/alarms/shelved/${shelfId}`, {
+  await apiFetch(`/api/v1/alarms/shelve/${shelfId}`, {
     method: 'DELETE',
   });
 }
 
 export async function isAlarmShelved(rtuStation: string, slot: number): Promise<boolean> {
   const data = await apiFetch<{ is_shelved: boolean }>(
-    `/api/v1/alarms/shelved/check?rtu_station=${encodeURIComponent(rtuStation)}&slot=${slot}`
+    `/api/v1/alarms/shelved/check/${encodeURIComponent(rtuStation)}/${slot}`
   );
   return data.is_shelved;
 }
@@ -393,17 +394,22 @@ export async function getSystemHealth(): Promise<SystemHealth> {
   return apiFetch<SystemHealth>('/api/v1/system/status');
 }
 
+// Configuration export/import uses the backup API
+// Export returns a ZIP file with all configuration
 export async function exportConfiguration(): Promise<Blob> {
-  const res = await fetch(`${API_BASE}/api/v1/system/config`);
+  const res = await fetch(`${API_BASE}/api/v1/system`, {
+    method: 'POST',
+  });
   if (!res.ok) throw new Error('Failed to export configuration');
   return res.blob();
 }
 
+// Import restores configuration from a backup ZIP file
 export async function importConfiguration(configFile: File): Promise<void> {
   const formData = new FormData();
-  formData.append('config', configFile);
+  formData.append('file', configFile);
 
-  const res = await fetch(`${API_BASE}/api/v1/system/config`, {
+  const res = await fetch(`${API_BASE}/api/v1/system/restore`, {
     method: 'POST',
     body: formData,
   });
@@ -442,24 +448,22 @@ export async function restoreBackup(file: File): Promise<{ success: boolean; err
   return res.json();
 }
 
-// RTU Inventory API
-export async function getRTUInventory(stationName: string): Promise<RTUInventory> {
-  return apiFetch<RTUInventory>(`/api/v1/rtus/${encodeURIComponent(stationName)}/inventory`);
-}
-
-export async function refreshRTUInventory(stationName: string): Promise<RTUInventory> {
-  return apiFetch<RTUInventory>(`/api/v1/rtus/${encodeURIComponent(stationName)}/inventory/refresh`, {
+// RTU Discovery API
+// Note: RTU inventory comes from PROFINET discovery, not stored locally
+export async function discoverRTUDevices(stationName: string): Promise<unknown> {
+  return apiFetch(`/api/v1/rtus/${encodeURIComponent(stationName)}/discover`, {
     method: 'POST',
   });
 }
 
+// Alias for control command (uses same endpoint as commandControl)
 export async function sendControlCommand(
   stationName: string,
-  controlId: string,
+  controlTag: string,
   command: string,
   value?: number
 ): Promise<void> {
-  await apiFetch(`/api/v1/rtus/${encodeURIComponent(stationName)}/control/${encodeURIComponent(controlId)}`, {
+  await apiFetch(`/api/v1/rtus/${encodeURIComponent(stationName)}/controls/${encodeURIComponent(controlTag)}/command`, {
     method: 'POST',
     body: JSON.stringify({ command, value }),
   });

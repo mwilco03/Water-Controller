@@ -2,53 +2,98 @@
 # Copyright (C) 2024
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Port Configuration:
-# The container listens on port 3000 internally (Next.js standalone server).
-# Map to external port via docker-compose: ${WTC_UI_PORT:-8080}:3000
-# See config/ports.env for the single source of truth.
+# Multi-stage build for Next.js frontend
+# Multi-architecture supporting:
+#   - linux/amd64  (x86_64)
+#   - linux/arm64  (Raspberry Pi 4/5, ARM servers)
+#   - linux/arm/v7 (Raspberry Pi 3, older ARM)
 
+# Global build arguments (available in all stages when redeclared)
+ARG BUILD_DATE
+ARG VCS_REF
+ARG VERSION
+
+# =============================================================================
+# Base stage - Common Node.js image
+# =============================================================================
 FROM node:18-alpine AS base
 
-# Install dependencies only when needed
+# =============================================================================
+# Dependencies stage - Install npm packages
+# =============================================================================
 FROM base AS deps
 WORKDIR /app
 
 # Copy package files
-COPY web/ui/package.json ./
-RUN npm install --legacy-peer-deps
+COPY web/ui/package.json web/ui/package-lock.json* ./
 
-# Rebuild the source code only when needed
+# Install dependencies
+RUN npm ci --legacy-peer-deps
+
+# =============================================================================
+# Builder stage - Build the Next.js application
+# =============================================================================
 FROM base AS builder
 WORKDIR /app
+
+# Copy dependencies from deps stage
 COPY --from=deps /app/node_modules ./node_modules
 COPY web/ui/ .
 
-# Build configuration
+# Disable telemetry during build
 ENV NEXT_TELEMETRY_DISABLED=1
+
+# Build the application
 RUN npm run build
 
-# Production image
+# =============================================================================
+# Runner stage - Production image
+# =============================================================================
 FROM base AS runner
 WORKDIR /app
 
-ENV NODE_ENV=production
-ENV NEXT_TELEMETRY_DISABLED=1
+# Redeclare ARGs to use in this stage (required for multi-stage builds)
+ARG BUILD_DATE
+ARG VCS_REF
+ARG VERSION
 
-RUN addgroup --system --gid 1001 nodejs
-RUN adduser --system --uid 1001 nextjs
+# OCI Image Labels
+LABEL org.opencontainers.image.created="${BUILD_DATE}" \
+      org.opencontainers.image.authors="Water Controller Team" \
+      org.opencontainers.image.url="https://github.com/mwilco03/Water-Controller" \
+      org.opencontainers.image.documentation="https://github.com/mwilco03/Water-Controller/blob/main/docs/DEPLOYMENT.md" \
+      org.opencontainers.image.source="https://github.com/mwilco03/Water-Controller" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.revision="${VCS_REF}" \
+      org.opencontainers.image.vendor="Water Controller Project" \
+      org.opencontainers.image.licenses="GPL-3.0-or-later" \
+      org.opencontainers.image.title="Water Controller UI" \
+      org.opencontainers.image.description="Next.js HMI frontend for Water Treatment Controller SCADA system"
 
+# Set production environment
+ENV NODE_ENV=production \
+    NEXT_TELEMETRY_DISABLED=1 \
+    PORT=3000 \
+    HOSTNAME="0.0.0.0"
+
+# Create non-root user
+RUN addgroup --system --gid 1001 nodejs && \
+    adduser --system --uid 1001 nextjs
+
+# Copy built assets from builder
 COPY --from=builder /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 
+# Switch to non-root user
 USER nextjs
 
-# Internal container port (Next.js standalone default)
-# External port mapping handled by docker-compose
-ENV WTC_DOCKER_UI_INTERNAL_PORT=3000
-ENV PORT=3000
-ENV HOSTNAME="0.0.0.0"
-
+# Expose port
 EXPOSE 3000
 
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+    CMD wget -q --spider http://localhost:3000 || exit 1
+
+# Start the server
 CMD ["node", "server.js"]

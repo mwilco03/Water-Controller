@@ -959,7 +959,6 @@ install_system_dependencies() {
         python3.11-venv \
         python3-pip \
         postgresql-client \
-        redis-tools \
         nginx
 
     log_info "System dependencies installed"

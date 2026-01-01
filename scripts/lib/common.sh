@@ -283,7 +283,6 @@ WT_LOG_LEVEL=INFO
 WT_CONFIG_DIR=/etc/water-controller
 WT_DATA_DIR=/var/lib/water-controller
 # DATABASE_URL=postgresql://user:pass@localhost/wtc
-# REDIS_URL=redis://localhost:6379
 EOF
     fi
 

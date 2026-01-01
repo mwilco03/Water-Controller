@@ -1,0 +1,310 @@
+# ============================================================================
+# Docker Image Build Workflow
+# ============================================================================
+# Purpose: Build and publish multi-arch container images for web components
+#
+# Triggers:
+#   - Push tags matching 'v*' (e.g., v1.0.0, v2.1.0-rc1)
+#   - Manual dispatch with optional tag override
+#
+# Images Published:
+#   - ghcr.io/{owner}/water-controller/api:{tag}
+#   - ghcr.io/{owner}/water-controller/ui:{tag}
+#
+# Architectures:
+#   - linux/amd64  (x86_64 servers, PCs)
+#   - linux/arm64  (Raspberry Pi 4/5, ARM servers)
+#   - linux/arm/v7 (Raspberry Pi 3, older ARM boards)
+#
+# Note: PROFINET controller is NOT containerized - it requires host network
+# access for real-time industrial communication.
+# ============================================================================
+
+name: Docker Images
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Image tag (default: git sha short)'
+        required: false
+        default: ''
+      push:
+        description: 'Push images to registry'
+        required: false
+        default: true
+        type: boolean
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ${{ github.repository }}
+
+jobs:
+  # ============================================================================
+  # Build API Image (FastAPI Backend)
+  # ============================================================================
+  build-api:
+    name: Build API Image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/api
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=sha,prefix=,format=short
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=${{ inputs.tag }},enable=${{ inputs.tag != '' }}
+
+      - name: Get build timestamp
+        id: timestamp
+        run: echo "date=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> $GITHUB_OUTPUT
+
+      - name: Build and push API image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/Dockerfile.web
+          platforms: linux/amd64,linux/arm64,linux/arm/v7
+          push: ${{ github.event_name == 'push' || inputs.push }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            BUILD_DATE=${{ steps.timestamp.outputs.date }}
+            VCS_REF=${{ github.sha }}
+            VERSION=${{ steps.meta.outputs.version }}
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        if: github.event_name == 'push'
+        with:
+          image: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/api:${{ steps.meta.outputs.version }}
+          artifact-name: sbom-api.spdx.json
+          output-file: ./sbom-api.spdx.json
+
+      - name: Upload SBOM
+        uses: actions/upload-artifact@v4
+        if: github.event_name == 'push'
+        with:
+          name: sbom-api
+          path: ./sbom-api.spdx.json
+          retention-days: 90
+
+  # ============================================================================
+  # Build UI Image (Next.js Frontend)
+  # ============================================================================
+  build-ui:
+    name: Build UI Image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/ui
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=sha,prefix=,format=short
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=${{ inputs.tag }},enable=${{ inputs.tag != '' }}
+
+      - name: Get build timestamp
+        id: timestamp
+        run: echo "date=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> $GITHUB_OUTPUT
+
+      - name: Build and push UI image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/Dockerfile.ui
+          platforms: linux/amd64,linux/arm64,linux/arm/v7
+          push: ${{ github.event_name == 'push' || inputs.push }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            BUILD_DATE=${{ steps.timestamp.outputs.date }}
+            VCS_REF=${{ github.sha }}
+            VERSION=${{ steps.meta.outputs.version }}
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        if: github.event_name == 'push'
+        with:
+          image: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/ui:${{ steps.meta.outputs.version }}
+          artifact-name: sbom-ui.spdx.json
+          output-file: ./sbom-ui.spdx.json
+
+      - name: Upload SBOM
+        uses: actions/upload-artifact@v4
+        if: github.event_name == 'push'
+        with:
+          name: sbom-ui
+          path: ./sbom-ui.spdx.json
+          retention-days: 90
+
+  # ============================================================================
+  # Security Scan
+  # ============================================================================
+  security-scan:
+    name: Security Scan
+    needs: [build-api, build-ui]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    permissions:
+      contents: read
+      packages: read
+      security-events: write
+
+    steps:
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract version
+        id: version
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            echo "version=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+          else
+            echo "version=$(echo $GITHUB_SHA | head -c7)" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Scan API image
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/api:${{ steps.version.outputs.version }}
+          format: 'sarif'
+          output: 'trivy-api.sarif'
+          severity: 'CRITICAL,HIGH'
+
+      - name: Scan UI image
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/ui:${{ steps.version.outputs.version }}
+          format: 'sarif'
+          output: 'trivy-ui.sarif'
+          severity: 'CRITICAL,HIGH'
+
+      - name: Upload API scan results
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: 'trivy-api.sarif'
+          category: 'container-api'
+
+      - name: Upload UI scan results
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: 'trivy-ui.sarif'
+          category: 'container-ui'
+
+  # ============================================================================
+  # Create Release Summary
+  # ============================================================================
+  release-summary:
+    name: Release Summary
+    needs: [build-api, build-ui, security-scan]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+      - name: Extract version
+        id: version
+        run: |
+          echo "version=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+          echo "tag=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
+
+      - name: Create release summary
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          REGISTRY: ${{ env.REGISTRY }}
+          IMAGE_PREFIX: ${{ env.IMAGE_PREFIX }}
+        run: |
+          cat >> $GITHUB_STEP_SUMMARY << EOF
+          ## Docker Images Published
+
+          | Component | Image | Tag |
+          |-----------|-------|-----|
+          | API (FastAPI) | \`${REGISTRY}/${IMAGE_PREFIX}/api\` | \`${VERSION}\` |
+          | UI (Next.js) | \`${REGISTRY}/${IMAGE_PREFIX}/ui\` | \`${VERSION}\` |
+
+          ### Architectures
+          - \`linux/amd64\` - x86_64 (PCs, servers, cloud)
+          - \`linux/arm64\` - ARM64 (Raspberry Pi 4/5, ARM servers)
+          - \`linux/arm/v7\` - ARMv7 (Raspberry Pi 3, older ARM)
+
+          ### Quick Start
+          \`\`\`bash
+          # Set version
+          export VERSION=${VERSION}
+
+          # Pull images
+          docker pull ${REGISTRY}/${IMAGE_PREFIX}/api:\${VERSION}
+          docker pull ${REGISTRY}/${IMAGE_PREFIX}/ui:\${VERSION}
+
+          # Or use docker-compose
+          cd docker
+          VERSION=\${VERSION} docker-compose -f docker-compose.prod.yml pull
+          VERSION=\${VERSION} docker-compose -f docker-compose.prod.yml up -d
+          \`\`\`
+
+          ### Security
+          - Images scanned with Trivy for vulnerabilities
+          - SBOM (Software Bill of Materials) attached as artifacts
+          - Non-root user execution
+          EOF

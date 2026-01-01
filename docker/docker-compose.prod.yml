@@ -1,0 +1,241 @@
+# Water Treatment Controller - Production Docker Compose
+# Copyright (C) 2024
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# This compose file uses PRE-BUILT container images from GitHub Container Registry.
+# For development with local builds, use docker-compose.yml instead.
+#
+# Port Configuration:
+# All ports are configurable via environment variables.
+# See config/ports.env for the single source of truth.
+#
+# Usage:
+#   # Load port configuration and start
+#   docker compose --env-file ../config/ports.env -f docker-compose.prod.yml up -d
+#
+#   # Or with version tag
+#   VERSION=1.2.0 docker compose -f docker-compose.prod.yml up -d
+#
+# Note: PROFINET controller should run on the host via systemd, not in a container.
+# See ../systemd/water-controller.service for the controller service.
+
+version: "3.9"
+
+# ============================================================================
+# Logging Configuration (YAML anchors for reuse)
+# ============================================================================
+x-logging: &default-logging
+  driver: "json-file"
+  options:
+    max-size: "10m"
+    max-file: "3"
+    labels: "service,environment"
+
+# For Graylog/Loki integration (uncomment and configure):
+# x-logging-gelf: &gelf-logging
+#   driver: "gelf"
+#   options:
+#     gelf-address: "udp://localhost:${WTC_GRAYLOG_PORT:-12201}"
+#     tag: "wtc-{{.Name}}"
+
+# ============================================================================
+# Security Configuration (YAML anchors for reuse)
+# ============================================================================
+x-security: &default-security
+  security_opt:
+    - no-new-privileges:true
+
+services:
+  # ============================================================================
+  # PostgreSQL with TimescaleDB - Time-series database for historian
+  # ============================================================================
+  database:
+    image: timescale/timescaledb:latest-pg15
+    container_name: wtc-database
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: wtc
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-wtc_password}
+      POSTGRES_DB: water_treatment
+    volumes:
+      - db_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    expose:
+      - "5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wtc -d water_treatment"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
+        reservations:
+          memory: 256M
+    networks:
+      - wtc-internal
+
+  # ============================================================================
+  # Web API - FastAPI Backend (PRE-BUILT IMAGE)
+  # ============================================================================
+  api:
+    image: ghcr.io/mwilco03/water-controller/api:${VERSION:-latest}
+    container_name: wtc-api
+    restart: unless-stopped
+    user: "1000:1000"
+    <<: *default-security
+    read_only: true
+    tmpfs:
+      - /tmp:size=64M,mode=1777
+    cap_drop:
+      - ALL
+    environment:
+      DATABASE_URL: postgresql://wtc:${DB_PASSWORD:-wtc_password}@database:${WTC_DB_PORT:-5432}/water_treatment
+      API_HOST: 0.0.0.0
+      WTC_API_PORT: ${WTC_API_PORT:-8000}
+      WTC_UI_PORT: ${WTC_UI_PORT:-8080}
+      # Startup validation configuration
+      WTC_STARTUP_MODE: ${WTC_STARTUP_MODE:-production}
+      WTC_API_ONLY: "true"
+      WTC_SIMULATION_MODE: ${WTC_SIMULATION_MODE:-false}
+      # Logging configuration
+      WTC_LOG_LEVEL: ${WTC_LOG_LEVEL:-INFO}
+      WTC_LOG_STRUCTURED: ${WTC_LOG_STRUCTURED:-true}
+      WTC_DEBUG: ${WTC_DEBUG:-false}
+      # IPC configuration
+      WTC_SHM_NAME: ${WTC_SHM_NAME:-/wtc_shared_memory}
+      # CORS for UI access
+      WTC_CORS_ORIGINS: ${WTC_CORS_ORIGINS:-http://localhost:8080}
+    ports:
+      - "${WTC_API_PORT:-8000}:${WTC_API_PORT:-8000}"
+    volumes:
+      # Shared memory for IPC with PROFINET controller on host
+      - /dev/shm/wtc:/dev/shm/wtc:rw
+      # Optional: mount config for runtime overrides
+      - ./config:/etc/water-controller:ro
+    depends_on:
+      database:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:${WTC_API_PORT:-8000}/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+        reservations:
+          memory: 128M
+    networks:
+      - wtc-internal
+      - wtc-external
+
+  # ============================================================================
+  # React HMI Frontend - Next.js (PRE-BUILT IMAGE)
+  # ============================================================================
+  ui:
+    image: ghcr.io/mwilco03/water-controller/ui:${VERSION:-latest}
+    container_name: wtc-ui
+    restart: unless-stopped
+    user: "1000:1000"
+    <<: *default-security
+    read_only: true
+    tmpfs:
+      - /tmp:size=32M,mode=1777
+    cap_drop:
+      - ALL
+    environment:
+      # API URL for server-side requests (container name resolution)
+      API_URL: http://api:${WTC_API_PORT:-8000}
+      # Public API URL for client-side (empty = use same origin with rewrites)
+      NEXT_PUBLIC_API_URL: ""
+      WTC_UI_PORT: ${WTC_UI_PORT:-8080}
+      WTC_API_PORT: ${WTC_API_PORT:-8000}
+    ports:
+      # Map external UI port to internal container port (3000)
+      - "${WTC_UI_PORT:-8080}:${WTC_DOCKER_UI_INTERNAL_PORT:-3000}"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:${WTC_DOCKER_UI_INTERNAL_PORT:-3000}"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          memory: 64M
+    networks:
+      - wtc-external
+
+  # ============================================================================
+  # Grafana - Historical data visualization
+  # ============================================================================
+  grafana:
+    image: grafana/grafana:latest
+    container_name: wtc-grafana
+    restart: unless-stopped
+    user: "472:472"
+    <<: *default-security
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_INSTALL_PLUGINS: grafana-clock-panel,grafana-simple-json-datasource
+      GF_SERVER_HTTP_PORT: ${WTC_GRAFANA_PORT:-3000}
+      GF_SERVER_ROOT_URL: ${GRAFANA_ROOT_URL:-http://localhost:3000}
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    ports:
+      - "${WTC_GRAFANA_PORT:-3000}:${WTC_GRAFANA_PORT:-3000}"
+    depends_on:
+      - database
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:${WTC_GRAFANA_PORT:-3000}/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          memory: 64M
+    networks:
+      - wtc-internal
+      - wtc-external
+
+# ============================================================================
+# Volumes - Persistent data storage
+# ============================================================================
+volumes:
+  db_data:
+    name: wtc-db-data
+  grafana_data:
+    name: wtc-grafana-data
+
+# ============================================================================
+# Networks - Isolated communication
+# ============================================================================
+networks:
+  wtc-internal:
+    name: wtc-internal
+    internal: true  # No external access - database isolated
+  wtc-external:
+    name: wtc-external
+    # Accessible from host for API/UI/Grafana ports

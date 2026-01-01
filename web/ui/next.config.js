@@ -24,6 +24,8 @@ const apiUrl = process.env.API_URL || process.env.WTC_API_URL || `http://${apiHo
 
 const nextConfig = {
   reactStrictMode: false,
+  // Required for Docker standalone builds
+  output: 'standalone',
   experimental: {
     serverComponentsExternalPackages: ['react-server-components'],
   },
