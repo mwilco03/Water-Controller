@@ -185,10 +185,39 @@ services:
         reservations:
           memory: 64M
 
+  # OpenPLC Editor (Read-Only Ladder Logic Viewer)
+  # Provides browser-based ladder logic visualization with Modbus communication
+  openplc:
+    image: openplcproject/openplc_v3:latest
+    container_name: wtc-openplc
+    restart: unless-stopped
+    ports:
+      - "${WTC_OPENPLC_PORT:-8081}:8080"
+    environment:
+      # Modbus configuration to connect to controller
+      MODBUS_ENABLED: "true"
+    volumes:
+      - openplc_data:/workdir
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          memory: 64M
+    profiles:
+      - openplc
+
 volumes:
   db_data:
   controller_logs:
   grafana_data:
+  openplc_data:
 
 networks:
   default:

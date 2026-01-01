@@ -40,6 +40,7 @@ readonly CHECKSUM_FILE="SHA256SUMS"
 
 # Global state
 QUIET_MODE="false"
+DEPLOYMENT_MODE=""  # baremetal or docker
 CLEANUP_DIRS=()  # Stack of directories to clean up
 
 # Colors for output
@@ -322,6 +323,90 @@ check_network() {
 
     log_error "Cannot reach GitHub after $max_retries attempts. Check your network connection."
     return 1
+}
+
+# Validate Docker requirements for docker deployment mode
+validate_docker_requirements() {
+    log_info "Validating Docker requirements..."
+
+    if ! command -v docker &>/dev/null; then
+        log_error "Docker is not installed"
+        log_info "Install Docker: https://docs.docker.com/engine/install/"
+        return 1
+    fi
+
+    if ! docker compose version &>/dev/null; then
+        log_error "Docker Compose is not available"
+        log_info "Install Docker Compose plugin or standalone"
+        return 1
+    fi
+
+    # Check if docker daemon is running
+    if ! docker info &>/dev/null; then
+        log_error "Docker daemon is not running"
+        log_info "Start Docker: sudo systemctl start docker"
+        return 1
+    fi
+
+    log_info "Docker requirements validated"
+    return 0
+}
+
+# Run Docker deployment
+do_docker_install() {
+    log_step "Starting Docker deployment..."
+
+    # Find docker directory
+    local docker_dir=""
+    if [[ -d "./docker" ]]; then
+        docker_dir="./docker"
+    elif [[ -d "/opt/water-controller/docker" ]]; then
+        docker_dir="/opt/water-controller/docker"
+    else
+        # Clone repo first to get docker files
+        local staging_dir
+        staging_dir=$(create_staging_dir "docker-install")
+        register_cleanup "$staging_dir"
+
+        clone_to_staging "$staging_dir" "main" || return 1
+        docker_dir="$staging_dir/repo/docker"
+    fi
+
+    log_info "Using Docker directory: $docker_dir"
+
+    # Copy ports.env if exists
+    local env_file=""
+    if [[ -f "./config/ports.env" ]]; then
+        env_file="--env-file ../config/ports.env"
+    elif [[ -f "$docker_dir/../config/ports.env" ]]; then
+        env_file="--env-file ../config/ports.env"
+    fi
+
+    # Run docker compose
+    log_info "Starting containers..."
+    (
+        cd "$docker_dir" || exit 1
+        if [[ -n "$env_file" ]]; then
+            docker compose $env_file up -d
+        else
+            docker compose up -d
+        fi
+    )
+
+    local result=$?
+    if [[ $result -eq 0 ]]; then
+        log_info "Docker deployment completed successfully!"
+        log_info ""
+        log_info "Services started. Check status with:"
+        log_info "  docker compose -f $docker_dir/docker-compose.yml ps"
+        log_info ""
+        log_info "View logs with:"
+        log_info "  docker compose -f $docker_dir/docker-compose.yml logs -f"
+    else
+        log_error "Docker deployment failed"
+    fi
+
+    return $result
 }
 
 # Check disk space
@@ -1008,6 +1093,12 @@ ACTIONS:
     upgrade     Upgrade existing installation (default for installed systems)
     remove      Remove Water-Controller from this system
 
+DEPLOYMENT MODE:
+    --mode baremetal    Install directly on host (systemd services)
+    --mode docker       Install using Docker containers
+
+    If not specified, defaults to baremetal.
+
 OPTIONS:
     --branch <name>     Use specific git branch (default: main)
     --force             Force action even if checks fail
@@ -1023,11 +1114,11 @@ LOGGING:
     Backups are stored in: $BACKUP_DIR
 
 EXAMPLES:
-    # Install or upgrade (smart detection)
-    curl -fsSL $REPO_RAW_URL/main/bootstrap.sh | bash
+    # Install with baremetal (default)
+    curl -fsSL $REPO_RAW_URL/main/bootstrap.sh | bash -s -- install
 
-    # Explicit install
-    curl -fsSL .../bootstrap.sh | bash -s -- install
+    # Install with Docker
+    curl -fsSL .../bootstrap.sh | bash -s -- install --mode docker
 
     # Install from develop branch
     curl -fsSL .../bootstrap.sh | bash -s -- install --branch develop
@@ -1081,6 +1172,15 @@ main() {
             install|upgrade|remove)
                 action="$1"
                 shift
+                ;;
+            --mode)
+                if [[ "$2" == "baremetal" || "$2" == "docker" ]]; then
+                    DEPLOYMENT_MODE="$2"
+                    shift 2
+                else
+                    log_error "Invalid mode: $2. Use 'baremetal' or 'docker'"
+                    exit 1
+                fi
                 ;;
             --branch)
                 branch="$2"
@@ -1153,6 +1253,20 @@ main() {
         validate_environment || exit 1
     else
         check_root || exit 1
+    fi
+
+    # Handle deployment mode for install action
+    if [[ "$action" == "install" && "$DEPLOYMENT_MODE" == "docker" ]]; then
+        log_info "Deployment mode: Docker"
+        validate_docker_requirements || exit 1
+        do_docker_install
+        exit $?
+    fi
+
+    # Default to baremetal for install if no mode specified
+    if [[ "$action" == "install" && -z "$DEPLOYMENT_MODE" ]]; then
+        DEPLOYMENT_MODE="baremetal"
+        log_info "Deployment mode: Bare-metal (default)"
     fi
 
     # Execute action
