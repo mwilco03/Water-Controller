@@ -21,6 +21,30 @@
 
 version: "3.9"
 
+# ============================================================================
+# Logging Configuration (YAML anchors for reuse)
+# ============================================================================
+x-logging: &default-logging
+  driver: "json-file"
+  options:
+    max-size: "10m"
+    max-file: "3"
+    labels: "service,environment"
+
+# For Graylog/Loki integration (uncomment and configure):
+# x-logging-gelf: &gelf-logging
+#   driver: "gelf"
+#   options:
+#     gelf-address: "udp://localhost:${WTC_GRAYLOG_PORT:-12201}"
+#     tag: "wtc-{{.Name}}"
+
+# ============================================================================
+# Security Configuration (YAML anchors for reuse)
+# ============================================================================
+x-security: &default-security
+  security_opt:
+    - no-new-privileges:true
+
 services:
   # ============================================================================
   # PostgreSQL with TimescaleDB - Time-series database for historian
@@ -43,6 +67,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    logging: *default-logging
     deploy:
       resources:
         limits:
@@ -61,17 +86,29 @@ services:
     container_name: wtc-api
     restart: unless-stopped
     user: "1000:1000"
+    <<: *default-security
+    read_only: true
+    tmpfs:
+      - /tmp:size=64M,mode=1777
+    cap_drop:
+      - ALL
     environment:
       DATABASE_URL: postgresql://wtc:${DB_PASSWORD:-wtc_password}@database:${WTC_DB_PORT:-5432}/water_treatment
       API_HOST: 0.0.0.0
       WTC_API_PORT: ${WTC_API_PORT:-8000}
       WTC_UI_PORT: ${WTC_UI_PORT:-8080}
-      # Additional runtime configuration
+      # Startup validation configuration
+      WTC_STARTUP_MODE: ${WTC_STARTUP_MODE:-production}
       WTC_API_ONLY: "true"
-      WTC_SHM_NAME: ${WTC_SHM_NAME:-/wtc_shared_memory}
       WTC_SIMULATION_MODE: ${WTC_SIMULATION_MODE:-false}
+      # Logging configuration
       WTC_LOG_LEVEL: ${WTC_LOG_LEVEL:-INFO}
+      WTC_LOG_STRUCTURED: ${WTC_LOG_STRUCTURED:-true}
       WTC_DEBUG: ${WTC_DEBUG:-false}
+      # IPC configuration
+      WTC_SHM_NAME: ${WTC_SHM_NAME:-/wtc_shared_memory}
+      # CORS for UI access
+      WTC_CORS_ORIGINS: ${WTC_CORS_ORIGINS:-http://localhost:8080}
     ports:
       - "${WTC_API_PORT:-8000}:${WTC_API_PORT:-8000}"
     volumes:
@@ -87,7 +124,8 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 10s
+      start_period: 30s
+    logging: *default-logging
     deploy:
       resources:
         limits:
@@ -107,6 +145,12 @@ services:
     container_name: wtc-ui
     restart: unless-stopped
     user: "1000:1000"
+    <<: *default-security
+    read_only: true
+    tmpfs:
+      - /tmp:size=32M,mode=1777
+    cap_drop:
+      - ALL
     environment:
       # API URL for server-side requests (container name resolution)
       API_URL: http://api:${WTC_API_PORT:-8000}
@@ -126,6 +170,7 @@ services:
       timeout: 10s
       retries: 3
       start_period: 10s
+    logging: *default-logging
     deploy:
       resources:
         limits:
@@ -144,6 +189,7 @@ services:
     container_name: wtc-grafana
     restart: unless-stopped
     user: "472:472"
+    <<: *default-security
     environment:
       GF_SECURITY_ADMIN_USER: admin
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
@@ -162,6 +208,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+    logging: *default-logging
     deploy:
       resources:
         limits:
