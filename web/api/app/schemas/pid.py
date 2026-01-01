@@ -8,7 +8,7 @@ Pydantic models for PID loop management.
 
 from enum import Enum
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class PidMode(str, Enum):
@@ -19,6 +19,12 @@ class PidMode(str, Enum):
     CASCADE = "CASCADE"
 
 
+# PID coefficient limits - prevent unstable or unreasonable values
+PID_KP_MAX = 1000.0  # Max proportional gain
+PID_KI_MAX = 100.0   # Max integral gain
+PID_KD_MAX = 100.0   # Max derivative gain
+
+
 class PidLoopCreate(BaseModel):
     """Request to create a PID loop."""
 
@@ -26,13 +32,20 @@ class PidLoopCreate(BaseModel):
     process_variable: str = Field(description="Sensor tag for PV")
     control_output: str = Field(description="Control tag for CV")
     setpoint: float = Field(description="Setpoint value")
-    kp: float = Field(ge=0, description="Proportional gain")
-    ki: float = Field(ge=0, description="Integral gain")
-    kd: float = Field(ge=0, description="Derivative gain")
+    kp: float = Field(ge=0, le=PID_KP_MAX, description="Proportional gain (0-1000)")
+    ki: float = Field(ge=0, le=PID_KI_MAX, description="Integral gain (0-100)")
+    kd: float = Field(ge=0, le=PID_KD_MAX, description="Derivative gain (0-100)")
     output_min: float = Field(0.0, description="Minimum output value")
     output_max: float = Field(100.0, description="Maximum output value")
     mode: PidMode = Field(PidMode.AUTO, description="Operating mode")
     enabled: bool = Field(True, description="Whether loop is enabled")
+
+    @model_validator(mode="after")
+    def validate_output_range(self):
+        """Ensure output_min < output_max."""
+        if self.output_min >= self.output_max:
+            raise ValueError(f"output_min ({self.output_min}) must be less than output_max ({self.output_max})")
+        return self
 
 
 class PidLoopUpdate(BaseModel):
@@ -40,13 +53,21 @@ class PidLoopUpdate(BaseModel):
 
     name: str | None = Field(None, description="Loop name")
     setpoint: float | None = Field(None, description="Setpoint value")
-    kp: float | None = Field(None, ge=0, description="Proportional gain")
-    ki: float | None = Field(None, ge=0, description="Integral gain")
-    kd: float | None = Field(None, ge=0, description="Derivative gain")
+    kp: float | None = Field(None, ge=0, le=PID_KP_MAX, description="Proportional gain (0-1000)")
+    ki: float | None = Field(None, ge=0, le=PID_KI_MAX, description="Integral gain (0-100)")
+    kd: float | None = Field(None, ge=0, le=PID_KD_MAX, description="Derivative gain (0-100)")
     output_min: float | None = Field(None, description="Minimum output")
     output_max: float | None = Field(None, description="Maximum output")
     mode: PidMode | None = Field(None, description="Operating mode")
     enabled: bool | None = Field(None, description="Whether enabled")
+
+    @model_validator(mode="after")
+    def validate_output_range(self):
+        """Ensure output_min < output_max when both are provided."""
+        if self.output_min is not None and self.output_max is not None:
+            if self.output_min >= self.output_max:
+                raise ValueError(f"output_min ({self.output_min}) must be less than output_max ({self.output_max})")
+        return self
 
 
 class PidLoopResponse(BaseModel):
@@ -78,9 +99,9 @@ class SetpointRequest(BaseModel):
 class TuningRequest(BaseModel):
     """Request to change tuning parameters."""
 
-    kp: float = Field(ge=0, description="Proportional gain")
-    ki: float = Field(ge=0, description="Integral gain")
-    kd: float = Field(ge=0, description="Derivative gain")
+    kp: float = Field(ge=0, le=PID_KP_MAX, description="Proportional gain (0-1000)")
+    ki: float = Field(ge=0, le=PID_KI_MAX, description="Integral gain (0-100)")
+    kd: float = Field(ge=0, le=PID_KD_MAX, description="Derivative gain (0-100)")
 
 
 class ModeRequest(BaseModel):

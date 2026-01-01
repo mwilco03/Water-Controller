@@ -4,6 +4,7 @@ Copyright (C) 2024
 SPDX-License-Identifier: GPL-3.0-or-later
 
 Integration with the C controller via shared memory.
+Supports demo mode for E2E testing without real hardware.
 """
 
 import logging
@@ -39,12 +40,23 @@ except ImportError:
     logger.warning("Shared memory client not available - running in simulation mode")
 
 
+def _get_demo_service():
+    """Lazily import demo service to avoid circular imports."""
+    try:
+        from .demo_mode import get_demo_service
+        return get_demo_service()
+    except ImportError:
+        return None
+
+
 class ProfinetClient:
     """
     Client for interacting with the PROFINET controller.
 
-    When the C controller is running, communicates via shared memory.
-    Otherwise, operates in simulation mode for development/testing.
+    Priority order:
+    1. Real C controller via shared memory (if running)
+    2. Demo mode (if enabled) - provides realistic simulated data
+    3. Simulation mode (fallback) - returns empty data
     """
 
     def __init__(self):
@@ -77,59 +89,91 @@ class ProfinetClient:
 
     def is_controller_running(self) -> bool:
         """Check if the PROFINET controller is running."""
-        if self._simulation_mode:
-            return False
-        if not self._client:
-            return False
-        return self._client.is_controller_running()
+        # Check real controller first
+        if not self._simulation_mode and self._client:
+            if self._client.is_controller_running():
+                return True
+
+        # Check demo mode
+        demo = _get_demo_service()
+        if demo and demo.enabled:
+            return demo.is_controller_running()
+
+        return False
 
     def get_status(self) -> dict[str, Any]:
         """Get controller status."""
-        if self._simulation_mode:
+        # Try real controller first
+        if not self._simulation_mode and self._client and self._client.is_connected():
+            status = self._client.get_status()
+            if status.get("connected"):
+                return status
+
+        # Try demo mode
+        demo = _get_demo_service()
+        if demo and demo.enabled:
+            demo_status = demo.get_status()
             return {
-                "connected": False,
-                "simulation_mode": True,
-                "controller_running": False,
+                "connected": True,
+                "demo_mode": True,
+                "controller_running": True,
+                **demo_status,
             }
 
-        if not self._client or not self._client.is_connected():
-            return {"connected": False}
-
-        return self._client.get_status()
+        return {
+            "connected": False,
+            "simulation_mode": True,
+            "controller_running": False,
+        }
 
     def get_rtu_state(self, station_name: str) -> str | None:
         """Get RTU connection state from controller."""
-        if self._simulation_mode:
-            return None
+        # Try real controller first
+        if not self._simulation_mode and self._client and self._client.is_connected():
+            rtu = self._client.get_rtu(station_name)
+            if rtu:
+                state_code = rtu.get("connection_state", CONN_STATE_OFFLINE)
+                return CONNECTION_STATE_NAMES.get(state_code, "UNKNOWN")
 
-        if not self._client or not self._client.is_connected():
-            return None
+        # Try demo mode
+        demo = _get_demo_service()
+        if demo and demo.enabled:
+            rtu = demo.get_rtu(station_name)
+            if rtu:
+                state_code = rtu.get("connection_state", CONN_STATE_OFFLINE)
+                return CONNECTION_STATE_NAMES.get(state_code, "UNKNOWN")
 
-        rtu = self._client.get_rtu(station_name)
-        if rtu:
-            state_code = rtu.get("connection_state", CONN_STATE_OFFLINE)
-            return CONNECTION_STATE_NAMES.get(state_code, "UNKNOWN")
         return None
 
     def get_sensor_values(self, station_name: str) -> list[dict[str, Any]]:
         """Get sensor values from controller."""
-        if self._simulation_mode:
-            return []
+        # Try real controller first
+        if not self._simulation_mode and self._client and self._client.is_connected():
+            sensors = self._client.get_sensors(station_name)
+            if sensors:
+                return sensors
 
-        if not self._client or not self._client.is_connected():
-            return []
+        # Try demo mode
+        demo = _get_demo_service()
+        if demo and demo.enabled:
+            return demo.get_sensors(station_name)
 
-        return self._client.get_sensors(station_name)
+        return []
 
     def get_actuator_states(self, station_name: str) -> list[dict[str, Any]]:
         """Get actuator states from controller."""
-        if self._simulation_mode:
-            return []
+        # Try real controller first
+        if not self._simulation_mode and self._client and self._client.is_connected():
+            actuators = self._client.get_actuators(station_name)
+            if actuators:
+                return actuators
 
-        if not self._client or not self._client.is_connected():
-            return []
+        # Try demo mode
+        demo = _get_demo_service()
+        if demo and demo.enabled:
+            return demo.get_actuators(station_name)
 
-        return self._client.get_actuators(station_name)
+        return []
 
     def command_actuator(
         self,
@@ -139,36 +183,33 @@ class ProfinetClient:
         pwm_duty: int = 0
     ) -> bool:
         """Send actuator command to controller."""
-        if self._simulation_mode:
-            logger.info(f"[SIM] Actuator command: {station_name}/{slot} = {command}")
-            return True
+        # Try real controller first
+        if not self._simulation_mode and self._client and self._client.is_connected():
+            return self._client.command_actuator(station_name, slot, command, pwm_duty)
 
-        if not self._client or not self._client.is_connected():
-            return False
+        # Try demo mode
+        demo = _get_demo_service()
+        if demo and demo.enabled:
+            return demo.command_actuator(station_name, slot, command, pwm_duty)
 
-        return self._client.command_actuator(station_name, slot, command, pwm_duty)
+        logger.info(f"[SIM] Actuator command: {station_name}/{slot} = {command}")
+        return True
 
     def connect_rtu(self, station_name: str) -> bool:
         """Send RTU connect command to controller."""
-        if self._simulation_mode:
-            logger.info(f"[SIM] Connect RTU: {station_name}")
-            return True
+        if not self._simulation_mode and self._client and self._client.is_connected():
+            return self._client.connect_rtu(station_name)
 
-        if not self._client or not self._client.is_connected():
-            return False
-
-        return self._client.connect_rtu(station_name)
+        logger.info(f"[SIM] Connect RTU: {station_name}")
+        return True
 
     def disconnect_rtu(self, station_name: str) -> bool:
         """Send RTU disconnect command to controller."""
-        if self._simulation_mode:
-            logger.info(f"[SIM] Disconnect RTU: {station_name}")
-            return True
+        if not self._simulation_mode and self._client and self._client.is_connected():
+            return self._client.disconnect_rtu(station_name)
 
-        if not self._client or not self._client.is_connected():
-            return False
-
-        return self._client.disconnect_rtu(station_name)
+        logger.info(f"[SIM] Disconnect RTU: {station_name}")
+        return True
 
     def add_rtu(
         self,
@@ -179,89 +220,107 @@ class ProfinetClient:
         slot_count: int
     ) -> bool:
         """Add RTU to controller."""
-        if self._simulation_mode:
-            logger.info(f"[SIM] Add RTU: {station_name} at {ip_address}")
-            return True
+        if not self._simulation_mode and self._client and self._client.is_connected():
+            return self._client.add_rtu(station_name, ip_address, vendor_id, device_id, slot_count)
 
-        if not self._client or not self._client.is_connected():
-            return False
-
-        return self._client.add_rtu(station_name, ip_address, vendor_id, device_id, slot_count)
+        logger.info(f"[SIM] Add RTU: {station_name} at {ip_address}")
+        return True
 
     def remove_rtu(self, station_name: str) -> bool:
         """Remove RTU from controller."""
-        if self._simulation_mode:
-            logger.info(f"[SIM] Remove RTU: {station_name}")
-            return True
+        if not self._simulation_mode and self._client and self._client.is_connected():
+            return self._client.remove_rtu(station_name)
 
-        if not self._client or not self._client.is_connected():
-            return False
-
-        return self._client.remove_rtu(station_name)
+        logger.info(f"[SIM] Remove RTU: {station_name}")
+        return True
 
     def dcp_discover(self, timeout_ms: int = 5000) -> list[dict[str, Any]]:
         """Discover PROFINET devices on network."""
-        if self._simulation_mode:
-            logger.info(f"[SIM] DCP discovery (timeout: {timeout_ms}ms)")
-            return []
+        # Try real controller first
+        if not self._simulation_mode and self._client and self._client.is_connected():
+            devices = self._client.dcp_discover(timeout_ms)
+            if devices:
+                return devices
 
-        if not self._client or not self._client.is_connected():
-            return []
+        # Try demo mode
+        demo = _get_demo_service()
+        if demo and demo.enabled:
+            return demo.dcp_discover(timeout_ms)
 
-        return self._client.dcp_discover(timeout_ms)
+        logger.info(f"[SIM] DCP discovery (timeout: {timeout_ms}ms)")
+        return []
 
     def get_pid_loops(self) -> list[dict[str, Any]]:
         """Get PID loop states from controller."""
-        if self._simulation_mode:
-            return []
+        # Try real controller first
+        if not self._simulation_mode and self._client and self._client.is_connected():
+            loops = self._client.get_pid_loops()
+            if loops:
+                return loops
 
-        if not self._client or not self._client.is_connected():
-            return []
+        # Try demo mode
+        demo = _get_demo_service()
+        if demo and demo.enabled:
+            return demo.get_pid_loops()
 
-        return self._client.get_pid_loops()
+        return []
 
     def set_setpoint(self, loop_id: int, setpoint: float) -> bool:
         """Set PID loop setpoint."""
-        if self._simulation_mode:
-            logger.info(f"[SIM] Set setpoint: loop {loop_id} = {setpoint}")
-            return True
+        # Try real controller first
+        if not self._simulation_mode and self._client and self._client.is_connected():
+            return self._client.set_setpoint(loop_id, setpoint)
 
-        if not self._client or not self._client.is_connected():
-            return False
+        # Try demo mode
+        demo = _get_demo_service()
+        if demo and demo.enabled:
+            return demo.set_setpoint(loop_id, setpoint)
 
-        return self._client.set_setpoint(loop_id, setpoint)
+        logger.info(f"[SIM] Set setpoint: loop {loop_id} = {setpoint}")
+        return True
 
     def set_pid_mode(self, loop_id: int, mode: int) -> bool:
         """Set PID loop mode."""
-        if self._simulation_mode:
-            logger.info(f"[SIM] Set PID mode: loop {loop_id} = {mode}")
-            return True
+        # Try real controller first
+        if not self._simulation_mode and self._client and self._client.is_connected():
+            return self._client.set_pid_mode(loop_id, mode)
 
-        if not self._client or not self._client.is_connected():
-            return False
+        # Try demo mode
+        demo = _get_demo_service()
+        if demo and demo.enabled:
+            return demo.set_pid_mode(loop_id, mode)
 
-        return self._client.set_pid_mode(loop_id, mode)
+        logger.info(f"[SIM] Set PID mode: loop {loop_id} = {mode}")
+        return True
 
     def get_alarms(self) -> list[dict[str, Any]]:
         """Get active alarms from controller."""
-        if self._simulation_mode:
-            return []
+        # Try real controller first
+        if not self._simulation_mode and self._client and self._client.is_connected():
+            alarms = self._client.get_alarms()
+            if alarms:
+                return alarms
 
-        if not self._client or not self._client.is_connected():
-            return []
+        # Try demo mode
+        demo = _get_demo_service()
+        if demo and demo.enabled:
+            return demo.get_alarms()
 
-        return self._client.get_alarms()
+        return []
 
     def acknowledge_alarm(self, alarm_id: int, user: str) -> bool:
         """Acknowledge alarm."""
-        if self._simulation_mode:
-            logger.info(f"[SIM] Acknowledge alarm: {alarm_id} by {user}")
-            return True
+        # Try real controller first
+        if not self._simulation_mode and self._client and self._client.is_connected():
+            return self._client.acknowledge_alarm(alarm_id, user)
 
-        if not self._client or not self._client.is_connected():
-            return False
+        # Try demo mode
+        demo = _get_demo_service()
+        if demo and demo.enabled:
+            return demo.acknowledge_alarm(alarm_id, user)
 
-        return self._client.acknowledge_alarm(alarm_id, user)
+        logger.info(f"[SIM] Acknowledge alarm: {alarm_id} by {user}")
+        return True
 
 
 # Global client instance

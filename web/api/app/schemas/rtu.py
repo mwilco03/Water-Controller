@@ -198,6 +198,7 @@ class TestResult(BaseModel):
     target_ms: float | None = Field(None, description="Target value (for cycle time)")
     measured_ms: float | None = Field(None, description="Measured value")
     jitter_ms: float | None = Field(None, description="Timing jitter")
+    error: str | None = Field(None, description="Error message if test failed")
 
 
 class TestResponse(BaseModel):

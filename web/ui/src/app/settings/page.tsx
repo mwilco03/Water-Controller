@@ -62,7 +62,7 @@ interface LogDestination {
 }
 
 export default function SettingsPage() {
-  const [activeTab, setActiveTab] = useState<'general' | 'backup' | 'modbus' | 'services' | 'logging'>('general');
+  const [activeTab, setActiveTab] = useState<'general' | 'backup' | 'modbus' | 'services' | 'logging' | 'demo'>('general');
   const [services, setServices] = useState<ServiceStatus>({});
   const [modbusConfig, setModbusConfig] = useState<ModbusServerConfig | null>(null);
   const [downstreamDevices, setDownstreamDevices] = useState<ModbusDownstreamDevice[]>([]);
@@ -70,6 +70,23 @@ export default function SettingsPage() {
   const [logDestinations, setLogDestinations] = useState<LogDestination[]>([]);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  // Demo mode state
+  const [demoStatus, setDemoStatus] = useState<{
+    enabled: boolean;
+    scenario: string | null;
+    uptime_seconds: number;
+    rtu_count: number;
+    alarm_count: number;
+    pid_loop_count: number;
+  } | null>(null);
+  const [demoScenarios, setDemoScenarios] = useState<Record<string, {
+    name: string;
+    description: string;
+    rtus: number;
+    features: string[];
+  }>>({});
+  const [selectedScenario, setSelectedScenario] = useState('water_treatment_plant');
 
   // Set page title
   useEffect(() => {
@@ -80,7 +97,88 @@ export default function SettingsPage() {
     fetchServices();
     fetchModbusConfig();
     fetchLogConfig();
+    fetchDemoStatus();
+    fetchDemoScenarios();
   }, []);
+
+  // ============== Demo Mode Functions ==============
+
+  const fetchDemoStatus = async () => {
+    try {
+      const res = await fetch('/api/v1/demo/status');
+      if (res.ok) {
+        const data = await res.json();
+        setDemoStatus(data.data);
+      }
+    } catch (error) {
+      systemLogger.error('Failed to fetch demo status', error);
+    }
+  };
+
+  const fetchDemoScenarios = async () => {
+    try {
+      const res = await fetch('/api/v1/demo/scenarios');
+      if (res.ok) {
+        const data = await res.json();
+        setDemoScenarios(data.data?.scenarios || {});
+        if (data.data?.default) {
+          setSelectedScenario(data.data.default);
+        }
+      }
+    } catch (error) {
+      systemLogger.error('Failed to fetch demo scenarios', error);
+    }
+  };
+
+  const enableDemoMode = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch('/api/v1/demo/enable', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scenario: selectedScenario }),
+      });
+
+      if (res.ok) {
+        showMessage('success', `Demo mode enabled with "${selectedScenario}" scenario`);
+        await fetchDemoStatus();
+      } else {
+        showMessage('error', 'Failed to enable demo mode');
+      }
+    } catch (error) {
+      showMessage('error', 'Error enabling demo mode');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const disableDemoMode = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch('/api/v1/demo/disable', {
+        method: 'POST',
+      });
+
+      if (res.ok) {
+        showMessage('success', 'Demo mode disabled');
+        await fetchDemoStatus();
+      } else {
+        showMessage('error', 'Failed to disable demo mode');
+      }
+    } catch (error) {
+      showMessage('error', 'Error disabling demo mode');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const formatUptime = (seconds: number): string => {
+    if (seconds < 60) return `${Math.floor(seconds)}s`;
+    if (seconds < 3600) return `${Math.floor(seconds / 60)}m ${Math.floor(seconds % 60)}s`;
+    const hours = Math.floor(seconds / 3600);
+    const mins = Math.floor((seconds % 3600) / 60);
+    return `${hours}h ${mins}m`;
+  };
 
   const showMessage = (type: 'success' | 'error', text: string) => {
     setMessage({ type, text });
@@ -396,13 +494,14 @@ export default function SettingsPage() {
       )}
 
       {/* Tabs */}
-      <div className="flex space-x-4 border-b border-hmi-border">
+      <div className="flex space-x-4 border-b border-hmi-border overflow-x-auto">
         {[
           { id: 'general', label: 'General' },
           { id: 'backup', label: 'Backup & Restore' },
           { id: 'modbus', label: 'Modbus Gateway' },
           { id: 'logging', label: 'Log Forwarding' },
           { id: 'services', label: 'Services' },
+          { id: 'demo', label: 'Demo Mode' },
         ].map((tab) => (
           <button
             key={tab.id}
@@ -986,6 +1085,138 @@ export default function SettingsPage() {
             >
               Refresh Status
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Demo Mode Tab */}
+      {activeTab === 'demo' && (
+        <div className="space-y-6">
+          {/* Demo Status */}
+          <div className="hmi-card p-6">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-lg font-semibold text-hmi-text">Demo Mode</h2>
+              <div className={`px-3 py-1 rounded text-sm font-medium ${
+                demoStatus?.enabled
+                  ? 'bg-status-ok/20 text-status-ok'
+                  : 'bg-hmi-panel text-hmi-muted'
+              }`}>
+                {demoStatus?.enabled ? 'Active' : 'Inactive'}
+              </div>
+            </div>
+
+            <p className="text-sm text-hmi-muted mb-6">
+              Demo mode provides realistic simulated data for E2E testing, training, and
+              demonstrations without requiring real PROFINET hardware or the C controller.
+            </p>
+
+            {demoStatus?.enabled ? (
+              /* Active Demo Mode */
+              <div className="space-y-6">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <div className="bg-hmi-panel p-4 rounded">
+                    <div className="text-sm text-hmi-muted">Scenario</div>
+                    <div className="text-lg font-medium text-hmi-text capitalize">
+                      {demoStatus.scenario?.replace(/_/g, ' ') || 'Unknown'}
+                    </div>
+                  </div>
+                  <div className="bg-hmi-panel p-4 rounded">
+                    <div className="text-sm text-hmi-muted">Uptime</div>
+                    <div className="text-lg font-medium text-hmi-text">
+                      {formatUptime(demoStatus.uptime_seconds)}
+                    </div>
+                  </div>
+                  <div className="bg-hmi-panel p-4 rounded">
+                    <div className="text-sm text-hmi-muted">Simulated RTUs</div>
+                    <div className="text-lg font-medium text-hmi-text">
+                      {demoStatus.rtu_count}
+                    </div>
+                  </div>
+                  <div className="bg-hmi-panel p-4 rounded">
+                    <div className="text-sm text-hmi-muted">Active Alarms</div>
+                    <div className="text-lg font-medium text-hmi-text">
+                      {demoStatus.alarm_count}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex space-x-4">
+                  <button
+                    onClick={disableDemoMode}
+                    disabled={loading}
+                    className="px-4 py-2 bg-status-alarm hover:bg-status-alarm/80 rounded text-white disabled:opacity-50"
+                  >
+                    {loading ? 'Stopping...' : 'Stop Demo Mode'}
+                  </button>
+                  <button
+                    onClick={fetchDemoStatus}
+                    className="px-4 py-2 bg-hmi-panel hover:bg-hmi-panel/80 rounded text-hmi-text"
+                  >
+                    Refresh
+                  </button>
+                </div>
+              </div>
+            ) : (
+              /* Inactive - Show Scenario Selection */
+              <div className="space-y-6">
+                <div>
+                  <label className="block text-sm text-hmi-muted mb-2">Select Scenario</label>
+                  <select
+                    value={selectedScenario}
+                    onChange={(e) => setSelectedScenario(e.target.value)}
+                    className="w-full md:w-96 px-3 py-2 bg-hmi-panel border border-hmi-border rounded text-hmi-text"
+                  >
+                    {Object.entries(demoScenarios).map(([key, scenario]) => (
+                      <option key={key} value={key}>
+                        {scenario.name} ({scenario.rtus} RTU{scenario.rtus !== 1 ? 's' : ''})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {demoScenarios[selectedScenario] && (
+                  <div className="bg-hmi-panel p-4 rounded">
+                    <h3 className="font-medium text-hmi-text mb-2">
+                      {demoScenarios[selectedScenario].name}
+                    </h3>
+                    <p className="text-sm text-hmi-muted mb-3">
+                      {demoScenarios[selectedScenario].description}
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {demoScenarios[selectedScenario].features.map((feature, idx) => (
+                        <span
+                          key={idx}
+                          className="px-2 py-1 bg-hmi-background text-xs text-hmi-muted rounded"
+                        >
+                          {feature}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <button
+                  onClick={enableDemoMode}
+                  disabled={loading}
+                  className="px-4 py-2 bg-status-ok hover:bg-status-ok/80 rounded text-white disabled:opacity-50"
+                >
+                  {loading ? 'Starting...' : 'Start Demo Mode'}
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Environment Variable Info */}
+          <div className="hmi-card p-6">
+            <h2 className="text-lg font-semibold text-hmi-text mb-4">Auto-Enable on Startup</h2>
+            <p className="text-sm text-hmi-muted mb-4">
+              Demo mode can be automatically enabled when the API server starts by setting
+              environment variables:
+            </p>
+            <div className="bg-hmi-panel p-4 rounded font-mono text-sm text-hmi-text">
+              <div>WTC_DEMO_MODE=1</div>
+              <div>WTC_DEMO_SCENARIO=water_treatment_plant</div>
+            </div>
           </div>
         </div>
       )}
