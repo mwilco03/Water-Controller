@@ -49,14 +49,14 @@ RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
 USER appuser
 
 # Environment configuration
+# Note: Port 8080 is the Docker standard for this container
+# app/core/ports.py defaults to 8000 for non-containerized deployments
 ENV PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1 \
-    API_HOST=0.0.0.0 \
-    API_PORT=8080
+    PYTHONDONTWRITEBYTECODE=1
 
-# Health check using curl (more reliable than Python import)
+# Health check using the /health endpoint (defined in app/main.py)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
-    CMD curl -f http://localhost:8080/api/v1/system/health || exit 1
+    CMD curl -f http://localhost:8080/health || exit 1
 
 EXPOSE 8080
 

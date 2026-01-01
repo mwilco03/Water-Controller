@@ -23,6 +23,14 @@ except ImportError:
     def get_correlation_id():
         return None
 
+# Import paths for configurable SHM name
+try:
+    from app.core.paths import paths as _paths
+    _get_shm_name = lambda: _paths.shm_name
+except ImportError:
+    import os
+    _get_shm_name = lambda: os.environ.get("WTC_SHM_NAME", "/wtc_shared_memory")
+
 logger = logging.getLogger(__name__)
 
 
@@ -35,8 +43,8 @@ def _log_with_correlation(level: int, msg: str, *args, **kwargs):
     kwargs['extra'] = extra
     logger.log(level, msg, *args, **kwargs)
 
-# Shared memory constants
-SHM_NAME = "/wtc_shared_memory"
+# Shared memory constants - configurable via WTC_SHM_NAME env var
+SHM_NAME = _get_shm_name()
 SHM_KEY = 0x57544301
 SHM_VERSION = 3  # Must match C definition - v3 adds correlation_id to commands
 CORRELATION_ID_LEN = 37  # UUID format + null terminator

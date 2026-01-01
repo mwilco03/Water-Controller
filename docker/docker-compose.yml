@@ -57,15 +57,19 @@ services:
     user: "1000:1000"
     environment:
       DATABASE_URL: postgresql://wtc:${DB_PASSWORD:-wtc_password}@database:5432/water_treatment
-      API_HOST: 0.0.0.0
-      API_PORT: 8080
+      # Shared memory name for IPC with host PROFINET controller
+      WTC_SHM_NAME: /wtc_shared_memory
+      # Enable simulation mode for testing without controller hardware
+      WTC_SIMULATION_MODE: ${WTC_SIMULATION_MODE:-false}
+      # Debug mode for verbose logging
+      WTC_DEBUG: ${WTC_DEBUG:-false}
     ports:
       - "8080:8080"
     depends_on:
       database:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/api/v1/system/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 30s
       timeout: 10s
       retries: 3
