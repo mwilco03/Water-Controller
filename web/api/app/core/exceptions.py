@@ -236,3 +236,35 @@ class PidLoopNotFoundError(ScadaException):
             recoverable=True,
             suggested_action="Verify loop ID or check PID loops list"
         )
+
+
+class NotFoundError(ScadaException):
+    """Generic resource not found error."""
+
+    def __init__(self, message: str, resource_type: str | None = None):
+        details = {}
+        if resource_type:
+            details["resource_type"] = resource_type
+        super().__init__(
+            code="NOT_FOUND",
+            message=message,
+            details=details,
+            recoverable=True,
+            suggested_action="Verify the resource exists and try again"
+        )
+
+
+class CommunicationError(ScadaException):
+    """Communication failure with external device or service."""
+
+    def __init__(self, message: str, device: str | None = None):
+        details = {}
+        if device:
+            details["device"] = device
+        super().__init__(
+            code="COMMUNICATION_ERROR",
+            message=message,
+            details=details,
+            recoverable=True,
+            suggested_action="Check device connectivity and try again"
+        )
