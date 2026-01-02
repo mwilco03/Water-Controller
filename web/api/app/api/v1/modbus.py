@@ -368,3 +368,117 @@ async def write_register(
         raise HTTPException(status_code=502, detail=str(e))
     except ValidationError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+# ============== Quality Tracking ==============
+
+
+@router.get("/quality")
+async def get_all_quality_summaries() -> dict[str, Any]:
+    """
+    Get quality tracking summaries for all devices.
+
+    Returns summary statistics for each tracked device including:
+    - Overall quality status (good/bad/uncertain/not_updated/comm_failure)
+    - Connection success rate
+    - Read/write counts and error counts
+    - Average latency
+    - Good/bad/stale register counts
+    """
+    service = get_modbus_service()
+    summaries = service.get_all_quality_summaries()
+    return build_success_response(summaries)
+
+
+@router.get("/devices/{device_name}/quality")
+async def get_device_quality(
+    device_name: str = Path(..., min_length=1, description="Device name"),
+    include_registers: bool = Query(
+        False,
+        description="Include detailed register quality data"
+    )
+) -> dict[str, Any]:
+    """
+    Get quality tracking data for a specific device.
+
+    Returns quality metrics including:
+    - Overall quality status
+    - Connection attempts and success rate
+    - Last connection/communication times
+    - Total read/write counts
+    - Average latency
+    - Optional: Detailed per-register quality data
+    """
+    try:
+        service = get_modbus_service()
+        if include_registers:
+            quality = service.get_device_quality(device_name)
+        else:
+            quality = service.get_device_quality_summary(device_name)
+        return build_success_response(quality)
+    except NotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.get("/devices/{device_name}/quality/registers/{register_type}/{address}")
+async def get_register_quality(
+    device_name: str = Path(..., min_length=1, description="Device name"),
+    register_type: str = Path(
+        ...,
+        pattern="^(holding|input|coil|discrete)$",
+        description="Register type"
+    ),
+    address: int = Path(..., ge=0, le=65535, description="Register address")
+) -> dict[str, Any]:
+    """
+    Get quality tracking data for a specific register.
+
+    Returns:
+    - Quality status (good/bad/uncertain/not_updated/comm_failure)
+    - Current value and raw value
+    - Last update time
+    - Last good value and time
+    - Success/error counts and rate
+    - Last error message
+    - Latency
+    - Stale flag
+    """
+    try:
+        service = get_modbus_service()
+        quality = service.get_register_quality(device_name, register_type, address)
+        return build_success_response(quality)
+    except NotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.delete("/devices/{device_name}/quality")
+async def reset_device_quality(
+    device_name: str = Path(..., min_length=1, description="Device name")
+) -> dict[str, Any]:
+    """
+    Reset quality tracking data for a specific device.
+
+    Clears all accumulated statistics and register quality data.
+    """
+    service = get_modbus_service()
+    service.reset_quality_tracking(device_name)
+    return build_success_response({
+        "device": device_name,
+        "reset": True,
+        "message": "Quality tracking data reset"
+    })
+
+
+@router.delete("/quality")
+async def reset_all_quality() -> dict[str, Any]:
+    """
+    Reset quality tracking data for all devices.
+
+    Clears all accumulated statistics and register quality data.
+    """
+    service = get_modbus_service()
+    service.reset_quality_tracking()
+    return build_success_response({
+        "reset": True,
+        "message": "All quality tracking data reset"
+    })

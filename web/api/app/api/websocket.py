@@ -117,7 +117,7 @@ class SubscriptionMessage(BaseModel):
     """Subscription request from client."""
 
     action: str  # "subscribe" or "unsubscribe"
-    channels: list[str]  # sensors, controls, alarms, rtu_state
+    channels: list[str]  # sensors, controls, alarms, rtu_state, modbus
     rtus: list[str] | None = None  # Optional filter by RTU names
 
 
@@ -210,3 +210,11 @@ async def broadcast_rtu_state_change(
         "previous_state": previous_state,
         "new_state": new_state,
     }, rtu)
+
+
+async def broadcast_modbus_update(device: str, registers: list[dict[str, Any]]) -> None:
+    """Broadcast Modbus register updates."""
+    await manager.broadcast("modbus", {
+        "device": device,
+        "registers": registers,
+    })

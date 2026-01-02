@@ -41,6 +41,10 @@ from .persistence.base import initialize as init_persistence
 from .persistence.base import is_initialized
 from .persistence.users import ensure_default_admin
 from .services.profinet_client import get_profinet_client
+from .services.websocket_publisher import (
+    publisher_lifespan_startup,
+    publisher_lifespan_shutdown,
+)
 from .core.ports import get_allowed_origins
 
 # Setup logging
@@ -91,6 +95,9 @@ async def lifespan(app: FastAPI):
     ensure_default_admin()
     logger.info("Default admin user verified")
 
+    # Start WebSocket data publisher for real-time updates
+    await publisher_lifespan_startup()
+
     # Log final startup status
     if startup_result.is_fully_healthy:
         logger.info("STARTUP COMPLETE: All systems operational")
@@ -102,6 +109,9 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     logger.info("Shutting down Water Treatment Controller API")
+
+    # Stop WebSocket data publisher
+    await publisher_lifespan_shutdown()
 
 
 # Create FastAPI application
