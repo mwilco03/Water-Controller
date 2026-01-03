@@ -24,9 +24,6 @@ psycopg2-binary==2.9.10
 python-dotenv==1.0.1
 httpx==0.28.1
 
-# Security - password hashing
-bcrypt==4.2.1
-
 # Monitoring & System
 psutil==6.1.1
 
