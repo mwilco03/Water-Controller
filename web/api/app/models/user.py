@@ -6,7 +6,9 @@ SPDX-License-Identifier: GPL-3.0-or-later
 SQLAlchemy models for user management and authentication.
 """
 
+import json
 from datetime import UTC, datetime
+from typing import Any
 
 from sqlalchemy import (
     Boolean,
@@ -73,6 +75,36 @@ class UserSession(Base):
         Index("ix_user_sessions_expires", "expires_at"),
         Index("ix_user_sessions_username", "username"),
     )
+
+    def _serialize_field(self, key: str, value: Any) -> Any:
+        """
+        Override to handle JSON-encoded groups field.
+
+        The groups column stores a JSON-encoded list of group names.
+        This method ensures it's deserialized to a Python list when
+        calling to_dict().
+        """
+        if key == "groups" and value is not None:
+            try:
+                return json.loads(value)
+            except json.JSONDecodeError:
+                return []
+        return super()._serialize_field(key, value)
+
+    @property
+    def groups_list(self) -> list[str]:
+        """Get groups as a Python list."""
+        if self.groups:
+            try:
+                return json.loads(self.groups)
+            except json.JSONDecodeError:
+                return []
+        return []
+
+    @groups_list.setter
+    def groups_list(self, value: list[str]) -> None:
+        """Set groups from a Python list."""
+        self.groups = json.dumps(value) if value else None
 
 
 class AuditLog(Base):

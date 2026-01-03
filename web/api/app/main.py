@@ -104,15 +104,96 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down Water Treatment Controller API")
 
 
+# OpenAPI tags for documentation organization
+openapi_tags = [
+    {
+        "name": "RTUs",
+        "description": "RTU (Remote Terminal Unit) configuration and connection management. "
+                       "RTUs are PROFINET IO devices that provide analog/digital I/O."
+    },
+    {
+        "name": "Sensors",
+        "description": "Sensor configuration and real-time values. "
+                       "Sensors are analog inputs from RTU modules (level, flow, pressure, temperature)."
+    },
+    {
+        "name": "Controls",
+        "description": "Control/actuator configuration and commands. "
+                       "Controls are digital/analog outputs (pumps, valves, VFDs)."
+    },
+    {
+        "name": "Alarms",
+        "description": "Alarm configuration and event management following ISA-18.2 standards. "
+                       "Includes alarm rules, shelving, and acknowledgment."
+    },
+    {
+        "name": "PID",
+        "description": "PID loop configuration and tuning. "
+                       "Closed-loop process control for level, flow, and pressure regulation."
+    },
+    {
+        "name": "PROFINET",
+        "description": "PROFINET diagnostics and module discovery. "
+                       "Low-level communication status with industrial Ethernet devices."
+    },
+    {
+        "name": "System",
+        "description": "System configuration, health monitoring, and administration. "
+                       "Includes backup/restore, user management, and audit logs."
+    },
+    {
+        "name": "Historian",
+        "description": "Time-series data storage and trending. "
+                       "Query historical process values for analysis and reporting."
+    },
+    {
+        "name": "Authentication",
+        "description": "User authentication and session management. "
+                       "Supports local accounts and Active Directory integration."
+    },
+]
+
 # Create FastAPI application
 app = FastAPI(
     title="Water Treatment Controller API",
-    description="PROFINET IO Controller Backend for Water Treatment SCADA",
+    description="""
+## Water Treatment SCADA Backend
+
+This API provides a RESTful interface for controlling and monitoring water treatment
+facilities via PROFINET IO.
+
+### Key Features
+- **RTU Management**: Configure and connect to PROFINET IO devices
+- **Real-time Monitoring**: WebSocket streaming of sensor values and alarms
+- **Process Control**: PID loops, setpoint management, and control commands
+- **Alarm Management**: ISA-18.2 compliant alarm handling
+- **Data Historian**: Time-series data storage with configurable retention
+
+### State Machine
+RTUs follow a connection state machine:
+`OFFLINE → CONNECTING → DISCOVERY → RUNNING`
+
+### Authentication
+All endpoints except /health require authentication via Bearer token.
+Obtain tokens via POST /api/v1/auth/login.
+
+### WebSocket
+Real-time updates available at `/api/v1/ws/{rtu_name}`.
+    """,
     version="2.0.0",
     lifespan=lifespan,
     docs_url="/api/docs",
     redoc_url="/api/redoc",
     openapi_url="/api/openapi.json",
+    openapi_tags=openapi_tags,
+    contact={
+        "name": "Water Controller Support",
+        "url": "https://github.com/mwilco03/Water-Controller",
+    },
+    license_info={
+        "name": "GPL-3.0-or-later",
+        "url": "https://www.gnu.org/licenses/gpl-3.0.html",
+    },
 )
 
 # CORS configuration from centralized port config

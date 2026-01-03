@@ -136,7 +136,8 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -r web/api/requirements.txt
-          pip install mypy ruff pytest-cov types-psutil pip-audit
+          pip install -r web/api/requirements-dev.txt
+          pip install pip-audit
 
       - name: Lint (ruff)
         run: cd web/api && ruff check . --output-format=github
@@ -144,10 +145,32 @@ jobs:
       - name: Type check (mypy)
         run: cd web/api && mypy app/ --ignore-missing-imports || true
 
+      - name: Validate Alembic migrations
+        run: |
+          cd web/api
+          # Verify migration files are valid Python
+          python -m py_compile migrations/env.py
+          for f in migrations/versions/*.py; do
+            [ -f "$f" ] && python -m py_compile "$f"
+          done
+
       - name: Test (pytest)
         run: |
           cd web/api
-          pytest tests/ --cov=app --cov-report=term-missing -v || true
+          pytest tests/ \
+            --cov=app \
+            --cov-report=term-missing \
+            --cov-report=xml \
+            --cov-fail-under=60 \
+            -v
+
+      - name: Upload coverage report
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+        uses: codecov/codecov-action@v4
+        with:
+          files: web/api/coverage.xml
+          flags: python
+          fail_ci_if_error: false
 
       - name: Security audit (pip-audit)
         run: pip-audit -r web/api/requirements.txt || true
