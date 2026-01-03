@@ -5,8 +5,7 @@ SPDX-License-Identifier: GPL-3.0-or-later
 
 User session management operations using SQLAlchemy.
 
-Note: Uses custom serialization for groups field (JSON stored as string).
-The base mixin's to_dict() is extended here for proper groups handling.
+Note: UserSession model overrides _serialize_field() for groups JSON parsing.
 """
 
 import json
@@ -63,29 +62,6 @@ def create_session(token: str, username: str, role: str, groups: list[str],
             return False
 
 
-def _session_to_dict(session: UserSession) -> dict[str, Any]:
-    """Convert UserSession model to dictionary."""
-    result = {
-        "token": session.token,
-        "username": session.username,
-        "role": session.role,
-        "created_at": session.created_at.isoformat() if session.created_at else None,
-        "last_activity": session.last_activity.isoformat() if session.last_activity else None,
-        "expires_at": session.expires_at.isoformat() if session.expires_at else None,
-        "ip_address": session.ip_address,
-        "user_agent": session.user_agent,
-    }
-    # Parse groups from JSON
-    if session.groups:
-        try:
-            result['groups'] = json.loads(session.groups)
-        except json.JSONDecodeError:
-            result['groups'] = []
-    else:
-        result['groups'] = []
-    return result
-
-
 def get_session(token: str) -> dict[str, Any] | None:
     """Get session by token"""
     with get_db() as db:
@@ -94,7 +70,7 @@ def get_session(token: str) -> dict[str, Any] | None:
             UserSession.expires_at > datetime.now(UTC)
         ).first()
         if session:
-            return _session_to_dict(session)
+            return session.to_dict()
         return None
 
 

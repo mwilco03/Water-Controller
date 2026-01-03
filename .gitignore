@@ -13,8 +13,9 @@ compile_commands.json
 
 # Executables (built binaries)
 water_treat_controller
-test_*
-!tests/test_*.c
+/test_*
+!/tests/
+!/web/api/tests/
 
 # IDE files
 .idea/

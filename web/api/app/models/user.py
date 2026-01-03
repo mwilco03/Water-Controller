@@ -6,7 +6,9 @@ SPDX-License-Identifier: GPL-3.0-or-later
 SQLAlchemy models for user management and authentication.
 """
 
+import json
 from datetime import UTC, datetime
+from typing import Any
 
 from sqlalchemy import (
     Boolean,
@@ -73,6 +75,15 @@ class UserSession(Base):
         Index("ix_user_sessions_expires", "expires_at"),
         Index("ix_user_sessions_username", "username"),
     )
+
+    def _serialize_field(self, key: str, value: Any) -> Any:
+        """Custom serialization for groups field (JSON-encoded)."""
+        if key == "groups" and value:
+            try:
+                return json.loads(value)
+            except json.JSONDecodeError:
+                return []
+        return super()._serialize_field(key, value)
 
 
 class AuditLog(Base):
