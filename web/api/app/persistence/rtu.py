@@ -9,6 +9,7 @@ RTU device, sensor, and control operations using SQLAlchemy.
 from datetime import UTC, datetime
 from typing import Any
 
+from ..core.config import settings
 from ..models.legacy import RtuControl, RtuDevice, RtuSensor
 from .audit import log_audit
 from .base import get_db
@@ -88,13 +89,14 @@ def get_rtu_device(station_name: str) -> dict[str, Any] | None:
 
 def create_rtu_device(device: dict[str, Any]) -> int:
     """Create a new RTU device"""
+    defaults = settings.rtu_defaults
     with get_db() as db:
         new_device = RtuDevice(
             station_name=device['station_name'],
             ip_address=device['ip_address'],
-            vendor_id=device.get('vendor_id', 1171),
-            device_id=device.get('device_id', 1),
-            slot_count=device.get('slot_count', 16),
+            vendor_id=device.get('vendor_id', defaults.VENDOR_ID),
+            device_id=device.get('device_id', defaults.DEVICE_ID),
+            slot_count=device.get('slot_count', defaults.SLOT_COUNT),
         )
         db.add(new_device)
         db.commit()
@@ -106,6 +108,7 @@ def create_rtu_device(device: dict[str, Any]) -> int:
 
 def update_rtu_device(station_name: str, device: dict[str, Any]) -> bool:
     """Update an RTU device"""
+    defaults = settings.rtu_defaults
     with get_db() as db:
         existing = db.query(RtuDevice).filter(
             RtuDevice.station_name == station_name
@@ -114,9 +117,9 @@ def update_rtu_device(station_name: str, device: dict[str, Any]) -> bool:
             return False
 
         existing.ip_address = device['ip_address']
-        existing.vendor_id = device.get('vendor_id', 1171)
-        existing.device_id = device.get('device_id', 1)
-        existing.slot_count = device.get('slot_count', 16)
+        existing.vendor_id = device.get('vendor_id', defaults.VENDOR_ID)
+        existing.device_id = device.get('device_id', defaults.DEVICE_ID)
+        existing.slot_count = device.get('slot_count', defaults.SLOT_COUNT)
         existing.updated_at = datetime.now(UTC)
 
         db.commit()

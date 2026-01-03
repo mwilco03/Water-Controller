@@ -47,9 +47,16 @@ _db_state = _DatabaseState()
 
 
 @contextmanager
-def get_db() -> Generator[Session, None, None]:
+def get_db_context() -> Generator[Session, None, None]:
     """
-    Context manager for database sessions.
+    Context manager for database sessions in persistence layer.
+
+    Use this for standalone scripts and persistence functions:
+        with get_db_context() as db:
+            db.query(...)
+
+    For FastAPI dependency injection, use models.base.get_db instead:
+        db: Session = Depends(get_db)
 
     Yields a SQLAlchemy session that works with both SQLite and PostgreSQL.
     """
@@ -58,6 +65,10 @@ def get_db() -> Generator[Session, None, None]:
         yield db
     finally:
         db.close()
+
+
+# Backward compatibility alias (deprecated - use get_db_context)
+get_db = get_db_context
 
 
 def init_database():

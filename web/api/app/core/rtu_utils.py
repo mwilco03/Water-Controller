@@ -78,3 +78,40 @@ def get_data_quality(rtu_state: str) -> DataQuality:
         return DataQuality.UNCERTAIN
     else:
         return DataQuality.NOT_CONNECTED
+
+
+# Protocol-to-Application State Mapping
+# =====================================
+# The codebase uses two state systems:
+#
+# 1. Protocol Layer (shm_client.py CONN_STATE_*):
+#    These are numeric codes from the C controller shared memory.
+#    Values: IDLE=0, CONNECTING=1, CONNECTED=2, RUNNING=3, ERROR=4, OFFLINE=5
+#
+# 2. Application Layer (models/rtu.py RtuState):
+#    These are string states stored in the database.
+#    Values: OFFLINE, CONNECTING, DISCOVERY, RUNNING, ERROR
+#
+# The mapping below converts protocol states to application states:
+
+PROTOCOL_TO_APP_STATE = {
+    0: RtuState.OFFLINE,      # IDLE -> OFFLINE (not connected yet)
+    1: RtuState.CONNECTING,   # CONNECTING -> CONNECTING
+    2: RtuState.DISCOVERY,    # CONNECTED -> DISCOVERY (AR established, enumerating)
+    3: RtuState.RUNNING,      # RUNNING -> RUNNING
+    4: RtuState.ERROR,        # ERROR -> ERROR
+    5: RtuState.OFFLINE,      # OFFLINE -> OFFLINE
+}
+
+
+def protocol_state_to_app_state(protocol_state: int) -> str:
+    """
+    Convert protocol-layer state code to application-layer state string.
+
+    Args:
+        protocol_state: Numeric state from shared memory (0-5)
+
+    Returns:
+        Application-layer state string (RtuState value)
+    """
+    return PROTOCOL_TO_APP_STATE.get(protocol_state, RtuState.OFFLINE)
