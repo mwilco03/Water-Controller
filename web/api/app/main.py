@@ -30,6 +30,7 @@ from .core.logging import (
     set_correlation_id,
     setup_logging,
 )
+from .core.rate_limit import RateLimitMiddleware
 from .core.startup import (
     StartupMode,
     get_startup_result,
@@ -139,6 +140,10 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "X-Correlation-ID", "X-Request-ID"],
 )
+
+# Rate limiting middleware
+# Configurable via WTC_RATE_LIMIT_ENABLED, WTC_RATE_LIMIT_REQUESTS, WTC_RATE_LIMIT_WINDOW
+app.add_middleware(RateLimitMiddleware)
 
 
 # Correlation ID middleware
