@@ -4,6 +4,8 @@ Copyright (C) 2024
 SPDX-License-Identifier: GPL-3.0-or-later
 
 RTU device, sensor, and control operations using SQLAlchemy.
+
+Note: Uses DictSerializableMixin.to_dict() from models/base.py for serialization.
 """
 
 from datetime import UTC, datetime
@@ -15,67 +17,13 @@ from .audit import log_audit
 from .base import get_db
 
 
-def _device_to_dict(device: RtuDevice) -> dict[str, Any]:
-    """Convert RtuDevice to dictionary."""
-    return {
-        "id": device.id,
-        "station_name": device.station_name,
-        "ip_address": device.ip_address,
-        "vendor_id": device.vendor_id,
-        "device_id": device.device_id,
-        "slot_count": device.slot_count,
-        "created_at": device.created_at.isoformat() if device.created_at else None,
-        "updated_at": device.updated_at.isoformat() if device.updated_at else None,
-    }
-
-
-def _sensor_to_dict(sensor: RtuSensor) -> dict[str, Any]:
-    """Convert RtuSensor to dictionary."""
-    return {
-        "id": sensor.id,
-        "rtu_station": sensor.rtu_station,
-        "sensor_id": sensor.sensor_id,
-        "sensor_type": sensor.sensor_type,
-        "name": sensor.name,
-        "unit": sensor.unit,
-        "register_address": sensor.register_address,
-        "data_type": sensor.data_type,
-        "scale_min": sensor.scale_min,
-        "scale_max": sensor.scale_max,
-        "last_value": sensor.last_value,
-        "last_quality": sensor.last_quality,
-        "last_update": sensor.last_update.isoformat() if sensor.last_update else None,
-        "created_at": sensor.created_at.isoformat() if sensor.created_at else None,
-    }
-
-
-def _control_to_dict(control: RtuControl) -> dict[str, Any]:
-    """Convert RtuControl to dictionary."""
-    return {
-        "id": control.id,
-        "rtu_station": control.rtu_station,
-        "control_id": control.control_id,
-        "control_type": control.control_type,
-        "name": control.name,
-        "command_type": control.command_type,
-        "register_address": control.register_address,
-        "feedback_register": control.feedback_register,
-        "range_min": control.range_min,
-        "range_max": control.range_max,
-        "unit": control.unit,
-        "last_state": control.last_state,
-        "last_update": control.last_update.isoformat() if control.last_update else None,
-        "created_at": control.created_at.isoformat() if control.created_at else None,
-    }
-
-
 # ============== RTU Device Operations ==============
 
 def get_rtu_devices() -> list[dict[str, Any]]:
     """Get all RTU devices"""
     with get_db() as db:
         devices = db.query(RtuDevice).order_by(RtuDevice.station_name).all()
-        return [_device_to_dict(d) for d in devices]
+        return [d.to_dict() for d in devices]
 
 
 def get_rtu_device(station_name: str) -> dict[str, Any] | None:
@@ -84,7 +32,7 @@ def get_rtu_device(station_name: str) -> dict[str, Any] | None:
         device = db.query(RtuDevice).filter(
             RtuDevice.station_name == station_name
         ).first()
-        return _device_to_dict(device) if device else None
+        return device.to_dict() if device else None
 
 
 def create_rtu_device(device: dict[str, Any]) -> int:
@@ -155,7 +103,7 @@ def get_rtu_sensors(rtu_station: str) -> list[dict[str, Any]]:
         sensors = db.query(RtuSensor).filter(
             RtuSensor.rtu_station == rtu_station
         ).order_by(RtuSensor.sensor_id).all()
-        return [_sensor_to_dict(s) for s in sensors]
+        return [s.to_dict() for s in sensors]
 
 
 def upsert_rtu_sensor(sensor: dict[str, Any]) -> int:
@@ -242,7 +190,7 @@ def get_rtu_controls(rtu_station: str) -> list[dict[str, Any]]:
         controls = db.query(RtuControl).filter(
             RtuControl.rtu_station == rtu_station
         ).order_by(RtuControl.control_id).all()
-        return [_control_to_dict(c) for c in controls]
+        return [c.to_dict() for c in controls]
 
 
 def upsert_rtu_control(control: dict[str, Any]) -> int:

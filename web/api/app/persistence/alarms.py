@@ -4,6 +4,8 @@ Copyright (C) 2024
 SPDX-License-Identifier: GPL-3.0-or-later
 
 Alarm rules and shelved alarms (ISA-18.2) operations using SQLAlchemy.
+
+Note: Uses DictSerializableMixin.to_dict() from models/base.py for serialization.
 """
 
 import logging
@@ -17,53 +19,20 @@ from .base import get_db
 logger = logging.getLogger(__name__)
 
 
-def _rule_to_dict(rule: AlarmRule) -> dict[str, Any]:
-    """Convert AlarmRule to dictionary."""
-    return {
-        "id": rule.id,
-        "name": rule.name,
-        "rtu_station": rule.rtu_station,
-        "slot": rule.slot,
-        "condition": rule.condition,
-        "threshold": rule.threshold,
-        "severity": rule.severity,
-        "delay_ms": rule.delay_ms,
-        "message": rule.message,
-        "enabled": rule.enabled,
-        "created_at": rule.created_at.isoformat() if rule.created_at else None,
-        "updated_at": rule.updated_at.isoformat() if rule.updated_at else None,
-    }
-
-
-def _shelved_to_dict(shelved: ShelvedAlarm) -> dict[str, Any]:
-    """Convert ShelvedAlarm to dictionary."""
-    return {
-        "id": shelved.id,
-        "rtu_station": shelved.rtu_station,
-        "slot": shelved.slot,
-        "shelved_by": shelved.shelved_by,
-        "shelved_at": shelved.shelved_at.isoformat() if shelved.shelved_at else None,
-        "shelf_duration_minutes": shelved.shelf_duration_minutes,
-        "expires_at": shelved.expires_at.isoformat() if shelved.expires_at else None,
-        "reason": shelved.reason,
-        "active": shelved.active,
-    }
-
-
 # ============== Alarm Rules Operations ==============
 
 def get_alarm_rules() -> list[dict[str, Any]]:
     """Get all alarm rules"""
     with get_db() as db:
         rules = db.query(AlarmRule).order_by(AlarmRule.id).all()
-        return [_rule_to_dict(r) for r in rules]
+        return [r.to_dict() for r in rules]
 
 
 def get_alarm_rule(rule_id: int) -> dict[str, Any] | None:
     """Get a single alarm rule"""
     with get_db() as db:
         rule = db.query(AlarmRule).filter(AlarmRule.id == rule_id).first()
-        return _rule_to_dict(rule) if rule else None
+        return rule.to_dict() if rule else None
 
 
 def create_alarm_rule(rule: dict[str, Any]) -> int:
@@ -145,7 +114,7 @@ def get_shelved_alarms(include_expired: bool = False) -> list[dict[str, Any]]:
                 ShelvedAlarm.expires_at > datetime.now(UTC)
             )
         shelved = query.order_by(ShelvedAlarm.shelved_at.desc()).all()
-        return [_shelved_to_dict(s) for s in shelved]
+        return [s.to_dict() for s in shelved]
 
 
 def is_alarm_shelved(rtu_station: str, slot: int) -> bool:
@@ -227,4 +196,4 @@ def get_shelved_alarm(shelf_id: int) -> dict[str, Any] | None:
     """Get a single shelved alarm entry"""
     with get_db() as db:
         shelved = db.query(ShelvedAlarm).filter(ShelvedAlarm.id == shelf_id).first()
-        return _shelved_to_dict(shelved) if shelved else None
+        return shelved.to_dict() if shelved else None
