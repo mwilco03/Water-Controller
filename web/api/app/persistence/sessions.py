@@ -4,6 +4,9 @@ Copyright (C) 2024
 SPDX-License-Identifier: GPL-3.0-or-later
 
 User session management operations using SQLAlchemy.
+
+Note: Uses custom serialization for groups field (JSON stored as string).
+The base mixin's to_dict() is extended here for proper groups handling.
 """
 
 import json

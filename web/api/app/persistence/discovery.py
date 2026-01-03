@@ -4,6 +4,8 @@ Copyright (C) 2024
 SPDX-License-Identifier: GPL-3.0-or-later
 
 DCP discovery cache operations using SQLAlchemy.
+
+Note: Uses DictSerializableMixin.to_dict() from models/base.py for serialization.
 """
 
 from datetime import UTC, datetime
@@ -13,30 +15,13 @@ from ..models.discovery import DCPDiscoveryCache
 from .base import get_db
 
 
-def _device_to_dict(device: DCPDiscoveryCache) -> dict[str, Any]:
-    """Convert DCPDiscoveryCache to dictionary."""
-    return {
-        "id": device.id,
-        "mac_address": device.mac_address,
-        "ip_address": device.ip_address,
-        "device_name": device.device_name,
-        "vendor_name": device.vendor_name,
-        "device_type": device.device_type,
-        "profinet_device_id": device.profinet_device_id,
-        "profinet_vendor_id": device.profinet_vendor_id,
-        "first_seen": device.first_seen.isoformat() if device.first_seen else None,
-        "last_seen": device.last_seen.isoformat() if device.last_seen else None,
-        "added_as_rtu": device.added_as_rtu,
-    }
-
-
 def get_discovered_devices() -> list[dict[str, Any]]:
     """Get all devices in the discovery cache"""
     with get_db() as db:
         devices = db.query(DCPDiscoveryCache).order_by(
             DCPDiscoveryCache.last_seen.desc()
         ).all()
-        return [_device_to_dict(d) for d in devices]
+        return [d.to_dict() for d in devices]
 
 
 def upsert_discovered_device(device: dict[str, Any]) -> int:

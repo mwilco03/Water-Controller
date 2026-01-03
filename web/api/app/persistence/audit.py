@@ -4,6 +4,8 @@ Copyright (C) 2024
 SPDX-License-Identifier: GPL-3.0-or-later
 
 Audit log and command log operations using SQLAlchemy.
+
+Note: Uses DictSerializableMixin.to_dict() from models/base.py for serialization.
 """
 
 import logging
@@ -18,37 +20,6 @@ from ..models.user import AuditLog
 from .base import get_db
 
 logger = logging.getLogger(__name__)
-
-
-def _audit_to_dict(entry: AuditLog) -> dict[str, Any]:
-    """Convert AuditLog model to dictionary."""
-    return {
-        "id": entry.id,
-        "timestamp": entry.timestamp.isoformat() if entry.timestamp else None,
-        "user": entry.user,
-        "action": entry.action,
-        "resource_type": entry.resource_type,
-        "resource_id": entry.resource_id,
-        "details": entry.details,
-        "ip_address": entry.ip_address,
-    }
-
-
-def _command_log_to_dict(entry: CommandLog) -> dict[str, Any]:
-    """Convert CommandLog model to dictionary."""
-    return {
-        "id": entry.id,
-        "timestamp": entry.timestamp.isoformat() if entry.timestamp else None,
-        "username": entry.username,
-        "rtu_station": entry.rtu_station,
-        "control_id": entry.control_id,
-        "command": entry.command,
-        "command_value": entry.command_value,
-        "result": entry.result,
-        "error_message": entry.error_message,
-        "source_ip": entry.source_ip,
-        "session_token": entry.session_token,
-    }
 
 
 def log_audit(user: str, action: str, resource_type: str, resource_id: str,
@@ -81,7 +52,7 @@ def get_audit_log(limit: int = 100, offset: int = 0) -> list[dict[str, Any]]:
         entries = db.query(AuditLog).order_by(
             AuditLog.timestamp.desc()
         ).limit(limit).offset(offset).all()
-        return [_audit_to_dict(e) for e in entries]
+        return [e.to_dict() for e in entries]
 
 
 # ============== Command Log Operations ==============
@@ -145,7 +116,7 @@ def get_command_log(
         entries = query.order_by(
             CommandLog.timestamp.desc()
         ).limit(limit).offset(offset).all()
-        return [_command_log_to_dict(e) for e in entries]
+        return [e.to_dict() for e in entries]
 
 
 def get_command_log_count(rtu_station: str | None = None, username: str | None = None) -> int:

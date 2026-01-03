@@ -4,6 +4,8 @@ Copyright (C) 2024
 SPDX-License-Identifier: GPL-3.0-or-later
 
 Historian tags and slot configuration operations using SQLAlchemy.
+
+Note: Uses DictSerializableMixin.to_dict() from models/base.py for serialization.
 """
 
 from datetime import UTC, datetime
@@ -14,47 +16,6 @@ from .audit import log_audit
 from .base import get_db
 
 
-def _slot_to_dict(slot: SlotConfig) -> dict[str, Any]:
-    """Convert SlotConfig to dictionary."""
-    return {
-        "id": slot.id,
-        "rtu_station": slot.rtu_station,
-        "slot": slot.slot,
-        "subslot": slot.subslot,
-        "slot_type": slot.slot_type,
-        "name": slot.name,
-        "unit": slot.unit,
-        "measurement_type": slot.measurement_type,
-        "actuator_type": slot.actuator_type,
-        "scale_min": slot.scale_min,
-        "scale_max": slot.scale_max,
-        "alarm_low": slot.alarm_low,
-        "alarm_high": slot.alarm_high,
-        "alarm_low_low": slot.alarm_low_low,
-        "alarm_high_high": slot.alarm_high_high,
-        "warning_low": slot.warning_low,
-        "warning_high": slot.warning_high,
-        "deadband": slot.deadband,
-        "enabled": slot.enabled,
-        "created_at": slot.created_at.isoformat() if slot.created_at else None,
-    }
-
-
-def _tag_to_dict(tag: HistorianTag) -> dict[str, Any]:
-    """Convert HistorianTag to dictionary."""
-    return {
-        "id": tag.id,
-        "rtu_station": tag.rtu_station,
-        "slot": tag.slot,
-        "tag_name": tag.tag_name,
-        "unit": tag.unit,
-        "sample_rate_ms": tag.sample_rate_ms,
-        "deadband": tag.deadband,
-        "compression": tag.compression,
-        "created_at": tag.created_at.isoformat() if tag.created_at else None,
-    }
-
-
 # ============== Slot Configuration Operations ==============
 
 def get_all_slot_configs() -> list[dict[str, Any]]:
@@ -63,7 +24,7 @@ def get_all_slot_configs() -> list[dict[str, Any]]:
         slots = db.query(SlotConfig).order_by(
             SlotConfig.rtu_station, SlotConfig.slot
         ).all()
-        return [_slot_to_dict(s) for s in slots]
+        return [s.to_dict() for s in slots]
 
 
 def get_slot_configs_by_rtu(rtu_station: str) -> list[dict[str, Any]]:
@@ -72,7 +33,7 @@ def get_slot_configs_by_rtu(rtu_station: str) -> list[dict[str, Any]]:
         slots = db.query(SlotConfig).filter(
             SlotConfig.rtu_station == rtu_station
         ).order_by(SlotConfig.slot).all()
-        return [_slot_to_dict(s) for s in slots]
+        return [s.to_dict() for s in slots]
 
 
 def get_slot_config(rtu_station: str, slot: int) -> dict[str, Any] | None:
@@ -82,7 +43,7 @@ def get_slot_config(rtu_station: str, slot: int) -> dict[str, Any] | None:
             SlotConfig.rtu_station == rtu_station,
             SlotConfig.slot == slot
         ).first()
-        return _slot_to_dict(config) if config else None
+        return config.to_dict() if config else None
 
 
 def upsert_slot_config(config: dict[str, Any]) -> int:
@@ -159,21 +120,21 @@ def get_historian_tags() -> list[dict[str, Any]]:
     """Get all historian tags"""
     with get_db() as db:
         tags = db.query(HistorianTag).order_by(HistorianTag.tag_name).all()
-        return [_tag_to_dict(t) for t in tags]
+        return [t.to_dict() for t in tags]
 
 
 def get_historian_tag(tag_id: int) -> dict[str, Any] | None:
     """Get a specific historian tag by ID"""
     with get_db() as db:
         tag = db.query(HistorianTag).filter(HistorianTag.id == tag_id).first()
-        return _tag_to_dict(tag) if tag else None
+        return tag.to_dict() if tag else None
 
 
 def get_historian_tag_by_name(tag_name: str) -> dict[str, Any] | None:
     """Get a historian tag by name"""
     with get_db() as db:
         tag = db.query(HistorianTag).filter(HistorianTag.tag_name == tag_name).first()
-        return _tag_to_dict(tag) if tag else None
+        return tag.to_dict() if tag else None
 
 
 def upsert_historian_tag(tag: dict[str, Any]) -> int:
