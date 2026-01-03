@@ -4,6 +4,8 @@ Copyright (C) 2024
 SPDX-License-Identifier: GPL-3.0-or-later
 
 PID control loop operations using SQLAlchemy.
+
+Note: Uses DictSerializableMixin.to_dict() from models/base.py for serialization.
 """
 
 from datetime import UTC, datetime
@@ -14,43 +16,18 @@ from .audit import log_audit
 from .base import get_db
 
 
-def _loop_to_dict(loop: PidLoop) -> dict[str, Any]:
-    """Convert PidLoop to dictionary."""
-    return {
-        "id": loop.id,
-        "name": loop.name,
-        "enabled": loop.enabled,
-        "input_rtu": loop.input_rtu,
-        "input_slot": loop.input_slot,
-        "output_rtu": loop.output_rtu,
-        "output_slot": loop.output_slot,
-        "kp": loop.kp,
-        "ki": loop.ki,
-        "kd": loop.kd,
-        "setpoint": loop.setpoint,
-        "output_min": loop.output_min,
-        "output_max": loop.output_max,
-        "deadband": loop.deadband,
-        "integral_limit": loop.integral_limit,
-        "derivative_filter": loop.derivative_filter,
-        "mode": loop.mode,
-        "created_at": loop.created_at.isoformat() if loop.created_at else None,
-        "updated_at": loop.updated_at.isoformat() if loop.updated_at else None,
-    }
-
-
 def get_pid_loops() -> list[dict[str, Any]]:
     """Get all PID control loops"""
     with get_db() as db:
         loops = db.query(PidLoop).order_by(PidLoop.id).all()
-        return [_loop_to_dict(l) for l in loops]
+        return [loop.to_dict() for loop in loops]
 
 
 def get_pid_loop(loop_id: int) -> dict[str, Any] | None:
     """Get a single PID loop by ID"""
     with get_db() as db:
         loop = db.query(PidLoop).filter(PidLoop.id == loop_id).first()
-        return _loop_to_dict(loop) if loop else None
+        return loop.to_dict() if loop else None
 
 
 def create_pid_loop(loop: dict[str, Any]) -> int:

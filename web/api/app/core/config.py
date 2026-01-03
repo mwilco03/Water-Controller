@@ -133,6 +133,29 @@ class HistorianConfig:
     MAX_SAMPLES_PER_TAG: int = _get_int_env("WTC_HISTORIAN_MAX_SAMPLES", 1000000)
 
 
+class RtuDefaults:
+    """
+    RTU default configuration values.
+
+    Rationale: These defaults are based on standard PROFINET device
+    configurations and can be overridden per-device at creation time.
+
+    - VENDOR_ID 0x002A (42): Real-Time Automation (RTA) - common for
+      water treatment PLCs
+    - DEVICE_ID 0x0405 (1029): Generic PROFINET IO device
+    - SLOT_COUNT 16: Typical modular RTU configuration
+    """
+
+    # Default PROFINET vendor ID (RTA = 0x002A = 42)
+    VENDOR_ID: int = _get_int_env("WTC_DEFAULT_VENDOR_ID", 0x002A)
+
+    # Default PROFINET device ID (generic = 0x0405 = 1029)
+    DEVICE_ID: int = _get_int_env("WTC_DEFAULT_DEVICE_ID", 0x0405)
+
+    # Default slot count for modular RTUs
+    SLOT_COUNT: int = _get_int_env("WTC_DEFAULT_SLOT_COUNT", 16)
+
+
 class Settings:
     """Aggregated settings for the application."""
 
@@ -141,6 +164,7 @@ class Settings:
         self.polling = PollingConfig()
         self.circuit_breaker = CircuitBreakerConfig()
         self.historian = HistorianConfig()
+        self.rtu_defaults = RtuDefaults()
 
         # Convenience accessors for common values
         self.command_timeout_ms = self.timeouts.COMMAND_TIMEOUT_MS

@@ -4,6 +4,8 @@ Copyright (C) 2024
 SPDX-License-Identifier: GPL-3.0-or-later
 
 Modbus server config, downstream devices, and register mappings using SQLAlchemy.
+
+Note: Uses DictSerializableMixin.to_dict() from models/base.py for serialization.
 """
 
 from datetime import UTC, datetime
@@ -18,71 +20,13 @@ from .audit import log_audit
 from .base import get_db
 
 
-def _config_to_dict(config: ModbusServerConfig) -> dict[str, Any]:
-    """Convert ModbusServerConfig to dictionary."""
-    return {
-        "id": config.id,
-        "tcp_enabled": config.tcp_enabled,
-        "tcp_port": config.tcp_port,
-        "tcp_bind_address": config.tcp_bind_address,
-        "rtu_enabled": config.rtu_enabled,
-        "rtu_device": config.rtu_device,
-        "rtu_baud_rate": config.rtu_baud_rate,
-        "rtu_parity": config.rtu_parity,
-        "rtu_data_bits": config.rtu_data_bits,
-        "rtu_stop_bits": config.rtu_stop_bits,
-        "rtu_slave_addr": config.rtu_slave_addr,
-        "updated_at": config.updated_at.isoformat() if config.updated_at else None,
-    }
-
-
-def _device_to_dict(device: ModbusDownstreamDevice) -> dict[str, Any]:
-    """Convert ModbusDownstreamDevice to dictionary."""
-    return {
-        "id": device.id,
-        "name": device.name,
-        "transport": device.transport,
-        "tcp_host": device.tcp_host,
-        "tcp_port": device.tcp_port,
-        "rtu_device": device.rtu_device,
-        "rtu_baud_rate": device.rtu_baud_rate,
-        "slave_addr": device.slave_addr,
-        "poll_interval_ms": device.poll_interval_ms,
-        "timeout_ms": device.timeout_ms,
-        "enabled": device.enabled,
-        "description": device.description,
-        "created_at": device.created_at.isoformat() if device.created_at else None,
-        "updated_at": device.updated_at.isoformat() if device.updated_at else None,
-    }
-
-
-def _mapping_to_dict(mapping: ModbusRegisterMapping) -> dict[str, Any]:
-    """Convert ModbusRegisterMapping to dictionary."""
-    return {
-        "id": mapping.id,
-        "modbus_addr": mapping.modbus_addr,
-        "register_type": mapping.register_type,
-        "data_type": mapping.data_type,
-        "source_type": mapping.source_type,
-        "rtu_station": mapping.rtu_station,
-        "slot": mapping.slot,
-        "description": mapping.description,
-        "scaling_enabled": mapping.scaling_enabled,
-        "scale_raw_min": mapping.scale_raw_min,
-        "scale_raw_max": mapping.scale_raw_max,
-        "scale_eng_min": mapping.scale_eng_min,
-        "scale_eng_max": mapping.scale_eng_max,
-        "created_at": mapping.created_at.isoformat() if mapping.created_at else None,
-    }
-
-
 # ============== Modbus Server Config ==============
 
 def get_modbus_server_config() -> dict[str, Any]:
     """Get Modbus server configuration"""
     with get_db() as db:
         config = db.query(ModbusServerConfig).filter(ModbusServerConfig.id == 1).first()
-        return _config_to_dict(config) if config else {}
+        return config.to_dict() if config else {}
 
 
 def update_modbus_server_config(config: dict[str, Any]) -> bool:
@@ -115,7 +59,7 @@ def get_modbus_downstream_devices() -> list[dict[str, Any]]:
     """Get all downstream Modbus devices"""
     with get_db() as db:
         devices = db.query(ModbusDownstreamDevice).order_by(ModbusDownstreamDevice.id).all()
-        return [_device_to_dict(d) for d in devices]
+        return [d.to_dict() for d in devices]
 
 
 def create_modbus_downstream_device(device: dict[str, Any]) -> int:
@@ -189,7 +133,7 @@ def get_modbus_register_mappings() -> list[dict[str, Any]]:
         mappings = db.query(ModbusRegisterMapping).order_by(
             ModbusRegisterMapping.modbus_addr
         ).all()
-        return [_mapping_to_dict(m) for m in mappings]
+        return [m.to_dict() for m in mappings]
 
 
 def create_modbus_register_mapping(mapping: dict[str, Any]) -> int:

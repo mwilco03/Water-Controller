@@ -59,21 +59,6 @@ def verify_password(password: str, stored_hash: str) -> bool:
         return False
 
 
-def _user_to_dict(user: User) -> dict[str, Any]:
-    """Convert User model to dictionary."""
-    return {
-        "id": user.id,
-        "username": user.username,
-        "password_hash": user.password_hash,
-        "role": user.role,
-        "active": user.active,
-        "sync_to_rtus": user.sync_to_rtus,
-        "created_at": user.created_at.isoformat() if user.created_at else None,
-        "updated_at": user.updated_at.isoformat() if user.updated_at else None,
-        "last_login": user.last_login.isoformat() if user.last_login else None,
-    }
-
-
 def get_users(include_inactive: bool = False) -> list[dict[str, Any]]:
     """Get all users"""
     with get_db() as db:
@@ -81,21 +66,21 @@ def get_users(include_inactive: bool = False) -> list[dict[str, Any]]:
         if not include_inactive:
             query = query.filter(User.active == True)
         users = query.order_by(User.username).all()
-        return [_user_to_dict(u) for u in users]
+        return [u.to_dict() for u in users]
 
 
 def get_user(user_id: int) -> dict[str, Any] | None:
     """Get a single user by ID"""
     with get_db() as db:
         user = db.query(User).filter(User.id == user_id).first()
-        return _user_to_dict(user) if user else None
+        return user.to_dict() if user else None
 
 
 def get_user_by_username(username: str) -> dict[str, Any] | None:
     """Get a user by username"""
     with get_db() as db:
         user = db.query(User).filter(User.username == username).first()
-        return _user_to_dict(user) if user else None
+        return user.to_dict() if user else None
 
 
 def create_user(user: dict[str, Any]) -> int:

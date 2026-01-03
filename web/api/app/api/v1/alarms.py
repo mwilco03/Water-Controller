@@ -8,7 +8,7 @@ Access Model:
 - POST/PUT/DELETE endpoints: Control access (authentication required)
 """
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, Path, Query
@@ -16,10 +16,9 @@ from sqlalchemy.orm import Session
 
 from ...core.auth import log_control_action, require_control_access
 from ...core.errors import build_success_response
-from ...core.exceptions import AlarmNotFoundError, RtuNotFoundError
-from ...models.alarm import AlarmEvent, AlarmPriority, AlarmRule, AlarmState
+from ...core.exceptions import AlarmNotFoundError
+from ...models.alarm import AlarmEvent, AlarmState
 from ...models.base import get_db
-from ...models.rtu import RTU
 from ...persistence import alarms as alarm_persistence
 from ...schemas.alarm import (
     AlarmAcknowledgeRequest,
@@ -27,9 +26,7 @@ from ...schemas.alarm import (
     AlarmShelveRequest,
     ShelvedAlarm,
 )
-from ...schemas.alarm import (
-    AlarmEvent as AlarmEventSchema,
-)
+from ...services.alarm_service import AlarmService
 
 router = APIRouter()
 
@@ -44,62 +41,23 @@ async def list_alarms(
 ) -> dict[str, Any]:
     """
     List active alarms across all RTUs.
+
+    Uses AlarmService for query logic (single source of truth).
     """
-    query = db.query(AlarmEvent).filter(AlarmEvent.state != AlarmState.CLEARED)
+    service = AlarmService(db)
+    events, stats = service.list_active_alarms(
+        rtu_name=rtu,
+        priority=priority,
+        acknowledged=acknowledged,
+        limit=limit,
+    )
 
-    if rtu:
-        rtu_obj = db.query(RTU).filter(RTU.station_name == rtu).first()
-        if not rtu_obj:
-            raise RtuNotFoundError(rtu)
-        query = query.filter(AlarmEvent.rtu_id == rtu_obj.id)
-
-    if priority:
-        query = query.filter(
-            AlarmRule.priority == priority.upper()
-        ).join(AlarmRule)
-
-    if acknowledged is not None:
-        if acknowledged:
-            query = query.filter(AlarmEvent.state == AlarmState.ACKNOWLEDGED)
-        else:
-            query = query.filter(AlarmEvent.state == AlarmState.ACTIVE)
-
-    total = query.count()
-    active_count = db.query(AlarmEvent).filter(AlarmEvent.state == AlarmState.ACTIVE).count()
-    unack_count = db.query(AlarmEvent).filter(
-        AlarmEvent.state == AlarmState.ACTIVE,
-        AlarmEvent.acknowledged_at.is_(None)
-    ).count()
-
-    events = query.order_by(AlarmEvent.activated_at.desc()).limit(limit).all()
-
-    result = []
-    for event in events:
-        rule = event.rule
-        rtu_obj = event.rtu
-
-        alarm_schema = AlarmEventSchema(
-            id=event.id,
-            rtu=rtu_obj.station_name if rtu_obj else "unknown",
-            tag=rule.tag if rule else "unknown",
-            priority=rule.priority if rule else AlarmPriority.MEDIUM,
-            type=rule.alarm_type if rule else "UNKNOWN",
-            message=event.message or "",
-            value=event.value_at_activation,
-            setpoint=rule.setpoint if rule else 0.0,
-            unit=None,  # Would come from sensor
-            state=event.state,
-            activated_at=event.activated_at,
-            acknowledged_at=event.acknowledged_at,
-            acknowledged_by=event.acknowledged_by,
-            cleared_at=event.cleared_at,
-        )
-        result.append(alarm_schema.model_dump())
+    result = [service.event_to_dict(event) for event in events]
 
     meta = AlarmListMeta(
-        total=total,
-        active=active_count,
-        unacknowledged=unack_count,
+        total=stats["total"],
+        active=stats["active"],
+        unacknowledged=stats["unacknowledged"],
     )
 
     return {
@@ -119,60 +77,32 @@ async def alarm_history(
 ) -> dict[str, Any]:
     """
     Get historical alarm log.
-    """
-    # Default to last 24 hours
-    now = datetime.now(UTC)
-    if not end:
-        end = now
-    if not start:
-        start = end - timedelta(hours=24)
 
-    query = db.query(AlarmEvent).filter(
-        AlarmEvent.activated_at >= start,
-        AlarmEvent.activated_at <= end
+    Uses AlarmService for query logic (single source of truth).
+    """
+    service = AlarmService(db)
+    events, total = service.get_alarm_history(
+        start=start,
+        end=end,
+        rtu_name=rtu,
+        priority=priority,
+        limit=limit,
     )
 
-    if rtu:
-        rtu_obj = db.query(RTU).filter(RTU.station_name == rtu).first()
-        if not rtu_obj:
-            raise RtuNotFoundError(rtu)
-        query = query.filter(AlarmEvent.rtu_id == rtu_obj.id)
+    result = [service.event_to_dict(event) for event in events]
 
-    if priority:
-        query = query.join(AlarmRule).filter(AlarmRule.priority == priority.upper())
-
-    total = query.count()
-    events = query.order_by(AlarmEvent.activated_at.desc()).limit(limit).all()
-
-    result = []
-    for event in events:
-        rule = event.rule
-        rtu_obj = event.rtu
-
-        alarm_schema = AlarmEventSchema(
-            id=event.id,
-            rtu=rtu_obj.station_name if rtu_obj else "unknown",
-            tag=rule.tag if rule else "unknown",
-            priority=rule.priority if rule else AlarmPriority.MEDIUM,
-            type=rule.alarm_type if rule else "UNKNOWN",
-            message=event.message or "",
-            value=event.value_at_activation,
-            setpoint=rule.setpoint if rule else 0.0,
-            unit=None,
-            state=event.state,
-            activated_at=event.activated_at,
-            acknowledged_at=event.acknowledged_at,
-            acknowledged_by=event.acknowledged_by,
-            cleared_at=event.cleared_at,
-        )
-        result.append(alarm_schema.model_dump())
+    # Calculate actual time range used
+    from datetime import UTC, timedelta
+    now = datetime.now(UTC)
+    actual_end = end or now
+    actual_start = start or (actual_end - timedelta(hours=24))
 
     return {
         "data": result,
         "meta": {
             "total": total,
-            "start": start.isoformat(),
-            "end": end.isoformat(),
+            "start": actual_start.isoformat(),
+            "end": actual_end.isoformat(),
         },
     }
 
@@ -189,12 +119,17 @@ async def acknowledge_alarm(
 
     **Authentication Required**: This is a control action requiring
     operator or admin role.
+
+    Uses AlarmService for business logic (single source of truth).
     """
     username = session.get("username", "unknown")
+    service = AlarmService(db)
 
-    event = db.query(AlarmEvent).filter(AlarmEvent.id == alarm_id).first()
-    if not event:
-        raise AlarmNotFoundError(alarm_id)
+    # Check if alarm exists first
+    try:
+        event = service.get_alarm_event(alarm_id)
+    except AlarmNotFoundError:
+        raise
 
     if event.state == AlarmState.CLEARED:
         # Already cleared - nothing to acknowledge
@@ -204,12 +139,12 @@ async def acknowledge_alarm(
             "message": "Alarm already cleared"
         })
 
-    # Acknowledge with authenticated user
-    event.acknowledge(
-        user=username,
+    # Acknowledge with authenticated user via service
+    event = service.acknowledge_alarm(
+        alarm_id=alarm_id,
+        username=username,
         note=request.note if request else None
     )
-    db.commit()
 
     # Log control action
     log_control_action(
@@ -239,28 +174,17 @@ async def acknowledge_all_alarms(
 
     **Authentication Required**: This is a control action requiring
     operator or admin role.
+
+    Uses AlarmService for business logic (single source of truth).
     """
     username = session.get("username", "unknown")
+    service = AlarmService(db)
 
-    query = db.query(AlarmEvent).filter(AlarmEvent.state == AlarmState.ACTIVE)
-
-    if rtu:
-        rtu_obj = db.query(RTU).filter(RTU.station_name == rtu).first()
-        if not rtu_obj:
-            raise RtuNotFoundError(rtu)
-        query = query.filter(AlarmEvent.rtu_id == rtu_obj.id)
-
-    events = query.all()
-    count = 0
-
-    for event in events:
-        event.acknowledge(
-            user=username,
-            note=request.note if request else None
-        )
-        count += 1
-
-    db.commit()
+    count = service.acknowledge_all(
+        username=username,
+        rtu_name=rtu,
+        note=request.note if request else None
+    )
 
     # Log control action
     log_control_action(

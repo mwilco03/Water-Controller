@@ -3,10 +3,28 @@ Water Treatment Controller - Legacy Persistence Models
 Copyright (C) 2024
 SPDX-License-Identifier: GPL-3.0-or-later
 
-SQLAlchemy models that match the legacy persistence layer schema.
-These are used by the persistence layer for backward compatibility.
+DEPRECATED: These legacy models exist for backward compatibility with the
+persistence layer. New code should use the ORM models in models/rtu.py instead.
 
-Note: These may be consolidated with the main models in a future refactor.
+Migration Path:
+===============
+The codebase has two parallel model systems:
+
+1. New ORM models (models/rtu.py): RTU, Sensor, Control
+   - Table names: rtus, sensors, controls
+   - Used by: API layer (app/api/v1/*)
+   - Features: Relationships, state machine, cascade deletes
+
+2. Legacy models (this file): RtuDevice, RtuSensor, RtuControl
+   - Table names: rtu_devices, rtu_sensors, rtu_controls
+   - Used by: Persistence layer (app/persistence/*)
+   - Features: Simple CRUD operations
+
+To migrate:
+1. Update persistence layer to use new ORM models
+2. Create database migration to rename/merge tables
+3. Update all imports from this file to use models/rtu.py
+4. Remove this file after migration verified
 """
 
 from datetime import UTC, datetime
