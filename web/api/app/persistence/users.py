@@ -4,9 +4,28 @@ Copyright (C) 2024
 SPDX-License-Identifier: GPL-3.0-or-later
 
 User management and authentication operations using SQLAlchemy.
+
+Password Hashing Strategy:
+==========================
+Two hash types are supported:
+
+1. BCRYPT (preferred for web authentication):
+   - Format: "BCRYPT:<bcrypt_hash>"
+   - Uses bcrypt with work factor 12
+   - Secure against rainbow tables and GPU attacks
+
+2. DJB2 (legacy, required for RTU sync):
+   - Format: "DJB2:<salt_hash>:<password_hash>"
+   - Must match C implementation on RTU hardware
+   - Only used for password sync to field devices
+
+New users get bcrypt hashes. RTU sync uses DJB2 separately.
 """
 
+import hashlib
 import logging
+import os
+import secrets
 from datetime import UTC, datetime
 from typing import Any
 
@@ -17,12 +36,19 @@ from .base import get_db
 logger = logging.getLogger(__name__)
 
 # DJB2 hash constants (must match C implementation and RTU)
+# WARNING: DJB2 is NOT cryptographically secure - only used for RTU compatibility
 USER_SYNC_SALT = "NaCl4Life"
+
+# Bcrypt work factor (12 = ~250ms on modern hardware)
+BCRYPT_ROUNDS = 12
 
 
 def _djb2_hash(s: str) -> int:
     """
     DJB2 hash algorithm by Dan Bernstein.
+
+    WARNING: This is NOT a cryptographic hash. Only use for RTU compatibility.
+    For authentication, use bcrypt via hash_password().
     """
     hash_val = 5381
     for c in s:
@@ -31,10 +57,12 @@ def _djb2_hash(s: str) -> int:
     return hash_val
 
 
-def hash_password(password: str) -> str:
+def _djb2_hash_password(password: str) -> str:
     """
-    Hash password using DJB2.
+    Hash password using DJB2 for RTU sync compatibility.
     Format: "DJB2:<salt_hash>:<password_hash>"
+
+    WARNING: Only use this for RTU sync. For web auth, use hash_password().
     """
     salted = USER_SYNC_SALT + password
     hash_val = _djb2_hash(salted)
@@ -42,12 +70,50 @@ def hash_password(password: str) -> str:
     return f"DJB2:{salt_hash:08X}:{hash_val:08X}"
 
 
+def hash_password(password: str) -> str:
+    """
+    Hash password using bcrypt (secure).
+    Format: "BCRYPT:<bcrypt_hash>"
+
+    Uses work factor 12 which takes ~250ms on modern hardware,
+    providing good resistance against brute force attacks.
+    """
+    try:
+        import bcrypt
+        hashed = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt(rounds=BCRYPT_ROUNDS))
+        return f"BCRYPT:{hashed.decode('utf-8')}"
+    except ImportError:
+        # Fallback if bcrypt not installed (use PBKDF2 with SHA256)
+        logger.warning("bcrypt not available, using PBKDF2 fallback")
+        salt = secrets.token_hex(16)
+        key = hashlib.pbkdf2_hmac('sha256', password.encode(), salt.encode(), 100000)
+        return f"PBKDF2:{salt}:{key.hex()}"
+
+
 def verify_password(password: str, stored_hash: str) -> bool:
     """
     Verify password against stored hash.
+    Supports bcrypt, PBKDF2, and legacy DJB2 formats.
     """
-    if stored_hash.startswith("DJB2:"):
-        computed = hash_password(password)
+    if stored_hash.startswith("BCRYPT:"):
+        try:
+            import bcrypt
+            bcrypt_hash = stored_hash[7:].encode('utf-8')
+            return bcrypt.checkpw(password.encode('utf-8'), bcrypt_hash)
+        except ImportError:
+            logger.error("bcrypt not available for verification")
+            return False
+    elif stored_hash.startswith("PBKDF2:"):
+        parts = stored_hash.split(":")
+        if len(parts) != 3:
+            return False
+        salt = parts[1]
+        stored_key = parts[2]
+        key = hashlib.pbkdf2_hmac('sha256', password.encode(), salt.encode(), 100000)
+        return secrets.compare_digest(key.hex(), stored_key)
+    elif stored_hash.startswith("DJB2:"):
+        # Legacy format - still verify but log warning
+        computed = _djb2_hash_password(password)
         return computed == stored_hash
     else:
         # [CONDITION] + [CONSEQUENCE] + [ACTION] per Section 1.9
@@ -57,6 +123,16 @@ def verify_password(password: str, stored_hash: str) -> bool:
             "Reset user password via admin interface."
         )
         return False
+
+
+def get_rtu_sync_hash(password: str) -> str:
+    """
+    Get DJB2 hash for RTU sync.
+
+    This is separate from the web authentication hash to maintain
+    compatibility with RTU hardware while using secure hashing for web.
+    """
+    return _djb2_hash_password(password)
 
 
 def get_users(include_inactive: bool = False) -> list[dict[str, Any]]:
@@ -173,15 +249,40 @@ def get_users_for_sync() -> list[dict[str, Any]]:
         } for u in users]
 
 
-def ensure_default_admin():
-    """Ensure default admin user exists"""
+def ensure_default_admin() -> None:
+    """
+    Ensure default admin user exists.
+
+    Security:
+    - Password can be set via WTC_DEFAULT_ADMIN_PASSWORD environment variable
+    - If not set, generates a secure random password and logs it ONCE
+    - The generated password should be changed immediately after first login
+    """
     admin = get_user_by_username('admin')
     if not admin:
+        # Check for environment variable first
+        password = os.environ.get('WTC_DEFAULT_ADMIN_PASSWORD')
+
+        if password:
+            logger.info("Creating admin user with password from WTC_DEFAULT_ADMIN_PASSWORD")
+        else:
+            # Generate secure random password
+            password = secrets.token_urlsafe(16)
+            logger.warning(
+                "=" * 60 + "\n"
+                "SECURITY: Generated default admin credentials\n"
+                f"  Username: admin\n"
+                f"  Password: {password}\n"
+                "IMPORTANT: Change this password immediately after first login!\n"
+                "To set a specific password, use WTC_DEFAULT_ADMIN_PASSWORD env var.\n"
+                + "=" * 60
+            )
+
         create_user({
             'username': 'admin',
-            'password': 'H2OhYeah!',
+            'password': password,
             'role': 'admin',
             'active': True,
             'sync_to_rtus': True
         })
-        logger.info("Created default admin user (username: admin)")
+        logger.info("Created default admin user")

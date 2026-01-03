@@ -220,12 +220,19 @@ async def apply_template(
         "pid_loops": 0,
     }
 
+    # Pre-fetch all existing items to avoid N+1 queries
+    existing_slots = {s.slot_number: s for s in db.query(Slot).filter(Slot.rtu_id == rtu.id).all()}
+    existing_sensors = {s.tag: s for s in db.query(Sensor).filter(Sensor.rtu_id == rtu.id).all()}
+    existing_controls = {c.tag: c for c in db.query(Control).filter(Control.rtu_id == rtu.id).all()}
+    existing_alarms = {
+        (a.tag, a.alarm_type): a
+        for a in db.query(AlarmRule).filter(AlarmRule.rtu_id == rtu.id).all()
+    }
+    existing_pids = {p.name: p for p in db.query(PidLoop).filter(PidLoop.rtu_id == rtu.id).all()}
+
     # Apply slots
     for slot_data in config.get("slots", []):
-        existing = db.query(Slot).filter(
-            Slot.rtu_id == rtu.id,
-            Slot.slot_number == slot_data["slot_number"]
-        ).first()
+        existing = existing_slots.get(slot_data["slot_number"])
 
         if existing:
             if overwrite:
@@ -240,25 +247,22 @@ async def apply_template(
                 module_id=slot_data.get("module_id"),
             )
             db.add(slot)
+            existing_slots[slot_data["slot_number"]] = slot
             applied["slots"] += 1
 
     db.flush()
 
+    # Refresh slot lookup after flush to get IDs for new slots
+    slot_by_number = {s.slot_number: s for s in db.query(Slot).filter(Slot.rtu_id == rtu.id).all()}
+
     # Apply sensors
     for sensor_data in config.get("sensors", []):
-        existing = db.query(Sensor).filter(
-            Sensor.rtu_id == rtu.id,
-            Sensor.tag == sensor_data["tag"]
-        ).first()
+        existing = existing_sensors.get(sensor_data["tag"])
 
         if existing and not overwrite:
             continue
 
-        # Get slot
-        slot = db.query(Slot).filter(
-            Slot.rtu_id == rtu.id,
-            Slot.slot_number == sensor_data["slot_number"]
-        ).first()
+        slot = slot_by_number.get(sensor_data["slot_number"])
 
         if existing:
             existing.slot_id = slot.id if slot else None
@@ -287,18 +291,12 @@ async def apply_template(
 
     # Apply controls
     for control_data in config.get("controls", []):
-        existing = db.query(Control).filter(
-            Control.rtu_id == rtu.id,
-            Control.tag == control_data["tag"]
-        ).first()
+        existing = existing_controls.get(control_data["tag"])
 
         if existing and not overwrite:
             continue
 
-        slot = db.query(Slot).filter(
-            Slot.rtu_id == rtu.id,
-            Slot.slot_number == control_data["slot_number"]
-        ).first()
+        slot = slot_by_number.get(control_data["slot_number"])
 
         if existing:
             existing.slot_id = slot.id if slot else None
@@ -323,11 +321,7 @@ async def apply_template(
 
     # Apply alarms
     for alarm_data in config.get("alarms", []):
-        existing = db.query(AlarmRule).filter(
-            AlarmRule.rtu_id == rtu.id,
-            AlarmRule.tag == alarm_data["tag"],
-            AlarmRule.alarm_type == alarm_data["alarm_type"]
-        ).first()
+        existing = existing_alarms.get((alarm_data["tag"], alarm_data["alarm_type"]))
 
         if existing and not overwrite:
             continue
@@ -353,10 +347,7 @@ async def apply_template(
 
     # Apply PID loops
     for pid_data in config.get("pid_loops", []):
-        existing = db.query(PidLoop).filter(
-            PidLoop.rtu_id == rtu.id,
-            PidLoop.name == pid_data["name"]
-        ).first()
+        existing = existing_pids.get(pid_data["name"])
 
         if existing and not overwrite:
             continue
@@ -426,9 +417,16 @@ async def create_template_from_rtu(
             details={"field": "name"}
         )
 
-    # Extract configuration
+    # Extract configuration - pre-fetch all related data to avoid N+1 queries
+    all_slots = db.query(Slot).filter(Slot.rtu_id == rtu.id).all()
+    all_sensors = db.query(Sensor).filter(Sensor.rtu_id == rtu.id).all()
+    all_controls = db.query(Control).filter(Control.rtu_id == rtu.id).all()
+
+    # Build slot lookup dict for O(1) access
+    slot_by_id = {slot.id: slot for slot in all_slots}
+
     slots = []
-    for slot in db.query(Slot).filter(Slot.rtu_id == rtu.id).all():
+    for slot in all_slots:
         slots.append({
             "slot_number": slot.slot_number,
             "module_type": slot.module_type,
@@ -436,8 +434,8 @@ async def create_template_from_rtu(
         })
 
     sensors = []
-    for sensor in db.query(Sensor).filter(Sensor.rtu_id == rtu.id).all():
-        slot = db.query(Slot).filter(Slot.id == sensor.slot_id).first()
+    for sensor in all_sensors:
+        slot = slot_by_id.get(sensor.slot_id)
         sensors.append({
             "tag": sensor.tag,
             "slot_number": slot.slot_number if slot else 0,
@@ -451,8 +449,8 @@ async def create_template_from_rtu(
         })
 
     controls = []
-    for control in db.query(Control).filter(Control.rtu_id == rtu.id).all():
-        slot = db.query(Slot).filter(Slot.id == control.slot_id).first()
+    for control in all_controls:
+        slot = slot_by_id.get(control.slot_id)
         controls.append({
             "tag": control.tag,
             "slot_number": slot.slot_number if slot else 0,

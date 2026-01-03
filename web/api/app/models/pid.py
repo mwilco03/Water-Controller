@@ -13,6 +13,7 @@ from sqlalchemy import (
     Column,
     DateTime,
     Float,
+    Index,
     Integer,
     String,
 )
@@ -65,4 +66,11 @@ class PidLoop(Base):
         DateTime(timezone=True),
         default=lambda: datetime.now(UTC),
         onupdate=lambda: datetime.now(UTC)
+    )
+
+    # Indexes for efficient queries
+    __table_args__ = (
+        Index("ix_pid_loops_name", "name"),
+        Index("ix_pid_loops_input_rtu", "input_rtu"),
+        Index("ix_pid_loops_output_rtu", "output_rtu"),
     )

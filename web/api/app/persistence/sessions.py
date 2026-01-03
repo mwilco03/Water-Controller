@@ -125,14 +125,13 @@ def delete_session_by_prefix(token_prefix: str, admin_user: str | None = None) -
 
 
 def cleanup_expired_sessions() -> int:
-    """Remove expired sessions"""
+    """Remove expired sessions using bulk delete for efficiency"""
     with get_db() as db:
-        expired = db.query(UserSession).filter(
+        # Use bulk delete instead of fetching+iterating
+        # synchronize_session=False is safe here since we don't use deleted objects
+        count = db.query(UserSession).filter(
             UserSession.expires_at < datetime.now(UTC)
-        ).all()
-        count = len(expired)
-        for session in expired:
-            db.delete(session)
+        ).delete(synchronize_session=False)
         db.commit()
         if count > 0:
             logger.info(f"Cleaned up {count} expired sessions")
