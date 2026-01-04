@@ -35,6 +35,7 @@
 #include "modbus/modbus_gateway.h"
 #include "db/database.h"
 #include "coordination/failover.h"
+#include "simulation/simulator.h"
 #include "utils/logger.h"
 #include "utils/time_utils.h"
 
@@ -58,6 +59,7 @@ static ipc_server_t *g_ipc = NULL;
 static modbus_gateway_t *g_modbus = NULL;
 static wtc_database_t *g_database = NULL;
 static failover_manager_t *g_failover = NULL;
+static simulator_t *g_simulator = NULL;
 
 /* Configuration */
 typedef struct {
@@ -88,6 +90,9 @@ typedef struct {
     int log_forward_port;
     char log_forward_type[32];  /* "elastic", "graylog", "syslog" */
     bool log_forward_enabled;
+    /* Simulation mode */
+    bool simulation_mode;
+    char simulation_scenario[64];
 } app_config_t;
 
 static app_config_t g_config = {
@@ -118,6 +123,9 @@ static app_config_t g_config = {
     .log_forward_port = 0,
     .log_forward_type = "",
     .log_forward_enabled = false,
+    /* Simulation mode defaults */
+    .simulation_mode = false,
+    .simulation_scenario = "water_treatment_plant",
 };
 
 /* Signal handler */
@@ -310,6 +318,10 @@ static void print_usage(const char *program) {
     printf("  --no-db                  Disable database persistence\n");
     printf("  --log-forward <host:port> Forward logs to Elastic/Graylog\n");
     printf("  --log-forward-type <type> Log forward type: elastic, graylog, syslog\n");
+    printf("  -s, --simulation         Run in simulation mode (no real hardware)\n");
+    printf("  --scenario <name>        Simulation scenario (default: water_treatment_plant)\n");
+    printf("                           Options: normal, startup, alarms, high_load,\n");
+    printf("                                    maintenance, water_treatment_plant\n");
     printf("  -h, --help               Show this help\n");
 }
 
@@ -324,6 +336,7 @@ static void parse_args(int argc, char *argv[]) {
         OPT_NO_DB,
         OPT_LOG_FORWARD,
         OPT_LOG_FORWARD_TYPE,
+        OPT_SCENARIO,
     };
 
     static struct option long_options[] = {
@@ -343,12 +356,14 @@ static void parse_args(int argc, char *argv[]) {
         {"no-db",            no_argument,       0, OPT_NO_DB},
         {"log-forward",      required_argument, 0, OPT_LOG_FORWARD},
         {"log-forward-type", required_argument, 0, OPT_LOG_FORWARD_TYPE},
+        {"simulation",       no_argument,       0, 's'},
+        {"scenario",         required_argument, 0, OPT_SCENARIO},
         {"help",             no_argument,       0, 'h'},
         {0, 0, 0, 0}
     };
 
     int opt;
-    while ((opt = getopt_long(argc, argv, "i:c:l:vqt:p:dh", long_options, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "i:c:l:vqt:p:dsh", long_options, NULL)) != -1) {
         switch (opt) {
         case 'i':
             strncpy(g_config.interface, optarg, sizeof(g_config.interface) - 1);
@@ -411,11 +426,28 @@ static void parse_args(int argc, char *argv[]) {
         case OPT_LOG_FORWARD_TYPE:
             strncpy(g_config.log_forward_type, optarg, sizeof(g_config.log_forward_type) - 1);
             break;
+        case 's':
+            g_config.simulation_mode = true;
+            break;
+        case OPT_SCENARIO:
+            strncpy(g_config.simulation_scenario, optarg, sizeof(g_config.simulation_scenario) - 1);
+            break;
         case 'h':
         default:
             print_usage(argv[0]);
             exit(opt == 'h' ? 0 : 1);
         }
+    }
+
+    /* Check environment variables for simulation mode */
+    const char *env_sim = getenv("WTC_SIMULATION_MODE");
+    if (env_sim && (strcmp(env_sim, "1") == 0 || strcmp(env_sim, "true") == 0)) {
+        g_config.simulation_mode = true;
+    }
+    const char *env_scenario = getenv("WTC_SIMULATION_SCENARIO");
+    if (env_scenario && env_scenario[0]) {
+        strncpy(g_config.simulation_scenario, env_scenario,
+                sizeof(g_config.simulation_scenario) - 1);
     }
 }
 
@@ -492,20 +524,42 @@ static wtc_result_t initialize_components(void) {
         return res;
     }
 
-    /* Initialize PROFINET controller */
-    profinet_config_t pn_config = {
-        .cycle_time_us = g_config.cycle_time_ms * 1000,
-        .send_clock_factor = 32,
-        .use_raw_sockets = true,
-        .socket_priority = 6,
-    };
-    strncpy(pn_config.interface_name, g_config.interface,
-            sizeof(pn_config.interface_name) - 1);
+    /* Initialize PROFINET controller or Simulator */
+    if (g_config.simulation_mode) {
+        /* Simulation mode - use virtual RTU simulator */
+        LOG_INFO("*** SIMULATION MODE ENABLED ***");
+        LOG_INFO("Scenario: %s", g_config.simulation_scenario);
 
-    res = profinet_controller_init(&g_profinet, &pn_config);
-    if (res != WTC_OK) {
-        LOG_ERROR("Failed to initialize PROFINET controller");
-        return res;
+        simulator_config_t sim_config = {
+            .scenario = simulator_parse_scenario(g_config.simulation_scenario),
+            .update_rate_hz = 1.0f,
+            .enable_alarms = true,
+            .enable_pid_response = true,
+            .time_scale = 1.0f,
+        };
+
+        res = simulator_init(&g_simulator, &sim_config);
+        if (res != WTC_OK) {
+            LOG_ERROR("Failed to initialize simulator");
+            return res;
+        }
+        simulator_set_registry(g_simulator, g_registry);
+    } else {
+        /* Normal mode - use real PROFINET controller */
+        profinet_config_t pn_config = {
+            .cycle_time_us = g_config.cycle_time_ms * 1000,
+            .send_clock_factor = 32,
+            .use_raw_sockets = true,
+            .socket_priority = 6,
+        };
+        strncpy(pn_config.interface_name, g_config.interface,
+                sizeof(pn_config.interface_name) - 1);
+
+        res = profinet_controller_init(&g_profinet, &pn_config);
+        if (res != WTC_OK) {
+            LOG_ERROR("Failed to initialize PROFINET controller");
+            return res;
+        }
     }
 
     /* Initialize control engine */
@@ -619,10 +673,18 @@ static wtc_result_t initialize_components(void) {
 static wtc_result_t start_components(void) {
     wtc_result_t res;
 
-    res = profinet_controller_start(g_profinet);
-    if (res != WTC_OK) {
-        LOG_ERROR("Failed to start PROFINET controller");
-        return res;
+    if (g_config.simulation_mode) {
+        res = simulator_start(g_simulator);
+        if (res != WTC_OK) {
+            LOG_ERROR("Failed to start simulator");
+            return res;
+        }
+    } else {
+        res = profinet_controller_start(g_profinet);
+        if (res != WTC_OK) {
+            LOG_ERROR("Failed to start PROFINET controller");
+            return res;
+        }
     }
 
     res = control_engine_start(g_control);
@@ -679,6 +741,7 @@ static void stop_components(void) {
     if (g_historian) historian_stop(g_historian);
     if (g_alarms) alarm_manager_stop(g_alarms);
     if (g_control) control_engine_stop(g_control);
+    if (g_simulator) simulator_stop(g_simulator);
     if (g_profinet) profinet_controller_stop(g_profinet);
 
     /* Save configuration to database before shutdown */
@@ -696,7 +759,8 @@ static void cleanup_components(void) {
     historian_cleanup(g_historian);
     alarm_manager_cleanup(g_alarms);
     control_engine_cleanup(g_control);
-    profinet_controller_cleanup(g_profinet);
+    if (g_simulator) simulator_cleanup(g_simulator);
+    if (g_profinet) profinet_controller_cleanup(g_profinet);
     rtu_registry_cleanup(g_registry);
 
     /* Disconnect and cleanup database last */
@@ -751,6 +815,11 @@ int main(int argc, char *argv[]) {
         /* Main loop processing */
         time_sleep_ms(100);
 
+        /* Process simulator if in simulation mode */
+        if (g_simulator) {
+            simulator_process(g_simulator);
+        }
+
         /* Update IPC shared memory and process commands */
         ipc_server_update(g_ipc);
         ipc_server_process_commands(g_ipc);
@@ -775,6 +844,12 @@ int main(int argc, char *argv[]) {
             alarm_stats_t alarm_stats;
             alarm_manager_get_statistics(g_alarms, &alarm_stats);
 
+            if (g_simulator) {
+                simulator_stats_t sim_stats;
+                simulator_get_stats(g_simulator, &sim_stats);
+                LOG_DEBUG("Status [SIMULATION]: RTUs=%d, Sensors=%d, Updates=%d",
+                         sim_stats.rtu_count, sim_stats.sensor_count, sim_stats.update_count);
+            }
             LOG_DEBUG("Status: RTUs=%d/%d, Alarms=%d (unack=%d)",
                      reg_stats.connected_devices, reg_stats.total_devices,
                      alarm_stats.active_alarms, alarm_stats.unack_alarms);

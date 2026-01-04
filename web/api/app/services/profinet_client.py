@@ -4,13 +4,26 @@ Copyright (C) 2024
 SPDX-License-Identifier: GPL-3.0-or-later
 
 Integration with the C controller via shared memory.
-Supports demo mode for E2E testing without real hardware.
+Supports simulation mode for testing and training without real hardware.
+
+Simulation mode can be enabled via:
+  - Environment variable: WTC_SIMULATION_MODE=1 or WTC_DEMO_MODE=1
+  - When shared memory is not available (controller not running)
+
+In simulation mode, the client uses demo_mode.py to generate realistic
+water treatment plant data matching the C simulator scenarios.
 """
 
 import logging
+import os
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+# Check for simulation mode via environment
+_SIMULATION_MODE_ENV = os.environ.get("WTC_SIMULATION_MODE", "").lower() in ("1", "true", "yes")
+_DEMO_MODE_ENV = os.environ.get("WTC_DEMO_MODE", "").lower() in ("1", "true", "yes")
+SIMULATION_ENABLED = _SIMULATION_MODE_ENV or _DEMO_MODE_ENV
 
 # Try to import the shared memory client
 try:
@@ -54,14 +67,31 @@ class ProfinetClient:
     Client for interacting with the PROFINET controller.
 
     Priority order:
-    1. Real C controller via shared memory (if running)
-    2. Demo mode (if enabled) - provides realistic simulated data
-    3. Simulation mode (fallback) - returns empty data
+    1. Real C controller via shared memory (if running and not in simulation mode)
+    2. Simulation/Demo mode - provides realistic simulated data
+    3. Empty data fallback
+
+    Simulation mode is automatically enabled when:
+    - WTC_SIMULATION_MODE=1 or WTC_DEMO_MODE=1 environment variable is set
+    - Shared memory client is not available
     """
 
     def __init__(self):
         self._client: Any | None = None
-        self._simulation_mode = not SHM_AVAILABLE
+        self._simulation_mode = not SHM_AVAILABLE or SIMULATION_ENABLED
+
+        # Auto-enable demo service when in simulation mode
+        if self._simulation_mode:
+            demo = _get_demo_service()
+            if demo and not demo.enabled:
+                scenario = os.environ.get("WTC_SIMULATION_SCENARIO",
+                          os.environ.get("WTC_DEMO_SCENARIO", "water_treatment_plant"))
+                try:
+                    from .demo_mode import DemoScenario
+                    demo.enable(DemoScenario(scenario))
+                    logger.info(f"Simulation mode enabled with scenario: {scenario}")
+                except (ValueError, ImportError) as e:
+                    logger.warning(f"Could not enable demo scenario '{scenario}': {e}")
 
     def connect(self) -> bool:
         """Connect to the PROFINET controller."""
@@ -84,8 +114,13 @@ class ProfinetClient:
     def is_connected(self) -> bool:
         """Check if connected to the controller."""
         if self._simulation_mode:
-            return True
+            demo = _get_demo_service()
+            return demo is not None and demo.enabled
         return self._client is not None and self._client.is_connected()
+
+    def is_simulation_mode(self) -> bool:
+        """Check if running in simulation mode."""
+        return self._simulation_mode
 
     def is_controller_running(self) -> bool:
         """Check if the PROFINET controller is running."""
