@@ -20,7 +20,8 @@ from app.core.ports import get_database_url
 from app.models.base import Base
 
 # Import all models to ensure they're registered with Base.metadata
-from app.models import rtu, user, legacy  # noqa: F401
+from app.models import rtu, user, alarm, historian, pid, audit, discovery, template  # noqa: F401
+from app.models import config as config_models  # noqa: F401
 
 # Alembic Config object
 config = context.config
