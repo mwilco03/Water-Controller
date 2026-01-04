@@ -3,28 +3,22 @@ Water Treatment Controller - Legacy Persistence Models
 Copyright (C) 2024
 SPDX-License-Identifier: GPL-3.0-or-later
 
-DEPRECATED: These legacy models exist for backward compatibility with the
-persistence layer. New code should use the ORM models in models/rtu.py instead.
+╔══════════════════════════════════════════════════════════════════════════════╗
+║  DEPRECATED - SCHEDULED FOR REMOVAL                                          ║
+║                                                                              ║
+║  Migration Status: COMPLETE                                                  ║
+║  - Persistence layer migrated to use RTU, Sensor, Control from models/rtu.py║
+║  - No active code imports from this file                                     ║
+║  - Legacy tables (rtu_devices, rtu_sensors, rtu_controls) no longer used    ║
+║                                                                              ║
+║  This file is retained only for reference. Delete after database migration  ║
+║  removes the legacy tables.                                                  ║
+╚══════════════════════════════════════════════════════════════════════════════╝
 
-Migration Path:
-===============
-The codebase has two parallel model systems:
-
-1. New ORM models (models/rtu.py): RTU, Sensor, Control
-   - Table names: rtus, sensors, controls
-   - Used by: API layer (app/api/v1/*)
-   - Features: Relationships, state machine, cascade deletes
-
-2. Legacy models (this file): RtuDevice, RtuSensor, RtuControl
-   - Table names: rtu_devices, rtu_sensors, rtu_controls
-   - Used by: Persistence layer (app/persistence/*)
-   - Features: Simple CRUD operations
-
-To migrate:
-1. Update persistence layer to use new ORM models
-2. Create database migration to rename/merge tables
-3. Update all imports from this file to use models/rtu.py
-4. Remove this file after migration verified
+Legacy Table Names (for migration reference):
+- rtu_devices   → rtus
+- rtu_sensors   → sensors
+- rtu_controls  → controls
 """
 
 from datetime import UTC, datetime
