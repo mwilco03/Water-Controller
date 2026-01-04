@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { rtuLogger, configLogger } from '@/lib/logger';
+import { useHMIToast } from '@/components/hmi';
 
 interface RTUDevice {
   station_name: string;
@@ -49,7 +50,7 @@ export default function IOTagsPage() {
   const [showEditModal, setShowEditModal] = useState<SlotConfig | null>(null);
   const [showHistorianModal, setShowHistorianModal] = useState<HistorianTag | null>(null);
   const [loading, setLoading] = useState(false);
-  const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const { showMessage } = useHMIToast();
 
   const fetchRtus = useCallback(async () => {
     try {
@@ -100,11 +101,6 @@ export default function IOTagsPage() {
       fetchHistorianTags();
     }
   }, [selectedRtu, fetchSlotConfigs, fetchHistorianTags]);
-
-  const showMessage = (type: 'success' | 'error', text: string) => {
-    setMessage({ type, text });
-    setTimeout(() => setMessage(null), 5000);
-  };
 
   const saveSlotConfig = async () => {
     if (!showEditModal) return;
@@ -282,17 +278,6 @@ export default function IOTagsPage() {
           </button>
         </div>
       </div>
-
-      {/* Message Banner */}
-      {message && (
-        <div
-          className={`p-4 rounded-lg ${
-            message.type === 'success' ? 'bg-status-ok/10 text-status-ok' : 'bg-status-alarm/10 text-status-alarm'
-          }`}
-        >
-          {message.text}
-        </div>
-      )}
 
       {/* RTU Selector */}
       <div className="hmi-card p-4">

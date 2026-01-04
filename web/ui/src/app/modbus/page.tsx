@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { modbusLogger } from '@/lib/logger';
+import { useHMIToast } from '@/components/hmi';
 
 interface ModbusServerConfig {
   tcp_enabled: boolean;
@@ -68,7 +69,7 @@ export default function ModbusPage() {
   const [stats, setStats] = useState<ModbusStats | null>(null);
   const [rtus, setRtus] = useState<RTUDevice[]>([]);
   const [loading, setLoading] = useState(false);
-  const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const { showMessage } = useHMIToast();
 
   // Modal states
   const [showDeviceModal, setShowDeviceModal] = useState(false);
@@ -117,11 +118,6 @@ export default function ModbusPage() {
     const interval = setInterval(fetchStats, 5000);
     return () => clearInterval(interval);
   }, []);
-
-  const showMsg = (type: 'success' | 'error', text: string) => {
-    setMessage({ type, text });
-    setTimeout(() => setMessage(null), 5000);
-  };
 
   const fetchServerConfig = async () => {
     try {
@@ -188,12 +184,12 @@ export default function ModbusPage() {
         body: JSON.stringify(serverConfig),
       });
       if (res.ok) {
-        showMsg('success', 'Server configuration saved');
+        showMessage('success', 'Server configuration saved');
       } else {
-        showMsg('error', 'Failed to save configuration');
+        showMessage('error', 'Failed to save configuration');
       }
     } catch (error) {
-      showMsg('error', 'Error saving configuration');
+      showMessage('error', 'Error saving configuration');
     } finally {
       setLoading(false);
     }
@@ -203,10 +199,10 @@ export default function ModbusPage() {
     try {
       const res = await fetch('/api/v1/modbus/restart', { method: 'POST' });
       if (res.ok) {
-        showMsg('success', 'Gateway restart initiated');
+        showMessage('success', 'Gateway restart initiated');
       }
     } catch (error) {
-      showMsg('error', 'Failed to restart gateway');
+      showMessage('error', 'Failed to restart gateway');
     }
   };
 
@@ -227,7 +223,7 @@ export default function ModbusPage() {
       });
 
       if (res.ok) {
-        showMsg('success', isEdit ? 'Device updated' : 'Device added');
+        showMessage('success', isEdit ? 'Device updated' : 'Device added');
         setShowDeviceModal(false);
         setEditingDevice(null);
         setNewDevice({
@@ -245,10 +241,10 @@ export default function ModbusPage() {
         });
         fetchDownstreamDevices();
       } else {
-        showMsg('error', 'Failed to save device');
+        showMessage('error', 'Failed to save device');
       }
     } catch (error) {
-      showMsg('error', 'Error saving device');
+      showMessage('error', 'Error saving device');
     } finally {
       setLoading(false);
     }
@@ -262,13 +258,13 @@ export default function ModbusPage() {
         method: 'DELETE',
       });
       if (res.ok) {
-        showMsg('success', 'Device deleted');
+        showMessage('success', 'Device deleted');
         fetchDownstreamDevices();
       } else {
-        showMsg('error', 'Failed to delete device');
+        showMessage('error', 'Failed to delete device');
       }
     } catch (error) {
-      showMsg('error', 'Error deleting device');
+      showMessage('error', 'Error deleting device');
     }
   };
 
@@ -289,7 +285,7 @@ export default function ModbusPage() {
       });
 
       if (res.ok) {
-        showMsg('success', isEdit ? 'Mapping updated' : 'Mapping created');
+        showMessage('success', isEdit ? 'Mapping updated' : 'Mapping created');
         setShowMappingModal(false);
         setEditingMapping(null);
         setNewMapping({
@@ -310,10 +306,10 @@ export default function ModbusPage() {
         });
         fetchRegisterMappings();
       } else {
-        showMsg('error', 'Failed to save mapping');
+        showMessage('error', 'Failed to save mapping');
       }
     } catch (error) {
-      showMsg('error', 'Error saving mapping');
+      showMessage('error', 'Error saving mapping');
     } finally {
       setLoading(false);
     }
@@ -327,13 +323,13 @@ export default function ModbusPage() {
         method: 'DELETE',
       });
       if (res.ok) {
-        showMsg('success', 'Mapping deleted');
+        showMessage('success', 'Mapping deleted');
         fetchRegisterMappings();
       } else {
-        showMsg('error', 'Failed to delete mapping');
+        showMessage('error', 'Failed to delete mapping');
       }
     } catch (error) {
-      showMsg('error', 'Error deleting mapping');
+      showMessage('error', 'Error deleting mapping');
     }
   };
 
@@ -358,17 +354,6 @@ export default function ModbusPage() {
           Restart Gateway
         </button>
       </div>
-
-      {/* Message Banner */}
-      {message && (
-        <div
-          className={`p-4 rounded-lg ${
-            message.type === 'success' ? 'bg-status-ok text-hmi-text' : 'bg-status-alarm text-hmi-text'
-          }`}
-        >
-          {message.text}
-        </div>
-      )}
 
       {/* Status Overview */}
       {stats && (
