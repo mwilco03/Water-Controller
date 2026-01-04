@@ -177,15 +177,13 @@ def unshelve_alarm(shelf_id: int, username: str) -> bool:
 
 
 def cleanup_expired_shelves() -> int:
-    """Deactivate all expired shelved alarms"""
+    """Deactivate all expired shelved alarms using bulk update for efficiency"""
     with get_db() as db:
-        expired = db.query(ShelvedAlarm).filter(
+        # Use bulk update instead of fetching+iterating
+        count = db.query(ShelvedAlarm).filter(
             ShelvedAlarm.active == True,
             ShelvedAlarm.expires_at <= datetime.now(UTC)
-        ).all()
-        count = len(expired)
-        for s in expired:
-            s.active = False
+        ).update({"active": False}, synchronize_session=False)
         db.commit()
         if count > 0:
             logger.info(f"Cleaned up {count} expired shelved alarms")

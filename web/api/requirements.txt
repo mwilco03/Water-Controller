@@ -12,6 +12,10 @@ websockets==14.1
 
 # Database (SQLite default, PostgreSQL for production)
 sqlalchemy==2.0.36
+alembic==1.14.0
+
+# State machine for RTU connection states
+transitions==0.9.2
 
 # PostgreSQL driver (required for production with PostgreSQL/TimescaleDB)
 psycopg2-binary==2.9.10

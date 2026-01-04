@@ -5,8 +5,8 @@ SPDX-License-Identifier: GPL-3.0-or-later
 
 User session management operations using SQLAlchemy.
 
-Note: Uses custom serialization for groups field (JSON stored as string).
-The base mixin's to_dict() is extended here for proper groups handling.
+Note: Uses DictSerializableMixin.to_dict() from models/base.py for serialization.
+The UserSession model overrides _serialize_field() to handle JSON groups parsing.
 """
 
 import json
@@ -63,38 +63,17 @@ def create_session(token: str, username: str, role: str, groups: list[str],
             return False
 
 
-def _session_to_dict(session: UserSession) -> dict[str, Any]:
-    """Convert UserSession model to dictionary."""
-    result = {
-        "token": session.token,
-        "username": session.username,
-        "role": session.role,
-        "created_at": session.created_at.isoformat() if session.created_at else None,
-        "last_activity": session.last_activity.isoformat() if session.last_activity else None,
-        "expires_at": session.expires_at.isoformat() if session.expires_at else None,
-        "ip_address": session.ip_address,
-        "user_agent": session.user_agent,
-    }
-    # Parse groups from JSON
-    if session.groups:
-        try:
-            result['groups'] = json.loads(session.groups)
-        except json.JSONDecodeError:
-            result['groups'] = []
-    else:
-        result['groups'] = []
-    return result
-
-
 def get_session(token: str) -> dict[str, Any] | None:
-    """Get session by token"""
+    """Get session by token."""
     with get_db() as db:
         session = db.query(UserSession).filter(
             UserSession.token == token,
             UserSession.expires_at > datetime.now(UTC)
         ).first()
         if session:
-            return _session_to_dict(session)
+            # Uses DictSerializableMixin.to_dict() with custom _serialize_field
+            # for groups field JSON parsing
+            return session.to_dict()
         return None
 
 
@@ -146,14 +125,13 @@ def delete_session_by_prefix(token_prefix: str, admin_user: str | None = None) -
 
 
 def cleanup_expired_sessions() -> int:
-    """Remove expired sessions"""
+    """Remove expired sessions using bulk delete for efficiency"""
     with get_db() as db:
-        expired = db.query(UserSession).filter(
+        # Use bulk delete instead of fetching+iterating
+        # synchronize_session=False is safe here since we don't use deleted objects
+        count = db.query(UserSession).filter(
             UserSession.expires_at < datetime.now(UTC)
-        ).all()
-        count = len(expired)
-        for session in expired:
-            db.delete(session)
+        ).delete(synchronize_session=False)
         db.commit()
         if count > 0:
             logger.info(f"Cleaned up {count} expired sessions")

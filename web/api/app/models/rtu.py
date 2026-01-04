@@ -14,6 +14,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -226,6 +227,7 @@ class Slot(Base):
 
     __table_args__ = (
         UniqueConstraint("rtu_id", "slot_number", name="uix_rtu_slot"),
+        Index("ix_slots_rtu_id", "rtu_id"),
     )
 
 
@@ -261,6 +263,12 @@ class Sensor(Base):
     rtu = relationship("RTU", back_populates="sensors")
     slot = relationship("Slot", back_populates="sensors")
 
+    # Indexes for foreign key lookups
+    __table_args__ = (
+        Index("ix_sensors_rtu_id", "rtu_id"),
+        Index("ix_sensors_slot_id", "slot_id"),
+    )
+
 
 class Control(Base):
     """Control/actuator configuration."""
@@ -292,3 +300,9 @@ class Control(Base):
     # Relationships
     rtu = relationship("RTU", back_populates="controls")
     slot = relationship("Slot", back_populates="controls")
+
+    # Indexes for foreign key lookups
+    __table_args__ = (
+        Index("ix_controls_rtu_id", "rtu_id"),
+        Index("ix_controls_slot_id", "slot_id"),
+    )

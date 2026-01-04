@@ -13,7 +13,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, File, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from ...core.errors import build_success_response
 from ...models.alarm import AlarmRule
@@ -57,7 +57,26 @@ async def create_backup(
         "rtus": [],
     }
 
-    rtus = db.query(RTU).all()
+    # Use eager loading to fetch all related data in minimal queries
+    # This reduces N+1 queries from 5N+1 to just 3 queries
+    rtus = db.query(RTU).options(
+        joinedload(RTU.slots),
+        joinedload(RTU.sensors),
+        joinedload(RTU.controls),
+    ).all()
+
+    # Fetch alarm rules and PID loops separately (not defined as relationships)
+    # These use 2 queries instead of 2N queries
+    all_alarms = db.query(AlarmRule).all()
+    alarms_by_rtu = {}
+    for alarm in all_alarms:
+        alarms_by_rtu.setdefault(alarm.rtu_id, []).append(alarm)
+
+    all_pid_loops = db.query(PidLoop).all()
+    pid_loops_by_rtu = {}
+    for loop in all_pid_loops:
+        pid_loops_by_rtu.setdefault(loop.rtu_id, []).append(loop)
+
     for rtu in rtus:
         rtu_data = {
             "station_name": rtu.station_name,
@@ -72,18 +91,16 @@ async def create_backup(
             "pid_loops": [],
         }
 
-        # Export slots
-        slots = db.query(Slot).filter(Slot.rtu_id == rtu.id).all()
-        for slot in slots:
+        # Export slots (already loaded via joinedload)
+        for slot in rtu.slots:
             rtu_data["slots"].append({
                 "slot_number": slot.slot_number,
                 "module_id": slot.module_id,
                 "module_type": slot.module_type,
             })
 
-        # Export sensors
-        sensors = db.query(Sensor).filter(Sensor.rtu_id == rtu.id).all()
-        for sensor in sensors:
+        # Export sensors (already loaded via joinedload)
+        for sensor in rtu.sensors:
             rtu_data["sensors"].append({
                 "tag": sensor.tag,
                 "channel": sensor.channel,
@@ -95,9 +112,8 @@ async def create_backup(
                 "eng_max": sensor.eng_max,
             })
 
-        # Export controls
-        controls = db.query(Control).filter(Control.rtu_id == rtu.id).all()
-        for control in controls:
+        # Export controls (already loaded via joinedload)
+        for control in rtu.controls:
             rtu_data["controls"].append({
                 "tag": control.tag,
                 "channel": control.channel,
@@ -107,9 +123,8 @@ async def create_backup(
                 "max_value": control.max_value,
             })
 
-        # Export alarm rules
-        alarms = db.query(AlarmRule).filter(AlarmRule.rtu_id == rtu.id).all()
-        for alarm in alarms:
+        # Export alarm rules (from pre-fetched dict)
+        for alarm in alarms_by_rtu.get(rtu.id, []):
             rtu_data["alarms"].append({
                 "tag": alarm.tag,
                 "alarm_type": alarm.alarm_type,
@@ -120,9 +135,8 @@ async def create_backup(
                 "enabled": alarm.enabled,
             })
 
-        # Export PID loops
-        pid_loops = db.query(PidLoop).filter(PidLoop.rtu_id == rtu.id).all()
-        for loop in pid_loops:
+        # Export PID loops (from pre-fetched dict)
+        for loop in pid_loops_by_rtu.get(rtu.id, []):
             rtu_data["pid_loops"].append({
                 "name": loop.name,
                 "pv_sensor_tag": loop.pv_sensor_tag,
