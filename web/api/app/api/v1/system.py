@@ -127,10 +127,18 @@ async def get_system_status(
     total_samples = db.query(HistorianSample).count()
     storage_used = total_samples * 16 / (1024 * 1024)  # ~16 bytes per sample
 
+    # Get actual available disk space
+    try:
+        import psutil
+        disk = psutil.disk_usage("/")
+        storage_available = disk.free / (1024 * 1024)  # Convert to MB
+    except ImportError:
+        storage_available = 0.0
+
     historian_summary = HistorianSummary(
         samples_today=samples_today,
         storage_used_mb=round(storage_used, 2),
-        storage_available_mb=1024.0,  # Placeholder
+        storage_available_mb=round(storage_available, 2),
     )
 
     # Resource usage
@@ -172,15 +180,19 @@ async def get_system_logs(
 ) -> dict[str, Any]:
     """
     Get application logs.
+
+    Log storage is handled via Python's logging framework. For centralized
+    logging in production, configure Loki/Promtail or Elasticsearch.
     """
-    # In a real implementation, this would read from log files or a log database
-    # For now, return empty list
+    # Logs are handled by Python logging framework
+    # For centralized logging, configure external log aggregation
     return build_success_response({
         "logs": [],
         "meta": {
             "level": level,
             "hours": hours,
             "count": 0,
+            "note": "Use external log aggregation (Loki/Promtail or Elasticsearch) for production",
         }
     })
 

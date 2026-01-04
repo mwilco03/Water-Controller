@@ -12,7 +12,7 @@
  * - Skeleton loading for stable layout
  */
 
-import { useEffect } from 'react';
+import { useEffect, useCallback } from 'react';
 import { useRTUStatusData } from '@/hooks/useRTUStatusData';
 import {
   AlarmBanner,
@@ -21,10 +21,12 @@ import {
   ErrorMessage,
   ErrorPresets,
   LiveTimestamp,
+  useHMIToast,
 } from '@/components/hmi';
 import type { RTUStatusData } from '@/components/hmi';
 import Link from 'next/link';
 import { TIMING } from '@/constants';
+import { acknowledgeAlarm, acknowledgeAllAlarms } from '@/lib/api';
 
 const PAGE_TITLE = 'RTU Status - Water Treatment Controller';
 
@@ -39,9 +41,35 @@ export default function RTUStatusPage() {
     refetch,
   } = useRTUStatusData();
 
+  const { showMessage } = useHMIToast();
+
   useEffect(() => {
     document.title = PAGE_TITLE;
   }, []);
+
+  // Alarm acknowledgment handler
+  const handleAcknowledge = useCallback(async (alarmId: number) => {
+    try {
+      // User is obtained from session in backend via require_control_access
+      await acknowledgeAlarm(alarmId, 'operator');
+      showMessage('success', `Alarm ${alarmId} acknowledged`);
+      refetch();
+    } catch (err) {
+      showMessage('error', `Failed to acknowledge alarm: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    }
+  }, [refetch, showMessage]);
+
+  // Acknowledge all alarms handler
+  const handleAcknowledgeAll = useCallback(async () => {
+    try {
+      // User is obtained from session in backend via require_control_access
+      await acknowledgeAllAlarms('operator');
+      showMessage('success', 'All alarms acknowledged');
+      refetch();
+    } catch (err) {
+      showMessage('error', `Failed to acknowledge alarms: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    }
+  }, [refetch, showMessage]);
 
   // Loading state - use skeleton for stable layout
   if (loading) {
@@ -88,8 +116,8 @@ export default function RTUStatusPage() {
       {/* Alarm Banner */}
       <AlarmBanner
         alarms={alarms}
-        onAcknowledge={() => {}}
-        onAcknowledgeAll={() => {}}
+        onAcknowledge={handleAcknowledge}
+        onAcknowledgeAll={handleAcknowledgeAll}
       />
 
       {/* Page Header */}
