@@ -409,7 +409,7 @@ export async function importConfiguration(configFile: File): Promise<void> {
   const formData = new FormData();
   formData.append('file', configFile);
 
-  const res = await fetch(`${API_BASE}/api/v1/system/restore`, {
+  const res = await fetch(`${API_BASE}/api/v1/backup/restore`, {
     method: 'POST',
     body: formData,
   });
@@ -421,8 +421,8 @@ export async function importConfiguration(configFile: File): Promise<void> {
 // Note: The backup API creates and downloads in a single request.
 // There is no persistent backup storage on the server.
 export async function createAndDownloadBackup(): Promise<Blob> {
-  // POST to /system/ creates and immediately returns backup as ZIP
-  const res = await fetch(`${API_BASE}/api/v1/system/`, {
+  // POST to /backup creates and immediately returns backup as ZIP
+  const res = await fetch(`${API_BASE}/api/v1/backup`, {
     method: 'POST',
     headers: authToken ? { 'Authorization': `Bearer ${authToken}` } : {},
   });
@@ -439,7 +439,7 @@ export async function restoreBackup(file: File): Promise<{ success: boolean; err
     headers['Authorization'] = `Bearer ${authToken}`;
   }
 
-  const res = await fetch(`${API_BASE}/api/v1/system/restore`, {
+  const res = await fetch(`${API_BASE}/api/v1/backup/restore`, {
     method: 'POST',
     headers,
     body: formData,

@@ -16,8 +16,7 @@ import { usePathname } from 'next/navigation';
 import Link from 'next/link';
 import { CommandModeProvider, useCommandMode } from '@/contexts/CommandModeContext';
 import CommandModeBanner from '@/components/CommandModeBanner';
-import { ToastProvider } from '@/components/ui/Toast';
-import { AuthenticationModal, DegradedModeBanner, BottomNavigation } from '@/components/hmi';
+import { HMIToastProvider, AuthenticationModal, DegradedModeBanner, BottomNavigation } from '@/components/hmi';
 import { useWebSocket } from '@/hooks/useWebSocket';
 import { useRTUStatusData } from '@/hooks/useRTUStatusData';
 
@@ -59,9 +58,9 @@ export default function RootLayout({
       </head>
       <body className="bg-hmi-bg text-hmi-text">
         <CommandModeProvider>
-          <ToastProvider>
+          <HMIToastProvider>
             <AppShell>{children}</AppShell>
-          </ToastProvider>
+          </HMIToastProvider>
         </CommandModeProvider>
       </body>
     </html>

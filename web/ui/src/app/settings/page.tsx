@@ -229,7 +229,7 @@ export default function SettingsPage() {
       const formData = new FormData();
       formData.append('file', file);
 
-      const res = await fetch('/api/v1/system/restore', {
+      const res = await fetch('/api/v1/backup/restore', {
         method: 'POST',
         body: formData,
       });

@@ -27,7 +27,7 @@ api_router.include_router(alarms_router, prefix="/alarms", tags=["Alarm Manageme
 api_router.include_router(trends_router, prefix="/trends", tags=["Historian/Trends"])
 api_router.include_router(discover_router, prefix="/discover", tags=["Network Discovery"])
 api_router.include_router(system_router, prefix="/system", tags=["System"])
-api_router.include_router(backup_router, prefix="/system", tags=["Backup/Restore"])
+api_router.include_router(backup_router, prefix="/backup", tags=["Backup/Restore"])
 api_router.include_router(templates_router, prefix="/templates", tags=["Configuration Templates"])
 
 # Demo mode for E2E testing and training
