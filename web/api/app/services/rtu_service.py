@@ -140,6 +140,21 @@ class RtuService:
             "historian_samples": historian_count,
         }
 
+    def get_deletion_impact(self, name: str) -> dict:
+        """
+        Get deletion impact preview for an RTU.
+
+        Returns resource counts and estimated data size.
+        """
+        rtu = self.get_by_name(name)
+        counts = self._count_resources(rtu)
+
+        # Estimate data size (rough approximation: 16 bytes per sample)
+        estimated_mb = counts["historian_samples"] * 16 / (1024 * 1024)
+        counts["estimated_data_size_mb"] = round(estimated_mb, 2)
+
+        return counts
+
     def get_stats(self, rtu: RTU) -> RtuStats:
         """Build statistics for an RTU."""
         configured_slots = self.db.query(Slot).filter(

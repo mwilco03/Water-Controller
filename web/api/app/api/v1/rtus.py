@@ -20,10 +20,8 @@ from ...core.exceptions import (
     RtuNotConnectedError,
 )
 from ...core.rtu_utils import get_rtu_or_404
-from ...models.alarm import AlarmRule
 from ...models.base import get_db
-from ...models.historian import HistorianSample
-from ...models.rtu import RTU, Control, RtuState, Sensor, Slot, SlotStatus
+from ...models.rtu import RTU, RtuState, Slot, SlotStatus
 from ...services.profinet_client import get_profinet_client
 from ...schemas.rtu import (
     ConnectRequest,
@@ -180,34 +178,14 @@ async def delete_rtu(
 
     RTU must be OFFLINE (disconnect first if connected).
     """
-    rtu = get_rtu_or_404(db, name)
-
-    # Check state - must be offline
-    if rtu.state not in [RtuState.OFFLINE, RtuState.ERROR]:
-        raise RtuBusyError(name, rtu.state)
-
-    # Count resources for response
-    slot_count = db.query(Slot).filter(Slot.rtu_id == rtu.id).count()
-    sensor_count = db.query(Sensor).filter(Sensor.rtu_id == rtu.id).count()
-    control_count = db.query(Control).filter(Control.rtu_id == rtu.id).count()
-    alarm_count = db.query(AlarmRule).filter(AlarmRule.rtu_id == rtu.id).count()
-    historian_count = db.query(HistorianSample).join(Sensor).filter(
-        Sensor.rtu_id == rtu.id
-    ).count()
-
-    # Delete RTU (cascade handles related records)
-    db.delete(rtu)
-    db.commit()
+    # Delegate to service layer (handles state check, counting, and deletion)
+    service = get_rtu_service(db)
+    deletion_counts = service.delete(name)
 
     response_data = {
         "deleted": {
             "rtu": name,
-            "slots": slot_count,
-            "sensors": sensor_count,
-            "controls": control_count,
-            "alarms": alarm_count,
-            "pid_loops": 0,
-            "historian_samples": historian_count,
+            **deletion_counts,
         }
     }
 
@@ -222,30 +200,13 @@ async def get_deletion_impact(
     """
     Preview what will be deleted (for confirmation UI).
     """
-    rtu = get_rtu_or_404(db, name)
-
-    slot_count = db.query(Slot).filter(Slot.rtu_id == rtu.id).count()
-    sensor_count = db.query(Sensor).filter(Sensor.rtu_id == rtu.id).count()
-    control_count = db.query(Control).filter(Control.rtu_id == rtu.id).count()
-    alarm_count = db.query(AlarmRule).filter(AlarmRule.rtu_id == rtu.id).count()
-    historian_count = db.query(HistorianSample).join(Sensor).filter(
-        Sensor.rtu_id == rtu.id
-    ).count()
-
-    # Estimate data size (rough approximation)
-    estimated_mb = historian_count * 16 / (1024 * 1024)
+    # Delegate to service layer (single source of truth for resource counting)
+    service = get_rtu_service(db)
+    impact = service.get_deletion_impact(name)
 
     response_data = DeletionImpact(
         rtu=name,
-        impact={
-            "slots": slot_count,
-            "sensors": sensor_count,
-            "controls": control_count,
-            "alarms": alarm_count,
-            "pid_loops": 0,
-            "historian_samples": historian_count,
-            "estimated_data_size_mb": round(estimated_mb, 2),
-        }
+        impact=impact,
     )
 
     return build_success_response(response_data.model_dump())

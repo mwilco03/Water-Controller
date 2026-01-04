@@ -209,6 +209,7 @@ typedef struct {
     float period_sum;
     float amplitude_max;
     float amplitude_min;
+    float last_error;  /* Per-loop error tracking for thread safety */
 } autotune_state_t;
 
 static autotune_state_t autotune_states[WTC_MAX_PID_LOOPS];
@@ -259,8 +260,7 @@ wtc_result_t pid_process_autotune(int loop_id, float pv, float setpoint,
     }
 
     /* Detect zero crossings to measure period */
-    static float last_error = 0;
-    if ((last_error <= 0 && error > 0) || (last_error >= 0 && error < 0)) {
+    if ((state->last_error <= 0 && error > 0) || (state->last_error >= 0 && error < 0)) {
         state->crossing_count++;
 
         if (state->crossing_count >= 2) {
@@ -296,7 +296,7 @@ wtc_result_t pid_process_autotune(int loop_id, float pv, float setpoint,
                      Ku, Tu, kp ? *kp : 0, ki ? *ki : 0, kd ? *kd : 0);
         }
     }
-    last_error = error;
+    state->last_error = error;
 
     return WTC_OK;
 }
