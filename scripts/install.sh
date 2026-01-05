@@ -1856,6 +1856,14 @@ main() {
         exit 1
     fi
 
+    # Check if Docker mode was requested via environment
+    if [[ "${USE_DOCKER:-0}" == "1" ]]; then
+        log_info "Docker mode selected via USE_DOCKER environment variable"
+        log_info "Skipping bare-metal installation. Use docker compose directly:"
+        log_info "  cd docker && docker compose up -d"
+        exit 0
+    fi
+
     # Execute appropriate mode
     local result=0
     if [ $SELECTIVE_ROLLBACK_MODE -eq 1 ]; then

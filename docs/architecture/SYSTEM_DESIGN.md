@@ -431,6 +431,102 @@ class SensorReading(BaseModel):
 # HMI MUST NOT display BAD/NOT_CONNECTED values as valid
 ```
 
+### Protocol Translation Layer (OpenPLC ↔ Modbus ↔ PROFINET)
+
+The system supports OpenPLC as an optional ladder logic runtime with a strict architectural boundary:
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    PROTOCOL TRANSLATION ARCHITECTURE                     │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│  EXTERNAL SYSTEM                                                         │
+│  (Ladder logic developed on engineering workstation)                     │
+│                           │                                              │
+│                     .st / .ld files                                      │
+│                           ▼                                              │
+│  ┌─────────────────────────────────────────────────────────────────┐    │
+│  │                       WATER-CONTROLLER                           │    │
+│  │                                                                  │    │
+│  │  ┌────────────┐     ┌─────────────┐     ┌──────────────────┐    │    │
+│  │  │  OpenPLC   │ R/W │   Modbus    │     │    PROFINET      │    │    │
+│  │  │  Runtime   │◄───►│  Gateway    │◄───►│   Controller     │    │    │
+│  │  │            │     │ (TCP:1502)  │     │                  │    │    │
+│  │  │ • Import   │     │             │     │ • Cyclic I/O     │    │    │
+│  │  │ • Execute  │     │ Translation │     │ • Device Comm    │    │    │
+│  │  │ • Display  │     │    Layer    │     │ • State Mgmt     │    │    │
+│  │  └────────────┘     └─────────────┘     └──────────────────┘    │    │
+│  │                                                   │              │    │
+│  └───────────────────────────────────────────────────┼──────────────┘    │
+│                                                      ▼                   │
+│                                           ┌──────────────────┐           │
+│                                           │    RTU Layer     │           │
+│                                           │  (Field Devices) │           │
+│                                           └──────────────────┘           │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+#### Key Principles
+
+| Principle | Requirement |
+|-----------|-------------|
+| **Import Only** | Ladder logic is developed EXTERNALLY, not on the controller |
+| **No On-Controller Development** | Controller is a runtime, not a development environment |
+| **Modbus as Bridge** | OpenPLC uses Modbus TCP; controller translates to PROFINET |
+| **Bidirectional Flow** | Modbus R/W flows through translation to PROFINET I/O |
+| **Display & Translate** | Controller displays state and translates protocols |
+
+#### Responsibility Assignment
+
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│  COMPONENT             OWNS                      NEVER               │
+├──────────────────────────────────────────────────────────────────────┤
+│  OpenPLC               • Ladder logic execution  • PROFINET comm     │
+│                        • Variable state          • RTU management    │
+│                        • Modbus register I/O     • Alarm generation  │
+├──────────────────────────────────────────────────────────────────────┤
+│  Modbus Gateway        • Protocol translation    • Logic execution   │
+│                        • Register mapping        • State persistence │
+│                        • Connection management   • Safety interlocks │
+├──────────────────────────────────────────────────────────────────────┤
+│  PROFINET Controller   • RTU communication       • Ladder logic      │
+│                        • Cyclic data exchange    • Modbus protocol   │
+│                        • Device state tracking   • OpenPLC runtime   │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+#### Data Flow Example
+
+```
+1. Engineer develops ladder logic on external workstation
+2. Exports .st/.ld file
+3. Imports into OpenPLC container on controller
+4. OpenPLC executes logic, reads/writes Modbus registers
+5. Modbus Gateway translates register R/W to PROFINET I/O
+6. PROFINET Controller exchanges data with field RTUs
+7. HMI displays state from all layers
+```
+
+#### Wire Format (Modbus ↔ PROFINET)
+
+```c
+// Modbus register to PROFINET mapping
+typedef struct {
+    uint16_t modbus_address;      // Modbus register address
+    const char *rtu_name;         // Target RTU station name
+    uint8_t slot;                 // PROFINET slot
+    uint8_t subslot;              // PROFINET subslot
+    register_type_t type;         // HOLDING, INPUT, COIL, DISCRETE
+    data_type_t data_type;        // FLOAT, INT16, BOOL
+} register_mapping_t;
+
+// Translation maintains quality codes
+// Modbus exception → PROFINET quality BAD
+// Modbus timeout → PROFINET quality NOT_CONNECTED
+// Modbus success → PROFINET quality preserved from RTU
+```
+
 ### Crossing Boundaries Correctly
 
 **Correct Pattern:**

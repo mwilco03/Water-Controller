@@ -30,6 +30,7 @@ from .core.logging import (
     set_correlation_id,
     setup_logging,
 )
+from .core.rate_limit import RateLimitMiddleware
 from .core.startup import (
     StartupMode,
     get_startup_result,
@@ -41,6 +42,10 @@ from .persistence.base import initialize as init_persistence
 from .persistence.base import is_initialized
 from .persistence.users import ensure_default_admin
 from .services.profinet_client import get_profinet_client
+from .services.websocket_publisher import (
+    publisher_lifespan_startup,
+    publisher_lifespan_shutdown,
+)
 from .core.ports import get_allowed_origins
 
 # Setup logging
@@ -91,6 +96,9 @@ async def lifespan(app: FastAPI):
     ensure_default_admin()
     logger.info("Default admin user verified")
 
+    # Start WebSocket data publisher for real-time updates
+    await publisher_lifespan_startup()
+
     # Log final startup status
     if startup_result.is_fully_healthy:
         logger.info("STARTUP COMPLETE: All systems operational")
@@ -102,6 +110,9 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     logger.info("Shutting down Water Treatment Controller API")
+
+    # Stop WebSocket data publisher
+    await publisher_lifespan_shutdown()
 
 
 # OpenAPI tags for documentation organization
@@ -210,6 +221,10 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "X-Correlation-ID", "X-Request-ID"],
 )
+
+# Rate limiting middleware
+# Configurable via WTC_RATE_LIMIT_ENABLED, WTC_RATE_LIMIT_REQUESTS, WTC_RATE_LIMIT_WINDOW
+app.add_middleware(RateLimitMiddleware)
 
 
 # Correlation ID middleware
