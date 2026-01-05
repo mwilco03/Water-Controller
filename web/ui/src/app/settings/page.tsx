@@ -62,7 +62,7 @@ interface LogDestination {
 }
 
 export default function SettingsPage() {
-  const [activeTab, setActiveTab] = useState<'general' | 'backup' | 'modbus' | 'services' | 'logging' | 'demo'>('general');
+  const [activeTab, setActiveTab] = useState<'general' | 'backup' | 'modbus' | 'services' | 'logging' | 'simulation'>('general');
   const [services, setServices] = useState<ServiceStatus>({});
   const [modbusConfig, setModbusConfig] = useState<ModbusServerConfig | null>(null);
   const [downstreamDevices, setDownstreamDevices] = useState<ModbusDownstreamDevice[]>([]);
@@ -140,13 +140,13 @@ export default function SettingsPage() {
       });
 
       if (res.ok) {
-        showMessage('success', `Demo mode enabled with "${selectedScenario}" scenario`);
+        showMessage('success', `Simulation mode enabled with "${selectedScenario}" scenario`);
         await fetchDemoStatus();
       } else {
-        showMessage('error', 'Failed to enable demo mode');
+        showMessage('error', 'Failed to enable simulation mode');
       }
     } catch (error) {
-      showMessage('error', 'Error enabling demo mode');
+      showMessage('error', 'Error enabling simulation mode');
     } finally {
       setLoading(false);
     }
@@ -160,13 +160,13 @@ export default function SettingsPage() {
       });
 
       if (res.ok) {
-        showMessage('success', 'Demo mode disabled');
+        showMessage('success', 'Simulation mode disabled');
         await fetchDemoStatus();
       } else {
-        showMessage('error', 'Failed to disable demo mode');
+        showMessage('error', 'Failed to disable simulation mode');
       }
     } catch (error) {
-      showMessage('error', 'Error disabling demo mode');
+      showMessage('error', 'Error disabling simulation mode');
     } finally {
       setLoading(false);
     }
@@ -501,7 +501,7 @@ export default function SettingsPage() {
           { id: 'modbus', label: 'Modbus Gateway' },
           { id: 'logging', label: 'Log Forwarding' },
           { id: 'services', label: 'Services' },
-          { id: 'demo', label: 'Demo Mode' },
+          { id: 'simulation', label: 'Simulation Mode' },
         ].map((tab) => (
           <button
             key={tab.id}
@@ -1089,13 +1089,13 @@ export default function SettingsPage() {
         </div>
       )}
 
-      {/* Demo Mode Tab */}
-      {activeTab === 'demo' && (
+      {/* Simulation Mode Tab */}
+      {activeTab === 'simulation' && (
         <div className="space-y-6">
-          {/* Demo Status */}
+          {/* Simulation Status */}
           <div className="hmi-card p-6">
             <div className="flex justify-between items-center mb-4">
-              <h2 className="text-lg font-semibold text-hmi-text">Demo Mode</h2>
+              <h2 className="text-lg font-semibold text-hmi-text">Simulation Mode</h2>
               <div className={`px-3 py-1 rounded text-sm font-medium ${
                 demoStatus?.enabled
                   ? 'bg-status-ok/20 text-status-ok'
@@ -1106,12 +1106,13 @@ export default function SettingsPage() {
             </div>
 
             <p className="text-sm text-hmi-muted mb-6">
-              Demo mode provides realistic simulated data for E2E testing, training, and
-              demonstrations without requiring real PROFINET hardware or the C controller.
+              Simulation mode provides realistic virtual RTU data for testing, operator training, and
+              development without requiring real PROFINET hardware. When enabled, the system generates
+              water treatment plant sensor values, responds to actuator commands, and creates alarm conditions.
             </p>
 
             {demoStatus?.enabled ? (
-              /* Active Demo Mode */
+              /* Active Simulation Mode */
               <div className="space-y-6">
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   <div className="bg-hmi-panel p-4 rounded">
@@ -1146,7 +1147,7 @@ export default function SettingsPage() {
                     disabled={loading}
                     className="px-4 py-2 bg-status-alarm hover:bg-status-alarm/80 rounded text-white disabled:opacity-50"
                   >
-                    {loading ? 'Stopping...' : 'Stop Demo Mode'}
+                    {loading ? 'Stopping...' : 'Stop Simulation'}
                   </button>
                   <button
                     onClick={fetchDemoStatus}
@@ -1200,7 +1201,7 @@ export default function SettingsPage() {
                   disabled={loading}
                   className="px-4 py-2 bg-status-ok hover:bg-status-ok/80 rounded text-white disabled:opacity-50"
                 >
-                  {loading ? 'Starting...' : 'Start Demo Mode'}
+                  {loading ? 'Starting...' : 'Start Simulation'}
                 </button>
               </div>
             )}
@@ -1210,12 +1211,15 @@ export default function SettingsPage() {
           <div className="hmi-card p-6">
             <h2 className="text-lg font-semibold text-hmi-text mb-4">Auto-Enable on Startup</h2>
             <p className="text-sm text-hmi-muted mb-4">
-              Demo mode can be automatically enabled when the API server starts by setting
-              environment variables:
+              Simulation mode can be automatically enabled when the controller or API server starts
+              by setting environment variables:
             </p>
-            <div className="bg-hmi-panel p-4 rounded font-mono text-sm text-hmi-text">
-              <div>WTC_DEMO_MODE=1</div>
-              <div>WTC_DEMO_SCENARIO=water_treatment_plant</div>
+            <div className="bg-hmi-panel p-4 rounded font-mono text-sm text-hmi-text space-y-1">
+              <div className="text-hmi-muted"># For C controller:</div>
+              <div>WTC_SIMULATION_MODE=1</div>
+              <div>WTC_SIMULATION_SCENARIO=water_treatment_plant</div>
+              <div className="text-hmi-muted mt-2"># Or use command line:</div>
+              <div>./water_treat_controller --simulation --scenario water_treatment_plant</div>
             </div>
           </div>
         </div>
