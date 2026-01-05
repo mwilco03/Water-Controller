@@ -22,6 +22,7 @@ from ...core.exceptions import (
     RtuNotConnectedError,
 )
 from ...core.rtu_utils import get_data_quality, get_rtu_or_404
+from ...services.profinet_client import get_profinet_client
 from ...models.audit import CommandAudit, CommandResult
 from ...models.base import get_db
 from ...models.rtu import RTU, Control, ControlType, RtuState
@@ -54,6 +55,10 @@ async def get_controls(
 ) -> dict[str, Any]:
     """
     Get current control states.
+
+    Retrieves live actuator states from the PROFINET controller (via shared memory)
+    or from demo mode if enabled. Falls back to database configuration if no live
+    data is available.
     """
     rtu = get_rtu_or_404(db, name)
 
@@ -62,34 +67,50 @@ async def get_controls(
     quality = get_data_quality(rtu.state)
     now = datetime.now(UTC)
 
+    # Get live actuator states from controller or demo mode
+    profinet = get_profinet_client()
+    live_actuators = profinet.get_actuator_states(name)
+
+    # Build lookup by slot for efficient access
+    actuator_by_slot = {a["slot"]: a for a in live_actuators}
+
     result = []
     for control in controls:
+        # Try to get live state from controller/demo mode
+        live = actuator_by_slot.get(control.slot, {})
+
         # Build control state based on type
         if control.control_type == ControlType.DISCRETE:
+            # Map command values: 0=OFF, 1=ON, 2=PWM
+            live_command = live.get("command", 0)
+            state = "ON" if live_command == 1 else ("PWM" if live_command == 2 else "OFF")
+
             state_obj = ControlState(
                 tag=control.tag,
                 type=control.equipment_type or "discrete",
                 control_type=control.control_type,
-                state="OFF",  # Placeholder - would come from real I/O
-                commanded_state="OFF",
+                state=state,
+                commanded_state=state,
                 quality=quality,
                 timestamp=now,
-                interlock_active=False,
-                available_commands=["ON"] if quality == DataQuality.GOOD else [],
+                interlock_active=live.get("forced", False),
+                available_commands=["ON", "OFF"] if quality == DataQuality.GOOD else [],
             )
         else:  # Analog
+            live_value = live.get("pwm_duty", 0.0)
+
             state_obj = ControlState(
                 tag=control.tag,
                 type=control.equipment_type or "analog",
                 control_type=control.control_type,
-                value=0.0,  # Placeholder
-                commanded_value=0.0,
+                value=float(live_value),
+                commanded_value=float(live_value),
                 unit=control.unit,
                 min_value=control.min_value or 0.0,
                 max_value=control.max_value or 100.0,
                 quality=quality,
                 timestamp=now,
-                interlock_active=False,
+                interlock_active=live.get("forced", False),
             )
 
         result.append(state_obj.model_dump())
@@ -194,22 +215,38 @@ async def send_command(
         details=f"{cmd_value}" + (f" value={command.value}" if not is_discrete else ""),
     )
 
-    # In a real implementation, send command via IPC to C controller
-    # For now, simulate success
+    # Send command to C controller via shared memory / demo mode
+    profinet = get_profinet_client()
+    mode_code = 1 if command.command == "ON" else (2 if command.command == "PWM" else 0)
+    if is_discrete:
+        profinet.command_actuator(name, control.slot, mode_code)
+    else:
+        profinet.command_actuator(name, control.slot, 2, int(command.value))
 
     db.commit()
 
     now = datetime.now(UTC)
+
+    # Get current state for proper before/after tracking
+    actuator_states = profinet.get_actuator_states(name)
+    current_state = next(
+        (a for a in actuator_states if a.get("slot") == control.slot),
+        {}
+    )
+    previous_state_val = (
+        ("ON" if current_state.get("command", 0) == 1 else "OFF")
+        if is_discrete else str(current_state.get("pwm_duty", 0.0))
+    )
 
     response_data = CommandResponse(
         tag=tag,
         command=command.command if is_discrete else None,
         value=command.value if not is_discrete else None,
         accepted=True,
-        previous_state="OFF" if is_discrete else None,
+        previous_state=previous_state_val if is_discrete else None,
         new_state=command.command if is_discrete else None,
         timestamp=now,
-        coupled_actions=[],  # Would be populated based on configuration
+        coupled_actions=[],
     )
 
     return build_success_response(response_data.model_dump())

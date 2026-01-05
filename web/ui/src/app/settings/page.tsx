@@ -229,7 +229,7 @@ export default function SettingsPage() {
       const formData = new FormData();
       formData.append('file', file);
 
-      const res = await fetch('/api/v1/system/restore', {
+      const res = await fetch('/api/v1/backup/restore', {
         method: 'POST',
         body: formData,
       });
@@ -1098,10 +1098,10 @@ export default function SettingsPage() {
               <h2 className="text-lg font-semibold text-hmi-text">Simulation Mode</h2>
               <div className={`px-3 py-1 rounded text-sm font-medium ${
                 demoStatus?.enabled
-                  ? 'bg-status-ok/20 text-status-ok'
+                  ? 'bg-status-info/20 text-status-info'
                   : 'bg-hmi-panel text-hmi-muted'
               }`}>
-                {demoStatus?.enabled ? 'Active' : 'Inactive'}
+                {demoStatus?.enabled ? 'Demo Active' : 'Inactive'}
               </div>
             </div>
 
@@ -1199,7 +1199,7 @@ export default function SettingsPage() {
                 <button
                   onClick={enableDemoMode}
                   disabled={loading}
-                  className="px-4 py-2 bg-status-ok hover:bg-status-ok/80 rounded text-white disabled:opacity-50"
+                  className="px-4 py-2 bg-status-info hover:bg-status-info/80 rounded text-white disabled:opacity-50"
                 >
                   {loading ? 'Starting...' : 'Start Simulation'}
                 </button>

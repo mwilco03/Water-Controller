@@ -5,6 +5,7 @@ import { useSearchParams } from 'next/navigation';
 
 const PAGE_TITLE = 'Trends - Water Treatment Controller';
 import { useWebSocket } from '@/hooks/useWebSocket';
+import { useHMIToast } from '@/components/hmi';
 import { exportTrendToCSV, exportTrendToJSON, exportTrendToExcel, TrendExportData } from '@/lib/exportUtils';
 import { wsLogger, logger } from '@/lib/logger';
 
@@ -58,6 +59,7 @@ export default function TrendsPage() {
 function TrendsContent() {
   const searchParams = useSearchParams();
   const rtuFilter = searchParams.get('rtu');
+  const { showMessage } = useHMIToast();
 
   const [tags, setTags] = useState<HistorianTag[]>([]);
   const [selectedTags, setSelectedTags] = useState<number[]>([]);
@@ -87,21 +89,32 @@ function TrendsContent() {
 
   const handleExport = useCallback((format: 'csv' | 'json' | 'excel') => {
     const data = prepareExportData();
+    if (data.length === 0) {
+      showMessage('error', 'No data to export. Select tags and fetch data first.');
+      setShowExportMenu(false);
+      return;
+    }
+
     const filename = `trend_export_${timeRange}_${new Date().toISOString().split('T')[0]}`;
 
-    switch (format) {
-      case 'csv':
-        exportTrendToCSV(data, { filename });
-        break;
-      case 'json':
-        exportTrendToJSON(data, { filename });
-        break;
-      case 'excel':
-        exportTrendToExcel(data, { filename });
-        break;
+    try {
+      switch (format) {
+        case 'csv':
+          exportTrendToCSV(data, { filename });
+          break;
+        case 'json':
+          exportTrendToJSON(data, { filename });
+          break;
+        case 'excel':
+          exportTrendToExcel(data, { filename });
+          break;
+      }
+      showMessage('success', `Trend data exported as ${format.toUpperCase()}`);
+    } catch (error) {
+      showMessage('error', `Export failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
     setShowExportMenu(false);
-  }, [prepareExportData, timeRange]);
+  }, [prepareExportData, timeRange, showMessage]);
 
   const fetchTags = useCallback(async () => {
     try {

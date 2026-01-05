@@ -19,8 +19,8 @@ from .config import (
 )
 from .discovery import DCPDiscoveryCache
 from .historian import HistorianSample, HistorianTag, ProfinetDiagnostic, SlotConfig
-from .legacy import RtuControl, RtuDevice, RtuSensor
 from .pid import PidLoop, PidMode
+# Note: Legacy models (RtuDevice, RtuSensor, RtuControl) removed - use RTU, Sensor, Control
 from .rtu import RTU, Control, Sensor, Slot
 from .template import ConfigTemplate
 from .user import AuditLog, User, UserSession
@@ -65,8 +65,4 @@ __all__ = [
     # User
     "User",
     "UserSession",
-    # Legacy (persistence layer compatible)
-    "RtuControl",
-    "RtuDevice",
-    "RtuSensor",
 ]

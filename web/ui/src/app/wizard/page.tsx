@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { RtuStateBadge } from '@/components/rtu';
-import { useToast } from '@/components/ui/Toast';
+import { useHMIToast } from '@/components/hmi';
 
 interface DiscoveredSensor {
   bus_type: string;
@@ -76,7 +76,7 @@ function clearWizardState(): void {
 
 export default function WizardPage() {
   const router = useRouter();
-  const toast = useToast();
+  const toast = useHMIToast();
   const [currentStep, setCurrentStep] = useState<WizardStep>('welcome');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);

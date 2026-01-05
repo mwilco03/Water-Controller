@@ -5,9 +5,8 @@ SPDX-License-Identifier: GPL-3.0-or-later
 
 RTU device, sensor, and control operations using SQLAlchemy ORM models.
 
-Note: Uses DictSerializableMixin.to_dict() from models/base.py for serialization.
-This module now uses the unified ORM models (RTU, Sensor, Control) instead of
-the deprecated legacy models (RtuDevice, RtuSensor, RtuControl).
+Uses DictSerializableMixin.to_dict() from models/base.py for serialization.
+Uses unified ORM models: RTU, Sensor, Control, Slot from models/rtu.py.
 """
 
 from datetime import UTC, datetime

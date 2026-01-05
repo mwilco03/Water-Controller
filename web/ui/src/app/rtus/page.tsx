@@ -6,7 +6,7 @@ import Link from 'next/link';
 const PAGE_TITLE = 'RTU Management - Water Treatment Controller';
 import { useWebSocket } from '@/hooks/useWebSocket';
 import { DiscoveryPanel, RtuStateBadge, AddRtuModal, DeleteRtuModal, StaleIndicator } from '@/components/rtu';
-import { useToast } from '@/components/ui/Toast';
+import { useHMIToast } from '@/components/hmi';
 import type { DiscoveredDevice } from '@/lib/api';
 import { wsLogger, rtuLogger } from '@/lib/logger';
 
@@ -46,7 +46,7 @@ export default function RTUsPage() {
   const [showDiscovery, setShowDiscovery] = useState(false);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
-  const toast = useToast();
+  const toast = useHMIToast();
 
   // Set page title
   useEffect(() => {

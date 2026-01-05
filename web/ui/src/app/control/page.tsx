@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useWebSocket } from '@/hooks/useWebSocket';
+import { useHMIToast } from '@/components/hmi';
 
 const PAGE_TITLE = 'Control - Water Treatment Controller';
 import { useCommandMode } from '@/contexts/CommandModeContext';
@@ -94,6 +95,7 @@ function ConfirmationModal({
 
 export default function ControlPage() {
   const { canCommand, mode } = useCommandMode();
+  const { showMessage } = useHMIToast();
   const [rtus, setRtus] = useState<RTU[]>([]);
   const [selectedRtu, setSelectedRtu] = useState<string | null>(null);
   const [pidLoops, setPidLoops] = useState<PIDLoop[]>([]);
@@ -216,14 +218,20 @@ export default function ControlPage() {
 
   const doUpdateSetpoint = async (rtuName: string, loopId: number, setpoint: number) => {
     try {
-      await fetch(`/api/v1/rtus/${encodeURIComponent(rtuName)}/pid/${loopId}/setpoint`, {
+      const res = await fetch(`/api/v1/rtus/${encodeURIComponent(rtuName)}/pid/${loopId}/setpoint`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ setpoint }),
       });
+      if (res.ok) {
+        showMessage('success', `Setpoint updated to ${setpoint.toFixed(2)}`);
+      } else {
+        showMessage('error', 'Failed to update setpoint');
+      }
       fetchControlData();
     } catch (error) {
       logger.error('Error updating setpoint', error);
+      showMessage('error', 'Error updating setpoint');
     }
   };
 
@@ -243,14 +251,20 @@ export default function ControlPage() {
 
   const doToggleMode = async (rtuName: string, loopId: number, pidMode: string) => {
     try {
-      await fetch(`/api/v1/rtus/${encodeURIComponent(rtuName)}/pid/${loopId}/mode`, {
+      const res = await fetch(`/api/v1/rtus/${encodeURIComponent(rtuName)}/pid/${loopId}/mode`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ mode: pidMode }),
       });
+      if (res.ok) {
+        showMessage('success', `PID mode changed to ${pidMode}`);
+      } else {
+        showMessage('error', 'Failed to change mode');
+      }
       fetchControlData();
     } catch (error) {
       logger.error('Error updating mode', error);
+      showMessage('error', 'Error changing PID mode');
     }
   };
 

@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from ...core.errors import build_success_response
 from ...core.rtu_utils import get_rtu_or_404
 from ...models.base import get_db
+from ...services.profinet_client import get_profinet_client
 from ...models.historian import ProfinetDiagnostic
 from ...models.rtu import RtuState, Slot, SlotStatus
 from ...schemas.common import DataQuality
@@ -46,13 +47,23 @@ async def get_profinet_status(
     now = datetime.now(UTC)
 
     if rtu.state == RtuState.RUNNING:
-        # Connected - return full status
-        # In a real implementation, these values would come from shared memory
+        # Connected - return status from controller or demo mode
+        profinet = get_profinet_client()
+        controller_status = profinet.get_status()
+
+        # Calculate uptime from state_since timestamp
+        uptime_seconds = int((now - rtu.state_since).total_seconds()) if rtu.state_since else 0
+        session_seconds = uptime_seconds  # Session started when RTU entered RUNNING
+
+        # Get uptime from demo mode if active
+        if controller_status.get("demo_mode"):
+            uptime_seconds = int(controller_status.get("uptime_seconds", uptime_seconds))
+
         status = ProfinetStatus(
             connected=True,
             ar_handle="0x0001",
-            uptime_seconds=3600,  # Placeholder
-            session_seconds=1800,  # Placeholder
+            uptime_seconds=uptime_seconds,
+            session_seconds=session_seconds,
             cycle_time=CycleTimeStats(
                 target_ms=32.0,
                 actual_ms=31.5,
@@ -124,7 +135,7 @@ async def get_profinet_slots(
         slot_info = ProfinetSlot(
             slot=slot.slot_number,
             module_id=slot.module_id or "0x0000",
-            module_ident=None,  # Would come from PROFINET
+            module_ident=slot.module_id,  # Use module_id as ident when available
             subslots=subslots,
             status=slot.status or SlotStatus.EMPTY,
             pulled=slot.status == SlotStatus.PULLED,
