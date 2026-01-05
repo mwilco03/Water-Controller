@@ -22,8 +22,8 @@ struct rtu_registry;
 struct control_engine;
 struct alarm_manager;
 
-/* Maximum downstream Modbus clients */
-#define MAX_MODBUS_CLIENTS  16
+/* Maximum downstream Modbus clients (Modbus slave addresses range 1-247) */
+#define MAX_MODBUS_CLIENTS  247
 
 /* Gateway handle */
 typedef struct modbus_gateway modbus_gateway_t;
