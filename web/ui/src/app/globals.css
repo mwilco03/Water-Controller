@@ -29,6 +29,12 @@
   --status-info: #2196F3;
   --status-offline: #9E9E9E;
 
+  /* Status Light Backgrounds */
+  --status-ok-light: #E8F5E9;
+  --status-warning-light: #FFF3E0;
+  --status-alarm-light: #FFEBEE;
+  --status-info-light: #E3F2FD;
+
   /* Mobile-First Touch Targets & Spacing */
   --touch-target-min: 48px;
   --touch-target-comfortable: 56px;
@@ -71,6 +77,47 @@
   --quality-uncertain-border: var(--status-warning);
   --quality-bad-border: var(--status-alarm);
   --quality-stale-border: var(--hmi-equipment);
+}
+
+/*
+ * DARK MODE - Night Shift Optimized
+ * Automatically enabled based on system preference
+ * Uses darker, less eye-straining colors while preserving ISA-101 semantics
+ */
+@media (prefers-color-scheme: dark) {
+  :root {
+    /* Dark ISA-101 Core Palette */
+    --hmi-bg: #1a1a1a;
+    --hmi-panel: #2d2d2d;
+    --hmi-border: #404040;
+    --hmi-text: #f5f5f5;
+    --hmi-text-muted: #a0a0a0;
+    --hmi-equipment: #808080;
+
+    /* Status Colors - Slightly desaturated for night viewing */
+    --status-ok: #66BB6A;
+    --status-warning: #FFA726;
+    --status-alarm: #EF5350;
+    --status-info: #42A5F5;
+    --status-offline: #757575;
+
+    /* Status Dark Backgrounds */
+    --status-ok-light: #1b3d1f;
+    --status-warning-light: #3d2e1a;
+    --status-alarm-light: #3d1a1a;
+    --status-info-light: #1a2d3d;
+  }
+
+  /* Invert shadows for dark mode */
+  .shadow-hmi-card,
+  .shadow-card {
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  }
+
+  .shadow-hmi-card-hover,
+  .shadow-card-hover {
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  }
 }
 
 /* Base Styles */

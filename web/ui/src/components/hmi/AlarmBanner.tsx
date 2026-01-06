@@ -33,6 +33,9 @@ interface AlarmBannerProps {
   className?: string;
 }
 
+// Carousel rotation time in ms - increased for better readability during shift
+const ALARM_ROTATION_MS = 10000; // 10 seconds per alarm
+
 export default function AlarmBanner({
   alarms,
   onAcknowledge,
@@ -40,18 +43,19 @@ export default function AlarmBanner({
   className = '',
 }: AlarmBannerProps) {
   const [currentIndex, setCurrentIndex] = useState(0);
+  const [isPaused, setIsPaused] = useState(false);
 
   // Filter to only active alarms
   const activeAlarms = alarms.filter(a => a.state !== 'CLEARED');
 
-  // Rotate through alarms every 5 seconds if multiple
+  // Rotate through alarms - pauses on hover/touch for operator reading
   useEffect(() => {
-    if (activeAlarms.length <= 1) return;
+    if (activeAlarms.length <= 1 || isPaused) return;
     const interval = setInterval(() => {
       setCurrentIndex(prev => (prev + 1) % activeAlarms.length);
-    }, 5000);
+    }, ALARM_ROTATION_MS);
     return () => clearInterval(interval);
-  }, [activeAlarms.length]);
+  }, [activeAlarms.length, isPaused]);
 
   // Reset index if alarms change
   useEffect(() => {
@@ -110,6 +114,10 @@ export default function AlarmBanner({
       `}
       role="alert"
       aria-live="assertive"
+      onMouseEnter={() => setIsPaused(true)}
+      onMouseLeave={() => setIsPaused(false)}
+      onTouchStart={() => setIsPaused(true)}
+      onTouchEnd={() => setIsPaused(false)}
     >
       <div className="flex items-center justify-between gap-4 flex-wrap">
         {/* Alarm info */}

@@ -70,26 +70,34 @@ export default function DegradedModeBanner({
 
   const title = REASON_TITLES[degradedInfo.reason];
 
+  // Determine if this is critical (stale > 30 seconds)
+  const elapsedSeconds = degradedInfo.since
+    ? Math.floor((Date.now() - degradedInfo.since.getTime()) / 1000)
+    : 0;
+  const isCritical = elapsedSeconds > 30;
+
   return (
     <div
-      className={`bg-status-warning text-hmi-text ${className}`}
+      className={`${isCritical ? 'bg-status-alarm animate-pulse-subtle' : 'bg-status-warning'} text-white ${className}`}
       role="alert"
-      aria-live="polite"
+      aria-live="assertive"
     >
-      <div className="hmi-container py-2 flex items-center justify-between gap-4 flex-wrap">
+      <div className="hmi-container py-3 flex items-center justify-between gap-4 flex-wrap">
         {/* Warning Info */}
         <div className="flex items-center gap-3">
-          <svg className="w-5 h-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <svg className="w-6 h-6 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
           </svg>
-          <div className="flex items-center gap-2 flex-wrap text-sm">
-            <span className="font-semibold">{title}</span>
-            <span className="opacity-60">|</span>
-            <span>{degradedInfo.message}</span>
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="font-bold text-base">{isCritical ? '⚠️ STALE DATA' : title}</span>
+            <span className="opacity-70">|</span>
+            <span className="text-sm">{degradedInfo.message}</span>
             {elapsed && (
               <>
-                <span className="opacity-60">|</span>
-                <span className="font-mono">{elapsed}</span>
+                <span className="opacity-70">|</span>
+                <span className="font-mono text-sm font-bold bg-black/20 px-2 py-0.5 rounded">
+                  Last update: {elapsed} ago
+                </span>
               </>
             )}
           </div>
