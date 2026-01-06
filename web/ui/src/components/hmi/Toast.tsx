@@ -38,6 +38,8 @@ interface ToastContextValue {
   error: (title: string, message?: string, options?: Partial<HMIToast>) => string;
   warning: (title: string, message?: string, options?: Partial<HMIToast>) => string;
   info: (title: string, message?: string, options?: Partial<HMIToast>) => string;
+  /** Convenience method for dynamic toast type selection */
+  showMessage: (type: ToastType, title: string, message?: string) => string;
 }
 
 const ToastContext = createContext<ToastContextValue | null>(null);
@@ -83,8 +85,12 @@ export function HMIToastProvider({ children }: { children: ReactNode }) {
     return addToast({ type: 'info', title, message, ...options });
   }, [addToast]);
 
+  const showMessage = useCallback((type: ToastType, title: string, message?: string) => {
+    return addToast({ type, title, message });
+  }, [addToast]);
+
   return (
-    <ToastContext.Provider value={{ toasts, addToast, removeToast, clearAll, success, error, warning, info }}>
+    <ToastContext.Provider value={{ toasts, addToast, removeToast, clearAll, success, error, warning, info, showMessage }}>
       {children}
       <HMIToastContainer toasts={toasts} removeToast={removeToast} />
     </ToastContext.Provider>

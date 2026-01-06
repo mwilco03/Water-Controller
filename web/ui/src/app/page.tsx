@@ -48,10 +48,12 @@ export default function RTUStatusPage() {
   }, []);
 
   // Alarm acknowledgment handler
-  const handleAcknowledge = useCallback(async (alarmId: number) => {
+  const handleAcknowledge = useCallback(async (alarmId: number | string) => {
     try {
       // User is obtained from session in backend via require_control_access
-      await acknowledgeAlarm(alarmId, 'operator');
+      // API expects numeric alarm ID
+      const numericId = typeof alarmId === 'string' ? parseInt(alarmId, 10) : alarmId;
+      await acknowledgeAlarm(numericId, 'operator');
       showMessage('success', `Alarm ${alarmId} acknowledged`);
       refetch();
     } catch (err) {
