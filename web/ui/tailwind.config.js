@@ -24,36 +24,36 @@ module.exports = {
        * Core principle: Gray is Normal, Color is Abnormal
        */
       colors: {
-        // Background & Surface
+        // Background & Surface - Using CSS variables for dark mode support
         'hmi': {
-          'bg': '#F5F5F5',           // Page background (light gray)
-          'bg-alt': '#EEEEEE',       // Alternate background
-          'panel': '#FFFFFF',         // Cards, panels
-          'border': '#E0E0E0',        // Borders, dividers
-          'text': '#212121',          // Primary text
-          'text-secondary': '#757575', // Secondary text (alias)
-          'muted': '#757575',         // Secondary text
-          'equipment': '#9E9E9E',     // Normal equipment state
-          'offline': '#9E9E9E',       // Offline state
-          'disabled': '#BDBDBD',      // Disabled elements
+          'bg': 'var(--hmi-bg)',           // Page background
+          'bg-alt': '#EEEEEE',             // Alternate background
+          'panel': 'var(--hmi-panel)',     // Cards, panels
+          'border': 'var(--hmi-border)',   // Borders, dividers
+          'text': 'var(--hmi-text)',       // Primary text
+          'text-secondary': 'var(--hmi-text-muted)', // Secondary text (alias)
+          'muted': 'var(--hmi-text-muted)', // Secondary text
+          'equipment': 'var(--hmi-equipment)', // Normal equipment state
+          'offline': 'var(--status-offline)',  // Offline state
+          'disabled': '#BDBDBD',           // Disabled elements
         },
-        // Status Colors (ISA-101 compliant)
+        // Status Colors (ISA-101 compliant) - Using CSS variables for dark mode
         'status': {
-          'ok': '#4CAF50',            // Running, safe (use sparingly)
-          'ok-light': '#E8F5E9',      // OK background
-          'ok-dark': '#2E7D32',       // OK text on light
-          'warning': '#FF9800',       // Caution, abnormal
-          'warning-light': '#FFF3E0', // Warning background
-          'warning-dark': '#E65100',  // Warning text on light
-          'alarm': '#F44336',         // Critical, danger, stop
-          'alarm-light': '#FFEBEE',   // Alarm background
-          'alarm-dark': '#C62828',    // Alarm text on light
-          'info': '#2196F3',          // Informational, manual
-          'info-light': '#E3F2FD',    // Info background
-          'info-dark': '#1565C0',     // Info text on light
-          'offline': '#9E9E9E',       // Disconnected, inactive
-          'offline-light': '#FAFAFA', // Offline background
-          'offline-dark': '#616161',  // Offline text on light
+          'ok': 'var(--status-ok)',            // Running, safe (use sparingly)
+          'ok-light': 'var(--status-ok-light)', // OK background
+          'ok-dark': '#2E7D32',                // OK text on light
+          'warning': 'var(--status-warning)',  // Caution, abnormal
+          'warning-light': 'var(--status-warning-light)', // Warning background
+          'warning-dark': '#E65100',           // Warning text on light
+          'alarm': 'var(--status-alarm)',      // Critical, danger, stop
+          'alarm-light': 'var(--status-alarm-light)', // Alarm background
+          'alarm-dark': '#C62828',             // Alarm text on light
+          'info': 'var(--status-info)',        // Informational, manual
+          'info-light': 'var(--status-info-light)', // Info background
+          'info-dark': '#1565C0',              // Info text on light
+          'offline': 'var(--status-offline)',  // Disconnected, inactive
+          'offline-light': '#FAFAFA',          // Offline background
+          'offline-dark': '#616161',           // Offline text on light
         },
         // Alarm severity colors (backward compatibility + new)
         'alarm': {

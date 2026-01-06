@@ -22,6 +22,8 @@ import {
   ErrorPresets,
   LiveTimestamp,
   useHMIToast,
+  ShiftHandoff,
+  QuickControlPanel,
 } from '@/components/hmi';
 import type { RTUStatusData } from '@/components/hmi';
 import Link from 'next/link';
@@ -48,10 +50,12 @@ export default function RTUStatusPage() {
   }, []);
 
   // Alarm acknowledgment handler
-  const handleAcknowledge = useCallback(async (alarmId: number) => {
+  const handleAcknowledge = useCallback(async (alarmId: number | string) => {
     try {
       // User is obtained from session in backend via require_control_access
-      await acknowledgeAlarm(alarmId, 'operator');
+      // API expects numeric alarm ID
+      const numericId = typeof alarmId === 'string' ? parseInt(alarmId, 10) : alarmId;
+      await acknowledgeAlarm(numericId, 'operator');
       showMessage('success', `Alarm ${alarmId} acknowledged`);
       refetch();
     } catch (err) {
@@ -150,6 +154,86 @@ export default function RTUStatusPage() {
         </div>
       </div>
 
+      {/* Quick Alarm Summary - Top 3 active alarms with one-tap acknowledge */}
+      {activeAlarmCount > 0 && (
+        <div className="hmi-card p-4">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="font-semibold text-hmi-text flex items-center gap-2">
+              <svg className="w-5 h-5 text-status-alarm" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+              </svg>
+              Active Alarms
+            </h2>
+            <Link href="/alarms" className="text-sm text-status-info hover:underline">
+              View All ({activeAlarmCount})
+            </Link>
+          </div>
+          <div className="space-y-2">
+            {alarms
+              .filter(a => a.state !== 'CLEARED')
+              .slice(0, 3)
+              .map((alarm) => {
+                const isUnacked = alarm.state === 'ACTIVE';
+                const isCritical = alarm.severity === 'CRITICAL';
+                return (
+                  <div
+                    key={alarm.alarm_id}
+                    className={`flex items-center justify-between gap-3 p-3 rounded-lg border ${
+                      isCritical
+                        ? 'bg-status-alarm-light border-status-alarm'
+                        : 'bg-status-warning-light border-status-warning'
+                    } ${isUnacked ? 'animate-pulse-subtle' : ''}`}
+                  >
+                    <div className="flex items-center gap-3 min-w-0 flex-1">
+                      {/* Severity badge */}
+                      <span className={`shrink-0 px-2 py-0.5 rounded text-xs font-bold text-white ${
+                        isCritical ? 'bg-status-alarm' : 'bg-status-warning'
+                      }`}>
+                        {alarm.severity || 'HIGH'}
+                      </span>
+                      {/* Alarm info */}
+                      <div className="min-w-0 flex-1">
+                        <div className="font-medium text-hmi-text truncate">
+                          {alarm.rtu_station}{alarm.slot !== undefined ? ` - Slot ${alarm.slot}` : ''}
+                        </div>
+                        <div className="text-sm text-hmi-muted truncate">
+                          {alarm.message}
+                        </div>
+                      </div>
+                      {/* Unacked indicator */}
+                      {isUnacked && (
+                        <span className="shrink-0 w-2 h-2 rounded-full bg-status-alarm animate-pulse"
+                              title="Unacknowledged" />
+                      )}
+                    </div>
+                    {/* Quick ACK button */}
+                    <button
+                      onClick={() => handleAcknowledge(alarm.alarm_id)}
+                      className="shrink-0 px-3 py-2 rounded-lg bg-hmi-panel border border-hmi-border hover:bg-hmi-bg text-sm font-medium text-hmi-text transition-colors touch-manipulation min-h-touch"
+                      title="Acknowledge alarm"
+                    >
+                      ACK
+                    </button>
+                  </div>
+                );
+              })}
+          </div>
+          {activeAlarmCount > 3 && (
+            <div className="mt-3 text-center">
+              <Link
+                href="/alarms"
+                className="text-sm text-status-info hover:underline"
+              >
+                +{activeAlarmCount - 3} more alarms
+              </Link>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Quick Control Panel - Fast setpoint adjustments */}
+      <QuickControlPanel />
+
       {/* RTU Grid */}
       {rtus.length > 0 ? (
         <div className="hmi-grid hmi-grid-auto">
@@ -171,6 +255,9 @@ export default function RTUStatusPage() {
           </a>
         </div>
       )}
+
+      {/* Shift Handoff Summary - Collapsible section for shift changes */}
+      <ShiftHandoff rtus={rtus} alarms={alarms} />
 
       {/* Data Mode Indicator */}
       {dataMode === 'polling' && (

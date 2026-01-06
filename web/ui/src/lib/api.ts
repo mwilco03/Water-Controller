@@ -448,6 +448,17 @@ export async function restoreBackup(file: File): Promise<{ success: boolean; err
   return res.json();
 }
 
+// RTU Inventory API
+export async function getRTUInventory(stationName: string): Promise<RTUInventory> {
+  return apiFetch<RTUInventory>(`/api/v1/rtus/${encodeURIComponent(stationName)}/inventory`);
+}
+
+export async function refreshRTUInventory(stationName: string): Promise<RTUInventory> {
+  return apiFetch<RTUInventory>(`/api/v1/rtus/${encodeURIComponent(stationName)}/inventory/refresh`, {
+    method: 'POST',
+  });
+}
+
 // RTU Discovery API
 // Note: RTU inventory comes from PROFINET discovery, not stored locally
 export async function discoverRTUDevices(stationName: string): Promise<unknown> {

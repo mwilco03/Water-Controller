@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { configLogger, systemLogger, modbusLogger } from '@/lib/logger';
+import { ConfirmModal } from '@/components/hmi';
 
 const PAGE_TITLE = 'Settings - Water Treatment Controller';
 
@@ -70,6 +71,7 @@ export default function SettingsPage() {
   const [logDestinations, setLogDestinations] = useState<LogDestination[]>([]);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [fileToRestore, setFileToRestore] = useState<File | null>(null);
 
   // Demo mode state
   const [demoStatus, setDemoStatus] = useState<{
@@ -219,15 +221,13 @@ export default function SettingsPage() {
     }
   };
 
-  const restoreBackup = async (file: File) => {
-    if (!confirm('Are you sure you want to restore this backup? Current configuration will be overwritten.')) {
-      return;
-    }
+  const confirmRestoreBackup = async () => {
+    if (!fileToRestore) return;
 
     setLoading(true);
     try {
       const formData = new FormData();
-      formData.append('file', file);
+      formData.append('file', fileToRestore);
 
       const res = await fetch('/api/v1/backup/restore', {
         method: 'POST',
@@ -248,14 +248,17 @@ export default function SettingsPage() {
       showMessage('error', 'Error restoring backup');
     } finally {
       setLoading(false);
+      setFileToRestore(null);
     }
   };
 
   const handleRestoreFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (file) {
-      restoreBackup(file);
+      setFileToRestore(file);
     }
+    // Reset input so same file can be selected again
+    event.target.value = '';
   };
 
   const exportConfig = async () => {
@@ -1224,6 +1227,19 @@ export default function SettingsPage() {
           </div>
         </div>
       )}
+
+      {/* Restore Backup Confirmation Modal */}
+      <ConfirmModal
+        isOpen={fileToRestore !== null}
+        onClose={() => setFileToRestore(null)}
+        onConfirm={confirmRestoreBackup}
+        title="Restore Backup"
+        message={`Are you sure you want to restore "${fileToRestore?.name}"? Current configuration will be overwritten. This action cannot be undone.`}
+        confirmLabel="Restore"
+        cancelLabel="Cancel"
+        variant="warning"
+        isLoading={loading}
+      />
     </div>
   );
 }
