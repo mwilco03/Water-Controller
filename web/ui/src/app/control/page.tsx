@@ -95,7 +95,7 @@ function ConfirmationModal({
 
 export default function ControlPage() {
   const { canCommand, mode } = useCommandMode();
-  const { showMessage } = useHMIToast();
+  const { showMessage, addToast } = useHMIToast();
   const [rtus, setRtus] = useState<RTU[]>([]);
   const [selectedRtu, setSelectedRtu] = useState<string | null>(null);
   const [pidLoops, setPidLoops] = useState<PIDLoop[]>([]);
@@ -104,6 +104,22 @@ export default function ControlPage() {
   const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null);
   const [pendingSetpoint, setPendingSetpoint] = useState<number | null>(null);
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  // Track last setpoint change for undo
+  const lastSetpointChangeRef = useRef<{
+    rtuName: string;
+    loopId: number;
+    loopName: string;
+    previousValue: number;
+    newValue: number;
+  } | null>(null);
+  // Track last mode change for undo
+  const lastModeChangeRef = useRef<{
+    rtuName: string;
+    loopId: number;
+    loopName: string;
+    previousMode: string;
+    newMode: string;
+  } | null>(null);
 
   // Set page title
   useEffect(() => {
@@ -216,7 +232,14 @@ export default function ControlPage() {
     }
   }, [selectedRtu, fetchControlData]);
 
-  const doUpdateSetpoint = async (rtuName: string, loopId: number, setpoint: number) => {
+  const doUpdateSetpoint = async (
+    rtuName: string,
+    loopId: number,
+    setpoint: number,
+    loopName: string,
+    previousValue?: number,
+    isUndo?: boolean
+  ) => {
     try {
       const res = await fetch(`/api/v1/rtus/${encodeURIComponent(rtuName)}/pid/${loopId}/setpoint`, {
         method: 'PUT',
@@ -224,7 +247,38 @@ export default function ControlPage() {
         body: JSON.stringify({ setpoint }),
       });
       if (res.ok) {
-        showMessage('success', `Setpoint updated to ${setpoint.toFixed(2)}`);
+        // Store the change for potential undo (only if not already an undo action)
+        if (!isUndo && previousValue !== undefined) {
+          lastSetpointChangeRef.current = {
+            rtuName,
+            loopId,
+            loopName,
+            previousValue,
+            newValue: setpoint,
+          };
+
+          // Show toast with undo action
+          addToast({
+            type: 'success',
+            title: `Setpoint updated to ${setpoint.toFixed(2)}`,
+            message: `${loopName} - Previous: ${previousValue.toFixed(2)}`,
+            duration: 8000, // Longer duration to give time for undo
+            action: {
+              label: 'Undo',
+              onClick: () => {
+                const last = lastSetpointChangeRef.current;
+                if (last) {
+                  doUpdateSetpoint(last.rtuName, last.loopId, last.previousValue, last.loopName, undefined, true);
+                  lastSetpointChangeRef.current = null;
+                }
+              },
+            },
+          });
+        } else if (isUndo) {
+          showMessage('success', `Setpoint reverted to ${setpoint.toFixed(2)}`);
+        } else {
+          showMessage('success', `Setpoint updated to ${setpoint.toFixed(2)}`);
+        }
       } else {
         showMessage('error', 'Failed to update setpoint');
       }
@@ -235,21 +289,28 @@ export default function ControlPage() {
     }
   };
 
-  const updateSetpoint = (rtuName: string, loopId: number, setpoint: number, loopName: string) => {
+  const updateSetpoint = (rtuName: string, loopId: number, setpoint: number, loopName: string, currentValue: number) => {
     if (!canCommand) return;
     setPendingSetpoint(setpoint);
     setConfirmAction({
       type: 'setpoint',
       name: loopName,
-      description: `Change setpoint to ${setpoint.toFixed(2)}?`,
+      description: `Change setpoint from ${currentValue.toFixed(2)} to ${setpoint.toFixed(2)}?`,
       onConfirm: () => {
-        doUpdateSetpoint(rtuName, loopId, setpoint);
+        doUpdateSetpoint(rtuName, loopId, setpoint, loopName, currentValue);
         setPendingSetpoint(null);
       },
     });
   };
 
-  const doToggleMode = async (rtuName: string, loopId: number, pidMode: string) => {
+  const doToggleMode = async (
+    rtuName: string,
+    loopId: number,
+    pidMode: string,
+    loopName: string,
+    previousMode?: string,
+    isUndo?: boolean
+  ) => {
     try {
       const res = await fetch(`/api/v1/rtus/${encodeURIComponent(rtuName)}/pid/${loopId}/mode`, {
         method: 'PUT',
@@ -257,7 +318,38 @@ export default function ControlPage() {
         body: JSON.stringify({ mode: pidMode }),
       });
       if (res.ok) {
-        showMessage('success', `PID mode changed to ${pidMode}`);
+        // Store the change for potential undo (only if not already an undo action)
+        if (!isUndo && previousMode) {
+          lastModeChangeRef.current = {
+            rtuName,
+            loopId,
+            loopName,
+            previousMode,
+            newMode: pidMode,
+          };
+
+          // Show toast with undo action
+          addToast({
+            type: 'success',
+            title: `PID mode changed to ${pidMode}`,
+            message: `${loopName} - Previous: ${previousMode}`,
+            duration: 8000,
+            action: {
+              label: 'Undo',
+              onClick: () => {
+                const last = lastModeChangeRef.current;
+                if (last) {
+                  doToggleMode(last.rtuName, last.loopId, last.previousMode, last.loopName, undefined, true);
+                  lastModeChangeRef.current = null;
+                }
+              },
+            },
+          });
+        } else if (isUndo) {
+          showMessage('success', `PID mode reverted to ${pidMode}`);
+        } else {
+          showMessage('success', `PID mode changed to ${pidMode}`);
+        }
       } else {
         showMessage('error', 'Failed to change mode');
       }
@@ -268,13 +360,13 @@ export default function ControlPage() {
     }
   };
 
-  const toggleMode = (rtuName: string, loopId: number, pidMode: string, loopName: string) => {
+  const toggleMode = (rtuName: string, loopId: number, pidMode: string, loopName: string, currentMode: string) => {
     if (!canCommand) return;
     setConfirmAction({
       type: 'mode',
       name: loopName,
-      description: `Switch PID loop to ${pidMode} mode?`,
-      onConfirm: () => doToggleMode(rtuName, loopId, pidMode),
+      description: `Switch PID loop from ${currentMode} to ${pidMode} mode?`,
+      onConfirm: () => doToggleMode(rtuName, loopId, pidMode, loopName, currentMode),
     });
   };
 
@@ -428,7 +520,7 @@ export default function ControlPage() {
                 />
                 {pendingSetpoint !== null && pendingSetpoint !== selectedLoop.setpoint && (
                   <button
-                    onClick={() => updateSetpoint(selectedRtu, selectedLoop.id, pendingSetpoint, selectedLoop.name)}
+                    onClick={() => updateSetpoint(selectedRtu, selectedLoop.id, pendingSetpoint, selectedLoop.name, selectedLoop.setpoint)}
                     className="px-3 py-2 bg-status-info hover:bg-status-info/80 text-white rounded text-sm font-medium transition-colors"
                     disabled={!canCommand}
                   >
@@ -458,7 +550,7 @@ export default function ControlPage() {
           </div>
           <div className="mt-4 flex gap-2">
             <button
-              onClick={() => toggleMode(selectedRtu, selectedLoop.id, 'AUTO', selectedLoop.name)}
+              onClick={() => toggleMode(selectedRtu, selectedLoop.id, 'AUTO', selectedLoop.name, selectedLoop.mode)}
               disabled={!canCommand || selectedLoop.mode === 'AUTO'}
               className={`px-4 py-2 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-white ${
                 selectedLoop.mode === 'AUTO' ? 'bg-status-ok' : 'bg-hmi-border hover:bg-hmi-border/80'
@@ -467,7 +559,7 @@ export default function ControlPage() {
               AUTO
             </button>
             <button
-              onClick={() => toggleMode(selectedRtu, selectedLoop.id, 'MANUAL', selectedLoop.name)}
+              onClick={() => toggleMode(selectedRtu, selectedLoop.id, 'MANUAL', selectedLoop.name, selectedLoop.mode)}
               disabled={!canCommand || selectedLoop.mode === 'MANUAL'}
               className={`px-4 py-2 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-white ${
                 selectedLoop.mode === 'MANUAL' ? 'bg-status-warning' : 'bg-hmi-border hover:bg-hmi-border/80'

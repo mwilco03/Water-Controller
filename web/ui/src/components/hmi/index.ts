@@ -80,5 +80,9 @@ export {
 } from './EmptyState';
 export type { EmptyStateVariant } from './EmptyState';
 
+export { default as ShiftHandoff } from './ShiftHandoff';
+
+export { default as QuickControlPanel } from './QuickControlPanel';
+
 // Form components
 export * from './forms';

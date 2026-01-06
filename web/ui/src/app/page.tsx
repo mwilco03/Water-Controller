@@ -22,6 +22,8 @@ import {
   ErrorPresets,
   LiveTimestamp,
   useHMIToast,
+  ShiftHandoff,
+  QuickControlPanel,
 } from '@/components/hmi';
 import type { RTUStatusData } from '@/components/hmi';
 import Link from 'next/link';
@@ -229,6 +231,9 @@ export default function RTUStatusPage() {
         </div>
       )}
 
+      {/* Quick Control Panel - Fast setpoint adjustments */}
+      <QuickControlPanel />
+
       {/* RTU Grid */}
       {rtus.length > 0 ? (
         <div className="hmi-grid hmi-grid-auto">
@@ -250,6 +255,9 @@ export default function RTUStatusPage() {
           </a>
         </div>
       )}
+
+      {/* Shift Handoff Summary - Collapsible section for shift changes */}
+      <ShiftHandoff rtus={rtus} alarms={alarms} />
 
       {/* Data Mode Indicator */}
       {dataMode === 'polling' && (
