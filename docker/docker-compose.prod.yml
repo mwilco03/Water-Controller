@@ -24,19 +24,14 @@ version: "3.9"
 # ============================================================================
 # Logging Configuration (YAML anchors for reuse)
 # ============================================================================
+# JSON file logging - Promtail scrapes these via Docker socket
 x-logging: &default-logging
   driver: "json-file"
   options:
     max-size: "10m"
-    max-file: "3"
+    max-file: "5"
     labels: "service,environment"
-
-# For Graylog/Loki integration (uncomment and configure):
-# x-logging-gelf: &gelf-logging
-#   driver: "gelf"
-#   options:
-#     gelf-address: "udp://localhost:${WTC_GRAYLOG_PORT:-12201}"
-#     tag: "wtc-{{.Name}}"
+    tag: "{{.Name}}"
 
 # ============================================================================
 # Security Configuration (YAML anchors for reuse)
@@ -196,13 +191,19 @@ services:
       GF_INSTALL_PLUGINS: grafana-clock-panel,grafana-simple-json-datasource
       GF_SERVER_HTTP_PORT: ${WTC_GRAFANA_PORT:-3000}
       GF_SERVER_ROOT_URL: ${GRAFANA_ROOT_URL:-http://localhost:3000}
+      # Unified alerting (disabled by default - enable when ready)
+      GF_UNIFIED_ALERTING_ENABLED: ${GF_UNIFIED_ALERTING_ENABLED:-true}
+      GF_ALERTING_ENABLED: "false"
     volumes:
       - grafana_data:/var/lib/grafana
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
     ports:
       - "${WTC_GRAFANA_PORT:-3000}:${WTC_GRAFANA_PORT:-3000}"
     depends_on:
-      - database
+      loki:
+        condition: service_healthy
+      database:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:${WTC_GRAFANA_PORT:-3000}/api/health"]
       interval: 30s
@@ -220,6 +221,70 @@ services:
       - wtc-internal
       - wtc-external
 
+  # ============================================================================
+  # Loki - Centralized log aggregation
+  # ============================================================================
+  loki:
+    image: grafana/loki:2.9.4
+    container_name: wtc-loki
+    restart: unless-stopped
+    user: "10001:10001"
+    <<: *default-security
+    command: -config.file=/etc/loki/loki-config.yml
+    volumes:
+      - ./loki/loki-config.yml:/etc/loki/loki-config.yml:ro
+      - loki_data:/loki
+    expose:
+      - "3100"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3100/ready"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          memory: 128M
+    networks:
+      - wtc-internal
+
+  # ============================================================================
+  # Promtail - Log collector (ships Docker logs to Loki)
+  # ============================================================================
+  promtail:
+    image: grafana/promtail:2.9.4
+    container_name: wtc-promtail
+    restart: unless-stopped
+    <<: *default-security
+    command: -config.file=/etc/promtail/promtail-config.yml
+    volumes:
+      - ./promtail/promtail-config.yml:/etc/promtail/promtail-config.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+    depends_on:
+      loki:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9080/ready"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 128M
+        reservations:
+          memory: 32M
+    networks:
+      - wtc-internal
+
 # ============================================================================
 # Volumes - Persistent data storage
 # ============================================================================
@@ -228,6 +293,8 @@ volumes:
     name: wtc-db-data
   grafana_data:
     name: wtc-grafana-data
+  loki_data:
+    name: wtc-loki-data
 
 # ============================================================================
 # Networks - Isolated communication
