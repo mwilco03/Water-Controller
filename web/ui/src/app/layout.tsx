@@ -50,6 +50,7 @@ export default function RootLayout({
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
         {/* Local fonts for air-gapped deployment - no external network calls */}
+        {/* eslint-disable-next-line @next/next/no-css-tags -- Intentional for air-gapped deployments */}
         <link rel="stylesheet" href="/fonts/fonts.css" />
       </head>
       <body className="bg-hmi-bg text-hmi-text">

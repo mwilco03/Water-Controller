@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { rtuLogger, configLogger } from '@/lib/logger';
-import { useHMIToast } from '@/components/hmi';
+import { useHMIToast, ConfirmModal } from '@/components/hmi';
 
 interface RTUDevice {
   station_name: string;
@@ -49,6 +49,7 @@ export default function IOTagsPage() {
   const [activeTab, setActiveTab] = useState<'slots' | 'historian'>('slots');
   const [showEditModal, setShowEditModal] = useState<SlotConfig | null>(null);
   const [showHistorianModal, setShowHistorianModal] = useState<HistorianTag | null>(null);
+  const [tagToDelete, setTagToDelete] = useState<HistorianTag | null>(null);
   const [loading, setLoading] = useState(false);
   const { showMessage } = useHMIToast();
 
@@ -159,11 +160,11 @@ export default function IOTagsPage() {
     }
   };
 
-  const deleteHistorianTag = async (tag: HistorianTag) => {
-    if (!confirm(`Delete historian tag "${tag.tag_name}"?`)) return;
+  const confirmDeleteHistorianTag = async () => {
+    if (!tagToDelete) return;
 
     try {
-      const res = await fetch(`/api/v1/trends/tags/${tag.id}`, { method: 'DELETE' });
+      const res = await fetch(`/api/v1/trends/tags/${tagToDelete.id}`, { method: 'DELETE' });
       if (res.ok) {
         showMessage('success', 'Historian tag deleted');
         fetchHistorianTags();
@@ -172,6 +173,8 @@ export default function IOTagsPage() {
       }
     } catch (error) {
       showMessage('error', 'Error deleting historian tag');
+    } finally {
+      setTagToDelete(null);
     }
   };
 
@@ -449,7 +452,7 @@ export default function IOTagsPage() {
                         Edit
                       </button>
                       <button
-                        onClick={() => deleteHistorianTag(tag)}
+                        onClick={() => setTagToDelete(tag)}
                         className="px-3 py-1 bg-status-alarm hover:bg-status-alarm/90 rounded text-sm text-white"
                       >
                         Delete
@@ -806,6 +809,18 @@ export default function IOTagsPage() {
           </div>
         </div>
       )}
+
+      {/* Delete Confirmation Modal */}
+      <ConfirmModal
+        isOpen={tagToDelete !== null}
+        onClose={() => setTagToDelete(null)}
+        onConfirm={confirmDeleteHistorianTag}
+        title="Delete Historian Tag"
+        message={`Are you sure you want to delete "${tagToDelete?.tag_name}"? This action cannot be undone.`}
+        confirmLabel="Delete"
+        cancelLabel="Cancel"
+        variant="danger"
+      />
     </div>
   );
 }
