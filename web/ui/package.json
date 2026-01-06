@@ -12,7 +12,8 @@
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
     "generate:types": "openapi-typescript http://localhost:${WTC_API_PORT:-8000}/api/openapi.json -o src/lib/api-types.generated.ts",
-    "generate:types:file": "openapi-typescript ../api/openapi.json -o src/lib/api-types.generated.ts"
+    "generate:types:file": "openapi-typescript ../api/openapi.json -o src/lib/api-types.generated.ts",
+    "fonts:download": "bash scripts/download-fonts.sh"
   },
   "dependencies": {
     "autoprefixer": "^10.4.14",

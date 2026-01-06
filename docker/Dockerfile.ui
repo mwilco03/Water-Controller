@@ -43,6 +43,12 @@ COPY web/ui/ .
 # Disable telemetry during build
 ENV NEXT_TELEMETRY_DISABLED=1
 
+# Download fonts for air-gapped deployment (no external network calls at runtime)
+RUN apk add --no-cache curl unzip && \
+    chmod +x scripts/download-fonts.sh && \
+    ./scripts/download-fonts.sh || echo "Font download skipped - using system fallbacks" && \
+    apk del curl unzip
+
 # Build the application
 RUN npm run build
 

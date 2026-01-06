@@ -1,0 +1,82 @@
+/*
+ * Local Font Definitions for Air-Gapped Deployment
+ *
+ * For isolated network deployments, font files should be placed in this directory.
+ * Download Inter and JetBrains Mono from:
+ *   - https://fonts.google.com/specimen/Inter
+ *   - https://fonts.google.com/specimen/JetBrains+Mono
+ *
+ * Or use the build script: npm run fonts:download
+ */
+
+/* Inter - Primary UI Font */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: local('Inter Regular'), local('Inter-Regular'),
+       url('/fonts/Inter-Regular.woff2') format('woff2'),
+       url('/fonts/Inter-Regular.woff') format('woff');
+}
+
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: local('Inter Medium'), local('Inter-Medium'),
+       url('/fonts/Inter-Medium.woff2') format('woff2'),
+       url('/fonts/Inter-Medium.woff') format('woff');
+}
+
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: local('Inter SemiBold'), local('Inter-SemiBold'),
+       url('/fonts/Inter-SemiBold.woff2') format('woff2'),
+       url('/fonts/Inter-SemiBold.woff') format('woff');
+}
+
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: local('Inter Bold'), local('Inter-Bold'),
+       url('/fonts/Inter-Bold.woff2') format('woff2'),
+       url('/fonts/Inter-Bold.woff') format('woff');
+}
+
+/* JetBrains Mono - Monospace/Code Font */
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: local('JetBrains Mono Regular'), local('JetBrainsMono-Regular'),
+       url('/fonts/JetBrainsMono-Regular.woff2') format('woff2'),
+       url('/fonts/JetBrainsMono-Regular.woff') format('woff');
+}
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: local('JetBrains Mono Medium'), local('JetBrainsMono-Medium'),
+       url('/fonts/JetBrainsMono-Medium.woff2') format('woff2'),
+       url('/fonts/JetBrainsMono-Medium.woff') format('woff');
+}
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: local('JetBrains Mono SemiBold'), local('JetBrainsMono-SemiBold'),
+       url('/fonts/JetBrainsMono-SemiBold.woff2') format('woff2'),
+       url('/fonts/JetBrainsMono-SemiBold.woff') format('woff');
+}
