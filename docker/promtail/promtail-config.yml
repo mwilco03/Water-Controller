@@ -1,0 +1,94 @@
+# Water Treatment Controller - Promtail Configuration
+# Copyright (C) 2024
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Promtail collects logs from Docker containers and ships them to Loki.
+# Labels are added to enable filtering by service, level, and container.
+
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /var/promtail/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+    batchwait: 1s
+    batchsize: 1048576
+    timeout: 10s
+
+scrape_configs:
+  # Scrape Docker container logs via the Docker daemon socket
+  - job_name: docker
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 5s
+        filters:
+          # Collect logs from containers with wtc- prefix
+          - name: name
+            values: ["wtc-.*"]
+    relabel_configs:
+      # Use container name as the job label
+      - source_labels: ['__meta_docker_container_name']
+        regex: '/(.+)'
+        target_label: container
+      # Extract service name from compose label
+      - source_labels: ['__meta_docker_container_label_com_docker_compose_service']
+        target_label: service
+      # Add environment label
+      - source_labels: ['__meta_docker_container_label_environment']
+        target_label: environment
+      # Add container ID for debugging
+      - source_labels: ['__meta_docker_container_id']
+        target_label: container_id
+    pipeline_stages:
+      # Try to parse JSON logs (structured logging from API)
+      - json:
+          expressions:
+            level: level
+            logger: logger
+            message: message
+            correlation_id: correlation_id
+            operation_name: operation_name
+            rtu: rtu
+            duration_ms: duration_ms
+            user: user
+            timestamp: timestamp
+      # If JSON parsing worked, use extracted level
+      - labels:
+          level:
+          logger:
+          correlation_id:
+          rtu:
+      # Extract log level from non-JSON logs (database, grafana)
+      - regex:
+          expression: '(?P<level>DEBUG|INFO|WARN|WARNING|ERROR|CRITICAL|FATAL)'
+      - labels:
+          level:
+      # Normalize log levels
+      - template:
+          source: level
+          template: '{{ ToLower .Value }}'
+      - labels:
+          level:
+      # Add static labels for the water controller
+      - static_labels:
+          app: water-controller
+
+  # Scrape systemd journal for host-level controller logs (if mounted)
+  - job_name: journal
+    journal:
+      max_age: 12h
+      labels:
+        job: systemd-journal
+    relabel_configs:
+      - source_labels: ['__journal__systemd_unit']
+        target_label: unit
+      - source_labels: ['__journal__hostname']
+        target_label: host
+    pipeline_stages:
+      - regex:
+          expression: '(?P<level>DEBUG|INFO|WARN|WARNING|ERROR|CRITICAL|FATAL)'
+      - labels:
+          level:

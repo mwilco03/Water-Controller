@@ -1,0 +1,123 @@
+# Water Treatment Controller - Promtail Configuration (Bare Metal)
+# Copyright (C) 2024
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Configuration for Promtail when running on bare metal (systemd).
+# Reads from systemd journal instead of Docker containers.
+
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /var/lib/water-controller/promtail/positions.yaml
+
+clients:
+  - url: http://localhost:3100/loki/api/v1/push
+    batchwait: 1s
+    batchsize: 1048576
+    timeout: 10s
+
+scrape_configs:
+  # Scrape systemd journal for water-controller services
+  - job_name: journal
+    journal:
+      max_age: 12h
+      labels:
+        job: systemd-journal
+        app: water-controller
+      path: /var/log/journal
+    relabel_configs:
+      # Extract unit name as service
+      - source_labels: ['__journal__systemd_unit']
+        target_label: unit
+      - source_labels: ['__journal__systemd_unit']
+        regex: 'water-controller-(.+)\.service'
+        target_label: service
+        replacement: '${1}'
+      # Add hostname
+      - source_labels: ['__journal__hostname']
+        target_label: host
+      # Add priority as level
+      - source_labels: ['__journal_priority_keyword']
+        target_label: priority
+      # Filter to only water-controller services
+      - source_labels: ['__journal__systemd_unit']
+        regex: 'water-controller.*\.service'
+        action: keep
+    pipeline_stages:
+      # Try to parse JSON logs from API service
+      - json:
+          expressions:
+            level: level
+            logger: logger
+            message: message
+            correlation_id: correlation_id
+            operation_name: operation_name
+            rtu: rtu
+            duration_ms: duration_ms
+            user: user
+            timestamp: timestamp
+      # If JSON parsing worked, use extracted level
+      - labels:
+          level:
+          logger:
+          correlation_id:
+          rtu:
+      # Extract log level from non-JSON logs
+      - regex:
+          expression: '(?P<level>DEBUG|INFO|WARN|WARNING|ERROR|CRITICAL|FATAL)'
+      - labels:
+          level:
+      # Normalize log levels
+      - template:
+          source: level
+          template: '{{ ToLower .Value }}'
+      - labels:
+          level:
+      # Map systemd priority to level if not already set
+      - match:
+          selector: '{level=""}'
+          stages:
+            - template:
+                source: priority
+                template: '{{ if eq .Value "emerg" }}critical{{ else if eq .Value "alert" }}critical{{ else if eq .Value "crit" }}critical{{ else if eq .Value "err" }}error{{ else if eq .Value "warning" }}warning{{ else if eq .Value "notice" }}info{{ else if eq .Value "info" }}info{{ else if eq .Value "debug" }}debug{{ else }}info{{ end }}'
+            - labels:
+                level:
+
+  # Scrape application log files (if any service writes to files)
+  - job_name: files
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: water-controller-files
+          app: water-controller
+          __path__: /var/log/water-controller/*.log
+    pipeline_stages:
+      # Parse filename to extract service
+      - regex:
+          expression: '/var/log/water-controller/(?P<service>[^/]+)\.log'
+      - labels:
+          service:
+      # Try JSON parsing
+      - json:
+          expressions:
+            level: level
+            logger: logger
+            message: message
+            correlation_id: correlation_id
+      - labels:
+          level:
+          logger:
+          correlation_id:
+      # Fallback regex for level
+      - regex:
+          expression: '(?P<level>DEBUG|INFO|WARN|WARNING|ERROR|CRITICAL|FATAL)'
+      - labels:
+          level:
+      - template:
+          source: level
+          template: '{{ ToLower .Value }}'
+      - labels:
+          level:

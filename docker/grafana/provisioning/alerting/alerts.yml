@@ -1,0 +1,380 @@
+# Water Treatment Controller - Grafana Alert Rules
+# Copyright (C) 2024
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# IMPORTANT: All alerts are PAUSED (disabled) by default.
+# Enable alerts individually in Grafana UI when ready:
+#   Alerting > Alert rules > Edit > Enable
+#
+# These alerts monitor critical infrastructure issues:
+# - High error rates in logs
+# - Service communication failures
+# - Database connectivity issues
+# - RTU communication problems
+
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: Infrastructure Alerts
+    folder: Water Controller Alerts
+    interval: 1m
+    rules:
+      # =========================================================================
+      # Log-Based Alerts (via Loki)
+      # =========================================================================
+
+      - uid: wtc-high-error-rate
+        title: High Error Rate in Logs
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: loki
+            model:
+              expr: 'sum(count_over_time({app="water-controller", level=~"error|critical"} [5m]))'
+              refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params: []
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - B
+                  reducer:
+                    params: []
+                    type: last
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+          - refId: C
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 10
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - C
+              refId: C
+              type: threshold
+              expression: B
+        noDataState: OK
+        execErrState: Error
+        for: 5m
+        isPaused: true
+        annotations:
+          summary: High error rate detected in application logs
+          description: More than 10 errors in the last 5 minutes. Check the Logs dashboard for details.
+          runbook_url: ""
+        labels:
+          severity: warning
+
+      - uid: wtc-critical-errors
+        title: Critical Errors Detected
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: loki
+            model:
+              expr: 'sum(count_over_time({app="water-controller", level="critical"} [5m]))'
+              refId: A
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 0
+                    type: gt
+              refId: C
+              type: threshold
+              expression: B
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        isPaused: true
+        annotations:
+          summary: Critical error detected
+          description: A critical error has been logged. Immediate attention required.
+          runbook_url: ""
+        labels:
+          severity: critical
+
+      - uid: wtc-database-errors
+        title: Database Connection Errors
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: loki
+            model:
+              expr: 'sum(count_over_time({app="water-controller"} |~ "(?i)(database|postgres|connection).*(?i)(error|failed|refused)" [5m]))'
+              refId: A
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 1
+                    type: gt
+              refId: C
+              type: threshold
+              expression: B
+        noDataState: OK
+        execErrState: Error
+        for: 2m
+        isPaused: true
+        annotations:
+          summary: Database connection errors detected
+          description: Multiple database connection errors in logs. Check PostgreSQL/TimescaleDB health.
+          runbook_url: ""
+        labels:
+          severity: critical
+
+      - uid: wtc-profinet-errors
+        title: PROFINET Communication Errors
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: loki
+            model:
+              expr: 'sum(count_over_time({app="water-controller"} |~ "(?i)profinet.*(?i)(error|lost|timeout|failed)" [5m]))'
+              refId: A
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 1
+                    type: gt
+              refId: C
+              type: threshold
+              expression: B
+        noDataState: OK
+        execErrState: Error
+        for: 2m
+        isPaused: true
+        annotations:
+          summary: PROFINET communication errors
+          description: PROFINET communication issues detected. RTU connectivity may be impaired.
+          runbook_url: ""
+        labels:
+          severity: critical
+
+      - uid: wtc-ipc-errors
+        title: IPC/Shared Memory Errors
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: loki
+            model:
+              expr: 'sum(count_over_time({app="water-controller"} |~ "(?i)(ipc|shared.?memory|shm).*(?i)(error|failed)" [5m]))'
+              refId: A
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 1
+                    type: gt
+              refId: C
+              type: threshold
+              expression: B
+        noDataState: OK
+        execErrState: Error
+        for: 2m
+        isPaused: true
+        annotations:
+          summary: IPC communication failure
+          description: API cannot communicate with PROFINET controller via shared memory.
+          runbook_url: ""
+        labels:
+          severity: critical
+
+      - uid: wtc-service-restart
+        title: Service Restart Detected
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: loki
+            model:
+              expr: 'sum(count_over_time({app="water-controller"} |~ "(?i)(starting|initialized|startup|boot)" [10m]))'
+              refId: A
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 3
+                    type: gt
+              refId: C
+              type: threshold
+              expression: B
+        noDataState: OK
+        execErrState: Error
+        for: 1m
+        isPaused: true
+        annotations:
+          summary: Service restart loop detected
+          description: Multiple service restarts detected in the last 10 minutes. Possible crash loop.
+          runbook_url: ""
+        labels:
+          severity: warning
+
+      - uid: wtc-no-logs
+        title: No Logs Received
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: loki
+            model:
+              expr: 'sum(count_over_time({app="water-controller"} [5m]))'
+              refId: A
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 1
+                    type: lt
+              refId: C
+              type: threshold
+              expression: B
+        noDataState: Alerting
+        execErrState: Error
+        for: 5m
+        isPaused: true
+        annotations:
+          summary: No logs received from services
+          description: No logs received in the last 5 minutes. Services may be down or Promtail may have failed.
+          runbook_url: ""
+        labels:
+          severity: critical
+
+      # =========================================================================
+      # Operator Action Alerts
+      # =========================================================================
+
+      - uid: wtc-operator-action-required
+        title: Operator Action Required
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: loki
+            model:
+              expr: 'sum(count_over_time({app="water-controller", logger="operator"} |~ "ACTION:" [5m]))'
+              refId: A
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 0
+                    type: gt
+              refId: C
+              type: threshold
+              expression: B
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        isPaused: true
+        annotations:
+          summary: Operator action required
+          description: An operator-actionable message has been logged. Check the Operator Messages panel in the Logs dashboard.
+          runbook_url: ""
+        labels:
+          severity: warning

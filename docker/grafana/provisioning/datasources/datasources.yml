@@ -5,6 +5,7 @@
 apiVersion: 1
 
 datasources:
+  # TimescaleDB - Primary datasource for historian data
   - name: TimescaleDB
     type: postgres
     access: proxy
@@ -21,3 +22,14 @@ datasources:
       postgresVersion: 1500
       timescaledb: true
     isDefault: true
+
+  # Loki - Centralized log aggregation
+  - name: Loki
+    type: loki
+    access: proxy
+    url: http://loki:3100
+    uid: loki
+    jsonData:
+      maxLines: 1000
+      timeout: 60
+    editable: false

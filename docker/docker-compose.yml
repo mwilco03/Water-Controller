@@ -164,13 +164,19 @@ services:
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:?GRAFANA_PASSWORD must be set}
       GF_INSTALL_PLUGINS: grafana-clock-panel,grafana-simple-json-datasource
       GF_SERVER_HTTP_PORT: ${WTC_GRAFANA_PORT:-3000}
+      # Unified alerting (disabled by default - enable when ready)
+      GF_UNIFIED_ALERTING_ENABLED: ${GF_UNIFIED_ALERTING_ENABLED:-true}
+      GF_ALERTING_ENABLED: "false"
     volumes:
       - grafana_data:/var/lib/grafana
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
     ports:
       - "${WTC_GRAFANA_PORT:-3000}:${WTC_GRAFANA_PORT:-3000}"
     depends_on:
-      - database
+      loki:
+        condition: service_healthy
+      database:
+        condition: service_healthy
     # DCK-H2 fix: Add health check
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:${WTC_GRAFANA_PORT:-3000}/api/health"]
@@ -185,6 +191,58 @@ services:
           memory: 256M
         reservations:
           memory: 64M
+
+  # Loki - Centralized log aggregation
+  loki:
+    image: grafana/loki:2.9.4
+    container_name: wtc-loki
+    restart: unless-stopped
+    command: -config.file=/etc/loki/loki-config.yml
+    volumes:
+      - ./loki/loki-config.yml:/etc/loki/loki-config.yml:ro
+      - loki_data:/loki
+    expose:
+      - "3100"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3100/ready"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          memory: 128M
+
+  # Promtail - Log collector (ships Docker logs to Loki)
+  promtail:
+    image: grafana/promtail:2.9.4
+    container_name: wtc-promtail
+    restart: unless-stopped
+    command: -config.file=/etc/promtail/promtail-config.yml
+    volumes:
+      - ./promtail/promtail-config.yml:/etc/promtail/promtail-config.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - promtail_positions:/var/promtail
+    depends_on:
+      loki:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9080/ready"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 128M
+        reservations:
+          memory: 32M
 
   # OpenPLC Editor (Read-Only Ladder Logic Viewer)
   # Provides browser-based ladder logic visualization with Modbus communication
@@ -218,6 +276,8 @@ volumes:
   db_data:
   controller_logs:
   grafana_data:
+  loki_data:
+  promtail_positions:
   openplc_data:
 
 networks:
