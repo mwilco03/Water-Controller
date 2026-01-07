@@ -8,7 +8,7 @@ Access Model:
 - POST/PUT/DELETE endpoints: Control access (authentication required)
 """
 
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, Depends, Path, Query
@@ -24,6 +24,7 @@ from ...schemas.alarm import (
     AlarmAcknowledgeRequest,
     AlarmListMeta,
     AlarmShelveRequest,
+    ScheduledMaintenanceCreate,
     ShelvedAlarm,
 )
 from ...services.alarm_service import AlarmService
@@ -334,4 +335,206 @@ async def check_alarm_shelved(
         "rtu_station": rtu_station,
         "slot": slot,
         "is_shelved": is_shelved,
+    })
+
+
+# ============== Scheduled Maintenance Endpoints ==============
+
+@router.get("/maintenance")
+async def list_maintenance_windows(
+    status: str | None = Query(None, description="Filter by status (SCHEDULED, ACTIVE, COMPLETED, CANCELLED)"),
+    rtu: str | None = Query(None, description="Filter by RTU station"),
+    include_past: bool = Query(False, description="Include completed/cancelled windows"),
+    db: Session = Depends(get_db)
+) -> dict[str, Any]:
+    """
+    List scheduled maintenance windows.
+
+    Returns upcoming and active maintenance windows by default.
+    Use include_past=true to see historical windows.
+    """
+    from ...models.alarm import ScheduledMaintenance
+
+    query = db.query(ScheduledMaintenance)
+
+    if status:
+        query = query.filter(ScheduledMaintenance.status == status.upper())
+    elif not include_past:
+        query = query.filter(ScheduledMaintenance.status.in_(["SCHEDULED", "ACTIVE"]))
+
+    if rtu:
+        query = query.filter(ScheduledMaintenance.rtu_station == rtu)
+
+    windows = query.order_by(ScheduledMaintenance.start_time).all()
+
+    result = []
+    for w in windows:
+        result.append({
+            "id": w.id,
+            "rtu_station": w.rtu_station,
+            "slot": w.slot,
+            "scheduled_by": w.scheduled_by,
+            "scheduled_at": w.scheduled_at.isoformat() if w.scheduled_at else None,
+            "start_time": w.start_time.isoformat() if w.start_time else None,
+            "end_time": w.end_time.isoformat() if w.end_time else None,
+            "reason": w.reason,
+            "work_order": w.work_order,
+            "status": w.status,
+            "activated_at": w.activated_at.isoformat() if w.activated_at else None,
+            "completed_at": w.completed_at.isoformat() if w.completed_at else None,
+            "cancelled_by": w.cancelled_by,
+            "cancelled_at": w.cancelled_at.isoformat() if w.cancelled_at else None,
+        })
+
+    return {
+        "data": result,
+        "meta": {
+            "total": len(result),
+            "include_past": include_past,
+        },
+    }
+
+
+@router.post("/maintenance")
+async def create_maintenance_window(
+    request: ScheduledMaintenanceCreate,
+    db: Session = Depends(get_db),
+    session: dict = Depends(require_control_access)
+) -> dict[str, Any]:
+    """
+    Schedule a maintenance window for alarm suppression.
+
+    **Authentication Required**: This is a control action requiring
+    operator or admin role.
+
+    During the scheduled window, alarms for the specified RTU/slot
+    will be automatically shelved.
+    """
+    from ...models.alarm import ScheduledMaintenance
+
+    username = session.get("username", "unknown")
+
+    # Validate start time is in the future (with 1 minute grace)
+    now = datetime.now(UTC)
+    if request.start_time < now - timedelta(minutes=1):
+        return build_success_response({
+            "success": False,
+            "message": "Start time must be in the future",
+        })
+
+    # Create the scheduled maintenance entry
+    window = ScheduledMaintenance(
+        rtu_station=request.rtu_station,
+        slot=request.slot,
+        scheduled_by=username,
+        start_time=request.start_time,
+        end_time=request.end_time,
+        reason=request.reason,
+        work_order=request.work_order,
+        status="SCHEDULED",
+    )
+    db.add(window)
+    db.commit()
+    db.refresh(window)
+
+    log_control_action(
+        session=session,
+        action="MAINTENANCE_SCHEDULE",
+        target=f"{request.rtu_station}/{request.slot}",
+        details=f"Scheduled {request.start_time} to {request.end_time}: {request.reason}",
+    )
+
+    return build_success_response({
+        "id": window.id,
+        "rtu_station": window.rtu_station,
+        "slot": window.slot,
+        "start_time": window.start_time.isoformat(),
+        "end_time": window.end_time.isoformat(),
+        "status": window.status,
+        "message": "Maintenance window scheduled",
+    })
+
+
+@router.delete("/maintenance/{window_id}")
+async def cancel_maintenance_window(
+    window_id: int = Path(..., description="Maintenance window ID"),
+    db: Session = Depends(get_db),
+    session: dict = Depends(require_control_access)
+) -> dict[str, Any]:
+    """
+    Cancel a scheduled maintenance window.
+
+    **Authentication Required**: This is a control action requiring
+    operator or admin role.
+
+    Can only cancel windows that are SCHEDULED or ACTIVE.
+    """
+    from ...models.alarm import ScheduledMaintenance
+
+    username = session.get("username", "unknown")
+
+    window = db.query(ScheduledMaintenance).filter(ScheduledMaintenance.id == window_id).first()
+    if not window:
+        return build_success_response({
+            "success": False,
+            "message": f"Maintenance window {window_id} not found",
+        })
+
+    if window.status not in ("SCHEDULED", "ACTIVE"):
+        return build_success_response({
+            "success": False,
+            "message": f"Cannot cancel window with status {window.status}",
+        })
+
+    window.status = "CANCELLED"
+    window.cancelled_by = username
+    window.cancelled_at = datetime.now(UTC)
+    db.commit()
+
+    log_control_action(
+        session=session,
+        action="MAINTENANCE_CANCEL",
+        target=f"{window.rtu_station}/{window.slot}",
+        details=f"Cancelled window {window_id}",
+    )
+
+    return build_success_response({
+        "id": window_id,
+        "status": "CANCELLED",
+        "message": "Maintenance window cancelled",
+    })
+
+
+@router.get("/maintenance/{window_id}")
+async def get_maintenance_window(
+    window_id: int = Path(..., description="Maintenance window ID"),
+    db: Session = Depends(get_db)
+) -> dict[str, Any]:
+    """
+    Get details of a specific maintenance window.
+    """
+    from ...models.alarm import ScheduledMaintenance
+
+    window = db.query(ScheduledMaintenance).filter(ScheduledMaintenance.id == window_id).first()
+    if not window:
+        return build_success_response({
+            "success": False,
+            "message": f"Maintenance window {window_id} not found",
+        })
+
+    return build_success_response({
+        "id": window.id,
+        "rtu_station": window.rtu_station,
+        "slot": window.slot,
+        "scheduled_by": window.scheduled_by,
+        "scheduled_at": window.scheduled_at.isoformat() if window.scheduled_at else None,
+        "start_time": window.start_time.isoformat() if window.start_time else None,
+        "end_time": window.end_time.isoformat() if window.end_time else None,
+        "reason": window.reason,
+        "work_order": window.work_order,
+        "status": window.status,
+        "activated_at": window.activated_at.isoformat() if window.activated_at else None,
+        "completed_at": window.completed_at.isoformat() if window.completed_at else None,
+        "cancelled_by": window.cancelled_by,
+        "cancelled_at": window.cancelled_at.isoformat() if window.cancelled_at else None,
     })

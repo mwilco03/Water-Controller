@@ -132,3 +132,48 @@ class ShelvedAlarm(Base):
         Index("ix_shelved_alarms_active_expires", "active", "expires_at"),
         Index("ix_shelved_alarms_rtu_slot", "rtu_station", "slot"),
     )
+
+
+class ScheduledMaintenance(Base):
+    """
+    Scheduled maintenance window for pre-planned alarm suppression.
+
+    Allows operators to schedule future maintenance periods where specific
+    alarms or entire RTUs will be automatically shelved.
+
+    Per ISA-18.2, scheduled shelving should:
+    - Have clear start/end times
+    - Be linked to work orders when possible
+    - Notify incoming shifts of scheduled suppressions
+    """
+
+    __tablename__ = "scheduled_maintenance"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    # Target: can be specific slot or entire RTU (slot=-1)
+    rtu_station = Column(String(32), nullable=False, index=True)
+    slot = Column(Integer, nullable=False)  # -1 means all slots for this RTU
+
+    # Scheduling
+    scheduled_by = Column(String(64), nullable=False)
+    scheduled_at = Column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
+    start_time = Column(DateTime(timezone=True), nullable=False)
+    end_time = Column(DateTime(timezone=True), nullable=False)
+
+    # Documentation
+    reason = Column(Text, nullable=False)  # Required for audit trail
+    work_order = Column(String(64), nullable=True)  # Optional link to maintenance system
+
+    # Status
+    status = Column(String(16), default="SCHEDULED")  # SCHEDULED, ACTIVE, COMPLETED, CANCELLED
+    activated_at = Column(DateTime(timezone=True), nullable=True)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+    cancelled_by = Column(String(64), nullable=True)
+    cancelled_at = Column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        Index("ix_scheduled_maintenance_status", "status"),
+        Index("ix_scheduled_maintenance_start", "start_time"),
+        Index("ix_scheduled_maintenance_rtu", "rtu_station"),
+    )

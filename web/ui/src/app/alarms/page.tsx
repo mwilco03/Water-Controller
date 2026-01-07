@@ -13,7 +13,7 @@
 
 import { useEffect, useState, useCallback, useRef } from 'react';
 import AlarmSummary from '@/components/AlarmSummary';
-import { AlarmInsights } from '@/components/hmi';
+import { AlarmInsights, MaintenanceScheduler } from '@/components/hmi';
 
 const PAGE_TITLE = 'Alarms - Water Treatment Controller';
 import { useWebSocket } from '@/hooks/useWebSocket';
@@ -344,6 +344,13 @@ export default function AlarmsPage() {
             }
           } : undefined}
         />
+
+        {/* Maintenance Window Scheduler - Pre-plan alarm suppression for maintenance */}
+        {canCommand && (
+          <MaintenanceScheduler
+            rtus={Array.from(new Set(alarms.map(a => a.rtu_station))).map(station_name => ({ station_name }))}
+          />
+        )}
 
         {/* Tabs - ISA-101: subtle styling */}
         <div className="flex gap-4 border-b border-hmi-border">
