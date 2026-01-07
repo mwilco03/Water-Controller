@@ -345,6 +345,75 @@ class ShelvedAlarmListResponse(BaseModel):
     meta: dict[str, Any] = Field(default_factory=dict)
 
 
+# ============== Scheduled Maintenance Schemas ==============
+
+class ScheduledMaintenanceStatus(str, Enum):
+    """Status of a scheduled maintenance window."""
+
+    SCHEDULED = "SCHEDULED"  # Future window, not yet active
+    ACTIVE = "ACTIVE"        # Currently suppressing alarms
+    COMPLETED = "COMPLETED"  # Window ended normally
+    CANCELLED = "CANCELLED"  # Manually cancelled before/during window
+
+
+class ScheduledMaintenanceCreate(BaseModel):
+    """Request to create a scheduled maintenance window."""
+
+    rtu_station: str = Field(description="RTU station name")
+    slot: int = Field(
+        default=-1,
+        ge=-1,
+        description="Slot number (-1 for all slots on this RTU)"
+    )
+    start_time: datetime = Field(description="When the maintenance window starts")
+    end_time: datetime = Field(description="When the maintenance window ends")
+    reason: str = Field(
+        ...,
+        min_length=5,
+        max_length=256,
+        description="Reason for maintenance (required)"
+    )
+    work_order: str | None = Field(
+        None,
+        max_length=64,
+        description="Optional work order reference"
+    )
+
+    @field_validator('end_time')
+    @classmethod
+    def end_after_start(cls, v, info):
+        """Validate end time is after start time."""
+        if 'start_time' in info.data and v <= info.data['start_time']:
+            raise ValueError('end_time must be after start_time')
+        return v
+
+
+class ScheduledMaintenanceResponse(BaseModel):
+    """A scheduled maintenance window."""
+
+    id: int = Field(description="Maintenance window ID")
+    rtu_station: str = Field(description="RTU station name")
+    slot: int = Field(description="Slot number (-1 for all)")
+    scheduled_by: str = Field(description="User who scheduled")
+    scheduled_at: datetime = Field(description="When it was scheduled")
+    start_time: datetime = Field(description="Window start time")
+    end_time: datetime = Field(description="Window end time")
+    reason: str = Field(description="Reason for maintenance")
+    work_order: str | None = Field(None, description="Work order reference")
+    status: ScheduledMaintenanceStatus = Field(description="Current status")
+    activated_at: datetime | None = Field(None, description="When window activated")
+    completed_at: datetime | None = Field(None, description="When window completed")
+    cancelled_by: str | None = Field(None, description="Who cancelled")
+    cancelled_at: datetime | None = Field(None, description="When cancelled")
+
+
+class ScheduledMaintenanceListResponse(BaseModel):
+    """Response for maintenance window list."""
+
+    data: list[ScheduledMaintenanceResponse]
+    meta: dict[str, Any] = Field(default_factory=dict)
+
+
 # ============== Mapping Functions ==============
 
 def severity_from_c(c_value: int) -> AlarmSeverity:

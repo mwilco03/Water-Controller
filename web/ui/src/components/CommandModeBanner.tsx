@@ -16,16 +16,20 @@ export default function CommandModeBanner() {
     return null;
   }
 
-  // Format time remaining
+  // Format time remaining - shows hours:minutes for long durations
   const formatTime = (seconds: number | null) => {
     if (seconds === null) return '--:--';
-    const mins = Math.floor(seconds / 60);
+    const hours = Math.floor(seconds / 3600);
+    const mins = Math.floor((seconds % 3600) / 60);
     const secs = seconds % 60;
+    if (hours > 0) {
+      return `${hours}h ${mins}m`;
+    }
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
-  // Warning when less than 60 seconds remaining
-  const isWarning = timeRemaining !== null && timeRemaining < 60;
+  // Warning when less than 5 minutes remaining
+  const isWarning = timeRemaining !== null && timeRemaining < 300;
 
   return (
     <div

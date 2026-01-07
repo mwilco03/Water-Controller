@@ -12,6 +12,10 @@ from .alarm import (
     AlarmPriority,
     AlarmState,
     AlarmType,
+    ScheduledMaintenanceCreate,
+    ScheduledMaintenanceListResponse,
+    ScheduledMaintenanceResponse,
+    ScheduledMaintenanceStatus,
 )
 from .common import DataQuality, ErrorResponse, ResponseMeta, SuccessResponse
 from .control import (
@@ -74,6 +78,11 @@ __all__ = [
     "AlarmPriority",
     "AlarmState",
     "AlarmType",
+    # Scheduled Maintenance
+    "ScheduledMaintenanceCreate",
+    "ScheduledMaintenanceListResponse",
+    "ScheduledMaintenanceResponse",
+    "ScheduledMaintenanceStatus",
     "CommandResponse",
     "ConnectRequest",
     "ConnectResponse",

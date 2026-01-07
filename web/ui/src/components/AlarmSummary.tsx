@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import Link from 'next/link';
 import { alarmLogger } from '@/lib/logger';
 
 interface Alarm {
@@ -20,8 +21,107 @@ interface Props {
   onShelve?: (alarm: Alarm) => void;
 }
 
+// Acknowledgment Dialog with optional operator note
+function AckDialog({
+  isOpen,
+  alarm,
+  isBulk,
+  onClose,
+  onConfirm,
+}: {
+  isOpen: boolean;
+  alarm: Alarm | null;
+  isBulk: boolean;
+  onClose: () => void;
+  onConfirm: (note: string) => void;
+}) {
+  const [note, setNote] = useState('');
+
+  if (!isOpen) return null;
+
+  const handleConfirm = () => {
+    onConfirm(note);
+    setNote('');
+  };
+
+  const handleClose = () => {
+    setNote('');
+    onClose();
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+      <div className="bg-hmi-panel rounded-lg p-6 max-w-md w-full mx-4 border border-hmi-border shadow-lg">
+        <div className="flex items-center gap-3 mb-4">
+          <div className="w-10 h-10 rounded-full bg-status-info/10 flex items-center justify-center">
+            <svg className="w-6 h-6 text-status-info" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+            </svg>
+          </div>
+          <h3 className="text-lg font-semibold text-hmi-text">
+            {isBulk ? 'Acknowledge All Alarms' : 'Acknowledge Alarm'}
+          </h3>
+        </div>
+
+        {!isBulk && alarm && (
+          <div className="mb-4 p-3 bg-hmi-bg rounded border border-hmi-border">
+            <p className="text-sm text-hmi-text font-medium">{alarm.message}</p>
+            <p className="text-xs text-hmi-muted mt-1">
+              {alarm.rtu_station} | Slot {alarm.slot} | {alarm.severity}
+            </p>
+          </div>
+        )}
+
+        <div className="space-y-4">
+          <div>
+            <label className="text-sm text-hmi-muted block mb-2">
+              Operator Note (optional)
+            </label>
+            <input
+              type="text"
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder="e.g., Contractor hit flow sensor during maintenance"
+              className="w-full bg-hmi-bg border border-hmi-border text-hmi-text rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-status-info"
+              maxLength={256}
+              autoFocus
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleConfirm();
+                if (e.key === 'Escape') handleClose();
+              }}
+            />
+            <p className="text-xs text-hmi-muted mt-1">
+              Note is saved to alarm history for shift handoff
+            </p>
+          </div>
+        </div>
+
+        <div className="flex gap-3 justify-end mt-6">
+          <button
+            onClick={handleClose}
+            className="px-4 py-2 bg-hmi-bg hover:bg-hmi-border text-hmi-text rounded border border-hmi-border transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleConfirm}
+            className="px-4 py-2 bg-status-info hover:bg-status-info/90 text-white rounded font-medium transition-colors"
+          >
+            {isBulk ? 'ACK All' : 'Acknowledge'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function AlarmSummary({ alarms, onShelve }: Props) {
   const [filter, setFilter] = useState<string>('all');
+  const [ackDialog, setAckDialog] = useState<{
+    isOpen: boolean;
+    alarm: Alarm | null;
+    isBulk: boolean;
+  }>({ isOpen: false, alarm: null, isBulk: false });
 
   const getSeverityClass = (severity: string) => {
     switch (severity.toLowerCase()) {
@@ -45,52 +145,69 @@ export default function AlarmSummary({ alarms, onShelve }: Props) {
     return true;
   });
 
-  const acknowledgeAlarm = async (alarmId: number) => {
+  const openAckDialog = (alarm: Alarm) => {
+    setAckDialog({ isOpen: true, alarm, isBulk: false });
+  };
+
+  const openBulkAckDialog = () => {
+    setAckDialog({ isOpen: true, alarm: null, isBulk: true });
+  };
+
+  const closeAckDialog = () => {
+    setAckDialog({ isOpen: false, alarm: null, isBulk: false });
+  };
+
+  const handleAckConfirm = async (note: string) => {
     try {
-      await fetch(`/api/v1/alarms/${alarmId}/acknowledge`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user: 'operator' }),
-      });
+      if (ackDialog.isBulk) {
+        await fetch('/api/v1/alarms/acknowledge-all', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ user: 'operator', note: note || null }),
+        });
+      } else if (ackDialog.alarm) {
+        await fetch(`/api/v1/alarms/${ackDialog.alarm.alarm_id}/acknowledge`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ user: 'operator', note: note || null }),
+        });
+      }
+      closeAckDialog();
     } catch (error) {
       alarmLogger.error('Failed to acknowledge alarm', error);
     }
   };
 
-  const acknowledgeAll = async () => {
-    try {
-      await fetch('/api/v1/alarms/acknowledge-all', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user: 'operator' }),
-      });
-    } catch (error) {
-      alarmLogger.error('Failed to acknowledge all alarms', error);
-    }
-  };
-
   return (
-    <div className="scada-panel p-4 h-full">
-      <div className="flex items-center justify-between mb-4">
-        <h2 className="text-lg font-semibold text-white">Active Alarms</h2>
-        <div className="flex gap-2">
-          <select
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-            className="text-xs bg-scada-accent text-white rounded px-2 py-1 border border-scada-accent"
-          >
-            <option value="all">All</option>
-            <option value="active">Active</option>
-            <option value="unack">Unacknowledged</option>
-          </select>
-          <button
-            onClick={acknowledgeAll}
-            className="text-xs bg-scada-highlight hover:bg-red-600 px-3 py-1 rounded transition-colors"
-          >
-            Ack All
-          </button>
+    <>
+      <AckDialog
+        isOpen={ackDialog.isOpen}
+        alarm={ackDialog.alarm}
+        isBulk={ackDialog.isBulk}
+        onClose={closeAckDialog}
+        onConfirm={handleAckConfirm}
+      />
+      <div className="scada-panel p-4 h-full">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-semibold text-white">Active Alarms</h2>
+          <div className="flex gap-2">
+            <select
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+              className="text-xs bg-scada-accent text-white rounded px-2 py-1 border border-scada-accent"
+            >
+              <option value="all">All</option>
+              <option value="active">Active</option>
+              <option value="unack">Unacknowledged</option>
+            </select>
+            <button
+              onClick={openBulkAckDialog}
+              className="text-xs bg-scada-highlight hover:bg-red-600 px-3 py-1 rounded transition-colors"
+            >
+              Ack All
+            </button>
+          </div>
         </div>
-      </div>
 
       <div className="space-y-2 max-h-96 overflow-y-auto">
         {filteredAlarms.map((alarm) => (
@@ -124,6 +241,16 @@ export default function AlarmSummary({ alarms, onShelve }: Props) {
                 </div>
               </div>
               <div className="flex gap-1">
+                {/* View Trend button - opens trends page filtered to this sensor */}
+                <Link
+                  href={`/trends?rtu=${encodeURIComponent(alarm.rtu_station)}&slot=${alarm.slot}`}
+                  className="text-xs bg-status-info hover:bg-status-info/90 px-2 py-1 rounded transition-colors whitespace-nowrap flex items-center gap-1"
+                  title="View sensor trend"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z" />
+                  </svg>
+                </Link>
                 {onShelve && (
                   <button
                     onClick={() => onShelve(alarm)}
@@ -137,7 +264,7 @@ export default function AlarmSummary({ alarms, onShelve }: Props) {
                 )}
                 {isUnacknowledged(alarm.state) && (
                   <button
-                    onClick={() => acknowledgeAlarm(alarm.alarm_id)}
+                    onClick={() => openAckDialog(alarm)}
                     className="text-xs bg-scada-accent hover:bg-scada-highlight px-2 py-1 rounded transition-colors whitespace-nowrap"
                   >
                     ACK
@@ -153,6 +280,7 @@ export default function AlarmSummary({ alarms, onShelve }: Props) {
           </div>
         )}
       </div>
-    </div>
+      </div>
+    </>
   );
 }

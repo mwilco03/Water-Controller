@@ -11,14 +11,15 @@
  */
 
 import './globals.css';
-import { useState, useEffect } from 'react';
-import { usePathname } from 'next/navigation';
+import { useState, useEffect, useMemo } from 'react';
+import { usePathname, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { CommandModeProvider, useCommandMode } from '@/contexts/CommandModeContext';
 import CommandModeBanner from '@/components/CommandModeBanner';
 import { HMIToastProvider, AuthenticationModal, DegradedModeBanner, BottomNavigation } from '@/components/hmi';
 import { useWebSocket } from '@/hooks/useWebSocket';
 import { useRTUStatusData } from '@/hooks/useRTUStatusData';
+import { useKeyboardShortcuts, commonShortcuts, getRegisteredShortcuts, formatShortcut } from '@/hooks/useKeyboardShortcuts';
 
 // Navigation items configuration
 const NAV_ITEMS = [
@@ -66,11 +67,28 @@ export default function RootLayout({
 
 function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const router = useRouter();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [configMenuOpen, setConfigMenuOpen] = useState(false);
   const [showLoginModal, setShowLoginModal] = useState(false);
+  const [showShortcutsHelp, setShowShortcutsHelp] = useState(false);
   const [degradedSince, setDegradedSince] = useState<Date | null>(null);
   const { isAuthenticated, exitCommandMode } = useCommandMode();
+
+  // Global keyboard shortcuts for veteran operators
+  const shortcuts = useMemo(() => [
+    // Single-key navigation (no modifiers required)
+    { key: 'a', description: 'Go to Alarms', handler: () => router.push('/alarms') },
+    { key: 'c', description: 'Go to Control', handler: () => router.push('/control') },
+    { key: 't', description: 'Go to Trends', handler: () => router.push('/trends') },
+    { key: 's', description: 'Go to Status (home)', handler: () => router.push('/') },
+    { key: 'r', description: 'Go to RTUs', handler: () => router.push('/rtus') },
+    // Help shortcut
+    commonShortcuts.help(() => setShowShortcutsHelp(true)),
+    commonShortcuts.escape(() => setShowShortcutsHelp(false)),
+  ], [router]);
+
+  useKeyboardShortcuts(shortcuts);
 
   // Get alarm data for bottom nav badge
   const { alarms } = useRTUStatusData();
@@ -268,7 +286,17 @@ function AppShell({ children }: { children: React.ReactNode }) {
       <footer className="border-t border-hmi-border py-4 mt-auto">
         <div className="hmi-container flex flex-col sm:flex-row items-center justify-between gap-2 text-xs text-hmi-muted">
           <span>Water Treatment Controller SCADA/HMI</span>
-          <span>PROFINET I/O Controller v1.0</span>
+          <div className="flex items-center gap-4">
+            <button
+              onClick={() => setShowShortcutsHelp(true)}
+              className="hover:text-hmi-text transition-colors flex items-center gap-1"
+              title="Keyboard shortcuts"
+            >
+              <kbd className="px-1.5 py-0.5 bg-hmi-bg rounded border border-hmi-border text-xs">?</kbd>
+              <span>Shortcuts</span>
+            </button>
+            <span>PROFINET I/O Controller v1.0</span>
+          </div>
         </div>
       </footer>
 
@@ -279,6 +307,64 @@ function AppShell({ children }: { children: React.ReactNode }) {
         onClose={() => setShowLoginModal(false)}
         onSuccess={() => setShowLoginModal(false)}
       />
+
+      {/* Keyboard Shortcuts Help Dialog */}
+      {showShortcutsHelp && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setShowShortcutsHelp(false)}>
+          <div className="bg-hmi-panel rounded-lg p-6 max-w-md w-full mx-4 border border-hmi-border shadow-lg" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-hmi-text">Keyboard Shortcuts</h3>
+              <button
+                onClick={() => setShowShortcutsHelp(false)}
+                className="p-1 hover:bg-hmi-bg rounded"
+                aria-label="Close"
+              >
+                <svg className="w-5 h-5 text-hmi-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <div className="text-sm text-hmi-muted mb-2">Navigation</div>
+              <div className="grid gap-2">
+                {[
+                  { key: 'A', desc: 'Go to Alarms' },
+                  { key: 'C', desc: 'Go to Control' },
+                  { key: 'T', desc: 'Go to Trends' },
+                  { key: 'S', desc: 'Go to Status (home)' },
+                  { key: 'R', desc: 'Go to RTUs' },
+                ].map(({ key, desc }) => (
+                  <div key={key} className="flex items-center justify-between py-1">
+                    <span className="text-hmi-text text-sm">{desc}</span>
+                    <kbd className="px-2 py-1 bg-hmi-bg rounded border border-hmi-border text-xs font-mono text-hmi-text">{key}</kbd>
+                  </div>
+                ))}
+              </div>
+
+              <div className="border-t border-hmi-border pt-3 mt-3">
+                <div className="text-sm text-hmi-muted mb-2">General</div>
+                <div className="grid gap-2">
+                  {[
+                    { key: 'Shift + ?', desc: 'Show this help' },
+                    { key: 'Esc', desc: 'Close dialogs' },
+                    { key: 'Enter', desc: 'Confirm action' },
+                  ].map(({ key, desc }) => (
+                    <div key={key} className="flex items-center justify-between py-1">
+                      <span className="text-hmi-text text-sm">{desc}</span>
+                      <kbd className="px-2 py-1 bg-hmi-bg rounded border border-hmi-border text-xs font-mono text-hmi-text">{key}</kbd>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <p className="text-xs text-hmi-muted mt-4">
+              Shortcuts are disabled when typing in input fields
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Bottom Navigation (Mobile) */}
       <BottomNavigation activeAlarmCount={activeAlarmCount} />
