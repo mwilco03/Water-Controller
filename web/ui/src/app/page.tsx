@@ -164,9 +164,20 @@ export default function RTUStatusPage() {
               </svg>
               Active Alarms
             </h2>
-            <Link href="/alarms" className="text-sm text-status-info hover:underline">
-              View All ({activeAlarmCount})
-            </Link>
+            <div className="flex items-center gap-3">
+              {activeAlarmCount > 1 && (
+                <button
+                  onClick={handleAcknowledgeAll}
+                  className="px-3 py-1.5 rounded-lg bg-status-alarm hover:bg-status-alarm/90 text-white text-sm font-medium transition-colors touch-manipulation"
+                  title="Acknowledge all alarms"
+                >
+                  ACK All
+                </button>
+              )}
+              <Link href="/alarms" className="text-sm text-status-info hover:underline">
+                View All ({activeAlarmCount})
+              </Link>
+            </div>
           </div>
           <div className="space-y-2">
             {alarms

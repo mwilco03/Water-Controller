@@ -345,10 +345,64 @@ async function fetchRTUs() {
 |---------|----------|--------|--------------|
 | PWA Basic (install + offline) | High | 1-2 weeks | None |
 | Push Notifications | High | 1 week | PWA Basic |
+| Maintenance Window Scheduling | High | 1 week | Existing shelving |
 | Recipe Database Schema | Medium | 1 week | None |
 | Recipe API | Medium | 2 weeks | Schema |
 | Recipe UI | Medium | 2 weeks | API |
 | Batch Executor | Medium | 2 weeks | Recipe API |
+
+---
+
+## Maintenance Window Scheduling
+
+### Overview
+
+Allow operators to pre-schedule alarm suppression for planned maintenance activities. This prevents alarm fatigue during known maintenance windows.
+
+### Use Cases
+
+| Use Case | Description |
+|----------|-------------|
+| Contractor Work | Suppress Pump 3 alarms from 8 AM - 4 PM tomorrow |
+| Filter Maintenance | Suppress filter differential alarms during backwash |
+| Calibration | Suppress sensor alarms while calibrating instruments |
+| Seasonal Shutdown | Suppress system alarms during plant winterization |
+
+### Proposed Features
+
+1. **Scheduled Shelving** - Create shelf entries with future start times
+2. **Duration Options** - Time-based (4h, 8h, 12h) or until manual release
+3. **Equipment Grouping** - Shelve all alarms for a specific RTU or equipment group
+4. **Work Order Integration** - Link scheduled shelves to maintenance work orders
+5. **Calendar View** - Visual display of upcoming maintenance windows
+
+### Implementation Notes
+
+- Extends existing ISA-18.2 shelving mechanism
+- Requires new API endpoints for scheduled shelves
+- Should integrate with shift handoff to notify incoming operators
+- Audit trail must capture who scheduled and why
+
+---
+
+## Explicitly Not Implementing
+
+### Audio Notifications
+
+**Status: Will NOT be implemented**
+
+**Rationale:**
+- Water treatment facilities are loud industrial environments
+- Plant floor noise levels make browser audio alerts ineffective
+- Operators wear hearing protection in many areas
+- Visual indicators (flashing banners, color changes) are the industry standard
+- Push notifications via PWA (phone vibration) are more practical for off-site alerting
+
+**Alternatives in use:**
+- ISA-101 compliant visual alarm banner with flashing animation
+- Alarm carousel that cycles through active alarms
+- Color-coded severity indicators
+- PWA push notifications (planned) for critical alarms to operator phones
 
 ---
 
@@ -358,3 +412,4 @@ async function fetchRTUs() {
 - PWA notifications should respect user preferences and avoid alarm fatigue
 - Offline mode is read-only; control commands require network connection for safety
 - Both features can be developed in parallel by different contributors
+- Maintenance window scheduling builds on existing alarm shelving infrastructure

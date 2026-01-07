@@ -258,17 +258,17 @@ export async function getAlarmHistory(limit = 100): Promise<Alarm[]> {
   return data.alarms || [];
 }
 
-export async function acknowledgeAlarm(alarmId: number, user: string): Promise<void> {
+export async function acknowledgeAlarm(alarmId: number, user: string, note?: string): Promise<void> {
   await apiFetch(`/api/v1/alarms/${alarmId}/acknowledge`, {
     method: 'POST',
-    body: JSON.stringify({ user }),
+    body: JSON.stringify({ user, note: note || null }),
   });
 }
 
-export async function acknowledgeAllAlarms(user: string): Promise<void> {
+export async function acknowledgeAllAlarms(user: string, note?: string): Promise<void> {
   await apiFetch('/api/v1/alarms/acknowledge-all', {
     method: 'POST',
-    body: JSON.stringify({ user }),
+    body: JSON.stringify({ user, note: note || null }),
   });
 }
 

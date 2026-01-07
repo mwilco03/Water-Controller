@@ -84,5 +84,7 @@ export { default as ShiftHandoff } from './ShiftHandoff';
 
 export { default as QuickControlPanel } from './QuickControlPanel';
 
+export { default as AlarmInsights } from './AlarmInsights';
+
 // Form components
 export * from './forms';

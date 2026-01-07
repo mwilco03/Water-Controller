@@ -5,7 +5,9 @@ import { setAuthToken } from '@/lib/api';
 import { authLogger as logger } from '@/lib/logger';
 
 // Command mode configuration
-const COMMAND_MODE_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+// 4 hours timeout - long enough for shift operations (3 logins per 12-hour shift)
+// This prevents mid-operation timeouts during engineering calls or extended procedures
+const COMMAND_MODE_TIMEOUT_MS = 4 * 60 * 60 * 1000; // 4 hours
 
 interface User {
   username: string;

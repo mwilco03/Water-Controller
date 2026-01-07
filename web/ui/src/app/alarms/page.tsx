@@ -13,6 +13,7 @@
 
 import { useEffect, useState, useCallback, useRef } from 'react';
 import AlarmSummary from '@/components/AlarmSummary';
+import { AlarmInsights } from '@/components/hmi';
 
 const PAGE_TITLE = 'Alarms - Water Treatment Controller';
 import { useWebSocket } from '@/hooks/useWebSocket';
@@ -331,6 +332,18 @@ export default function AlarmsPage() {
             <div className="text-sm text-hmi-muted">Shelved</div>
           </div>
         </div>
+
+        {/* Alarm Insights - Shows frequently occurring alarms for chronic issue detection */}
+        <AlarmInsights
+          alarmHistory={history}
+          onShelve={canCommand ? (rtuStation, slot) => {
+            // Find a matching alarm to shelve
+            const alarm = alarms.find(a => a.rtu_station === rtuStation && a.slot === slot);
+            if (alarm) {
+              setShelveDialog({ isOpen: true, alarm });
+            }
+          } : undefined}
+        />
 
         {/* Tabs - ISA-101: subtle styling */}
         <div className="flex gap-4 border-b border-hmi-border">
