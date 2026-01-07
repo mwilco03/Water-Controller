@@ -1,0 +1,76 @@
+# Water Treatment Controller - Loki Configuration (Bare Metal)
+# Copyright (C) 2024
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Configuration for Loki when running on bare metal (systemd).
+# Uses filesystem storage in /var/lib/water-controller/loki
+
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+  grpc_listen_port: 9096
+  log_level: warn
+
+common:
+  instance_addr: 127.0.0.1
+  path_prefix: /var/lib/water-controller/loki
+  storage:
+    filesystem:
+      chunks_directory: /var/lib/water-controller/loki/chunks
+      rules_directory: /var/lib/water-controller/loki/rules
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+
+query_range:
+  results_cache:
+    cache:
+      embedded_cache:
+        enabled: true
+        max_size_mb: 100
+
+schema_config:
+  configs:
+    - from: 2024-01-01
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+storage_config:
+  tsdb_shipper:
+    active_index_directory: /var/lib/water-controller/loki/tsdb-index
+    cache_location: /var/lib/water-controller/loki/tsdb-cache
+
+# Retention - keep logs for 30 days (matches historian data retention)
+limits_config:
+  retention_period: 720h
+  ingestion_rate_mb: 4
+  ingestion_burst_size_mb: 6
+  max_streams_per_user: 10000
+  max_line_size: 256kb
+
+compactor:
+  working_directory: /var/lib/water-controller/loki/compactor
+  compaction_interval: 10m
+  retention_enabled: true
+  retention_delete_delay: 2h
+  retention_delete_worker_count: 150
+  delete_request_store: filesystem
+
+ruler:
+  alertmanager_url: ""
+  storage:
+    type: local
+    local:
+      directory: /var/lib/water-controller/loki/rules
+  rule_path: /var/lib/water-controller/loki/rules-temp
+  enable_api: true
+
+# Analytics disabled for air-gapped deployments
+analytics:
+  reporting_enabled: false

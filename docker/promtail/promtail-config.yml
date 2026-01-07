@@ -10,11 +10,10 @@ server:
   grpc_listen_port: 0
 
 positions:
-  filename: /tmp/positions.yaml
+  filename: /var/promtail/positions.yaml
 
 clients:
   - url: http://loki:3100/loki/api/v1/push
-    tenant_id: wtc
     batchwait: 1s
     batchsize: 1048576
     timeout: 10s
@@ -26,9 +25,9 @@ scrape_configs:
       - host: unix:///var/run/docker.sock
         refresh_interval: 5s
         filters:
-          # Only collect logs from water-controller containers
-          - name: label
-            values: ["com.docker.compose.project=docker"]
+          # Collect logs from containers with wtc- prefix
+          - name: name
+            values: ["wtc-.*"]
     relabel_configs:
       # Use container name as the job label
       - source_labels: ['__meta_docker_container_name']

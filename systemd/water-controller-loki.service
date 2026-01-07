@@ -1,0 +1,54 @@
+[Unit]
+Description=Water Treatment Controller - Loki Log Aggregation
+Documentation=https://grafana.com/docs/loki/latest/
+After=network.target
+Wants=network-online.target
+
+# Readiness gate: Ensure Loki binary is available
+ConditionPathExists=/opt/water-controller/bin/loki
+
+[Service]
+Type=simple
+User=wtc
+Group=wtc
+WorkingDirectory=/opt/water-controller
+
+# Main service
+ExecStart=/opt/water-controller/bin/loki -config.file=/etc/water-controller/loki-config.yml
+ExecReload=/bin/kill -HUP $MAINPID
+
+# Restart behavior
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=water-controller-loki
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/water-controller/loki /var/log/water-controller
+
+# Runtime directory
+RuntimeDirectory=water-controller
+RuntimeDirectoryMode=0755
+
+# State directory for Loki data
+StateDirectory=water-controller/loki
+StateDirectoryMode=0750
+
+# Environment
+Environment=GOMAXPROCS=2
+EnvironmentFile=-/etc/water-controller/environment
+
+# Resource limits - Loki needs memory for indexing
+MemoryMax=512M
+MemoryHigh=400M
+CPUQuota=100%
+TasksMax=128
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

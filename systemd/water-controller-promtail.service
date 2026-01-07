@@ -1,0 +1,56 @@
+[Unit]
+Description=Water Treatment Controller - Promtail Log Collector
+Documentation=https://grafana.com/docs/loki/latest/clients/promtail/
+After=network.target water-controller-loki.service
+Wants=network-online.target water-controller-loki.service
+
+# Readiness gate: Ensure Promtail binary is available
+ConditionPathExists=/opt/water-controller/bin/promtail
+
+[Service]
+Type=simple
+User=wtc
+Group=wtc
+WorkingDirectory=/opt/water-controller
+
+# Allow reading journal logs
+SupplementaryGroups=systemd-journal
+
+# Main service
+ExecStart=/opt/water-controller/bin/promtail -config.file=/etc/water-controller/promtail-config.yml
+ExecReload=/bin/kill -HUP $MAINPID
+
+# Restart behavior
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=water-controller-promtail
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/water-controller/promtail /var/log/water-controller
+
+# Runtime directory
+RuntimeDirectory=water-controller
+RuntimeDirectoryMode=0755
+
+# State directory for positions file
+StateDirectory=water-controller/promtail
+StateDirectoryMode=0750
+
+# Environment
+EnvironmentFile=-/etc/water-controller/environment
+
+# Resource limits - Promtail is lightweight
+MemoryMax=128M
+MemoryHigh=100M
+CPUQuota=50%
+TasksMax=64
+LimitNOFILE=8192
+
+[Install]
+WantedBy=multi-user.target
