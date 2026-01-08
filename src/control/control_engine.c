@@ -219,12 +219,26 @@ static void process_pid_loops(control_engine_t *engine) {
                                                     loop->input_slot,
                                                     &sensor);
 
-        /* CE-H2 fix: Track communication status */
-        if (res == WTC_OK && sensor.status == IOPS_GOOD) {
+        /* CE-H2 fix: Track communication status
+         * Check both IOPS status AND quality code for reliable operation.
+         * Quality codes BAD (0x80) and NOT_CONNECTED (0xC0) indicate
+         * the sensor value should not be used for control.
+         */
+        bool quality_ok = (res == WTC_OK &&
+                           sensor.status == IOPS_GOOD &&
+                           (sensor.quality == QUALITY_GOOD ||
+                            sensor.quality == QUALITY_UNCERTAIN));
+
+        if (quality_ok) {
             engine->last_input_time_ms[i] = now_ms;
             if (engine->comm_loss[i]) {
                 LOG_INFO("PID loop %d: communication restored", loop->loop_id);
                 engine->comm_loss[i] = false;
+            }
+
+            /* Log warning for UNCERTAIN quality but allow operation */
+            if (sensor.quality == QUALITY_UNCERTAIN) {
+                LOG_DEBUG("PID loop %d: operating with UNCERTAIN quality input", loop->loop_id);
             }
         } else {
             /* Check for communication loss timeout */
@@ -317,27 +331,60 @@ static void process_interlocks(control_engine_t *engine) {
                                                     interlock->condition_rtu,
                                                     interlock->condition_slot,
                                                     &sensor);
-        if (res != WTC_OK || sensor.status != IOPS_GOOD) {
-            /* Input fault - treat as condition met for safety */
-            LOG_WARN("Interlock %d: input fault, assuming trip condition",
-                     interlock->interlock_id);
+
+        /* Check quality - interlocks MUST fail-safe on bad input
+         * This is critical safety behavior: if we can't trust the sensor,
+         * we must assume the worst case and trip the interlock.
+         */
+        bool input_valid = (res == WTC_OK &&
+                            sensor.status == IOPS_GOOD &&
+                            sensor.quality == QUALITY_GOOD);
+
+        if (!input_valid) {
+            /* Input fault or bad quality - treat as condition met for safety
+             * This ensures fail-safe behavior when sensor data is unreliable
+             */
+            const char *reason = "unknown";
+            if (res != WTC_OK) {
+                reason = "read failed";
+            } else if (sensor.status != IOPS_GOOD) {
+                reason = "IOPS bad";
+            } else if (sensor.quality == QUALITY_BAD) {
+                reason = "quality BAD";
+            } else if (sensor.quality == QUALITY_NOT_CONNECTED) {
+                reason = "quality NOT_CONNECTED";
+            } else if (sensor.quality == QUALITY_UNCERTAIN) {
+                reason = "quality UNCERTAIN";
+            }
+
+            LOG_WARN("Interlock %d: input fault (%s), assuming trip condition for safety",
+                     interlock->interlock_id, reason);
         }
 
-        /* Evaluate condition */
+        /* Evaluate condition
+         * If input is invalid, fail-safe: assume condition is met (trip).
+         * Only evaluate actual condition when we have valid sensor data.
+         */
         bool condition_met = false;
-        switch (interlock->condition) {
-        case INTERLOCK_CONDITION_ABOVE:
-            condition_met = sensor.value > interlock->threshold;
-            break;
-        case INTERLOCK_CONDITION_BELOW:
-            condition_met = sensor.value < interlock->threshold;
-            break;
-        case INTERLOCK_CONDITION_EQUAL:
-            condition_met = fabsf(sensor.value - interlock->threshold) < 0.01f;
-            break;
-        case INTERLOCK_CONDITION_NOT_EQUAL:
-            condition_met = fabsf(sensor.value - interlock->threshold) >= 0.01f;
-            break;
+
+        if (input_valid) {
+            switch (interlock->condition) {
+            case INTERLOCK_CONDITION_ABOVE:
+                condition_met = sensor.value > interlock->threshold;
+                break;
+            case INTERLOCK_CONDITION_BELOW:
+                condition_met = sensor.value < interlock->threshold;
+                break;
+            case INTERLOCK_CONDITION_EQUAL:
+                condition_met = fabsf(sensor.value - interlock->threshold) < 0.01f;
+                break;
+            case INTERLOCK_CONDITION_NOT_EQUAL:
+                condition_met = fabsf(sensor.value - interlock->threshold) >= 0.01f;
+                break;
+            }
+        } else {
+            /* Fail-safe: treat bad input as trip condition */
+            condition_met = true;
         }
 
         /* Handle delay */

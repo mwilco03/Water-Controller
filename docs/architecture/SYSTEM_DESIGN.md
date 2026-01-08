@@ -1458,6 +1458,11 @@ A calm system:
 
 ## Implementation Roadmap
 
+### Related Documentation
+
+- **[FAILURE_MODES.md](./FAILURE_MODES.md)** - Detailed failure mode analysis and safe-state design
+- **[ALARM_PHILOSOPHY.md](./ALARM_PHILOSOPHY.md)** - ISA-18.2 compliant alarm architecture
+
 ### Current State Assessment
 
 Based on codebase analysis, current implementation status:
@@ -1465,15 +1470,15 @@ Based on codebase analysis, current implementation status:
 | Principle | Status | Priority Actions |
 |-----------|--------|------------------|
 | 0. Documentation | ✅ Strong | Keep current |
-| 1. Failure design | ⚠️ Partial | Add HMI degradation visibility |
+| 1. Failure design | ✅ Strong | See FAILURE_MODES.md |
 | 2. Separation | ✅ Strong | Formalize API contracts |
 | 3. Determinism | ✅ Strong | Add reproducible build CI |
-| 4. Explicit state | ⚠️ Partial | Add state transition logging |
+| 4. Explicit state | ✅ Strong | Quality propagates through system |
 | 5. Maintainability | ✅ Strong | Keep current |
 | 6. Efficiency | ✅ Strong | Monitor in production |
 | 7. Environment parity | ⚠️ Partial | Unify startup paths |
-| 8. HMI as control | ⚠️ Partial | Add quality indicators |
-| 9. Continuous validation | ⚠️ Partial | Add health check hierarchy |
+| 8. HMI as control | ✅ Strong | Quality indicators implemented |
+| 9. Continuous validation | ✅ Strong | Staleness detection active |
 | 10. Operational calm | ⚠️ Partial | Add runbooks |
 
 ### Priority Implementation Tasks

@@ -14,9 +14,51 @@
 #include <stdio.h>
 #include <pthread.h>
 #include <math.h>
+#include <sys/stat.h>
+#include <errno.h>
 
 /* Default buffer size */
 #define DEFAULT_BUFFER_SIZE 1000
+
+/* Create directory and parent directories if needed
+ * Replaces unsafe system("mkdir -p") call with proper POSIX mkdir()
+ * Returns 0 on success, -1 on failure
+ */
+static int create_directory_recursive(const char *path) {
+    if (!path || !path[0]) return -1;
+
+    /* Copy path since we'll modify it */
+    char tmp[256];
+    size_t len = strlen(path);
+    if (len >= sizeof(tmp)) return -1;
+    strncpy(tmp, path, sizeof(tmp) - 1);
+    tmp[sizeof(tmp) - 1] = '\0';
+
+    /* Remove trailing slash if present */
+    if (len > 0 && tmp[len - 1] == '/') {
+        tmp[len - 1] = '\0';
+    }
+
+    /* Create each directory component */
+    for (char *p = tmp + 1; *p; p++) {
+        if (*p == '/') {
+            *p = '\0';
+            if (mkdir(tmp, 0755) != 0 && errno != EEXIST) {
+                LOG_ERROR("Failed to create directory: %s (%s)", tmp, strerror(errno));
+                return -1;
+            }
+            *p = '/';
+        }
+    }
+
+    /* Create the final directory */
+    if (mkdir(tmp, 0755) != 0 && errno != EEXIST) {
+        LOG_ERROR("Failed to create directory: %s (%s)", tmp, strerror(errno));
+        return -1;
+    }
+
+    return 0;
+}
 
 /* Tag buffer structure */
 typedef struct {
@@ -459,12 +501,15 @@ wtc_result_t historian_process(historian_t *historian) {
         }
 
         if (store || tag->info.total_samples == 0) {
-            /* Create sample */
+            /* Create sample with actual quality from sensor
+             * Quality is extracted from 5-byte sensor format and should
+             * propagate through the system unchanged.
+             */
             historian_sample_t sample;
             sample.timestamp_ms = now_ms;
             sample.tag_id = tag->info.tag_id;
             sample.value = sensor.value;
-            sample.quality = sensor.status == IOPS_GOOD ? 192 : 0;
+            sample.quality = (uint8_t)sensor.quality;
 
             /* Add to buffer */
             buffer_add_sample(&tag->buffer, &sample, tag->info.tag_id);
@@ -528,10 +573,11 @@ wtc_result_t historian_flush(historian_t *historian) {
 
         FILE *fp = fopen(filename, "ab"); /* Append binary */
         if (!fp) {
-            /* Try to create directory first */
-            char mkdir_cmd[300];
-            snprintf(mkdir_cmd, sizeof(mkdir_cmd), "mkdir -p %s", data_dir);
-            system(mkdir_cmd);
+            /* Try to create directory first using safe recursive mkdir */
+            if (create_directory_recursive(data_dir) != 0) {
+                LOG_ERROR("Failed to create historian directory: %s", data_dir);
+                continue;
+            }
 
             fp = fopen(filename, "ab");
             if (!fp) {
@@ -640,7 +686,16 @@ wtc_result_t historian_get_current(historian_t *historian,
                 *timestamp_ms = historian->tags[i].info.last_sample_ms;
             }
             if (quality) {
-                *quality = 192; /* Good quality */
+                /* Return actual quality from last sample in buffer
+                 * If buffer is empty, check staleness and return appropriate quality
+                 */
+                tag_buffer_t *buffer = &historian->tags[i].buffer;
+                if (buffer->count > 0) {
+                    int last_idx = (buffer->write_pos - 1 + buffer->capacity) % buffer->capacity;
+                    *quality = buffer->samples[last_idx].quality;
+                } else {
+                    *quality = QUALITY_UNCERTAIN; /* No samples available */
+                }
             }
             pthread_mutex_unlock(&historian->lock);
             return WTC_OK;

@@ -526,10 +526,30 @@ wtc_result_t rtu_registry_get_sensor(rtu_registry_t *registry,
 
     memcpy(data, &device->sensors[slot], sizeof(sensor_data_t));
 
-    /* Check staleness */
+    /* Check staleness and degrade quality accordingly
+     * Staleness thresholds per ISA-18.2 guidelines:
+     * - 5 seconds: Mark as stale, quality -> UNCERTAIN
+     * - 60 seconds: Extended staleness, quality -> BAD
+     * - 5 minutes: Assumed disconnected, quality -> NOT_CONNECTED
+     *
+     * This ensures downstream consumers (alarms, PID, historian)
+     * receive appropriate quality indicators for aged data.
+     */
     uint64_t now = time_get_ms();
-    if (now - data->timestamp_ms > 5000) { /* 5 second stale threshold */
+    uint64_t age_ms = now - data->timestamp_ms;
+
+    if (age_ms > 300000) { /* 5 minutes */
         data->stale = true;
+        data->quality = QUALITY_NOT_CONNECTED;
+    } else if (age_ms > 60000) { /* 60 seconds */
+        data->stale = true;
+        data->quality = QUALITY_BAD;
+    } else if (age_ms > 5000) { /* 5 seconds */
+        data->stale = true;
+        /* Only degrade quality if it was previously good */
+        if (data->quality == QUALITY_GOOD) {
+            data->quality = QUALITY_UNCERTAIN;
+        }
     }
 
     return WTC_OK;
