@@ -208,6 +208,80 @@ export const ErrorPresets = {
       ? [{ label: 'Report Issue', onClick: onReport }]
       : [],
   }),
+
+  /** Interlock preventing command execution */
+  interlockActive: (interlockName: string, condition: string) => ({
+    title: 'Interlock Active',
+    description: `${interlockName} is preventing this operation.`,
+    suggestion: `Condition: ${condition}. Resolve the condition before retrying. Interlocks cannot be bypassed from this system.`,
+    severity: 'warning' as ErrorSeverity,
+  }),
+
+  /** Data quality degraded - sensor may be unreliable */
+  qualityDegraded: (sensorName: string, quality: 'UNCERTAIN' | 'BAD' | 'NOT_CONNECTED') => ({
+    title: quality === 'NOT_CONNECTED' ? 'Sensor Not Connected' : 'Data Quality Issue',
+    description: quality === 'NOT_CONNECTED'
+      ? `Cannot communicate with ${sensorName}.`
+      : `${sensorName} is reporting ${quality.toLowerCase()} quality data.`,
+    suggestion: quality === 'NOT_CONNECTED'
+      ? 'Check RTU connection and sensor wiring. Contact maintenance if issue persists.'
+      : quality === 'BAD'
+        ? 'Sensor may be faulty. Do not rely on this reading for control decisions.'
+        : 'Data may be stale or at sensor limits. Verify reading against local gauge if available.',
+    severity: quality === 'UNCERTAIN' ? 'warning' as ErrorSeverity : 'error' as ErrorSeverity,
+  }),
+
+  /** Session expired, need to re-authenticate */
+  sessionExpired: (onLogin: () => void) => ({
+    title: 'Session Expired',
+    description: 'Your session has timed out for security.',
+    suggestion: 'Log in again to continue. Any unsaved changes may be lost.',
+    severity: 'warning' as ErrorSeverity,
+    actions: [{ label: 'Log In', onClick: onLogin, primary: true }],
+  }),
+
+  /** Rate limited - too many requests */
+  rateLimited: (retryAfterSeconds?: number) => ({
+    title: 'Too Many Requests',
+    description: 'Request rate limit exceeded.',
+    suggestion: retryAfterSeconds
+      ? `Please wait ${retryAfterSeconds} seconds before trying again.`
+      : 'Please wait a moment before trying again.',
+    severity: 'warning' as ErrorSeverity,
+  }),
+
+  /** RTU version mismatch - informational only */
+  versionMismatch: (rtuName: string, rtuVersion: string, controllerVersion: string) => ({
+    title: 'Version Mismatch',
+    description: `${rtuName} is running v${rtuVersion}, controller expects v${controllerVersion}.`,
+    suggestion: 'System continues operating normally. Schedule coordinated update during next maintenance window.',
+    severity: 'info' as ErrorSeverity,
+  }),
+
+  /** Command rejected by RTU */
+  commandRejected: (command: string, reason: string) => ({
+    title: 'Command Rejected',
+    description: `${command} was rejected by the RTU.`,
+    suggestion: reason || 'Check equipment status and interlocks. The RTU may be in a state that prevents this operation.',
+    severity: 'error' as ErrorSeverity,
+  }),
+
+  /** Historian not recording */
+  historianOffline: (onCheckStatus: () => void) => ({
+    title: 'Historian Not Recording',
+    description: 'Historical data is not being saved.',
+    suggestion: 'Current sensor values are still available. Check database connection and disk space.',
+    severity: 'warning' as ErrorSeverity,
+    actions: [{ label: 'Check Status', onClick: onCheckStatus }],
+  }),
+
+  /** RTU in maintenance mode */
+  rtuMaintenance: (rtuName: string) => ({
+    title: 'RTU in Maintenance Mode',
+    description: `${rtuName} is in maintenance mode.`,
+    suggestion: 'Control commands are disabled. The RTU is operating in safe state. Contact maintenance for estimated completion.',
+    severity: 'info' as ErrorSeverity,
+  }),
 };
 
 export { ErrorMessage };
