@@ -267,6 +267,64 @@ TEST(alarm_rule_enable_disable)
     alarm_manager_cleanup(am);
 }
 
+TEST(alarm_rule_delete)
+{
+    alarm_manager_t *am = NULL;
+    alarm_manager_config_t config = {0};
+    config.max_active_alarms = 100;
+    alarm_manager_init(&am, &config);
+    ASSERT_NOT_NULL(am);
+
+    /* Create a rule */
+    int rule_id = -1;
+    wtc_result_t result = alarm_manager_create_rule(am, "rtu-tank-1", 1, ALARM_CONDITION_HIGH,
+                               8.5f, ALARM_SEVERITY_MEDIUM, 5000, "pH High", &rule_id);
+    ASSERT_EQ(WTC_OK, result);
+    ASSERT_TRUE(rule_id >= 0);
+
+    /* Delete the rule */
+    result = alarm_manager_delete_rule(am, rule_id);
+    ASSERT_EQ(WTC_OK, result);
+
+    /* Verify rule is deleted - get should fail */
+    alarm_rule_t rule = {0};
+    result = alarm_manager_get_rule(am, rule_id, &rule);
+    ASSERT_EQ(WTC_ERROR_NOT_FOUND, result);
+
+    alarm_manager_cleanup(am);
+}
+
+TEST(alarm_active_count)
+{
+    alarm_manager_t *am = NULL;
+    alarm_manager_config_t config = {0};
+    config.max_active_alarms = 100;
+    alarm_manager_init(&am, &config);
+    ASSERT_NOT_NULL(am);
+
+    /* Initially should have zero active alarms */
+    int count = alarm_manager_get_active_count(am);
+    ASSERT_EQ(0, count);
+
+    alarm_manager_cleanup(am);
+}
+
+TEST(alarm_unack_count)
+{
+    alarm_manager_t *am = NULL;
+    alarm_manager_config_t config = {0};
+    config.max_active_alarms = 100;
+    config.require_ack = true;
+    alarm_manager_init(&am, &config);
+    ASSERT_NOT_NULL(am);
+
+    /* Initially should have zero unacknowledged alarms */
+    int count = alarm_manager_get_unack_count(am);
+    ASSERT_EQ(0, count);
+
+    alarm_manager_cleanup(am);
+}
+
 /* ============== Alarm Message Tests ============== */
 
 TEST(alarm_message)

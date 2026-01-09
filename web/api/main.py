@@ -2577,7 +2577,7 @@ async def get_trend_latest(tag_id: int):
         return {"tag_id": tag_id, "value": None, "time": None, "quality": None}
     except Exception as e:
         logger.error(f"Historian query failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to retrieve trend data. Check historian service status.")
 
 
 @app.post("/api/v1/trends/{tag_id}/record")
@@ -2598,7 +2598,7 @@ async def record_trend_sample(tag_id: int, value: float, quality: int = 192):
         return {"status": "ok", "tag_id": tag_id}
     except Exception as e:
         logger.error(f"Failed to record sample: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to record sample. Check historian service status.")
 
 
 @app.get("/api/v1/trends/stats")
@@ -2609,7 +2609,7 @@ async def get_historian_stats():
         return stats
     except Exception as e:
         logger.error(f"Failed to get historian stats: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to retrieve historian statistics.")
 
 # ============== System Endpoints ==============
 
@@ -2702,7 +2702,7 @@ async def import_config(config: Dict[str, Any], user: Dict = Depends(get_current
         return {"status": "ok", "imported": imported}
     except Exception as e:
         logger.error(f"Configuration import failed: {e}")
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail="Configuration import failed. Check file format and content.")
 
 # ============== Backup/Restore Endpoints ==============
 
@@ -2865,7 +2865,7 @@ async def restore_backup(backup_id: str, user: Dict = Depends(get_current_user))
         raise HTTPException(status_code=400, detail=f"Invalid JSON in backup: {e}")
     except Exception as e:
         logger.error(f"Restore failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Backup restore failed. Check backup file integrity.")
 
 @app.delete("/api/v1/backups/{backup_id}")
 async def delete_backup(backup_id: str):
@@ -2941,7 +2941,7 @@ async def upload_backup(
         logger.error(f"Failed to upload backup: {e}")
         if os.path.exists(filepath):
             os.remove(filepath)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to upload backup file.")
 
 
 @app.post("/api/v1/backups/import")
@@ -2974,11 +2974,11 @@ async def import_backup_file(
         logger.info(f"Configuration imported from file {file.filename} by {username}: {imported}")
         return {"status": "ok", "imported": imported}
 
-    except json.JSONDecodeError as e:
-        raise HTTPException(status_code=400, detail=f"Invalid JSON file: {e}")
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid JSON file format.")
     except Exception as e:
         logger.error(f"Failed to import config file: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to import configuration file.")
 
 # ============== Modbus Gateway Configuration ==============
 

@@ -827,7 +827,7 @@ def get_session(token: str) -> Optional[Dict[str, Any]]:
             if session.get('groups'):
                 try:
                     session['groups'] = json.loads(session['groups'])
-                except:
+                except (json.JSONDecodeError, TypeError):
                     session['groups'] = []
             return session
         return None

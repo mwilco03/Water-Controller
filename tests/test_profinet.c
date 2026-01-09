@@ -143,6 +143,38 @@ TEST(frame_build_dcp_identify_test)
 
 /* ============== Frame Parser Tests ============== */
 
+TEST(frame_parser_init_test)
+{
+    uint8_t buffer[] = {0x01, 0x02, 0x03, 0x04, 0x05};
+    frame_parser_t parser;
+
+    wtc_result_t result = frame_parser_init(&parser, buffer, sizeof(buffer));
+    ASSERT_EQ(WTC_OK, result);
+    ASSERT_EQ(sizeof(buffer), frame_parser_remaining(&parser));
+}
+
+TEST(frame_parser_read_bytes)
+{
+    uint8_t buffer[] = {0x01, 0x02, 0x03, 0x04, 0x05};
+    frame_parser_t parser;
+    uint8_t read_data[3];
+
+    wtc_result_t result = frame_parser_init(&parser, buffer, sizeof(buffer));
+    ASSERT_EQ(WTC_OK, result);
+
+    /* Read 3 bytes */
+    result = frame_read_bytes(&parser, read_data, 3);
+    ASSERT_EQ(WTC_OK, result);
+    ASSERT_EQ(0x01, read_data[0]);
+    ASSERT_EQ(0x02, read_data[1]);
+    ASSERT_EQ(0x03, read_data[2]);
+
+    /* Should have 2 bytes remaining */
+    ASSERT_EQ(2, frame_parser_remaining(&parser));
+}
+
+/* ============== AR Manager Tests ============== */
+
 TEST(ar_manager_init_null)
 {
     /* Test that ar_manager_init returns error for NULL parameters */

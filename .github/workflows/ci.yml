@@ -186,7 +186,7 @@ jobs:
             --enable=warning,style,performance,portability \
             --suppress=missingIncludeSystem \
             --suppress=unusedFunction \
-            --error-exitcode=0 \
+            --error-exitcode=1 \
             --xml --xml-version=2 \
             --output-file=cppcheck-report.xml \
             src/ 2>&1 | tee cppcheck-output.txt
