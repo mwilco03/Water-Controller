@@ -15,7 +15,9 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     python3-dev \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && gcc --version \
+    && python3 -c "import sysconfig; print(sysconfig.get_config_var('INCLUDEPY'))"
 
 # Install Python dependencies (compiles posix-ipc with gcc + python3-dev)
 COPY web/api/requirements.txt .
