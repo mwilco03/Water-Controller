@@ -480,6 +480,26 @@ validate_docker_requirements() {
     return 0
 }
 
+# Generate secure random password
+generate_password() {
+    local length="${1:-24}"
+
+    # Try openssl first (most common)
+    if command -v openssl &>/dev/null; then
+        openssl rand -base64 "$length" | tr -d '\n'
+        return 0
+    fi
+
+    # Fall back to /dev/urandom
+    if [[ -r /dev/urandom ]]; then
+        tr -dc 'A-Za-z0-9!@#$%^&*' < /dev/urandom | head -c "$length"
+        return 0
+    fi
+
+    # Last resort: use date and random
+    echo "$(date +%s)${RANDOM}${RANDOM}" | sha256sum | head -c "$length"
+}
+
 # Run Docker deployment
 do_docker_install() {
     log_step "Starting Docker deployment..."
@@ -502,30 +522,79 @@ do_docker_install() {
 
     log_info "Using Docker directory: $docker_dir"
 
-    # Copy ports.env if exists
-    local env_file=""
-    if [[ -f "./config/ports.env" ]]; then
-        env_file="--env-file ../config/ports.env"
-    elif [[ -f "$docker_dir/../config/ports.env" ]]; then
-        env_file="--env-file ../config/ports.env"
+    # Source ports.env if it exists
+    local ports_env_file=""
+    if [[ -f "$docker_dir/../config/ports.env" ]]; then
+        ports_env_file="$docker_dir/../config/ports.env"
+    elif [[ -f "./config/ports.env" ]]; then
+        ports_env_file="./config/ports.env"
     fi
+
+    if [[ -n "$ports_env_file" ]]; then
+        log_info "Loading port configuration from: $ports_env_file"
+        # Export variables from ports.env
+        set -a
+        source "$ports_env_file"
+        set +a
+    fi
+
+    # Generate required passwords if not already set
+    if [[ -z "${GRAFANA_PASSWORD:-}" ]]; then
+        log_info "Generating secure Grafana password..."
+        export GRAFANA_PASSWORD=$(generate_password 24)
+        log_info "GRAFANA_PASSWORD generated (save this for later access)"
+    fi
+
+    if [[ -z "${DB_PASSWORD:-}" ]]; then
+        log_info "Generating secure database password..."
+        export DB_PASSWORD=$(generate_password 32)
+    fi
+
+    # Save passwords to a secure file for future reference
+    local creds_file="$docker_dir/../config/.docker-credentials"
+    log_info "Saving credentials to: $creds_file"
+    run_privileged mkdir -p "$(dirname "$creds_file")"
+    {
+        echo "# Water-Controller Docker Credentials"
+        echo "# Generated: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        echo "# KEEP THIS FILE SECURE - Contains passwords"
+        echo ""
+        echo "GRAFANA_PASSWORD=$GRAFANA_PASSWORD"
+        echo "DB_PASSWORD=$DB_PASSWORD"
+        echo ""
+        echo "# Grafana URL: http://localhost:\${WTC_GRAFANA_PORT:-3000}"
+        echo "# Grafana User: admin"
+        echo "# Grafana Password: (see above)"
+    } | run_privileged tee "$creds_file" > /dev/null
+    run_privileged chmod 600 "$creds_file"
+
+    log_info "Credentials saved to: $creds_file"
+    log_warn "IMPORTANT: Save your Grafana password - it won't be shown again!"
+    log_info "Grafana admin password: $GRAFANA_PASSWORD"
 
     # Run docker compose
     log_info "Starting containers..."
     (
         cd "$docker_dir" || exit 1
-        if [[ -n "$env_file" ]]; then
-            docker compose $env_file up -d
-        else
-            docker compose up -d
-        fi
+        # Export passwords for docker compose
+        export GRAFANA_PASSWORD="$GRAFANA_PASSWORD"
+        export DB_PASSWORD="$DB_PASSWORD"
+
+        docker compose up -d
     )
 
     local result=$?
     if [[ $result -eq 0 ]]; then
         log_info "Docker deployment completed successfully!"
         log_info ""
-        log_info "Services started. Check status with:"
+        log_info "Services started. Access points:"
+        log_info "  Web UI:      http://localhost:${WTC_UI_PORT:-8080}"
+        log_info "  API:         http://localhost:${WTC_API_PORT:-8000}"
+        log_info "  Grafana:     http://localhost:${WTC_GRAFANA_PORT:-3000} (admin / see credentials file)"
+        log_info ""
+        log_info "Credentials saved in: $creds_file"
+        log_info ""
+        log_info "Check status with:"
         log_info "  docker compose -f $docker_dir/docker-compose.yml ps"
         log_info ""
         log_info "View logs with:"
