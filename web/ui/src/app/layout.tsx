@@ -15,6 +15,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { CommandModeProvider, useCommandMode } from '@/contexts/CommandModeContext';
+import { QueryClientProvider } from '@/contexts/QueryClientProvider';
 import CommandModeBanner from '@/components/CommandModeBanner';
 import { HMIToastProvider, AuthenticationModal, DegradedModeBanner, BottomNavigation } from '@/components/hmi';
 import { useWebSocket } from '@/hooks/useWebSocket';
@@ -55,11 +56,13 @@ export default function RootLayout({
         <link rel="stylesheet" href="/fonts/fonts.css" />
       </head>
       <body className="bg-hmi-bg text-hmi-text">
-        <CommandModeProvider>
-          <HMIToastProvider>
-            <AppShell>{children}</AppShell>
-          </HMIToastProvider>
-        </CommandModeProvider>
+        <QueryClientProvider>
+          <CommandModeProvider>
+            <HMIToastProvider>
+              <AppShell>{children}</AppShell>
+            </HMIToastProvider>
+          </CommandModeProvider>
+        </QueryClientProvider>
       </body>
     </html>
   );

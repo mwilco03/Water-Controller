@@ -232,3 +232,111 @@ SELECT add_retention_policy('audit_log', INTERVAL '365 days', if_not_exists => T
 -- Grant permissions
 GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO wtc;
 GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO wtc;
+
+-- =============================================================================
+-- TimescaleDB Native Compression (replaces custom C-level compression)
+-- =============================================================================
+
+-- Enable compression on historian_data hypertable
+-- Provides 80-95% compression ratio for industrial time-series data
+ALTER TABLE historian_data SET (
+  timescaledb.compress,
+  timescaledb.compress_segmentby = 'tag_id',
+  timescaledb.compress_orderby = 'time DESC'
+);
+
+-- Add compression policy: compress chunks older than 7 days
+SELECT add_compression_policy('historian_data',
+    INTERVAL '7 days',
+    if_not_exists => TRUE);
+
+-- Create daily continuous aggregate
+CREATE MATERIALIZED VIEW IF NOT EXISTS historian_daily
+WITH (timescaledb.continuous) AS
+SELECT
+    time_bucket('1 day', time) AS bucket,
+    tag_id,
+    AVG(value) AS avg_value,
+    MIN(value) AS min_value,
+    MAX(value) AS max_value,
+    STDDEV(value) AS stddev_value,
+    COUNT(*) AS sample_count,
+    -- Quality statistics (percentage of good samples)
+    COUNT(*) FILTER (WHERE quality = 192) AS good_count,
+    COUNT(*) FILTER (WHERE quality = 128) AS bad_count,
+    COUNT(*) FILTER (WHERE quality = 64) AS uncertain_count
+FROM historian_data
+GROUP BY bucket, tag_id;
+
+-- Add refresh policy for daily aggregate
+SELECT add_continuous_aggregate_policy('historian_daily',
+    start_offset => INTERVAL '3 days',
+    end_offset => INTERVAL '1 day',
+    schedule_interval => INTERVAL '1 day',
+    if_not_exists => TRUE);
+
+-- Enable compression on continuous aggregates
+ALTER MATERIALIZED VIEW historian_hourly SET (
+  timescaledb.compress,
+  timescaledb.compress_segmentby = 'tag_id',
+  timescaledb.compress_orderby = 'bucket DESC'
+);
+
+SELECT add_compression_policy('historian_hourly',
+    INTERVAL '30 days',
+    if_not_exists => TRUE);
+
+ALTER MATERIALIZED VIEW historian_daily SET (
+  timescaledb.compress,
+  timescaledb.compress_segmentby = 'tag_id',
+  timescaledb.compress_orderby = 'bucket DESC'
+);
+
+SELECT add_compression_policy('historian_daily',
+    INTERVAL '90 days',
+    if_not_exists => TRUE);
+
+-- Update retention policies for aggregates
+SELECT add_retention_policy('historian_hourly',
+    INTERVAL '365 days',
+    if_not_exists => TRUE);
+
+SELECT add_retention_policy('historian_daily',
+    INTERVAL '1825 days',
+    if_not_exists => TRUE);
+
+-- Query helper views
+CREATE OR REPLACE VIEW historian_recent AS
+SELECT
+    h.time,
+    h.tag_id,
+    t.tag_name,
+    h.value,
+    h.quality,
+    CASE h.quality
+        WHEN 192 THEN 'GOOD'
+        WHEN 128 THEN 'BAD'
+        WHEN 64 THEN 'UNCERTAIN'
+        WHEN 0 THEN 'NOT_CONNECTED'
+        ELSE 'UNKNOWN'
+    END AS quality_text
+FROM historian_data h
+JOIN historian_tags t ON h.tag_id = t.id
+WHERE h.time > NOW() - INTERVAL '7 days';
+
+CREATE OR REPLACE VIEW historian_compression_stats AS
+SELECT
+    hypertable_name,
+    compression_status,
+    uncompressed_heap_size,
+    compressed_heap_size,
+    ROUND(
+        (1 - compressed_heap_size::numeric / NULLIF(uncompressed_heap_size, 0)) * 100,
+        2
+    ) AS compression_ratio_pct
+FROM timescaledb_information.compressed_hypertable_stats
+WHERE hypertable_name IN ('historian_data', 'historian_hourly', 'historian_daily');
+
+GRANT SELECT ON historian_recent TO wtc;
+GRANT SELECT ON historian_compression_stats TO wtc;
+GRANT SELECT ON historian_daily TO wtc;
