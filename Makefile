@@ -11,12 +11,17 @@ all: generate build
 # Python executable
 PYTHON ?= python3
 
-# Directories
-SCHEMA_DIR := schemas
-SCRIPTS_DIR := scripts
-DOCS_GEN_DIR := docs/generated
-SRC_GEN_DIR := src/generated
-WEB_GEN_DIR := web/api/models/generated
+# Directories - anchored from Makefile location
+ROOT_DIR := $(CURDIR)
+BUILD_DIR := $(ROOT_DIR)/build
+SCHEMA_DIR := $(ROOT_DIR)/schemas
+SCRIPTS_DIR := $(ROOT_DIR)/scripts
+DOCS_GEN_DIR := $(ROOT_DIR)/docs/generated
+SRC_GEN_DIR := $(ROOT_DIR)/src/generated
+WEB_GEN_DIR := $(ROOT_DIR)/web/api/models/generated
+WEB_API_DIR := $(ROOT_DIR)/web/api
+WEB_UI_DIR := $(ROOT_DIR)/web/ui
+TESTS_DIR := $(ROOT_DIR)/tests
 
 #
 # Schema-Driven Generation
@@ -82,8 +87,14 @@ regenerate:
 # Build the controller
 build:
 	@echo "Building water-controller..."
-	@if [ -d build ]; then cd build && cmake --build .; \
-	else mkdir -p build && cd build && cmake .. && cmake --build .; fi
+	@echo "  Build directory: $(BUILD_DIR)"
+	@command -v cmake >/dev/null 2>&1 || { echo "ERROR: cmake not found in PATH"; exit 1; }
+	@echo "  Using cmake: $$(command -v cmake) ($$(cmake --version | head -1))"
+	@if [ -d "$(BUILD_DIR)" ]; then \
+		cd "$(BUILD_DIR)" && cmake --build .; \
+	else \
+		mkdir -p "$(BUILD_DIR)" && cd "$(BUILD_DIR)" && cmake "$(ROOT_DIR)" && cmake --build .; \
+	fi
 
 # Clean build artifacts
 clean:
@@ -118,40 +129,54 @@ test: test-c test-python test-js test-integration
 # Run C tests (controller)
 test-c:
 	@echo "Running C tests..."
-	@if [ -d build ]; then \
-		cd build && ctest --output-on-failure; \
-	else \
-		echo "No build directory found. Run 'make build' first."; \
+	@if [ ! -d "$(BUILD_DIR)" ]; then \
+		echo "ERROR: Build directory not found at $(BUILD_DIR)"; \
+		echo "  Run 'make build' first to compile the controller"; \
+		exit 1; \
 	fi
+	@command -v ctest >/dev/null 2>&1 || { echo "ERROR: ctest not found (install cmake)"; exit 1; }
+	cd "$(BUILD_DIR)" && ctest --output-on-failure
 
 # Run Python tests (API)
 test-python:
 	@echo "Running Python tests..."
-	cd web/api && $(PYTHON) -m pytest tests/ -v --tb=short
+	@if [ ! -d "$(WEB_API_DIR)/tests" ]; then \
+		echo "WARNING: No tests directory at $(WEB_API_DIR)/tests"; \
+		exit 0; \
+	fi
+	cd "$(WEB_API_DIR)" && $(PYTHON) -m pytest tests/ -v --tb=short
 
 # Run JavaScript tests (UI)
 test-js:
 	@echo "Running JavaScript tests..."
-	@if [ -f web/ui/package.json ]; then \
-		cd web/ui && npm test -- --passWithNoTests 2>/dev/null || echo "No JS tests configured"; \
-	else \
-		echo "No web/ui package.json found"; \
+	@if [ ! -f "$(WEB_UI_DIR)/package.json" ]; then \
+		echo "WARNING: No package.json found at $(WEB_UI_DIR)"; \
+		exit 0; \
 	fi
+	@if ! command -v npm >/dev/null 2>&1; then \
+		echo "WARNING: npm not found, skipping JS tests"; \
+		exit 0; \
+	fi
+	cd "$(WEB_UI_DIR)" && npm test -- --passWithNoTests || echo "NOTE: JS tests returned non-zero (may be expected if no tests exist)"
 
 # Run integration tests
 test-integration:
 	@echo "Running integration tests..."
-	$(PYTHON) -m pytest tests/integration/ -v --tb=short -m "not docker" 2>/dev/null || echo "No integration tests found or markers not set"
+	@if [ ! -d "$(TESTS_DIR)/integration" ]; then \
+		echo "WARNING: No integration tests directory at $(TESTS_DIR)/integration"; \
+		exit 0; \
+	fi
+	$(PYTHON) -m pytest "$(TESTS_DIR)/integration/" -v --tb=short -m "not docker" || echo "NOTE: Integration tests returned non-zero (check output above)"
 
 # Run all tests with coverage
 test-coverage:
 	@echo "Running tests with coverage..."
-	cd web/api && $(PYTHON) -m pytest tests/ -v --cov=app --cov-report=html --cov-report=term
+	cd "$(WEB_API_DIR)" && $(PYTHON) -m pytest tests/ -v --cov=app --cov-report=html --cov-report=term
 
 # Quick test (fast subset for development)
 test-quick:
 	@echo "Running quick tests..."
-	cd web/api && $(PYTHON) -m pytest tests/ -v -x --tb=short -m "not slow"
+	cd "$(WEB_API_DIR)" && $(PYTHON) -m pytest tests/ -v -x --tb=short -m "not slow"
 
 #
 # Documentation

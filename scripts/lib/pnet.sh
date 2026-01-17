@@ -454,6 +454,7 @@ build_pnet() {
     # Detect architecture-specific options
     local arch
     arch=$(uname -m)
+    log_debug "Detected architecture: $arch"
     case "$arch" in
         armv7l|armv6l)
             log_info "Configuring for ARM 32-bit..."
@@ -464,6 +465,10 @@ build_pnet() {
             ;;
         x86_64)
             log_info "Configuring for x86_64..."
+            ;;
+        *)
+            log_warn "Unknown architecture '$arch' - using default compiler options"
+            log_info "  Detected via: uname -m"
             ;;
     esac
 

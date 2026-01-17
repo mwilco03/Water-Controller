@@ -252,7 +252,13 @@ install_system_package() {
             if [ ! -f /var/lib/apt/periodic/update-success-stamp ] || \
                [ "$(find /var/lib/apt/periodic/update-success-stamp -mmin +60 2>/dev/null)" ]; then
                 log_debug "Updating apt package lists..."
-                sudo apt-get update -qq 2>&1 | tee -a "$INSTALL_LOG_FILE" || true
+                local apt_update_output
+                if ! apt_update_output=$(sudo apt-get update -qq 2>&1); then
+                    # Log the actual error but continue - cached packages might work
+                    log_warn "apt-get update failed (using cached package lists)"
+                    log_debug "  apt-get update error: $apt_update_output"
+                fi
+                echo "$apt_update_output" >> "$INSTALL_LOG_FILE"
             fi
 
             sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "$package" 2>&1 | tee -a "$INSTALL_LOG_FILE"

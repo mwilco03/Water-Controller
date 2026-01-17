@@ -38,11 +38,15 @@ _SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 _REPO_ROOT="$(cd "$_SCRIPT_DIR/../.." && pwd)"
 
 # Try to load from repository config first (development)
-if [[ -f "${_REPO_ROOT}/config/ports.sh" ]]; then
+# Discovery: Check existence AND readability before sourcing
+_PORTS_CONFIG_SOURCE=""
+if [[ -f "${_REPO_ROOT}/config/ports.sh" ]] && [[ -r "${_REPO_ROOT}/config/ports.sh" ]]; then
     source "${_REPO_ROOT}/config/ports.sh"
+    _PORTS_CONFIG_SOURCE="${_REPO_ROOT}/config/ports.sh"
 # Then try installed location (production)
-elif [[ -f "${INSTALL_DIR}/config/ports.sh" ]]; then
+elif [[ -f "${INSTALL_DIR}/config/ports.sh" ]] && [[ -r "${INSTALL_DIR}/config/ports.sh" ]]; then
     source "${INSTALL_DIR}/config/ports.sh"
+    _PORTS_CONFIG_SOURCE="${INSTALL_DIR}/config/ports.sh"
 # Fallback to hardcoded defaults if no config file available
 else
     export WTC_API_PORT="${WTC_API_PORT:-8000}"
@@ -50,7 +54,10 @@ else
     export WTC_DB_PORT="${WTC_DB_PORT:-5432}"
     export WTC_PROFINET_UDP_PORT="${WTC_PROFINET_UDP_PORT:-34964}"
     export WTC_MODBUS_TCP_PORT="${WTC_MODBUS_TCP_PORT:-1502}"
+    _PORTS_CONFIG_SOURCE="hardcoded defaults"
 fi
+# Export for debugging - shows HOW ports were configured
+export _PORTS_CONFIG_SOURCE
 
 # Derived URLs (if not already set)
 export WTC_API_URL="${WTC_API_URL:-http://localhost:${WTC_API_PORT}}"
@@ -453,10 +460,27 @@ require_root() {
 create_service_user() {
     if ! id -u "$SERVICE_USER" >/dev/null 2>&1; then
         log_info "Creating service user: $SERVICE_USER"
-        useradd --system --user-group --no-create-home --shell /usr/sbin/nologin "$SERVICE_USER"
-        usermod -a -G dialout "$SERVICE_USER"  # For serial port access
+        local useradd_output
+        if ! useradd_output=$(useradd --system --user-group --no-create-home --shell /usr/sbin/nologin "$SERVICE_USER" 2>&1); then
+            log_error "Failed to create service user: $useradd_output"
+            return 1
+        fi
+
+        # Verify user was actually created
+        if ! id -u "$SERVICE_USER" >/dev/null 2>&1; then
+            log_error "useradd succeeded but user '$SERVICE_USER' not found"
+            return 1
+        fi
+        log_debug "Service user created (uid=$(id -u "$SERVICE_USER"))"
+
+        # Add to dialout group for serial port access
+        local usermod_output
+        if ! usermod_output=$(usermod -a -G dialout "$SERVICE_USER" 2>&1); then
+            log_warn "Could not add $SERVICE_USER to dialout group: $usermod_output"
+            log_info "  Serial port access may require manual configuration"
+        fi
     else
-        log_info "Service user already exists: $SERVICE_USER"
+        log_info "Service user already exists: $SERVICE_USER (uid=$(id -u "$SERVICE_USER"))"
     fi
 }
 

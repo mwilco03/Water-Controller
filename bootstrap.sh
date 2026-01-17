@@ -38,6 +38,10 @@ readonly MIN_DISK_SPACE_MB=2048
 readonly REQUIRED_TOOLS=("git" "curl" "systemctl")
 readonly CHECKSUM_FILE="SHA256SUMS"
 
+# Service names (DRY - single source of truth)
+readonly DOCKER_SERVICE="docker"
+readonly WTC_DOCKER_SERVICE="water-controller-docker"
+
 # Global state
 QUIET_MODE="false"
 DEPLOYMENT_MODE=""  # baremetal or docker
@@ -58,15 +62,27 @@ readonly NC='\033[0m' # No Color
 init_logging() {
     local log_dir
     log_dir=$(dirname "$BOOTSTRAP_LOG")
+    local mkdir_error
+
     if [[ -w "$log_dir" ]] || [[ $EUID -eq 0 ]]; then
         if [[ $EUID -ne 0 ]]; then
-            sudo mkdir -p "$log_dir" 2>/dev/null || true
-            sudo touch "$BOOTSTRAP_LOG" 2>/dev/null || true
+            if ! mkdir_error=$(sudo mkdir -p "$log_dir" 2>&1); then
+                echo "[WARN] Could not create log directory $log_dir: $mkdir_error" >&2
+            fi
+            if ! sudo touch "$BOOTSTRAP_LOG" 2>&1; then
+                echo "[WARN] Could not create log file $BOOTSTRAP_LOG" >&2
+            fi
             sudo chmod 644 "$BOOTSTRAP_LOG" 2>/dev/null || true
         else
-            mkdir -p "$log_dir" 2>/dev/null || true
-            touch "$BOOTSTRAP_LOG" 2>/dev/null || true
+            if ! mkdir_error=$(mkdir -p "$log_dir" 2>&1); then
+                echo "[WARN] Could not create log directory $log_dir: $mkdir_error" >&2
+            fi
+            if ! touch "$BOOTSTRAP_LOG" 2>&1; then
+                echo "[WARN] Could not create log file $BOOTSTRAP_LOG" >&2
+            fi
         fi
+    else
+        echo "[INFO] Log directory $log_dir not writable and not root, logs may not be saved" >&2
     fi
 }
 
@@ -666,8 +682,8 @@ install_docker() {
 
     # Start and enable Docker service
     log_info "Starting Docker service..."
-    run_privileged systemctl start docker
-    run_privileged systemctl enable docker
+    run_privileged systemctl start "$DOCKER_SERVICE"
+    run_privileged systemctl enable "$DOCKER_SERVICE"
 
     # Verify installation
     if command -v docker &>/dev/null && docker compose version &>/dev/null; then
@@ -734,14 +750,14 @@ validate_docker_requirements() {
 
                 if command -v systemctl &>/dev/null; then
                     local start_error
-                    if ! start_error=$(run_privileged systemctl start docker 2>&1); then
+                    if ! start_error=$(run_privileged systemctl start "$DOCKER_SERVICE" 2>&1); then
                         log_error "Failed to start Docker daemon"
                         log_error "  Cause: $start_error"
-                        log_info "Check: sudo systemctl status docker"
-                        log_info "Logs:  sudo journalctl -xeu docker"
+                        log_info "Check: sudo systemctl status $DOCKER_SERVICE"
+                        log_info "Logs:  sudo journalctl -xeu $DOCKER_SERVICE"
                         return 1
                     fi
-                    run_privileged systemctl enable docker 2>/dev/null || true
+                    run_privileged systemctl enable "$DOCKER_SERVICE" 2>/dev/null || true
                 fi
 
                 # Wait for daemon with progress
@@ -754,8 +770,8 @@ validate_docker_requirements() {
 
                 if ! discover_docker; then
                     log_discovered_error "Docker daemon failed to start after ${wait_count}s"
-                    log_info "Check: sudo systemctl status docker"
-                    log_info "Logs:  sudo journalctl -xeu docker"
+                    log_info "Check: sudo systemctl status $DOCKER_SERVICE"
+                    log_info "Logs:  sudo journalctl -xeu $DOCKER_SERVICE"
                     return 1
                 fi
                 log_info "Docker daemon started successfully"
@@ -793,9 +809,9 @@ validate_docker_requirements() {
 
     # Step 3: Ensure docker is enabled for boot
     if command -v systemctl &>/dev/null; then
-        if ! systemctl is-enabled docker &>/dev/null 2>&1; then
+        if ! systemctl is-enabled "$DOCKER_SERVICE" &>/dev/null 2>&1; then
             log_info "Enabling Docker to start on boot..."
-            run_privileged systemctl enable docker 2>/dev/null || true
+            run_privileged systemctl enable "$DOCKER_SERVICE" 2>/dev/null || true
         fi
     fi
 
@@ -909,7 +925,7 @@ verify_endpoints() {
 # Create systemd service for auto-start
 create_systemd_service() {
     local docker_dir="$1"
-    local service_file="/etc/systemd/system/water-controller-docker.service"
+    local service_file="/etc/systemd/system/${WTC_DOCKER_SERVICE}.service"
     local env_file="$docker_dir/.env"
 
     log_step "Creating systemd service for auto-start on boot..."
@@ -933,6 +949,15 @@ create_systemd_service() {
     } | run_privileged tee "$env_file" > /dev/null
     run_privileged chmod 600 "$env_file"
 
+    # Discovery: Find docker binary path at install time
+    local docker_bin
+    docker_bin=$(command -v docker)
+    if [[ -z "$docker_bin" ]]; then
+        log_error "Cannot find docker binary for systemd unit"
+        return 1
+    fi
+    log_debug "Docker binary discovered at: $docker_bin"
+
     local service_content
     service_content=$(cat <<EOF
 [Unit]
@@ -946,8 +971,9 @@ Type=oneshot
 RemainAfterExit=yes
 WorkingDirectory=$docker_dir
 EnvironmentFile=$env_file
-ExecStart=/usr/bin/docker compose up -d
-ExecStop=/usr/bin/docker compose down
+# Docker path discovered at install time: $docker_bin
+ExecStart=$docker_bin compose up -d
+ExecStop=$docker_bin compose down
 TimeoutStartSec=300
 TimeoutStopSec=120
 
@@ -960,7 +986,7 @@ EOF
 
     # Enable service
     run_privileged systemctl daemon-reload
-    run_privileged systemctl enable water-controller-docker.service
+    run_privileged systemctl enable "${WTC_DOCKER_SERVICE}.service"
 
     log_info "Systemd service created and enabled for auto-start"
 }
@@ -1059,8 +1085,15 @@ do_docker_install() {
 
         # Copy to persistent location (including hidden files)
         log_info "Installing to /opt/water-controller..."
-        run_privileged mkdir -p /opt/water-controller
-        run_privileged cp -a "$staging_dir/repo/." /opt/water-controller/
+        local mkdir_result
+        if ! mkdir_result=$(run_privileged mkdir -p /opt/water-controller 2>&1); then
+            log_error "Failed to create /opt/water-controller: $mkdir_result"
+            return 1
+        fi
+        if ! run_privileged cp -a "$staging_dir/repo/." /opt/water-controller/; then
+            log_error "Failed to copy repository to /opt/water-controller"
+            return 1
+        fi
         docker_dir="/opt/water-controller/docker"
         repo_dir="/opt/water-controller"
     fi
@@ -1115,6 +1148,20 @@ do_docker_install() {
     # Build images with visible progress
     log_step "Building Docker images (this may take 5-10 minutes)..."
     log_info "Building: api, ui, controller (3 images)"
+
+    # Discovery: Verify docker directory exists and is accessible
+    if [[ ! -d "$docker_dir" ]]; then
+        log_error "Docker directory not found: $docker_dir"
+        log_info "  Expected docker-compose.yml at: $docker_dir/docker-compose.yml"
+        return 1
+    fi
+    if [[ ! -f "$docker_dir/docker-compose.yml" ]]; then
+        log_error "docker-compose.yml not found in: $docker_dir"
+        log_info "  Directory contents: $(ls -la "$docker_dir" 2>&1 | head -5)"
+        return 1
+    fi
+    log_debug "Docker directory verified: $docker_dir"
+
     (
         cd "$docker_dir" || exit 1
         export GRAFANA_PASSWORD="$GRAFANA_PASSWORD"
@@ -1146,10 +1193,10 @@ do_docker_install() {
         return 1
     }
 
-    # Start containers
+    # Start containers (docker_dir already verified above during build step)
     log_step "Starting containers..."
     (
-        cd "$docker_dir" || exit 1
+        cd "$docker_dir" || { echo "ERROR: Cannot access $docker_dir" >&2; exit 1; }
         export GRAFANA_PASSWORD="$GRAFANA_PASSWORD"
         export DB_PASSWORD="$DB_PASSWORD"
 
@@ -1222,8 +1269,8 @@ do_docker_install() {
     log_info "═══ MANAGEMENT COMMANDS ═══"
     log_info "  Status:  docker compose -f $docker_dir/docker-compose.yml ps"
     log_info "  Logs:    docker compose -f $docker_dir/docker-compose.yml logs -f"
-    log_info "  Restart: sudo systemctl restart water-controller-docker"
-    log_info "  Stop:    sudo systemctl stop water-controller-docker"
+    log_info "  Restart: sudo systemctl restart $WTC_DOCKER_SERVICE"
+    log_info "  Stop:    sudo systemctl stop $WTC_DOCKER_SERVICE"
     log_info ""
     log_info "  Quick commands: source /opt/water-controller/docker-commands.sh"
     log_info ""
@@ -1587,9 +1634,19 @@ verify_checksum() {
         return 0
     fi
 
+    # Discovery: Verify repo directory and checksum file exist
+    if [[ ! -d "$verify_dir" ]]; then
+        log_warn "Verification directory not found: $verify_dir"
+        return 0  # Non-fatal, continue without verification
+    fi
+    if [[ ! -f "$verify_dir/$CHECKSUM_FILE" ]]; then
+        log_debug "No checksum file at: $verify_dir/$CHECKSUM_FILE"
+        return 0  # Non-fatal, continue without verification
+    fi
+
     # Change to repo directory and verify
     (
-        cd "$verify_dir" || exit 1
+        cd "$verify_dir" || { echo "ERROR: Cannot access $verify_dir" >&2; exit 1; }
         if sha256sum --check --quiet "$CHECKSUM_FILE" 2>/dev/null; then
             log_info "Checksum verification passed"
             exit 0

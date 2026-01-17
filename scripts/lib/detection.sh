@@ -190,18 +190,46 @@ detect_system() {
     esac
     log_debug "Detected architecture: $arch"
 
-    # Detect CPU information
-    cpu_cores="$(nproc 2>/dev/null || grep -c '^processor' /proc/cpuinfo 2>/dev/null || echo "1")"
-    cpu_model="$(grep -m1 'model name' /proc/cpuinfo 2>/dev/null | cut -d: -f2 | sed 's/^[ \t]*//' || echo "unknown")"
-    if [ "$cpu_model" = "unknown" ] || [ -z "$cpu_model" ]; then
-        # ARM processors often don't have 'model name', try Hardware field
-        cpu_model="$(grep -m1 'Hardware' /proc/cpuinfo 2>/dev/null | cut -d: -f2 | sed 's/^[ \t]*//' || echo "unknown")"
+    # Detect CPU information with discovery logging
+    local cpu_cores_method="unknown"
+    if cpu_cores="$(nproc 2>/dev/null)" && [ -n "$cpu_cores" ]; then
+        cpu_cores_method="nproc"
+    elif cpu_cores="$(grep -c '^processor' /proc/cpuinfo 2>/dev/null)" && [ -n "$cpu_cores" ]; then
+        cpu_cores_method="/proc/cpuinfo"
+    else
+        cpu_cores="1"
+        cpu_cores_method="fallback (could not detect)"
+        log_warn "Could not detect CPU cores, defaulting to 1"
     fi
-    log_debug "Detected CPU: $cpu_model ($cpu_cores cores)"
 
-    # Detect total RAM in MB
-    total_ram_mb="$(awk '/MemTotal/ {printf "%.0f", $2/1024}' /proc/meminfo 2>/dev/null || echo "0")"
-    log_debug "Detected RAM: ${total_ram_mb}MB"
+    local cpu_model_method="unknown"
+    cpu_model="$(grep -m1 'model name' /proc/cpuinfo 2>/dev/null | cut -d: -f2 | sed 's/^[ \t]*//')"
+    if [ -n "$cpu_model" ]; then
+        cpu_model_method="/proc/cpuinfo:model name"
+    else
+        # ARM processors often don't have 'model name', try Hardware field
+        cpu_model="$(grep -m1 'Hardware' /proc/cpuinfo 2>/dev/null | cut -d: -f2 | sed 's/^[ \t]*//')"
+        if [ -n "$cpu_model" ]; then
+            cpu_model_method="/proc/cpuinfo:Hardware"
+        else
+            cpu_model="unknown"
+            cpu_model_method="fallback (no model info)"
+            log_debug "Could not detect CPU model name"
+        fi
+    fi
+    log_debug "Detected CPU: $cpu_model ($cpu_cores cores via $cpu_cores_method)"
+
+    # Detect total RAM in MB with discovery logging
+    local ram_method="unknown"
+    total_ram_mb="$(awk '/MemTotal/ {printf "%.0f", $2/1024}' /proc/meminfo 2>/dev/null)"
+    if [ -n "$total_ram_mb" ] && [ "$total_ram_mb" != "0" ]; then
+        ram_method="/proc/meminfo"
+    else
+        total_ram_mb="0"
+        ram_method="fallback (could not detect)"
+        log_warn "Could not detect system RAM"
+    fi
+    log_debug "Detected RAM: ${total_ram_mb}MB (via $ram_method)"
 
     # Detect storage type and root device
     _detect_storage_info
@@ -211,12 +239,21 @@ detect_system() {
     storage_avail_mb="$_STORAGE_AVAIL_MB"
     log_debug "Detected storage: $storage_device ($storage_type) - ${storage_avail_mb}MB available"
 
-    # Detect network interfaces (excluding lo)
+    # Detect network interfaces (excluding lo) with method tracking
+    local net_method="unknown"
     network_interfaces="$(ip -o link show 2>/dev/null | awk -F': ' '{print $2}' | grep -v '^lo$' | tr '\n' ',' | sed 's/,$//')"
-    if [ -z "$network_interfaces" ]; then
+    if [ -n "$network_interfaces" ]; then
+        net_method="ip -o link show"
+    else
         network_interfaces="$(ls /sys/class/net 2>/dev/null | grep -v '^lo$' | tr '\n' ',' | sed 's/,$//')"
+        if [ -n "$network_interfaces" ]; then
+            net_method="/sys/class/net"
+        else
+            net_method="fallback (none detected)"
+            log_debug "No network interfaces detected"
+        fi
     fi
-    log_debug "Detected network interfaces: $network_interfaces"
+    log_debug "Detected network interfaces: $network_interfaces (via $net_method)"
 
     # Output as key=value pairs
     echo "OS_ID=$os_id"
@@ -238,12 +275,13 @@ detect_system() {
 }
 
 # Internal function to detect storage information
-# Sets: _STORAGE_TYPE, _STORAGE_DEVICE, _STORAGE_TOTAL_MB, _STORAGE_AVAIL_MB
+# Sets: _STORAGE_TYPE, _STORAGE_DEVICE, _STORAGE_TOTAL_MB, _STORAGE_AVAIL_MB, _STORAGE_DETECTION_METHOD
 _detect_storage_info() {
     _STORAGE_TYPE="unknown"
     _STORAGE_DEVICE="unknown"
     _STORAGE_TOTAL_MB="0"
     _STORAGE_AVAIL_MB="0"
+    _STORAGE_DETECTION_METHOD="unknown"
 
     local root_device
     local block_device
@@ -252,9 +290,12 @@ _detect_storage_info() {
     # Find the device for root filesystem
     root_device="$(df / 2>/dev/null | awk 'NR==2 {print $1}')"
     if [ -z "$root_device" ]; then
-        log_warn "Could not determine root device" true
+        log_warn "Could not determine root device"
+        log_debug "  Tried: df / | awk"
+        _STORAGE_DETECTION_METHOD="failed (df / returned empty)"
         return 1
     fi
+    log_debug "Root device detected: $root_device (via df /)"
 
     # Get the base block device name (strip partition number)
     if [[ "$root_device" == /dev/mmcblk* ]] || [[ "$root_device" == /dev/nvme* ]]; then
@@ -313,14 +354,17 @@ _detect_storage_info() {
         else
             _STORAGE_TYPE="hdd"
         fi
+        _STORAGE_DETECTION_METHOD="/sys/block/$block_device/queue/rotational"
     else
-        # Fallback based on device name
+        # Fallback based on device name (no rotational info available)
+        log_debug "No rotational info at /sys/block/$block_device/queue/rotational, using device name heuristic"
         case "$block_device" in
             mmcblk*) _STORAGE_TYPE="mmc" ;;
             nvme*) _STORAGE_TYPE="nvme" ;;
             sd*) _STORAGE_TYPE="disk" ;;
             *) _STORAGE_TYPE="unknown" ;;
         esac
+        _STORAGE_DETECTION_METHOD="device name heuristic (no /sys info)"
     fi
 
     # Get storage capacity from df

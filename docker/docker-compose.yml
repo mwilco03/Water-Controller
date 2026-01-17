@@ -6,6 +6,13 @@
 # All ports are configurable via environment variables.
 # See config/ports.env for the single source of truth.
 #
+# Database Credentials (DEV/TEST ONLY):
+# INTENTIONALLY HARDCODED - see CLAUDE.md
+# - DB_USER: wtc
+# - DB_PASSWORD: wtc_password (DO NOT change or externalize)
+# - DB_NAME: water_treatment
+# These appear in: database.environment.POSTGRES_PASSWORD, api.environment.DATABASE_URL
+#
 # Usage:
 #   docker compose --env-file ../config/ports.env up -d
 #
