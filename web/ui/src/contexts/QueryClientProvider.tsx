@@ -48,8 +48,8 @@ function makeQueryClient() {
         // Don't refetch on window focus (SCADA operators often have multiple windows)
         refetchOnWindowFocus: false,
 
-        // Refetch on mount only if data is stale
-        refetchOnMount: 'if-stale' as const,
+        // Refetch on mount only if data is stale (default behavior in v5)
+        refetchOnMount: true,
 
         // Don't refetch on reconnect (WebSocket handles real-time updates)
         refetchOnReconnect: false,
