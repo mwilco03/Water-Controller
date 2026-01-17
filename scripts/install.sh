@@ -710,12 +710,12 @@ step_build() {
 
     # Acquire source
     if [ -n "$SOURCE_PATH" ]; then
-        if ! acquire_source "$SOURCE_PATH" "$build_dir"; then
+        if ! acquire_source --source "$SOURCE_PATH"; then
             log_error "Source copy failed from $SOURCE_PATH. Build cannot proceed. Verify source path and permissions."
             return 1
         fi
     else
-        if ! acquire_source "$SOURCE_REPO" "$build_dir" "$SOURCE_BRANCH"; then
+        if ! acquire_source --branch "$SOURCE_BRANCH"; then
             log_error "Repository clone failed. Build cannot proceed. Check network connectivity and repository URL."
             return 1
         fi
