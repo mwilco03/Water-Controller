@@ -118,9 +118,8 @@ from .rtu import (
     get_rtu_devices,
     get_rtu_inventory,
     get_rtu_sensors,
-    update_control_state,
+    update_rtu_state,
     update_rtu_device,
-    update_sensor_value,
     upsert_rtu_control,
     upsert_rtu_sensor,
 )
