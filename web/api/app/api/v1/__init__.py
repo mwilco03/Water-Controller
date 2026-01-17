@@ -17,6 +17,7 @@ from .rtus import router as rtus_router
 from .system import router as system_router
 from .templates import router as templates_router
 from .trends import router as trends_router
+from .trends_optimized import router as trends_optimized_router
 
 api_router = APIRouter()
 
@@ -27,6 +28,7 @@ api_router.include_router(auth_router, prefix="/auth", tags=["Authentication"])
 api_router.include_router(rtus_router, prefix="/rtus", tags=["RTU Management"])
 api_router.include_router(alarms_router, prefix="/alarms", tags=["Alarm Management"])
 api_router.include_router(trends_router, prefix="/trends", tags=["Historian/Trends"])
+api_router.include_router(trends_optimized_router, prefix="/trends", tags=["Historian/Trends"])
 api_router.include_router(discover_router, prefix="/discover", tags=["Network Discovery"])
 api_router.include_router(modbus_router, prefix="/modbus", tags=["Modbus Gateway"])
 api_router.include_router(system_router, prefix="/system", tags=["System"])

@@ -39,6 +39,38 @@ IMPORTANT: `/schemas` is the source of truth. Run `make generate` after changes.
 - Zero warnings required (`-Wall -Wextra -Werror`)
 - Run `make validate` before committing schema changes
 
+## Pre-Production Status
+
+**CRITICAL: This is PRE-PRODUCTION software. No historical migration concerns.**
+
+When implementing features:
+
+1. **Happy Path Installation Required**
+   - If a feature needs something to work, include it in the installation
+   - NO manual migration steps that users must run separately
+   - Fix the code to automatically include required changes
+
+2. **Database Migrations**
+   - Add new migrations to `docker/init.sql` for fresh installs
+   - Include migration SQL in Docker entrypoint for auto-execution
+   - Example: TimescaleDB compression must be enabled automatically, not manually
+
+3. **Frontend Dependencies**
+   - Add to `package.json` and ensure `npm install` is in Docker build
+   - Don't document "run npm install" - it should happen automatically
+
+4. **Configuration**
+   - New features with required config should have sensible defaults
+   - Auto-enable in `docker-compose.yml` if needed for core functionality
+   - Don't require manual configuration file edits
+
+5. **Automated Everything**
+   - `docker compose up` should start a fully working system
+   - `make build && make test` should build everything needed
+   - No "Step 3: Manually run this SQL" documentation
+
+**Rule of thumb:** If you write "The user must manually...", you're doing it wrong. Fix the automation instead.
+
 ## References
 
 - Architecture: `/docs/architecture/SYSTEM_DESIGN.md`
