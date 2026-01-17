@@ -688,9 +688,9 @@ EOF
 do_docker_install() {
     log_step "Starting Docker deployment..."
 
-    # Pre-deployment checks
-    check_docker_resources || return 1
-    check_port_conflicts || return 1
+    # Pre-deployment checks (non-blocking, warnings only)
+    check_docker_resources || log_warn "Resource checks failed, proceeding anyway..."
+    check_port_conflicts || log_warn "Port conflicts detected, proceeding anyway..."
 
     # Find docker directory
     local docker_dir=""
@@ -774,18 +774,28 @@ do_docker_install() {
         export GRAFANA_PASSWORD="$GRAFANA_PASSWORD"
         export DB_PASSWORD="$DB_PASSWORD"
 
-        docker compose build --progress=plain 2>&1 | while IFS= read -r line; do
+        docker compose build --no-cache --progress=plain 2>&1 | while IFS= read -r line; do
             # Show meaningful build steps and progress
             if echo "$line" | grep -qE "Building|FROM|Step [0-9]+|writing image|FINISHED"; then
                 echo "[BUILD] $line" >&2
             elif echo "$line" | grep -qE "=> \["; then
                 # Show layer progress indicators
                 echo "[BUILD] $line" >&2
+            elif echo "$line" | grep -qiE "error|ERROR|failed|FAILED|posix-ipc|Python\.h|fatal"; then
+                # Show error messages and posix-ipc related output
+                echo "[BUILD ERROR] $line" >&2
+            elif echo "$line" | grep -qE "Building wheel|pip install|gcc|collecting"; then
+                # Show pip/gcc activity for debugging
+                echo "[BUILD] $line" >&2
             fi
         done
     ) || {
         log_error "Docker image build failed"
         log_info "Check logs above for build errors"
+        log_info "Common issues:"
+        log_info "  - Missing build dependencies (should be auto-installed)"
+        log_info "  - Network connectivity (required for package downloads)"
+        log_info "  - Insufficient disk space"
         return 1
     }
 

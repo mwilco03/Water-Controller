@@ -10,9 +10,21 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install dependencies
+# Install build dependencies for posix-ipc and other C extensions
+# python3-dev provides Python.h headers needed for C extension compilation
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    python3-dev \
+    && rm -rf /var/lib/apt/lists/* \
+    && gcc --version \
+    && python3 -c "import sysconfig; print(sysconfig.get_config_var('INCLUDEPY'))"
+
+# Install Python dependencies (compiles posix-ipc with gcc + python3-dev)
 COPY web/api/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+
+# Remove build dependencies to reduce image size and attack surface
+RUN apt-get purge -y --auto-remove gcc python3-dev
 
 # Copy application
 COPY web/api/ .
