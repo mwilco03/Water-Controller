@@ -821,6 +821,26 @@ do_docker_install() {
     # Verify endpoints
     verify_endpoints
 
+    # Fix database authentication if needed
+    log_step "Ensuring database authentication is configured..."
+    if [[ -x "$INSTALL_DIR/scripts/fix-database-auth.sh" ]]; then
+        "$INSTALL_DIR/scripts/fix-database-auth.sh" || log_warn "Database auth fix had warnings (check logs)"
+    else
+        log_warn "Database auth fix script not found, skipping"
+    fi
+
+    # Run comprehensive validation
+    log_step "Running deployment validation..."
+    if [[ -x "$INSTALL_DIR/scripts/validate-deployment.sh" ]]; then
+        if "$INSTALL_DIR/scripts/validate-deployment.sh"; then
+            log_info "✓ Deployment validation passed"
+        else
+            log_warn "⚠ Deployment validation had failures (see above)"
+        fi
+    else
+        log_warn "Validation script not found, skipping comprehensive validation"
+    fi
+
     # Create systemd service for auto-start
     create_systemd_service "$docker_dir"
 
@@ -859,10 +879,16 @@ do_docker_install() {
     log_info ""
     log_info "  Quick commands: source /opt/water-controller/docker-commands.sh"
     log_info ""
+    log_info "═══ TROUBLESHOOTING ═══"
+    log_info "  Validate:  $INSTALL_DIR/scripts/validate-deployment.sh"
+    log_info "  Fix Auth:  $INSTALL_DIR/scripts/fix-database-auth.sh"
+    log_info "  Guide:     $INSTALL_DIR/docs/DEPLOYMENT_TROUBLESHOOTING.md"
+    log_info ""
     log_info "═══ NEXT STEPS ═══"
     log_info "  1. Browse to http://$ip_addr:${WTC_UI_PORT:-8080}"
     log_info "  2. Save your Grafana password securely"
     log_info "  3. Configure firewall if accessing remotely"
+    log_info "  4. Change default admin password (admin/admin)"
     log_info ""
 
     return 0
@@ -1429,6 +1455,17 @@ do_upgrade() {
         log_info "Upgrade completed successfully!"
         # Clean up backup on success (keep last 2)
         cleanup_old_backups 2
+
+        # Run validation after upgrade
+        log_step "Validating upgraded deployment..."
+        if [[ -x "$INSTALL_DIR/scripts/validate-deployment.sh" ]]; then
+            if "$INSTALL_DIR/scripts/validate-deployment.sh"; then
+                log_info "✓ Post-upgrade validation passed"
+            else
+                log_warn "⚠ Post-upgrade validation had failures"
+                log_info "Run: $INSTALL_DIR/scripts/fix-database-auth.sh"
+            fi
+        fi
     else
         log_error "Upgrade failed with exit code: $result"
         if [[ -n "$backup_dir" ]] && [[ -d "$backup_dir" ]]; then
