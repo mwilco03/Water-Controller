@@ -20,7 +20,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: wtc
-      POSTGRES_PASSWORD: ${WTC_DB_PASSWORD}
+      POSTGRES_PASSWORD: wtc_password
       POSTGRES_DB: water_treatment
     volumes:
       - db_data:/var/lib/postgresql/data
@@ -52,7 +52,7 @@ services:
     # DCK-H1 fix: Run as non-root user
     user: "1000:1000"
     environment:
-      DATABASE_URL: postgresql://wtc:${WTC_DB_PASSWORD}@database:${WTC_DB_PORT:-5432}/water_treatment
+      DATABASE_URL: postgresql://wtc:wtc_password@database:${WTC_DB_PORT:-5432}/water_treatment
       API_HOST: 0.0.0.0
       WTC_API_PORT: ${WTC_API_PORT:-8000}
       WTC_UI_PORT: ${WTC_UI_PORT:-8080}
@@ -154,8 +154,8 @@ services:
           memory: 64M
 
   # Grafana for visualization
-  # NOTE: WTC_GRAFANA_PASSWORD must be set explicitly - no weak default
-  # Set via: export WTC_GRAFANA_PASSWORD=$(openssl rand -base64 24)
+  # NOTE: GRAFANA_PASSWORD must be set explicitly - no weak default
+  # Set via: export GRAFANA_PASSWORD=$(openssl rand -base64 24)
   grafana:
     image: grafana/grafana:latest
     container_name: wtc-grafana
@@ -165,7 +165,7 @@ services:
     environment:
       GF_SECURITY_ADMIN_USER: admin
       # Security: Require explicit password, fail if not set
-      GF_SECURITY_ADMIN_PASSWORD: ${WTC_GRAFANA_PASSWORD:?WTC_GRAFANA_PASSWORD must be set}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:?GRAFANA_PASSWORD must be set}
       GF_INSTALL_PLUGINS: grafana-clock-panel,grafana-simple-json-datasource
       GF_SERVER_HTTP_PORT: ${WTC_GRAFANA_PORT:-3000}
       # Unified alerting (disabled by default - enable when ready)
