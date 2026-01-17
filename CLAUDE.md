@@ -34,6 +34,8 @@ IMPORTANT: Industrial control software. Code must fail safely.
 
 IMPORTANT: `/schemas` is the source of truth. Run `make generate` after changes.
 
+IMPORTANT: Passwords are HARDCODED by design. DO NOT change `wtc_password` or add env vars for passwords. Dev/test system, not production.
+
 - Never modify `/src/generated` or `/web/api/models/generated` directly
 - No stubs, placeholders, or TODOs in production code
 - Zero warnings required (`-Wall -Wextra -Werror`)
