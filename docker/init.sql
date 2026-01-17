@@ -161,17 +161,26 @@ CREATE INDEX IF NOT EXISTS ix_user_sessions_expires ON user_sessions (expires_at
 CREATE INDEX IF NOT EXISTS ix_user_sessions_username ON user_sessions (username);
 
 -- Audit Log table (hypertable)
+-- Schema matches SQLAlchemy model in web/api/app/models/user.py
 CREATE TABLE IF NOT EXISTS audit_log (
-    time TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    user_id INTEGER REFERENCES users(id),
-    action VARCHAR(64) NOT NULL,
-    resource VARCHAR(128) NOT NULL,
-    details JSONB,
-    ip_address INET
+    id SERIAL,
+    timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    "user" VARCHAR(64),
+    action VARCHAR(32) NOT NULL,
+    resource_type VARCHAR(32),
+    resource_id VARCHAR(64),
+    details TEXT,
+    ip_address VARCHAR(45)
 );
 
--- Convert to hypertable
-SELECT create_hypertable('audit_log', 'time', if_not_exists => TRUE);
+-- Convert to hypertable (partitioned by timestamp)
+SELECT create_hypertable('audit_log', 'timestamp', if_not_exists => TRUE);
+
+-- Index for SQLAlchemy ORM lookups and efficient queries
+CREATE INDEX IF NOT EXISTS ix_audit_log_id ON audit_log (id);
+CREATE INDEX IF NOT EXISTS ix_audit_log_user ON audit_log ("user");
+CREATE INDEX IF NOT EXISTS ix_audit_log_action ON audit_log (action);
+CREATE INDEX IF NOT EXISTS ix_audit_log_resource ON audit_log (resource_type, resource_id);
 
 -- Default admin user is created automatically by the API on startup via ensure_default_admin()
 

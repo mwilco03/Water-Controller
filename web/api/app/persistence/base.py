@@ -23,6 +23,93 @@ from ..models.base import Base, SessionLocal, engine
 logger = logging.getLogger(__name__)
 
 
+def _migrate_audit_log_table_schema():
+    """
+    Migrate audit_log table schema for existing deployments.
+
+    Historical issue: The audit_log table had different column names:
+    - 'time' instead of 'timestamp'
+    - 'user_id' instead of 'user'
+    - 'resource' instead of 'resource_type'/'resource_id'
+    - Missing 'id' column
+
+    Per CLAUDE.md: "docker compose up should start a fully working system" -
+    this enables self-healing for existing deployments.
+    """
+    try:
+        with engine.connect() as conn:
+            dialect = engine.dialect.name
+            if dialect != "postgresql":
+                return  # Only needed for PostgreSQL (Docker setup)
+
+            # Check if audit_log table exists with old schema ('time' column)
+            result = conn.execute(text(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = 'audit_log' AND column_name = 'time'"
+            ))
+            if result.fetchone():
+                # Old schema detected - need to recreate table
+                logger.info("Detected old audit_log schema, recreating table...")
+
+                # Drop the old table (CASCADE to remove hypertable metadata)
+                conn.execute(text("DROP TABLE IF EXISTS audit_log CASCADE"))
+                conn.commit()
+
+                # Recreate with correct schema
+                conn.execute(text("""
+                    CREATE TABLE audit_log (
+                        id SERIAL,
+                        timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                        "user" VARCHAR(64),
+                        action VARCHAR(32) NOT NULL,
+                        resource_type VARCHAR(32),
+                        resource_id VARCHAR(64),
+                        details TEXT,
+                        ip_address VARCHAR(45)
+                    )
+                """))
+                conn.commit()
+
+                # Convert to hypertable
+                conn.execute(text(
+                    "SELECT create_hypertable('audit_log', 'timestamp', "
+                    "if_not_exists => TRUE)"
+                ))
+                conn.commit()
+
+                # Create indexes
+                conn.execute(text(
+                    "CREATE INDEX IF NOT EXISTS ix_audit_log_id "
+                    "ON audit_log (id)"
+                ))
+                conn.execute(text(
+                    "CREATE INDEX IF NOT EXISTS ix_audit_log_user "
+                    "ON audit_log (\"user\")"
+                ))
+                conn.execute(text(
+                    "CREATE INDEX IF NOT EXISTS ix_audit_log_action "
+                    "ON audit_log (action)"
+                ))
+                conn.execute(text(
+                    "CREATE INDEX IF NOT EXISTS ix_audit_log_resource "
+                    "ON audit_log (resource_type, resource_id)"
+                ))
+                conn.commit()
+
+                # Add retention policy
+                conn.execute(text(
+                    "SELECT add_retention_policy('audit_log', "
+                    "INTERVAL '365 days', if_not_exists => TRUE)"
+                ))
+                conn.commit()
+
+                logger.info("Migrated audit_log table to new schema")
+
+    except Exception as e:
+        # Non-fatal: if migration fails, log but continue
+        logger.warning(f"Audit log table migration: {e}")
+
+
 def _migrate_users_table_schema():
     """
     Migrate users table schema for existing deployments.
@@ -197,6 +284,10 @@ def init_database():
 
     Includes self-healing for historical schema issues.
     """
+    # Migrate audit_log table schema for existing deployments
+    # This enables self-healing per CLAUDE.md
+    _migrate_audit_log_table_schema()
+
     # Migrate users table schema for existing deployments
     # This enables self-healing per CLAUDE.md
     _migrate_users_table_schema()
