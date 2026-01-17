@@ -110,7 +110,7 @@ export default function RTUDetailPage() {
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500" />
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-status-info" />
       </div>
     );
   }
@@ -118,8 +118,8 @@ export default function RTUDetailPage() {
   if (error || !rtu) {
     return (
       <div className="text-center py-12">
-        <div className="text-red-400 mb-4">{error || 'RTU not found'}</div>
-        <Link href="/rtus" className="text-blue-400 hover:underline">
+        <div className="text-status-alarm mb-4">{error || 'RTU not found'}</div>
+        <Link href="/rtus" className="text-status-info hover:underline">
           Back to RTU List
         </Link>
       </div>
@@ -138,7 +138,7 @@ export default function RTUDetailPage() {
         <div className="flex items-center gap-4">
           <Link
             href="/rtus"
-            className="p-2 rounded-lg bg-gray-800 hover:bg-gray-700 transition-colors"
+            className="p-2 rounded-lg bg-hmi-bg hover:bg-hmi-border transition-colors"
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
@@ -146,23 +146,23 @@ export default function RTUDetailPage() {
           </Link>
           <div>
             <div className="flex items-center gap-3">
-              <h1 className="text-2xl font-bold text-white">{rtu.station_name}</h1>
+              <h1 className="text-2xl font-bold text-hmi-text">{rtu.station_name}</h1>
               <RtuStateBadge state={rtu.state} size="md" />
             </div>
-            <p className="text-gray-400 font-mono mt-1">{rtu.ip_address || 'No IP address'}</p>
+            <p className="text-hmi-muted font-mono mt-1">{rtu.ip_address || 'No IP address'}</p>
           </div>
         </div>
 
         <div className="flex items-center gap-2 text-sm">
-          <span className={`flex items-center gap-1 ${connected ? 'text-green-400' : 'text-yellow-400'}`}>
-            <span className={`w-2 h-2 rounded-full ${connected ? 'bg-green-400' : 'bg-yellow-400'}`} />
+          <span className={`flex items-center gap-1 ${connected ? 'text-status-ok' : 'text-status-warning'}`}>
+            <span className={`w-2 h-2 rounded-full ${connected ? 'bg-status-ok' : 'bg-status-warning'}`} />
             {connected ? 'Live' : 'Polling'}
           </span>
         </div>
       </div>
 
       {/* Inventory Refresh */}
-      <div className="scada-panel p-4">
+      <div className="bg-hmi-panel border border-hmi-border rounded-lg p-4">
         <InventoryRefresh
           rtuStation={stationName}
           lastRefresh={inventory?.last_refresh}
@@ -172,30 +172,30 @@ export default function RTUDetailPage() {
 
       {/* Summary Stats */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        <div className="scada-panel p-4 text-center">
-          <div className="text-3xl font-bold text-white">{rtu.slot_count}</div>
-          <div className="text-sm text-gray-400">Slots</div>
+        <div className="bg-hmi-panel border border-hmi-border rounded-lg p-4 text-center">
+          <div className="text-3xl font-bold text-hmi-text">{rtu.slot_count}</div>
+          <div className="text-sm text-hmi-muted">Slots</div>
         </div>
-        <div className="scada-panel p-4 text-center">
-          <div className="text-3xl font-bold text-green-400">{sensors.length}</div>
-          <div className="text-sm text-gray-400">Sensors</div>
+        <div className="bg-hmi-panel border border-hmi-border rounded-lg p-4 text-center">
+          <div className="text-3xl font-bold text-status-ok">{sensors.length}</div>
+          <div className="text-sm text-hmi-muted">Sensors</div>
         </div>
-        <div className="scada-panel p-4 text-center">
-          <div className="text-3xl font-bold text-blue-400">{controls.length}</div>
-          <div className="text-sm text-gray-400">Controls</div>
+        <div className="bg-hmi-panel border border-hmi-border rounded-lg p-4 text-center">
+          <div className="text-3xl font-bold text-status-info">{controls.length}</div>
+          <div className="text-sm text-hmi-muted">Controls</div>
         </div>
-        <div className="scada-panel p-4 text-center">
-          <div className="text-3xl font-bold text-purple-400">
+        <div className="bg-hmi-panel border border-hmi-border rounded-lg p-4 text-center">
+          <div className="text-3xl font-bold text-control-manual">
             {controls.filter((c) =>
               ['ON', 'RUNNING', 'OPEN'].includes(c.current_state?.toUpperCase() ?? '')
             ).length}
           </div>
-          <div className="text-sm text-gray-400">Active</div>
+          <div className="text-sm text-hmi-muted">Active</div>
         </div>
       </div>
 
       {/* Tabs */}
-      <div className="border-b border-gray-700">
+      <div className="border-b border-hmi-border">
         <nav className="flex gap-4">
           {(['overview', 'sensors', 'controls', 'profinet'] as Tab[]).map((tab) => (
             <button
@@ -203,8 +203,8 @@ export default function RTUDetailPage() {
               onClick={() => setActiveTab(tab)}
               className={`py-3 px-1 border-b-2 font-medium text-sm transition-colors ${
                 activeTab === tab
-                  ? 'border-blue-500 text-blue-400'
-                  : 'border-transparent text-gray-400 hover:text-gray-300 hover:border-gray-600'
+                  ? 'border-status-info text-status-info'
+                  : 'border-transparent text-hmi-muted hover:text-hmi-text hover:border-hmi-border'
               }`}
             >
               {tab === 'overview' && 'Overview'}
@@ -217,28 +217,28 @@ export default function RTUDetailPage() {
       </div>
 
       {/* Tab Content */}
-      <div className="scada-panel p-6">
+      <div className="bg-hmi-panel border border-hmi-border rounded-lg p-6">
         {activeTab === 'overview' && (
           <div className="space-y-8">
             {/* Device Info */}
             <div>
-              <h3 className="text-lg font-semibold text-white mb-4">Device Information</h3>
+              <h3 className="text-lg font-semibold text-hmi-text mb-4">Device Information</h3>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                <div className="bg-gray-800/50 p-3 rounded">
-                  <div className="text-xs text-gray-400">Vendor ID</div>
-                  <div className="text-white font-mono">0x{rtu.vendor_id.toString(16).padStart(4, '0')}</div>
+                <div className="bg-hmi-bg/50 p-3 rounded">
+                  <div className="text-xs text-hmi-muted">Vendor ID</div>
+                  <div className="text-hmi-text font-mono">0x{rtu.vendor_id.toString(16).padStart(4, '0')}</div>
                 </div>
-                <div className="bg-gray-800/50 p-3 rounded">
-                  <div className="text-xs text-gray-400">Device ID</div>
-                  <div className="text-white font-mono">0x{rtu.device_id.toString(16).padStart(4, '0')}</div>
+                <div className="bg-hmi-bg/50 p-3 rounded">
+                  <div className="text-xs text-hmi-muted">Device ID</div>
+                  <div className="text-hmi-text font-mono">0x{rtu.device_id.toString(16).padStart(4, '0')}</div>
                 </div>
-                <div className="bg-gray-800/50 p-3 rounded">
-                  <div className="text-xs text-gray-400">State</div>
+                <div className="bg-hmi-bg/50 p-3 rounded">
+                  <div className="text-xs text-hmi-muted">State</div>
                   <div style={{ color: stateColor }}>{rtu.state}</div>
                 </div>
-                <div className="bg-gray-800/50 p-3 rounded">
-                  <div className="text-xs text-gray-400">Slots</div>
-                  <div className="text-white">{rtu.slot_count}</div>
+                <div className="bg-hmi-bg/50 p-3 rounded">
+                  <div className="text-xs text-hmi-muted">Slots</div>
+                  <div className="text-hmi-text">{rtu.slot_count}</div>
                 </div>
               </div>
             </div>
@@ -247,10 +247,10 @@ export default function RTUDetailPage() {
             {sensors.length > 0 && (
               <div>
                 <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-lg font-semibold text-white">Sensors</h3>
+                  <h3 className="text-lg font-semibold text-hmi-text">Sensors</h3>
                   <button
                     onClick={() => setActiveTab('sensors')}
-                    className="text-sm text-blue-400 hover:underline"
+                    className="text-sm text-status-info hover:underline"
                   >
                     View all
                   </button>
@@ -263,10 +263,10 @@ export default function RTUDetailPage() {
             {controls.length > 0 && (
               <div>
                 <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-lg font-semibold text-white">Controls</h3>
+                  <h3 className="text-lg font-semibold text-hmi-text">Controls</h3>
                   <button
                     onClick={() => setActiveTab('controls')}
-                    className="text-sm text-blue-400 hover:underline"
+                    className="text-sm text-status-info hover:underline"
                   >
                     View all
                   </button>
@@ -284,7 +284,7 @@ export default function RTUDetailPage() {
 
             {/* Empty State */}
             {sensors.length === 0 && controls.length === 0 && (
-              <div className="text-center py-8 text-gray-400">
+              <div className="text-center py-8 text-hmi-muted">
                 <svg className="w-12 h-12 mx-auto mb-3 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z" />
                 </svg>
@@ -294,22 +294,22 @@ export default function RTUDetailPage() {
             )}
 
             {/* Quick Links */}
-            <div className="flex flex-wrap gap-3 pt-4 border-t border-gray-700">
+            <div className="flex flex-wrap gap-3 pt-4 border-t border-hmi-border">
               <Link
                 href={`/trends?rtu=${stationName}`}
-                className="px-4 py-2 rounded bg-gray-700 hover:bg-gray-600 text-white text-sm transition-colors"
+                className="px-4 py-2 rounded bg-hmi-border hover:bg-gray-600 text-hmi-text text-sm transition-colors"
               >
                 View Trends
               </Link>
               <Link
                 href={`/alarms?rtu=${stationName}`}
-                className="px-4 py-2 rounded bg-gray-700 hover:bg-gray-600 text-white text-sm transition-colors"
+                className="px-4 py-2 rounded bg-hmi-border hover:bg-gray-600 text-hmi-text text-sm transition-colors"
               >
                 View Alarms
               </Link>
               <Link
                 href={`/control?rtu=${stationName}`}
-                className="px-4 py-2 rounded bg-gray-700 hover:bg-gray-600 text-white text-sm transition-colors"
+                className="px-4 py-2 rounded bg-hmi-border hover:bg-gray-600 text-hmi-text text-sm transition-colors"
               >
                 PID Control
               </Link>
