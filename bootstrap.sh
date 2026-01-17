@@ -1781,14 +1781,24 @@ do_fresh() {
     # Validate environment
     validate_environment || return 1
 
-    # Validate Docker requirements (always docker mode for fresh)
-    validate_docker_requirements || return 1
+    # Default to docker if mode not specified
+    if [[ -z "$DEPLOYMENT_MODE" ]]; then
+        DEPLOYMENT_MODE="docker"
+        log_info "Deployment mode: Docker (default)"
+    else
+        log_info "Deployment mode: $DEPLOYMENT_MODE"
+    fi
 
-    # Do Docker install
-    DEPLOYMENT_MODE="docker"
-    do_docker_install
+    local result=0
+    if [[ "$DEPLOYMENT_MODE" == "docker" ]]; then
+        validate_docker_requirements || return 1
+        do_docker_install
+        result=$?
+    else
+        do_install "$branch" "true"
+        result=$?
+    fi
 
-    local result=$?
     show_disk_space "After Fresh Install"
 
     if [[ $result -eq 0 ]]; then
@@ -1830,12 +1840,24 @@ do_reinstall() {
 
     # Validate environment
     validate_environment || return 1
-    validate_docker_requirements || return 1
 
-    # Do Docker install
-    DEPLOYMENT_MODE="docker"
-    do_docker_install
-    local result=$?
+    # Default to docker if mode not specified
+    if [[ -z "$DEPLOYMENT_MODE" ]]; then
+        DEPLOYMENT_MODE="docker"
+        log_info "Deployment mode: Docker (default)"
+    else
+        log_info "Deployment mode: $DEPLOYMENT_MODE"
+    fi
+
+    local result=0
+    if [[ "$DEPLOYMENT_MODE" == "docker" ]]; then
+        validate_docker_requirements || return 1
+        do_docker_install
+        result=$?
+    else
+        do_install "$branch" "true"
+        result=$?
+    fi
 
     # Restore config if backup exists
     if [[ -n "$config_backup" ]] && [[ -d "$config_backup" ]] && [[ $result -eq 0 ]]; then
@@ -1969,7 +1991,7 @@ DEPLOYMENT MODE:
     --mode baremetal    Install directly on host (systemd services)
     --mode docker       Install using Docker containers
 
-    If not specified, defaults to baremetal. fresh/reinstall always use docker.
+    All actions respect --mode. Default: baremetal for install, docker for fresh/reinstall.
 
 OPTIONS:
     --branch <name>     Use specific git branch (default: main)
