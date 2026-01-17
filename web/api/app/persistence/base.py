@@ -14,12 +14,62 @@ import os
 from contextlib import contextmanager
 from typing import Generator
 
+from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from ..models.base import Base, SessionLocal, engine
 
 logger = logging.getLogger(__name__)
+
+
+def _cleanup_duplicate_indexes():
+    """
+    Remove duplicate indexes that may have been created by older code.
+
+    Historical issue: Some Column definitions had both index=True AND explicit
+    Index() in __table_args__, causing duplicate index creation attempts on restart.
+    This function drops any auto-generated indexes that conflict with explicit ones.
+
+    Per CLAUDE.md: "docker compose up should start a fully working system" -
+    this enables self-healing for existing deployments.
+    """
+    # Map of auto-generated index names to their explicit replacements
+    # Format: auto_index_name -> (table, explicit_index_name)
+    duplicate_indexes = [
+        # AlarmEvent: had index=True on rtu_station + explicit ix_alarm_events_rtu_station
+        ("ix_alarm_events_rtu_station", "alarm_events"),
+        # ScheduledMaintenance: had index=True on rtu_station + explicit ix_scheduled_maintenance_rtu
+        ("ix_scheduled_maintenance_rtu", "scheduled_maintenance"),
+    ]
+
+    try:
+        with engine.connect() as conn:
+            # Check if we're on PostgreSQL (has pg_indexes) or SQLite
+            dialect = engine.dialect.name
+
+            for index_name, table_name in duplicate_indexes:
+                try:
+                    if dialect == "postgresql":
+                        # PostgreSQL: Check if index exists before dropping
+                        result = conn.execute(text(
+                            "SELECT 1 FROM pg_indexes WHERE indexname = :idx"
+                        ), {"idx": index_name})
+                        if result.fetchone():
+                            conn.execute(text(f"DROP INDEX IF EXISTS {index_name}"))
+                            conn.commit()
+                            logger.info(f"Cleaned up duplicate index: {index_name}")
+                    else:
+                        # SQLite: DROP INDEX IF EXISTS is safe
+                        conn.execute(text(f"DROP INDEX IF EXISTS {index_name}"))
+                        conn.commit()
+                except Exception as e:
+                    # Non-fatal: index might not exist or already be correct
+                    logger.debug(f"Index cleanup for {index_name}: {e}")
+
+    except Exception as e:
+        # Non-fatal: if cleanup fails, create_all will handle it
+        logger.debug(f"Index cleanup skipped: {e}")
 
 # Database path (for backward compatibility with env var)
 DB_PATH = os.environ.get('WTC_DB_PATH', '/var/lib/water-controller/wtc.db')
@@ -77,7 +127,13 @@ def init_database():
 
     Creates all tables defined in the models if they don't exist.
     Works with both SQLite (development) and PostgreSQL (production).
+
+    Includes self-healing for historical duplicate index issues.
     """
+    # Clean up any duplicate indexes from older code versions
+    # This enables self-healing for existing deployments per CLAUDE.md
+    _cleanup_duplicate_indexes()
+
     Base.metadata.create_all(bind=engine)
     logger.info("Database schema initialized via SQLAlchemy")
 
