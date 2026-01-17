@@ -325,14 +325,135 @@ check_network() {
     return 1
 }
 
+# Install Docker on the host system
+install_docker() {
+    log_step "Installing Docker..."
+
+    # Detect OS
+    if [[ ! -f /etc/os-release ]]; then
+        log_error "Cannot detect OS distribution"
+        return 1
+    fi
+
+    source /etc/os-release
+    local distro="${ID:-unknown}"
+    local version="${VERSION_CODENAME:-${VERSION_ID}}"
+
+    log_info "Detected OS: $distro $version"
+
+    case "$distro" in
+        ubuntu|debian)
+            log_info "Installing Docker using official repository method..."
+
+            # Remove old versions
+            run_privileged apt-get remove -y docker docker-engine docker.io containerd runc 2>/dev/null || true
+
+            # Install prerequisites
+            run_privileged apt-get update
+            run_privileged apt-get install -y \
+                ca-certificates \
+                curl \
+                gnupg \
+                lsb-release
+
+            # Add Docker GPG key
+            run_privileged install -m 0755 -d /etc/apt/keyrings
+            if [[ ! -f /etc/apt/keyrings/docker.gpg ]]; then
+                curl -fsSL "https://download.docker.com/linux/$distro/gpg" | \
+                    run_privileged gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+                run_privileged chmod a+r /etc/apt/keyrings/docker.gpg
+            fi
+
+            # Add Docker repository
+            local arch
+            arch=$(dpkg --print-architecture)
+            echo "deb [arch=$arch signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/$distro $version stable" | \
+                run_privileged tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+            # Install Docker
+            run_privileged apt-get update
+            run_privileged apt-get install -y \
+                docker-ce \
+                docker-ce-cli \
+                containerd.io \
+                docker-buildx-plugin \
+                docker-compose-plugin
+
+            ;;
+
+        fedora|rhel|centos)
+            log_info "Installing Docker using official repository method..."
+
+            # Remove old versions
+            run_privileged dnf remove -y docker docker-client docker-client-latest docker-common docker-latest docker-latest-logrotate docker-logrotate docker-engine 2>/dev/null || true
+
+            # Install prerequisites
+            run_privileged dnf -y install dnf-plugins-core
+
+            # Add Docker repository
+            run_privileged dnf config-manager --add-repo "https://download.docker.com/linux/fedora/docker-ce.repo"
+
+            # Install Docker
+            run_privileged dnf install -y \
+                docker-ce \
+                docker-ce-cli \
+                containerd.io \
+                docker-buildx-plugin \
+                docker-compose-plugin
+
+            ;;
+
+        *)
+            log_error "Unsupported distribution: $distro"
+            log_info "Please install Docker manually: https://docs.docker.com/engine/install/"
+            return 1
+            ;;
+    esac
+
+    # Start and enable Docker service
+    log_info "Starting Docker service..."
+    run_privileged systemctl start docker
+    run_privileged systemctl enable docker
+
+    # Verify installation
+    if command -v docker &>/dev/null && docker compose version &>/dev/null; then
+        log_info "Docker installed successfully"
+        docker --version
+        docker compose version
+        return 0
+    else
+        log_error "Docker installation verification failed"
+        return 1
+    fi
+}
+
 # Validate Docker requirements for docker deployment mode
 validate_docker_requirements() {
     log_info "Validating Docker requirements..."
 
     if ! command -v docker &>/dev/null; then
-        log_error "Docker is not installed"
-        log_info "Install Docker: https://docs.docker.com/engine/install/"
-        return 1
+        log_warn "Docker is not installed"
+
+        # Check if running in interactive mode
+        if [[ -t 0 ]] || [[ -e /dev/tty ]]; then
+            # Interactive: prompt user
+            local response
+            response=$(prompt_user "Would you like to install Docker now? [Y/n] ")
+            if [[ "$response" =~ ^[Nn]$ ]]; then
+                log_error "Docker is required for docker deployment mode"
+                log_info "Install Docker manually: https://docs.docker.com/engine/install/"
+                return 1
+            fi
+        else
+            # Non-interactive (piped execution): install automatically
+            log_info "Non-interactive mode detected, installing Docker automatically..."
+        fi
+
+        # Install Docker
+        if ! install_docker; then
+            log_error "Docker installation failed"
+            return 1
+        fi
     fi
 
     if ! docker compose version &>/dev/null; then
@@ -343,9 +464,16 @@ validate_docker_requirements() {
 
     # Check if docker daemon is running
     if ! docker info &>/dev/null; then
-        log_error "Docker daemon is not running"
-        log_info "Start Docker: sudo systemctl start docker"
-        return 1
+        log_warn "Docker daemon is not running"
+        log_info "Starting Docker daemon..."
+        run_privileged systemctl start docker
+
+        # Verify it started
+        if ! docker info &>/dev/null; then
+            log_error "Failed to start Docker daemon"
+            log_info "Start Docker manually: sudo systemctl start docker"
+            return 1
+        fi
     fi
 
     log_info "Docker requirements validated"

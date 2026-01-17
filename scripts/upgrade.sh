@@ -196,6 +196,33 @@ phase_preflight() {
 phase_stage() {
     log_info "=== PHASE 1: STAGING ==="
 
+    # Check if source directory was provided via --source (from bootstrap.sh)
+    if [[ -n "$SOURCE_DIR" ]]; then
+        log_info "Using pre-cloned source directory: $SOURCE_DIR"
+
+        # Verify source directory exists and has expected structure
+        if [[ ! -d "$SOURCE_DIR" ]]; then
+            log_error "Provided source directory does not exist: $SOURCE_DIR"
+            return 1
+        fi
+
+        if [[ ! -d "$SOURCE_DIR/.git" ]] && [[ ! -f "$SOURCE_DIR/web/api/main.py" ]]; then
+            log_warn "Source directory may not be a valid Water-Controller repository"
+        fi
+
+        # Extract commit info if available
+        if [[ -d "$SOURCE_DIR/.git" ]]; then
+            local commit_sha
+            commit_sha=$(cd "$SOURCE_DIR" && git rev-parse HEAD 2>/dev/null || echo "unknown")
+            local commit_short="${commit_sha:0:7}"
+            log_info "Source commit: $commit_short"
+        fi
+
+        _log_write "INFO" "Using pre-staged source: $SOURCE_DIR"
+        return 0
+    fi
+
+    # Standard staging: clone from git
     # Select temp directory with enough space
     local tmp_base="/tmp"
     local tmp_space
@@ -758,6 +785,8 @@ USAGE:
 
 OPTIONS:
     --branch <name>     Target branch (default: $DEFAULT_BRANCH)
+    --source <path>     Use pre-cloned source directory (for bootstrap.sh integration)
+    --upgrade           Upgrade mode flag (for bootstrap.sh integration)
     --force             Force upgrade even if already current
     --dry-run           Show what would be done without making changes
     --help, -h          Show this help message
@@ -803,6 +832,16 @@ main() {
                 ;;
             --dry-run)
                 DRY_RUN="true"
+                shift
+                ;;
+            --source)
+                # Accept source directory from bootstrap.sh
+                # Overrides git clone with pre-cloned source
+                SOURCE_DIR="$2"
+                shift 2
+                ;;
+            --upgrade)
+                # Accept --upgrade flag from bootstrap.sh (no-op, already in upgrade mode)
                 shift
                 ;;
             --help|-h)
