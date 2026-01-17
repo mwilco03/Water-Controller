@@ -10,6 +10,9 @@ import CommandModeLogin from '@/components/CommandModeLogin';
 import CoupledActionsPanel from '@/components/control/CoupledActionsPanel';
 import { wsLogger, logger } from '@/lib/logger';
 
+// Polling interval constant
+const POLL_INTERVAL_MS = 2000;
+
 interface RTU {
   station_name: string;
   ip_address: string;
@@ -53,37 +56,22 @@ function ConfirmationModal({
   if (!action) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50">
-      <div className="bg-hmi-panel rounded-lg p-6 max-w-md w-full mx-4 border border-hmi-border">
-        <div className="flex items-center gap-3 mb-4">
-          <div className="w-10 h-10 rounded-full bg-status-warning/20 flex items-center justify-center">
-            <svg className="w-6 h-6 text-status-warning" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-            </svg>
-          </div>
-          <h3 className="text-lg font-semibold text-hmi-text">Confirm Control Change</h3>
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+      <div className="bg-hmi-panel rounded-lg shadow-hmi-modal max-w-sm w-full border border-hmi-border">
+        <div className="p-4 border-b border-hmi-border">
+          <h3 className="font-semibold text-hmi-text">Confirm Change</h3>
         </div>
-
-        <p className="text-hmi-muted mb-2">
-          <span className="font-bold text-hmi-text">{action.name}</span>
-        </p>
-        <p className="text-hmi-muted mb-6">
-          {action.description}
-        </p>
-
-        <div className="flex gap-3 justify-end">
-          <button
-            onClick={onCancel}
-            className="px-4 py-2 bg-hmi-border hover:bg-hmi-border/80 text-hmi-text rounded transition-colors"
-          >
+        <div className="p-4">
+          <p className="text-sm text-hmi-text mb-1 font-medium">{action.name}</p>
+          <p className="text-sm text-hmi-muted">{action.description}</p>
+        </div>
+        <div className="flex gap-2 p-4 pt-0 justify-end">
+          <button onClick={onCancel} className="hmi-btn hmi-btn-secondary">
             Cancel
           </button>
           <button
-            onClick={() => {
-              action.onConfirm();
-              onCancel();
-            }}
-            className="px-4 py-2 bg-status-warning hover:bg-status-warning/80 text-white rounded font-medium transition-colors"
+            onClick={() => { action.onConfirm(); onCancel(); }}
+            className="hmi-btn bg-status-warning hover:bg-status-warning/90 text-white"
           >
             Confirm
           </button>
@@ -103,7 +91,13 @@ export default function ControlPage() {
   const [loading, setLoading] = useState(true);
   const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null);
   const [pendingSetpoint, setPendingSetpoint] = useState<number | null>(null);
+
+  // Refs for cleanup and stable callbacks
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const selectedRtuRef = useRef<string | null>(null);
+  const isMountedRef = useRef(true);
+
   // Track last setpoint change for undo
   const lastSetpointChangeRef = useRef<{
     rtuName: string;
@@ -121,72 +115,131 @@ export default function ControlPage() {
     newMode: string;
   } | null>(null);
 
+  // Keep ref in sync with state
+  useEffect(() => {
+    selectedRtuRef.current = selectedRtu;
+  }, [selectedRtu]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+        pollIntervalRef.current = null;
+      }
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+    };
+  }, []);
+
   // Set page title
   useEffect(() => {
     document.title = PAGE_TITLE;
   }, []);
 
   // Fetch RTU list first
-  const fetchRtus = useCallback(async () => {
+  const fetchRtus = useCallback(async (signal?: AbortSignal) => {
     try {
-      const res = await fetch('/api/v1/rtus');
+      const res = await fetch('/api/v1/rtus', { signal });
+      if (!isMountedRef.current) return;
       if (res.ok) {
         const data = await res.json();
         const rtuList = data.data || [];
         setRtus(rtuList);
         // Auto-select first RTU if none selected
-        if (!selectedRtu && rtuList.length > 0) {
+        if (!selectedRtuRef.current && rtuList.length > 0) {
           setSelectedRtu(rtuList[0].station_name);
         }
       }
     } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') return;
       logger.error('Error fetching RTUs', error);
     }
-  }, [selectedRtu]);
+  }, []);
 
-  // Fetch PID loops for selected RTU
-  const fetchControlData = useCallback(async () => {
-    if (!selectedRtu) {
+  // Fetch PID loops for selected RTU - uses ref to avoid stale closures
+  const fetchControlData = useCallback(async (signal?: AbortSignal) => {
+    const rtu = selectedRtuRef.current;
+    if (!rtu) {
       setLoading(false);
       return;
     }
 
     try {
-      const pidRes = await fetch(`/api/v1/rtus/${encodeURIComponent(selectedRtu)}/pid`);
+      const pidRes = await fetch(`/api/v1/rtus/${encodeURIComponent(rtu)}/pid`, { signal });
+      if (!isMountedRef.current) return;
 
       if (pidRes.ok) {
         const data = await pidRes.json();
         const loops = (data.data || []).map((loop: PIDLoop) => ({
           ...loop,
-          rtu_name: selectedRtu,
+          rtu_name: rtu,
         }));
         setPidLoops(loops);
       } else {
         setPidLoops([]);
       }
     } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') return;
       logger.error('Error fetching control data', error);
       setPidLoops([]);
     } finally {
-      setLoading(false);
+      if (isMountedRef.current) {
+        setLoading(false);
+      }
     }
-  }, [selectedRtu]);
+  }, []);
 
-  // WebSocket for real-time control updates
+  // Stable polling functions using refs
+  const startPolling = useCallback(() => {
+    if (pollIntervalRef.current) return; // Already polling
+    pollIntervalRef.current = setInterval(() => {
+      fetchControlData(abortControllerRef.current?.signal);
+    }, POLL_INTERVAL_MS);
+    wsLogger.info('Polling started');
+  }, [fetchControlData]);
+
+  const stopPolling = useCallback(() => {
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
+      wsLogger.info('Polling stopped');
+    }
+  }, []);
+
+  // Store callbacks in refs to avoid recreating WebSocket on every render
+  const onWsConnectRef = useRef(() => {
+    stopPolling();
+    wsLogger.info('WebSocket connected - polling disabled');
+  });
+  const onWsDisconnectRef = useRef(() => {
+    if (selectedRtuRef.current) {
+      startPolling();
+      wsLogger.info('WebSocket disconnected - polling enabled');
+    }
+  });
+
+  // Update refs when callbacks change
+  useEffect(() => {
+    onWsConnectRef.current = () => {
+      stopPolling();
+      wsLogger.info('WebSocket connected - polling disabled');
+    };
+    onWsDisconnectRef.current = () => {
+      if (selectedRtuRef.current) {
+        startPolling();
+        wsLogger.info('WebSocket disconnected - polling enabled');
+      }
+    };
+  }, [startPolling, stopPolling]);
+
+  // WebSocket for real-time control updates - use stable callback wrappers
   const { connected, subscribe } = useWebSocket({
-    onConnect: () => {
-      if (pollIntervalRef.current) {
-        clearInterval(pollIntervalRef.current);
-        pollIntervalRef.current = null;
-        wsLogger.info('WebSocket connected - control polling disabled');
-      }
-    },
-    onDisconnect: () => {
-      if (!pollIntervalRef.current) {
-        pollIntervalRef.current = setInterval(fetchControlData, 2000);
-        wsLogger.info('WebSocket disconnected - control polling enabled');
-      }
-    },
+    onConnect: useCallback(() => onWsConnectRef.current(), []),
+    onDisconnect: useCallback(() => onWsDisconnectRef.current(), []),
   });
 
   // Subscribe to PID updates
@@ -214,23 +267,36 @@ export default function ControlPage() {
 
   // Fetch RTUs on mount
   useEffect(() => {
-    fetchRtus();
+    const controller = new AbortController();
+    fetchRtus(controller.signal);
+    return () => controller.abort();
   }, [fetchRtus]);
 
-  // Fetch PID loops when selected RTU changes
+  // Fetch PID loops when selected RTU changes - SINGLE source of polling
   useEffect(() => {
-    if (selectedRtu) {
-      setLoading(true);
-      fetchControlData();
-      pollIntervalRef.current = setInterval(fetchControlData, 2000);
+    if (!selectedRtu) return;
 
-      return () => {
-        if (pollIntervalRef.current) {
-          clearInterval(pollIntervalRef.current);
-        }
-      };
+    // Cancel any pending requests
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
     }
-  }, [selectedRtu, fetchControlData]);
+    abortControllerRef.current = new AbortController();
+
+    setLoading(true);
+    fetchControlData(abortControllerRef.current.signal);
+
+    // Only start polling if WebSocket is not connected
+    if (!connected) {
+      startPolling();
+    }
+
+    return () => {
+      stopPolling();
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+    };
+  }, [selectedRtu, connected, fetchControlData, startPolling, stopPolling]);
 
   const doUpdateSetpoint = async (
     rtuName: string,
@@ -372,209 +438,212 @@ export default function ControlPage() {
 
   return (
     <>
-      {/* Confirmation Modal */}
       <ConfirmationModal
         action={confirmAction}
-        onCancel={() => {
-          setConfirmAction(null);
-          setPendingSetpoint(null);
-        }}
+        onCancel={() => { setConfirmAction(null); setPendingSetpoint(null); }}
       />
 
-      <div className="space-y-6">
-        <div className="flex items-center justify-between">
-          <h1 className="text-2xl font-bold text-hmi-text">Control System</h1>
-          {mode === 'view' && <CommandModeLogin showButton />}
-        </div>
-
-      {/* Command Mode Notice */}
-      {mode === 'view' && (
-        <div className="flex items-center gap-3 p-4 bg-status-warning/10 border border-status-warning/30 rounded-lg">
-          <svg className="w-5 h-5 text-status-warning" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-          </svg>
-          <div>
-            <p className="text-status-warning font-medium">View Mode Active</p>
-            <p className="text-sm text-hmi-muted">Enter Command Mode to modify PID settings</p>
+      <div className="space-y-4">
+        {/* Header */}
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <div className="flex items-center gap-3">
+            <h1 className="text-xl font-semibold text-hmi-text">PID Control</h1>
+            {selectedRtu && (
+              <select
+                value={selectedRtu}
+                onChange={(e) => { setSelectedRtu(e.target.value); setSelectedLoop(null); }}
+                className="text-sm bg-hmi-panel border border-hmi-border rounded px-2 py-1 text-hmi-text"
+              >
+                {rtus.map((rtu) => (
+                  <option key={rtu.station_name} value={rtu.station_name}>
+                    {rtu.station_name}
+                  </option>
+                ))}
+              </select>
+            )}
+            {loading && <span className="text-xs text-hmi-muted">Loading...</span>}
           </div>
-        </div>
-      )}
-
-      {/* RTU Selector */}
-      <div className="hmi-card p-4">
-        <div className="flex items-center gap-4">
-          <label className="text-sm text-hmi-muted">Select RTU:</label>
-          <select
-            value={selectedRtu || ''}
-            onChange={(e) => {
-              setSelectedRtu(e.target.value);
-              setSelectedLoop(null);
-            }}
-            className="bg-hmi-panel text-hmi-text rounded px-3 py-2 min-w-[200px] border border-hmi-border"
-          >
-            {rtus.length === 0 && <option value="">No RTUs available</option>}
-            {rtus.map((rtu) => (
-              <option key={rtu.station_name} value={rtu.station_name}>
-                {rtu.station_name} ({rtu.state})
-              </option>
-            ))}
-          </select>
-          {loading && (
-            <span className="text-sm text-hmi-muted">Loading...</span>
+          {mode === 'view' ? (
+            <CommandModeLogin showButton />
+          ) : (
+            <span className="text-xs px-2 py-1 rounded bg-status-ok-light text-status-ok font-medium">
+              Command Mode
+            </span>
           )}
         </div>
-      </div>
 
-      {/* PID Loops */}
-      <div className="hmi-card p-4">
-        <h2 className="text-lg font-semibold mb-4 text-hmi-text">
-          PID Loops {selectedRtu && `- ${selectedRtu}`}
-        </h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {pidLoops.map((loop) => (
-            <div
-              key={loop.id}
-              className={`bg-hmi-panel rounded-lg p-4 cursor-pointer transition-colors border ${
-                selectedLoop?.id === loop.id ? 'ring-2 ring-hmi-border border-hmi-border' : 'border-hmi-border'
-              }`}
-              onClick={() => setSelectedLoop(loop)}
-            >
-              <div className="flex justify-between items-start mb-3">
-                <div>
-                  <div className="font-medium text-hmi-text">{loop.name}</div>
-                  <div className="text-xs text-hmi-muted">
-                    PV: {loop.process_variable} → CV: {loop.control_output}
-                  </div>
-                </div>
-                <span
-                  className={`text-xs px-2 py-1 rounded text-white ${
-                    loop.mode === 'AUTO'
-                      ? 'bg-status-ok'
-                      : loop.mode === 'MANUAL'
-                      ? 'bg-status-warning'
-                      : 'bg-hmi-border'
+        {/* View Mode Notice - compact */}
+        {mode === 'view' && (
+          <div className="text-sm text-status-warning bg-status-warning-light px-3 py-2 rounded border border-status-warning/20">
+            View only. Enter Command Mode to make changes.
+          </div>
+        )}
+
+        {/* PID Loop Table - Data-dense layout */}
+        <div className="hmi-card overflow-hidden">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-hmi-bg border-b border-hmi-border">
+                <th className="text-left px-3 py-2 font-medium text-hmi-muted">Loop</th>
+                <th className="text-right px-3 py-2 font-medium text-hmi-muted">PV</th>
+                <th className="text-right px-3 py-2 font-medium text-hmi-muted">SP</th>
+                <th className="text-right px-3 py-2 font-medium text-hmi-muted">CV%</th>
+                <th className="text-center px-3 py-2 font-medium text-hmi-muted">Mode</th>
+                <th className="px-3 py-2 w-24"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {pidLoops.map((loop) => {
+                const isSelected = selectedLoop?.id === loop.id;
+                const error = loop.pv !== null && loop.setpoint !== null
+                  ? Math.abs(loop.pv - loop.setpoint)
+                  : null;
+                const hasLargeError = error !== null && error > loop.setpoint * 0.1;
+
+                return (
+                  <tr
+                    key={loop.id}
+                    className={`border-b border-hmi-border cursor-pointer transition-colors ${
+                      isSelected ? 'bg-status-info-light' : 'hover:bg-hmi-bg'
+                    }`}
+                    onClick={() => setSelectedLoop(loop)}
+                  >
+                    <td className="px-3 py-2">
+                      <div className="font-medium text-hmi-text">{loop.name}</div>
+                      <div className="text-xs text-hmi-muted">{loop.process_variable}</div>
+                    </td>
+                    <td className={`px-3 py-2 text-right font-mono ${hasLargeError ? 'text-status-warning font-semibold' : 'text-hmi-text'}`}>
+                      {loop.pv?.toFixed(2) ?? '--'}
+                    </td>
+                    <td className="px-3 py-2 text-right font-mono text-status-info font-semibold">
+                      {loop.setpoint?.toFixed(2) ?? '--'}
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      <div className="flex items-center justify-end gap-2">
+                        <div className="w-12 h-1.5 bg-hmi-border rounded-full overflow-hidden">
+                          <div
+                            className="h-full bg-status-info rounded-full"
+                            style={{ width: `${Math.max(0, Math.min(100, loop.cv || 0))}%` }}
+                          />
+                        </div>
+                        <span className="font-mono text-hmi-text w-10 text-right">
+                          {loop.cv?.toFixed(0) ?? '--'}
+                        </span>
+                      </div>
+                    </td>
+                    <td className="px-3 py-2 text-center">
+                      <span className={`text-xs px-2 py-0.5 rounded font-medium ${
+                        loop.mode === 'AUTO' ? 'bg-status-ok-light text-status-ok-dark' :
+                        loop.mode === 'MANUAL' ? 'bg-status-warning-light text-status-warning-dark' :
+                        'bg-hmi-bg text-hmi-muted'
+                      }`}>
+                        {loop.mode}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2">
+                      {isSelected && <span className="text-xs text-status-info">Selected</span>}
+                    </td>
+                  </tr>
+                );
+              })}
+              {pidLoops.length === 0 && !loading && (
+                <tr>
+                  <td colSpan={6} className="px-3 py-8 text-center text-hmi-muted">
+                    {selectedRtu ? `No PID loops for ${selectedRtu}` : 'Select an RTU'}
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Selected Loop Controls */}
+        {selectedLoop && selectedRtu && (
+          <div className="hmi-card p-4">
+            <div className="flex items-start justify-between gap-4 flex-wrap">
+              <div>
+                <h2 className="font-semibold text-hmi-text">{selectedLoop.name}</h2>
+                <p className="text-xs text-hmi-muted">{selectedLoop.process_variable} → {selectedLoop.control_output}</p>
+              </div>
+
+              {/* Mode Toggle */}
+              <div className="flex gap-1 p-1 bg-hmi-bg rounded">
+                <button
+                  onClick={() => toggleMode(selectedRtu, selectedLoop.id, 'AUTO', selectedLoop.name, selectedLoop.mode)}
+                  disabled={!canCommand || selectedLoop.mode === 'AUTO'}
+                  className={`px-3 py-1 text-sm rounded transition-colors ${
+                    selectedLoop.mode === 'AUTO'
+                      ? 'bg-status-ok text-white'
+                      : 'text-hmi-muted hover:text-hmi-text disabled:opacity-50'
                   }`}
                 >
-                  {loop.mode}
-                </span>
-              </div>
-
-              <div className="grid grid-cols-3 gap-4 text-center">
-                <div>
-                  <div className="text-xs text-hmi-muted">PV</div>
-                  <div className="text-lg font-bold text-hmi-text">{loop.pv?.toFixed(2) ?? '--'}</div>
-                </div>
-                <div>
-                  <div className="text-xs text-hmi-muted">SP</div>
-                  <div className="text-lg font-bold text-status-info">
-                    {loop.setpoint?.toFixed(2) ?? '--'}
-                  </div>
-                </div>
-                <div>
-                  <div className="text-xs text-hmi-muted">CV</div>
-                  <div className="text-lg font-bold text-status-warning">
-                    {loop.cv?.toFixed(1) ?? '--'}%
-                  </div>
-                </div>
-              </div>
-
-              {/* Progress bar showing CV */}
-              <div className="mt-3 h-2 bg-hmi-bg rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-status-warning transition-all duration-300"
-                  style={{ width: `${Math.max(0, Math.min(100, loop.cv || 0))}%` }}
-                />
+                  AUTO
+                </button>
+                <button
+                  onClick={() => toggleMode(selectedRtu, selectedLoop.id, 'MANUAL', selectedLoop.name, selectedLoop.mode)}
+                  disabled={!canCommand || selectedLoop.mode === 'MANUAL'}
+                  className={`px-3 py-1 text-sm rounded transition-colors ${
+                    selectedLoop.mode === 'MANUAL'
+                      ? 'bg-status-warning text-white'
+                      : 'text-hmi-muted hover:text-hmi-text disabled:opacity-50'
+                  }`}
+                >
+                  MANUAL
+                </button>
               </div>
             </div>
-          ))}
-          {pidLoops.length === 0 && !loading && selectedRtu && (
-            <div className="text-center text-hmi-muted py-8 col-span-full">
-              No PID loops configured for {selectedRtu}
-            </div>
-          )}
-          {!selectedRtu && !loading && (
-            <div className="text-center text-hmi-muted py-8 col-span-full">
-              Select an RTU to view PID loops
-            </div>
-          )}
-        </div>
-      </div>
 
-      {/* Selected Loop Detail */}
-      {selectedLoop && selectedRtu && (
-        <div className="hmi-card p-4">
-          <h2 className="text-lg font-semibold mb-4 text-hmi-text">
-            {selectedLoop.name} - Tuning Parameters
-          </h2>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <div>
-              <label className="text-xs text-hmi-muted block mb-1">Setpoint</label>
-              <div className="flex gap-2">
-                <input
-                  type="number"
-                  value={pendingSetpoint ?? selectedLoop.setpoint}
-                  onChange={(e) => setPendingSetpoint(parseFloat(e.target.value))}
-                  className="flex-1 bg-hmi-panel text-hmi-text rounded px-3 py-2 border border-hmi-border disabled:opacity-50 disabled:cursor-not-allowed"
-                  step="0.1"
-                  disabled={!canCommand}
-                />
-                {pendingSetpoint !== null && pendingSetpoint !== selectedLoop.setpoint && (
-                  <button
-                    onClick={() => updateSetpoint(selectedRtu, selectedLoop.id, pendingSetpoint, selectedLoop.name, selectedLoop.setpoint)}
-                    className="px-3 py-2 bg-status-info hover:bg-status-info/80 text-white rounded text-sm font-medium transition-colors"
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-4 mt-4">
+              {/* Setpoint - editable */}
+              <div className="col-span-2">
+                <label className="text-xs text-hmi-muted block mb-1">Setpoint</label>
+                <div className="flex gap-2">
+                  <input
+                    type="number"
+                    value={pendingSetpoint ?? selectedLoop.setpoint}
+                    onChange={(e) => setPendingSetpoint(parseFloat(e.target.value))}
+                    className="flex-1 bg-hmi-bg text-hmi-text rounded px-3 py-1.5 border border-hmi-border text-sm font-mono disabled:opacity-50"
+                    step="0.1"
                     disabled={!canCommand}
-                  >
-                    Set
-                  </button>
-                )}
+                  />
+                  {pendingSetpoint !== null && pendingSetpoint !== selectedLoop.setpoint && (
+                    <button
+                      onClick={() => updateSetpoint(selectedRtu, selectedLoop.id, pendingSetpoint, selectedLoop.name, selectedLoop.setpoint)}
+                      className="hmi-btn hmi-btn-primary text-sm py-1"
+                      disabled={!canCommand}
+                    >
+                      Apply
+                    </button>
+                  )}
+                </div>
               </div>
-            </div>
-            <div>
-              <label className="text-xs text-hmi-muted block mb-1">Kp</label>
-              <div className="bg-hmi-panel text-hmi-text rounded px-3 py-2 border border-hmi-border">
-                {selectedLoop.kp}
-              </div>
-            </div>
-            <div>
-              <label className="text-xs text-hmi-muted block mb-1">Ki</label>
-              <div className="bg-hmi-panel text-hmi-text rounded px-3 py-2 border border-hmi-border">
-                {selectedLoop.ki}
-              </div>
-            </div>
-            <div>
-              <label className="text-xs text-hmi-muted block mb-1">Kd</label>
-              <div className="bg-hmi-panel text-hmi-text rounded px-3 py-2 border border-hmi-border">
-                {selectedLoop.kd}
-              </div>
-            </div>
-          </div>
-          <div className="mt-4 flex gap-2">
-            <button
-              onClick={() => toggleMode(selectedRtu, selectedLoop.id, 'AUTO', selectedLoop.name, selectedLoop.mode)}
-              disabled={!canCommand || selectedLoop.mode === 'AUTO'}
-              className={`px-4 py-2 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-white ${
-                selectedLoop.mode === 'AUTO' ? 'bg-status-ok' : 'bg-hmi-border hover:bg-hmi-border/80'
-              }`}
-            >
-              AUTO
-            </button>
-            <button
-              onClick={() => toggleMode(selectedRtu, selectedLoop.id, 'MANUAL', selectedLoop.name, selectedLoop.mode)}
-              disabled={!canCommand || selectedLoop.mode === 'MANUAL'}
-              className={`px-4 py-2 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-white ${
-                selectedLoop.mode === 'MANUAL' ? 'bg-status-warning' : 'bg-hmi-border hover:bg-hmi-border/80'
-              }`}
-            >
-              MANUAL
-            </button>
-          </div>
-        </div>
-      )}
 
-      {/* Coupled Actions Panel */}
-      <div className="hmi-card p-4">
-        <CoupledActionsPanel showAll />
-      </div>
+              {/* Tuning params - read only */}
+              <div>
+                <label className="text-xs text-hmi-muted block mb-1">Kp</label>
+                <div className="text-sm font-mono text-hmi-text">{selectedLoop.kp}</div>
+              </div>
+              <div>
+                <label className="text-xs text-hmi-muted block mb-1">Ki</label>
+                <div className="text-sm font-mono text-hmi-text">{selectedLoop.ki}</div>
+              </div>
+              <div>
+                <label className="text-xs text-hmi-muted block mb-1">Kd</label>
+                <div className="text-sm font-mono text-hmi-text">{selectedLoop.kd}</div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Coupled Actions - collapsible */}
+        <details className="hmi-card">
+          <summary className="px-4 py-3 cursor-pointer text-sm font-medium text-hmi-text hover:bg-hmi-bg transition-colors">
+            Coupled Actions
+          </summary>
+          <div className="px-4 pb-4 border-t border-hmi-border pt-4">
+            <CoupledActionsPanel showAll />
+          </div>
+        </details>
       </div>
     </>
   );

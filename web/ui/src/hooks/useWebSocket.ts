@@ -74,6 +74,19 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
   const reconnectAttemptsRef = useRef(0);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const subscribersRef = useRef<Map<string, Set<MessageHandler>>>(new Map());
+  const isMountedRef = useRef(true);
+
+  // Store callbacks in refs to avoid dependency issues
+  const onConnectRef = useRef(onConnect);
+  const onDisconnectRef = useRef(onDisconnect);
+  const onMessageRef = useRef(onMessage);
+
+  // Update refs when callbacks change (without causing reconnects)
+  useEffect(() => {
+    onConnectRef.current = onConnect;
+    onDisconnectRef.current = onDisconnect;
+    onMessageRef.current = onMessage;
+  }, [onConnect, onDisconnect, onMessage]);
 
   // Subscribe to a specific event type
   const subscribe = useCallback((event: string, handler: MessageHandler) => {
@@ -88,7 +101,7 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
     };
   }, []);
 
-  // Connect to WebSocket
+  // Connect to WebSocket - uses refs to avoid dependency on callbacks
   const connect = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       return;
@@ -102,20 +115,22 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
       const ws = new WebSocket(wsUrl);
 
       ws.onopen = () => {
+        if (!isMountedRef.current) return;
         logger.info('WebSocket connected');
         reconnectAttemptsRef.current = 0;
         setState(prev => ({ ...prev, connected: true }));
-        onConnect?.();
+        onConnectRef.current?.();
       };
 
       ws.onclose = () => {
+        if (!isMountedRef.current) return;
         logger.info('WebSocket disconnected');
         setState(prev => ({ ...prev, connected: false }));
-        onDisconnect?.();
+        onDisconnectRef.current?.();
         wsRef.current = null;
 
-        // Attempt reconnection
-        if (reconnectAttemptsRef.current < maxReconnectAttempts) {
+        // Attempt reconnection only if still mounted
+        if (isMountedRef.current && reconnectAttemptsRef.current < maxReconnectAttempts) {
           reconnectAttemptsRef.current++;
           logger.info(`Reconnecting in ${reconnectInterval}ms (attempt ${reconnectAttemptsRef.current}/${maxReconnectAttempts})`);
           reconnectTimeoutRef.current = setTimeout(connect, reconnectInterval);
@@ -127,6 +142,7 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
       };
 
       ws.onmessage = (event) => {
+        if (!isMountedRef.current) return;
         try {
           const message = JSON.parse(event.data);
           // Backend sends 'channel', frontend uses 'type' - support both
@@ -140,7 +156,7 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
           }));
 
           // Call global handler
-          onMessage?.(type, data);
+          onMessageRef.current?.(type, data);
 
           // Call event-specific subscribers
           subscribersRef.current.get(type)?.forEach(handler => {
@@ -169,7 +185,7 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
     } catch (e) {
       logger.error('Failed to create WebSocket:', e);
     }
-  }, [onConnect, onDisconnect, onMessage, reconnectInterval, maxReconnectAttempts]);
+  }, [reconnectInterval, maxReconnectAttempts]); // Removed callback deps - using refs instead
 
   // Disconnect from WebSocket
   const disconnect = useCallback(() => {
@@ -182,13 +198,19 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
     wsRef.current = null;
   }, [maxReconnectAttempts]);
 
-  // Connect on mount, disconnect on unmount
+  // Connect on mount, disconnect and cleanup on unmount
   useEffect(() => {
+    isMountedRef.current = true;
+    const subscribers = subscribersRef.current;
     connect();
     return () => {
+      isMountedRef.current = false;
       disconnect();
+      // Clear all subscribers to prevent memory leaks
+      subscribers.clear();
     };
-  }, [connect, disconnect]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Empty deps intentional - only run on mount/unmount, callbacks use refs
 
   return {
     connected: state.connected,
