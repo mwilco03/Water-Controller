@@ -500,16 +500,186 @@ generate_password() {
     echo "$(date +%s)${RANDOM}${RANDOM}" | sha256sum | head -c "$length"
 }
 
+# Wait for container health checks
+wait_for_health_checks() {
+    local docker_dir="$1"
+    local max_wait="${2:-120}"  # 2 minutes default
+
+    log_step "Waiting for services to become healthy..."
+
+    local start_time
+    start_time=$(date +%s)
+    local timeout_time=$((start_time + max_wait))
+
+    local services=("wtc-database" "wtc-api" "wtc-ui" "wtc-loki" "wtc-grafana")
+    local healthy_services=()
+
+    while true; do
+        local all_healthy=true
+        healthy_services=()
+
+        for svc in "${services[@]}"; do
+            local health
+            health=$(docker inspect --format='{{.State.Health.Status}}' "$svc" 2>/dev/null || echo "starting")
+
+            if [[ "$health" == "healthy" ]]; then
+                healthy_services+=("$svc")
+            else
+                all_healthy=false
+            fi
+        done
+
+        if [[ "$all_healthy" == "true" ]]; then
+            log_info "All services are healthy (${#healthy_services[@]}/${#services[@]})"
+            return 0
+        fi
+
+        local current_time
+        current_time=$(date +%s)
+        if [[ "$current_time" -ge "$timeout_time" ]]; then
+            log_warn "Timeout waiting for services to become healthy"
+            log_info "Healthy services: ${#healthy_services[@]}/${#services[@]}"
+            return 1
+        fi
+
+        log_debug "Waiting for services... (${#healthy_services[@]}/${#services[@]} healthy)"
+        sleep 5
+    done
+}
+
+# Verify endpoints are responding
+verify_endpoints() {
+    local api_port="${WTC_API_PORT:-8000}"
+    local ui_port="${WTC_UI_PORT:-8080}"
+    local grafana_port="${WTC_GRAFANA_PORT:-3000}"
+
+    log_step "Verifying service endpoints..."
+
+    local errors=0
+
+    # Check API health endpoint
+    if curl -sf "http://localhost:$api_port/health" >/dev/null 2>&1; then
+        log_info "✓ API endpoint responding (port $api_port)"
+    else
+        log_error "✗ API endpoint not responding (port $api_port)"
+        errors=$((errors + 1))
+    fi
+
+    # Check UI
+    if curl -sf "http://localhost:$ui_port" >/dev/null 2>&1; then
+        log_info "✓ UI endpoint responding (port $ui_port)"
+    else
+        log_error "✗ UI endpoint not responding (port $ui_port)"
+        errors=$((errors + 1))
+    fi
+
+    # Check Grafana
+    if curl -sf "http://localhost:$grafana_port/api/health" >/dev/null 2>&1; then
+        log_info "✓ Grafana endpoint responding (port $grafana_port)"
+    else
+        log_warn "⚠ Grafana endpoint not responding yet (port $grafana_port)"
+    fi
+
+    return $errors
+}
+
+# Create systemd service for auto-start
+create_systemd_service() {
+    local docker_dir="$1"
+    local service_file="/etc/systemd/system/water-controller-docker.service"
+
+    log_step "Creating systemd service for auto-start on boot..."
+
+    local service_content
+    service_content=$(cat <<EOF
+[Unit]
+Description=Water-Controller Docker Stack
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=$docker_dir
+ExecStart=/usr/bin/docker compose up -d
+ExecStop=/usr/bin/docker compose down
+TimeoutStartSec=300
+TimeoutStopSec=120
+
+[Install]
+WantedBy=multi-user.target
+EOF
+)
+
+    echo "$service_content" | run_privileged tee "$service_file" > /dev/null
+
+    # Enable service
+    run_privileged systemctl daemon-reload
+    run_privileged systemctl enable water-controller-docker.service
+
+    log_info "Systemd service created and enabled for auto-start"
+}
+
+# Create quick commands helper script
+create_quick_commands() {
+    local install_dir="$1"
+    local commands_file="$install_dir/docker-commands.sh"
+
+    log_step "Creating quick commands helper..."
+
+    local commands_content
+    commands_content=$(cat <<'EOF'
+#!/bin/bash
+# Water-Controller Docker Quick Commands
+
+DOCKER_DIR="/opt/water-controller/docker"
+
+alias wtc-status='docker compose -f $DOCKER_DIR/docker-compose.yml ps'
+alias wtc-logs='docker compose -f $DOCKER_DIR/docker-compose.yml logs -f'
+alias wtc-restart='docker compose -f $DOCKER_DIR/docker-compose.yml restart'
+alias wtc-stop='docker compose -f $DOCKER_DIR/docker-compose.yml stop'
+alias wtc-start='docker compose -f $DOCKER_DIR/docker-compose.yml start'
+alias wtc-down='docker compose -f $DOCKER_DIR/docker-compose.yml down'
+alias wtc-pull='docker compose -f $DOCKER_DIR/docker-compose.yml pull'
+alias wtc-rebuild='docker compose -f $DOCKER_DIR/docker-compose.yml up -d --build'
+
+echo "Water-Controller Docker Commands loaded:"
+echo "  wtc-status   - Show container status"
+echo "  wtc-logs     - Follow container logs"
+echo "  wtc-restart  - Restart all containers"
+echo "  wtc-stop     - Stop all containers"
+echo "  wtc-start    - Start all containers"
+echo "  wtc-down     - Stop and remove containers"
+echo "  wtc-pull     - Pull latest images"
+echo "  wtc-rebuild  - Rebuild and restart containers"
+EOF
+)
+
+    echo "$commands_content" | run_privileged tee "$commands_file" > /dev/null
+    run_privileged chmod +x "$commands_file"
+
+    log_info "Quick commands helper created: $commands_file"
+    log_info "To use: source $commands_file"
+}
+
 # Run Docker deployment
 do_docker_install() {
     log_step "Starting Docker deployment..."
 
+    # Pre-deployment checks
+    check_docker_resources || return 1
+    check_port_conflicts || return 1
+
     # Find docker directory
     local docker_dir=""
+    local repo_dir=""
     if [[ -d "./docker" ]]; then
         docker_dir="./docker"
+        repo_dir="."
     elif [[ -d "/opt/water-controller/docker" ]]; then
         docker_dir="/opt/water-controller/docker"
+        repo_dir="/opt/water-controller"
     else
         # Clone repo first to get docker files
         local staging_dir
@@ -518,6 +688,14 @@ do_docker_install() {
 
         clone_to_staging "$staging_dir" "main" || return 1
         docker_dir="$staging_dir/repo/docker"
+        repo_dir="$staging_dir/repo"
+
+        # Copy to persistent location
+        log_info "Installing to /opt/water-controller..."
+        run_privileged mkdir -p /opt/water-controller
+        run_privileged cp -r "$staging_dir/repo/"* /opt/water-controller/
+        docker_dir="/opt/water-controller/docker"
+        repo_dir="/opt/water-controller"
     fi
 
     log_info "Using Docker directory: $docker_dir"
@@ -542,7 +720,6 @@ do_docker_install() {
     if [[ -z "${GRAFANA_PASSWORD:-}" ]]; then
         log_info "Generating secure Grafana password..."
         export GRAFANA_PASSWORD=$(generate_password 24)
-        log_info "GRAFANA_PASSWORD generated (save this for later access)"
     fi
 
     if [[ -z "${DB_PASSWORD:-}" ]]; then
@@ -550,8 +727,8 @@ do_docker_install() {
         export DB_PASSWORD=$(generate_password 32)
     fi
 
-    # Save passwords to a secure file for future reference
-    local creds_file="$docker_dir/../config/.docker-credentials"
+    # Save passwords to PERSISTENT location
+    local creds_file="/opt/water-controller/config/.docker-credentials"
     log_info "Saving credentials to: $creds_file"
     run_privileged mkdir -p "$(dirname "$creds_file")"
     {
@@ -568,15 +745,25 @@ do_docker_install() {
     } | run_privileged tee "$creds_file" > /dev/null
     run_privileged chmod 600 "$creds_file"
 
-    log_info "Credentials saved to: $creds_file"
-    log_warn "IMPORTANT: Save your Grafana password - it won't be shown again!"
-    log_info "Grafana admin password: $GRAFANA_PASSWORD"
-
-    # Run docker compose
-    log_info "Starting containers..."
+    # Build images with visible progress
+    log_step "Building Docker images (this may take 5-10 minutes)..."
     (
         cd "$docker_dir" || exit 1
-        # Export passwords for docker compose
+        export GRAFANA_PASSWORD="$GRAFANA_PASSWORD"
+        export DB_PASSWORD="$DB_PASSWORD"
+
+        docker compose build --progress=plain 2>&1 | while IFS= read -r line; do
+            # Show meaningful build steps
+            if echo "$line" | grep -qE "FROM|RUN|COPY|Step|writing image"; then
+                log_debug "$line"
+            fi
+        done
+    )
+
+    # Start containers
+    log_step "Starting containers..."
+    (
+        cd "$docker_dir" || exit 1
         export GRAFANA_PASSWORD="$GRAFANA_PASSWORD"
         export DB_PASSWORD="$DB_PASSWORD"
 
@@ -584,26 +771,62 @@ do_docker_install() {
     )
 
     local result=$?
-    if [[ $result -eq 0 ]]; then
-        log_info "Docker deployment completed successfully!"
-        log_info ""
-        log_info "Services started. Access points:"
-        log_info "  Web UI:      http://localhost:${WTC_UI_PORT:-8080}"
-        log_info "  API:         http://localhost:${WTC_API_PORT:-8000}"
-        log_info "  Grafana:     http://localhost:${WTC_GRAFANA_PORT:-3000} (admin / see credentials file)"
-        log_info ""
-        log_info "Credentials saved in: $creds_file"
-        log_info ""
-        log_info "Check status with:"
-        log_info "  docker compose -f $docker_dir/docker-compose.yml ps"
-        log_info ""
-        log_info "View logs with:"
-        log_info "  docker compose -f $docker_dir/docker-compose.yml logs -f"
-    else
+    if [[ $result -ne 0 ]]; then
         log_error "Docker deployment failed"
+        return $result
     fi
 
-    return $result
+    # Wait for health checks
+    wait_for_health_checks "$docker_dir" 120
+
+    # Verify endpoints
+    verify_endpoints
+
+    # Create systemd service for auto-start
+    create_systemd_service "$docker_dir"
+
+    # Create quick commands helper
+    create_quick_commands "/opt/water-controller"
+
+    # Display deployment summary
+    log_info ""
+    log_info "╔════════════════════════════════════════════════════════════════╗"
+    log_info "║          WATER-CONTROLLER DEPLOYMENT SUMMARY                  ║"
+    log_info "╚════════════════════════════════════════════════════════════════╝"
+    log_info ""
+    log_info "✓ Docker installed: $(docker --version | cut -d' ' -f3 | tr -d ',')"
+    log_info "✓ Docker Compose: $(docker compose version --short)"
+    log_info "✓ Containers started successfully"
+    log_info "✓ Auto-start enabled (systemd service)"
+    log_info ""
+    log_info "═══ ACCESS POINTS ═══"
+    local ip_addr
+    ip_addr=$(hostname -I 2>/dev/null | awk '{print $1}' || echo "localhost")
+    log_info "  Web UI:      http://$ip_addr:${WTC_UI_PORT:-8080}"
+    log_info "  API Docs:    http://$ip_addr:${WTC_API_PORT:-8000}/docs"
+    log_info "  API Health:  http://$ip_addr:${WTC_API_PORT:-8000}/health"
+    log_info "  Grafana:     http://$ip_addr:${WTC_GRAFANA_PORT:-3000}"
+    log_info ""
+    log_info "═══ CREDENTIALS ═══"
+    log_info "  Grafana User:     admin"
+    log_info "  Grafana Password: $GRAFANA_PASSWORD"
+    log_info "  Credentials File: $creds_file"
+    log_info ""
+    log_info "═══ MANAGEMENT COMMANDS ═══"
+    log_info "  Status:  docker compose -f $docker_dir/docker-compose.yml ps"
+    log_info "  Logs:    docker compose -f $docker_dir/docker-compose.yml logs -f"
+    log_info "  Restart: sudo systemctl restart water-controller-docker"
+    log_info "  Stop:    sudo systemctl stop water-controller-docker"
+    log_info ""
+    log_info "  Quick commands: source /opt/water-controller/docker-commands.sh"
+    log_info ""
+    log_info "═══ NEXT STEPS ═══"
+    log_info "  1. Browse to http://$ip_addr:${WTC_UI_PORT:-8080}"
+    log_info "  2. Save your Grafana password securely"
+    log_info "  3. Configure firewall if accessing remotely"
+    log_info ""
+
+    return 0
 }
 
 # Check disk space
@@ -625,6 +848,103 @@ check_disk_space() {
     fi
 
     log_info "Disk space check passed: ${available_mb}MB available"
+    return 0
+}
+
+# Check system resources for Docker deployment
+check_docker_resources() {
+    log_step "Checking system resources..."
+
+    local errors=0
+
+    # Check RAM (minimum 2GB, recommended 4GB)
+    local total_ram_mb
+    total_ram_mb=$(free -m 2>/dev/null | awk 'NR==2 {print $2}')
+
+    if [[ -n "$total_ram_mb" ]]; then
+        if [[ "$total_ram_mb" -lt 2048 ]]; then
+            log_error "Insufficient RAM: ${total_ram_mb}MB detected, 2048MB minimum required"
+            errors=$((errors + 1))
+        elif [[ "$total_ram_mb" -lt 4096 ]]; then
+            log_warn "Low RAM: ${total_ram_mb}MB detected, 4096MB recommended for optimal performance"
+        else
+            log_info "RAM check passed: ${total_ram_mb}MB available"
+        fi
+    fi
+
+    # Check CPU cores (minimum 2, recommended 4)
+    local cpu_cores
+    cpu_cores=$(nproc 2>/dev/null || grep -c ^processor /proc/cpuinfo 2>/dev/null || echo "0")
+
+    if [[ "$cpu_cores" -lt 2 ]]; then
+        log_error "Insufficient CPU cores: ${cpu_cores} detected, 2 minimum required"
+        errors=$((errors + 1))
+    elif [[ "$cpu_cores" -lt 4 ]]; then
+        log_warn "Low CPU cores: ${cpu_cores} detected, 4 recommended for optimal performance"
+    else
+        log_info "CPU check passed: ${cpu_cores} cores available"
+    fi
+
+    # Check disk space (minimum 10GB for Docker images + data)
+    local available_gb
+    available_gb=$(df -BG / 2>/dev/null | awk 'NR==2 {print $4}' | tr -d 'G')
+
+    if [[ -n "$available_gb" ]] && [[ "$available_gb" -lt 10 ]]; then
+        log_error "Insufficient disk space: ${available_gb}GB available, 10GB minimum required for Docker deployment"
+        errors=$((errors + 1))
+    elif [[ -n "$available_gb" ]]; then
+        log_info "Disk space check passed: ${available_gb}GB available"
+    fi
+
+    if [[ "$errors" -gt 0 ]]; then
+        log_error "Resource checks failed. System does not meet minimum requirements."
+        return 1
+    fi
+
+    return 0
+}
+
+# Check if ports are available
+check_port_conflicts() {
+    log_step "Checking for port conflicts..."
+
+    local ports_to_check=(
+        "${WTC_API_PORT:-8000}:API"
+        "${WTC_UI_PORT:-8080}:UI"
+        "${WTC_GRAFANA_PORT:-3000}:Grafana"
+        "${WTC_DB_PORT:-5432}:Database"
+    )
+
+    local conflicts=()
+    local port_desc
+    local port
+
+    for port_desc in "${ports_to_check[@]}"; do
+        port="${port_desc%%:*}"
+        local desc="${port_desc##*:}"
+
+        # Check if port is in use
+        if command -v ss &>/dev/null; then
+            if ss -tuln 2>/dev/null | grep -q ":$port "; then
+                conflicts+=("$port ($desc)")
+            fi
+        elif command -v netstat &>/dev/null; then
+            if netstat -tuln 2>/dev/null | grep -q ":$port "; then
+                conflicts+=("$port ($desc)")
+            fi
+        fi
+    done
+
+    if [[ ${#conflicts[@]} -gt 0 ]]; then
+        log_error "Port conflicts detected. The following ports are already in use:"
+        for conflict in "${conflicts[@]}"; do
+            log_error "  - Port $conflict"
+        done
+        log_info "Stop services using these ports or modify config/ports.env to use different ports"
+        return 1
+    fi
+
+    log_info "Port conflict check passed: all ports available"
     return 0
 }
 
