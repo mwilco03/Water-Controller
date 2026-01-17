@@ -102,6 +102,342 @@ log_header() {
 }
 
 # =============================================================================
+# Discovery-First Helper Functions
+# =============================================================================
+# These functions implement the "discovery-first" pattern:
+# - Discover state BEFORE assuming failure reasons
+# - Capture actual errors instead of swallowing them
+# - Report what was DISCOVERED, not what was ASSUMED
+# - Provide actionable remediation based on actual cause
+
+# Store last discovery result for detailed error reporting
+export _LAST_DISCOVERY_ERROR=""
+export _LAST_DISCOVERY_METHOD=""
+
+# Discover Docker accessibility - returns 0 if accessible, 1 if not
+# Sets _LAST_DISCOVERY_ERROR with the actual reason for failure
+discover_docker() {
+    _LAST_DISCOVERY_ERROR=""
+    _LAST_DISCOVERY_METHOD=""
+
+    # Step 1: Is docker binary available?
+    if ! command -v docker &>/dev/null; then
+        _LAST_DISCOVERY_ERROR="Docker binary not found in PATH"
+        _LAST_DISCOVERY_METHOD="command -v docker"
+        return 1
+    fi
+    _LAST_DISCOVERY_METHOD="binary found via 'command -v docker'"
+
+    # Step 2: Does the socket exist?
+    local socket="/var/run/docker.sock"
+    if [[ ! -e "$socket" ]]; then
+        _LAST_DISCOVERY_ERROR="Docker socket does not exist at $socket - daemon not installed or not started"
+        _LAST_DISCOVERY_METHOD="socket existence check"
+        return 1
+    fi
+
+    # Step 3: Can we access the socket?
+    if [[ ! -r "$socket" ]] || [[ ! -w "$socket" ]]; then
+        if [[ $EUID -ne 0 ]]; then
+            if ! id -nG 2>/dev/null | grep -qw docker; then
+                _LAST_DISCOVERY_ERROR="Permission denied: user '$(whoami)' is not root and not in docker group"
+                _LAST_DISCOVERY_METHOD="group membership check (id -nG | grep docker)"
+                return 1
+            fi
+        fi
+        _LAST_DISCOVERY_ERROR="Socket exists but not accessible (permissions: $(ls -la "$socket" 2>/dev/null | awk '{print $1}'))"
+        _LAST_DISCOVERY_METHOD="socket permission check"
+        return 1
+    fi
+
+    # Step 4: Can we actually talk to the daemon?
+    local docker_error
+    if ! docker_error=$(docker info 2>&1); then
+        # Parse the actual error
+        if [[ "$docker_error" == *"permission denied"* ]]; then
+            _LAST_DISCOVERY_ERROR="Permission denied accessing Docker daemon: $docker_error"
+        elif [[ "$docker_error" == *"Cannot connect"* ]] || [[ "$docker_error" == *"connection refused"* ]]; then
+            _LAST_DISCOVERY_ERROR="Docker daemon not responding (socket exists but daemon may be stopped): $docker_error"
+        elif [[ "$docker_error" == *"Is the docker daemon running"* ]]; then
+            _LAST_DISCOVERY_ERROR="Docker daemon is not running"
+        else
+            _LAST_DISCOVERY_ERROR="Docker info failed: $docker_error"
+        fi
+        _LAST_DISCOVERY_METHOD="docker info command"
+        return 1
+    fi
+
+    _LAST_DISCOVERY_METHOD="full verification (binary + socket + permissions + daemon response)"
+    return 0
+}
+
+# Discover Docker Compose accessibility
+discover_docker_compose() {
+    _LAST_DISCOVERY_ERROR=""
+    _LAST_DISCOVERY_METHOD=""
+
+    # First verify Docker itself works
+    if ! discover_docker; then
+        _LAST_DISCOVERY_ERROR="Docker Compose requires Docker: $_LAST_DISCOVERY_ERROR"
+        return 1
+    fi
+
+    # Check for docker compose (plugin) or docker-compose (standalone)
+    local compose_error
+    if docker compose version &>/dev/null; then
+        _LAST_DISCOVERY_METHOD="docker compose plugin"
+        return 0
+    elif command -v docker-compose &>/dev/null; then
+        if compose_error=$(docker-compose version 2>&1); then
+            _LAST_DISCOVERY_METHOD="docker-compose standalone binary"
+            return 0
+        else
+            _LAST_DISCOVERY_ERROR="docker-compose binary exists but failed: $compose_error"
+            _LAST_DISCOVERY_METHOD="docker-compose version check"
+            return 1
+        fi
+    else
+        _LAST_DISCOVERY_ERROR="Neither 'docker compose' plugin nor 'docker-compose' standalone found"
+        _LAST_DISCOVERY_METHOD="compose availability check"
+        return 1
+    fi
+}
+
+# Discover systemd service state - provides detailed status
+# Usage: discover_service_state <service_name>
+# Returns: 0 if running, 1 if not
+# Sets _LAST_DISCOVERY_ERROR with details
+discover_service_state() {
+    local service="$1"
+    _LAST_DISCOVERY_ERROR=""
+    _LAST_DISCOVERY_METHOD=""
+
+    if [[ -z "$service" ]]; then
+        _LAST_DISCOVERY_ERROR="No service name provided"
+        return 1
+    fi
+
+    # Check if systemctl is available
+    if ! command -v systemctl &>/dev/null; then
+        _LAST_DISCOVERY_ERROR="systemctl not available - not a systemd system?"
+        _LAST_DISCOVERY_METHOD="command -v systemctl"
+        return 1
+    fi
+
+    # Check if service unit exists
+    if ! systemctl cat "$service" &>/dev/null; then
+        _LAST_DISCOVERY_ERROR="Service unit '$service' does not exist"
+        _LAST_DISCOVERY_METHOD="systemctl cat $service"
+        return 1
+    fi
+
+    # Get detailed status
+    local status
+    status=$(systemctl is-active "$service" 2>&1)
+
+    case "$status" in
+        active)
+            _LAST_DISCOVERY_METHOD="systemctl is-active $service"
+            return 0
+            ;;
+        inactive)
+            _LAST_DISCOVERY_ERROR="Service '$service' is inactive (stopped)"
+            ;;
+        failed)
+            local fail_reason
+            fail_reason=$(systemctl status "$service" 2>&1 | grep -E "(Main PID|Status:|Active:)" | head -3)
+            _LAST_DISCOVERY_ERROR="Service '$service' has failed: $fail_reason"
+            ;;
+        activating)
+            _LAST_DISCOVERY_ERROR="Service '$service' is still starting"
+            ;;
+        deactivating)
+            _LAST_DISCOVERY_ERROR="Service '$service' is stopping"
+            ;;
+        *)
+            _LAST_DISCOVERY_ERROR="Service '$service' is in state: $status"
+            ;;
+    esac
+
+    _LAST_DISCOVERY_METHOD="systemctl is-active $service"
+    return 1
+}
+
+# Discover Python module availability with detailed error
+# Usage: discover_python_module <module_name>
+discover_python_module() {
+    local module="$1"
+    _LAST_DISCOVERY_ERROR=""
+    _LAST_DISCOVERY_METHOD=""
+
+    # First check Python itself
+    if ! command -v python3 &>/dev/null; then
+        _LAST_DISCOVERY_ERROR="python3 not found in PATH"
+        _LAST_DISCOVERY_METHOD="command -v python3"
+        return 1
+    fi
+
+    local python_path python_version import_error
+    python_path=$(command -v python3)
+    python_version=$(python3 --version 2>&1)
+
+    if ! import_error=$(python3 -c "import $module" 2>&1); then
+        if [[ "$import_error" == *"No module named"* ]]; then
+            _LAST_DISCOVERY_ERROR="Module '$module' not installed for $python_version at $python_path"
+        elif [[ "$import_error" == *"Permission denied"* ]]; then
+            _LAST_DISCOVERY_ERROR="Permission denied importing '$module' (check file permissions)"
+        else
+            _LAST_DISCOVERY_ERROR="Failed to import '$module': $import_error"
+        fi
+        _LAST_DISCOVERY_METHOD="python3 -c 'import $module'"
+        return 1
+    fi
+
+    _LAST_DISCOVERY_METHOD="python3 -c 'import $module' using $python_version"
+    return 0
+}
+
+# Discover PostgreSQL connectivity
+# Usage: discover_postgres [host] [port] [user] [database]
+discover_postgres() {
+    local host="${1:-localhost}"
+    local port="${2:-5432}"
+    local user="${3:-wtc}"
+    local database="${4:-water_treatment}"
+    _LAST_DISCOVERY_ERROR=""
+    _LAST_DISCOVERY_METHOD=""
+
+    # Check if psql is available
+    if ! command -v psql &>/dev/null; then
+        _LAST_DISCOVERY_ERROR="psql client not found in PATH"
+        _LAST_DISCOVERY_METHOD="command -v psql"
+        return 1
+    fi
+
+    # Check if port is open
+    if command -v ss &>/dev/null; then
+        if ! ss -tuln 2>/dev/null | grep -q ":${port} "; then
+            _LAST_DISCOVERY_ERROR="PostgreSQL port $port is not listening on $host"
+            _LAST_DISCOVERY_METHOD="ss -tuln | grep :$port"
+            return 1
+        fi
+    elif command -v netstat &>/dev/null; then
+        if ! netstat -tuln 2>/dev/null | grep -q ":${port} "; then
+            _LAST_DISCOVERY_ERROR="PostgreSQL port $port is not listening on $host"
+            _LAST_DISCOVERY_METHOD="netstat -tuln | grep :$port"
+            return 1
+        fi
+    fi
+
+    # Try pg_isready if available (doesn't need auth)
+    if command -v pg_isready &>/dev/null; then
+        local pg_error
+        if ! pg_error=$(pg_isready -h "$host" -p "$port" 2>&1); then
+            if [[ "$pg_error" == *"no response"* ]]; then
+                _LAST_DISCOVERY_ERROR="PostgreSQL at $host:$port not responding"
+            elif [[ "$pg_error" == *"rejecting connections"* ]]; then
+                _LAST_DISCOVERY_ERROR="PostgreSQL at $host:$port is rejecting connections (starting up?)"
+            else
+                _LAST_DISCOVERY_ERROR="PostgreSQL check failed: $pg_error"
+            fi
+            _LAST_DISCOVERY_METHOD="pg_isready -h $host -p $port"
+            return 1
+        fi
+    fi
+
+    _LAST_DISCOVERY_METHOD="PostgreSQL accepting connections at $host:$port"
+    return 0
+}
+
+# Discover network connectivity to a host
+# Usage: discover_network <url_or_host> [timeout_seconds]
+discover_network() {
+    local target="$1"
+    local timeout="${2:-10}"
+    _LAST_DISCOVERY_ERROR=""
+    _LAST_DISCOVERY_METHOD=""
+
+    if [[ -z "$target" ]]; then
+        _LAST_DISCOVERY_ERROR="No target specified"
+        return 1
+    fi
+
+    # If we're running from a piped curl, network is already proven
+    if [[ ! -t 0 ]] && [[ "${BASH_SOURCE[-1]:-}" == "${0}" ]] && [[ "$target" == *"github.com"* ]]; then
+        _LAST_DISCOVERY_METHOD="script was piped from remote source - network already verified"
+        return 0
+    fi
+
+    # Try curl first
+    if command -v curl &>/dev/null; then
+        local curl_error
+        if curl_error=$(curl -fsSL --connect-timeout "$timeout" --max-time "$timeout" "$target" -o /dev/null 2>&1); then
+            _LAST_DISCOVERY_METHOD="curl --connect-timeout $timeout to $target"
+            return 0
+        else
+            if [[ "$curl_error" == *"Could not resolve"* ]]; then
+                _LAST_DISCOVERY_ERROR="DNS resolution failed for $target"
+            elif [[ "$curl_error" == *"Connection refused"* ]]; then
+                _LAST_DISCOVERY_ERROR="Connection refused by $target"
+            elif [[ "$curl_error" == *"Connection timed out"* ]] || [[ "$curl_error" == *"timed out"* ]]; then
+                _LAST_DISCOVERY_ERROR="Connection to $target timed out after ${timeout}s"
+            elif [[ "$curl_error" == *"SSL"* ]] || [[ "$curl_error" == *"certificate"* ]]; then
+                _LAST_DISCOVERY_ERROR="SSL/TLS error connecting to $target: $curl_error"
+            else
+                _LAST_DISCOVERY_ERROR="Failed to reach $target: $curl_error"
+            fi
+            _LAST_DISCOVERY_METHOD="curl to $target"
+            return 1
+        fi
+    fi
+
+    # Fallback to wget
+    if command -v wget &>/dev/null; then
+        if wget -q --timeout="$timeout" --spider "$target" 2>/dev/null; then
+            _LAST_DISCOVERY_METHOD="wget --spider to $target"
+            return 0
+        fi
+    fi
+
+    _LAST_DISCOVERY_ERROR="No curl or wget available to test connectivity"
+    _LAST_DISCOVERY_METHOD="tool availability check"
+    return 1
+}
+
+# Run command and capture error for discovery
+# Usage: run_with_discovery <command> [args...]
+# Returns command exit code, sets _LAST_DISCOVERY_ERROR on failure
+run_with_discovery() {
+    local output
+    local exit_code
+
+    output=$("$@" 2>&1)
+    exit_code=$?
+
+    if [[ $exit_code -ne 0 ]]; then
+        _LAST_DISCOVERY_ERROR="$output"
+        _LAST_DISCOVERY_METHOD="$1 (exit code: $exit_code)"
+    else
+        _LAST_DISCOVERY_ERROR=""
+        _LAST_DISCOVERY_METHOD="$1"
+    fi
+
+    return $exit_code
+}
+
+# Log a discovered error with context
+log_discovered_error() {
+    local context="$1"
+    log_error "$context"
+    if [[ -n "$_LAST_DISCOVERY_ERROR" ]]; then
+        log_error "  Cause: $_LAST_DISCOVERY_ERROR"
+    fi
+    if [[ -n "$_LAST_DISCOVERY_METHOD" ]]; then
+        log_info "  Discovered via: $_LAST_DISCOVERY_METHOD"
+    fi
+}
+
+# =============================================================================
 # Utility Functions
 # =============================================================================
 

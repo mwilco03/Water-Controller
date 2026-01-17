@@ -122,6 +122,197 @@ log_debug() {
 # Helper Functions
 # =============================================================================
 
+# -----------------------------------------------------------------------------
+# Discovery-First Helper Functions
+# -----------------------------------------------------------------------------
+# These functions implement the "discovery-first" pattern:
+# - Discover state BEFORE assuming failure reasons
+# - Capture actual errors instead of swallowing them
+# - Report what was DISCOVERED, not what was ASSUMED
+
+# Store last discovery result for detailed error reporting
+_LAST_DISCOVERY_ERROR=""
+_LAST_DISCOVERY_METHOD=""
+
+# Discover Docker accessibility - returns 0 if accessible, 1 if not
+# Sets _LAST_DISCOVERY_ERROR with the actual reason for failure
+discover_docker() {
+    _LAST_DISCOVERY_ERROR=""
+    _LAST_DISCOVERY_METHOD=""
+
+    # Step 1: Is docker binary available?
+    if ! command -v docker &>/dev/null; then
+        _LAST_DISCOVERY_ERROR="Docker binary not found in PATH"
+        _LAST_DISCOVERY_METHOD="command -v docker"
+        return 1
+    fi
+    _LAST_DISCOVERY_METHOD="binary found via 'command -v docker'"
+
+    # Step 2: Does the socket exist?
+    local socket="/var/run/docker.sock"
+    if [[ ! -e "$socket" ]]; then
+        _LAST_DISCOVERY_ERROR="Docker socket does not exist at $socket - daemon not installed or not started"
+        _LAST_DISCOVERY_METHOD="socket existence check"
+        return 1
+    fi
+
+    # Step 3: Can we access the socket? Check permissions properly
+    local socket_accessible=false
+    if [[ -r "$socket" ]] && [[ -w "$socket" ]]; then
+        socket_accessible=true
+    elif [[ $EUID -eq 0 ]]; then
+        # Root should always have access
+        socket_accessible=true
+    elif id -nG 2>/dev/null | grep -qw docker; then
+        # User is in docker group - socket should be accessible
+        socket_accessible=true
+    fi
+
+    if [[ "$socket_accessible" != "true" ]]; then
+        _LAST_DISCOVERY_ERROR="Permission denied: user '$(whoami)' is not root and not in docker group"
+        _LAST_DISCOVERY_METHOD="group membership check (id -nG | grep docker)"
+        return 1
+    fi
+
+    # Step 4: Can we actually talk to the daemon?
+    local docker_error
+    if ! docker_error=$(docker info 2>&1); then
+        # Parse the actual error to provide accurate diagnosis
+        if [[ "$docker_error" == *"permission denied"* ]]; then
+            _LAST_DISCOVERY_ERROR="Permission denied accessing Docker daemon"
+            _LAST_DISCOVERY_METHOD="docker info (permission error)"
+        elif [[ "$docker_error" == *"Cannot connect"* ]] || [[ "$docker_error" == *"connection refused"* ]]; then
+            _LAST_DISCOVERY_ERROR="Docker daemon not responding (socket exists but daemon stopped)"
+            _LAST_DISCOVERY_METHOD="docker info (connection refused)"
+        elif [[ "$docker_error" == *"Is the docker daemon running"* ]]; then
+            _LAST_DISCOVERY_ERROR="Docker daemon is not running"
+            _LAST_DISCOVERY_METHOD="docker info (daemon not running)"
+        else
+            _LAST_DISCOVERY_ERROR="Docker command failed: $docker_error"
+            _LAST_DISCOVERY_METHOD="docker info (unknown error)"
+        fi
+        return 1
+    fi
+
+    _LAST_DISCOVERY_METHOD="full verification (binary + socket + permissions + daemon response)"
+    return 0
+}
+
+# Discover Docker Compose accessibility
+discover_docker_compose() {
+    _LAST_DISCOVERY_ERROR=""
+    _LAST_DISCOVERY_METHOD=""
+
+    # First verify Docker itself works
+    if ! discover_docker; then
+        # Preserve the Docker discovery error
+        _LAST_DISCOVERY_ERROR="Docker Compose requires working Docker: $_LAST_DISCOVERY_ERROR"
+        return 1
+    fi
+
+    # Check for docker compose (plugin) or docker-compose (standalone)
+    local compose_error
+    if compose_error=$(docker compose version 2>&1); then
+        _LAST_DISCOVERY_METHOD="docker compose plugin"
+        return 0
+    fi
+
+    # Plugin failed, check why
+    if [[ "$compose_error" == *"is not a docker command"* ]]; then
+        # Plugin not installed, try standalone
+        if command -v docker-compose &>/dev/null; then
+            if compose_error=$(docker-compose version 2>&1); then
+                _LAST_DISCOVERY_METHOD="docker-compose standalone binary"
+                return 0
+            else
+                _LAST_DISCOVERY_ERROR="docker-compose binary exists but failed: $compose_error"
+                _LAST_DISCOVERY_METHOD="docker-compose version check"
+                return 1
+            fi
+        else
+            _LAST_DISCOVERY_ERROR="Neither 'docker compose' plugin nor 'docker-compose' standalone found"
+            _LAST_DISCOVERY_METHOD="compose availability check"
+            return 1
+        fi
+    else
+        _LAST_DISCOVERY_ERROR="docker compose failed: $compose_error"
+        _LAST_DISCOVERY_METHOD="docker compose version"
+        return 1
+    fi
+}
+
+# Discover network connectivity to a host
+# Usage: discover_network <url_or_host> [timeout_seconds]
+discover_network() {
+    local target="$1"
+    local timeout="${2:-10}"
+    _LAST_DISCOVERY_ERROR=""
+    _LAST_DISCOVERY_METHOD=""
+
+    if [[ -z "$target" ]]; then
+        _LAST_DISCOVERY_ERROR="No target specified"
+        return 1
+    fi
+
+    # If we're running from a piped curl from github, network is already proven
+    if [[ ! -t 0 ]] && [[ "$target" == *"github.com"* ]]; then
+        _LAST_DISCOVERY_METHOD="script was piped from remote source - network connectivity already verified by successful download"
+        return 0
+    fi
+
+    # Try curl first
+    if command -v curl &>/dev/null; then
+        local curl_error
+        if curl_error=$(curl -fsSL --connect-timeout "$timeout" --max-time "$timeout" "$target" -o /dev/null 2>&1); then
+            _LAST_DISCOVERY_METHOD="curl --connect-timeout $timeout to $target"
+            return 0
+        else
+            if [[ "$curl_error" == *"Could not resolve"* ]]; then
+                _LAST_DISCOVERY_ERROR="DNS resolution failed for $target"
+            elif [[ "$curl_error" == *"Connection refused"* ]]; then
+                _LAST_DISCOVERY_ERROR="Connection refused by $target"
+            elif [[ "$curl_error" == *"Connection timed out"* ]] || [[ "$curl_error" == *"timed out"* ]]; then
+                _LAST_DISCOVERY_ERROR="Connection to $target timed out after ${timeout}s"
+            elif [[ "$curl_error" == *"SSL"* ]] || [[ "$curl_error" == *"certificate"* ]]; then
+                _LAST_DISCOVERY_ERROR="SSL/TLS error connecting to $target"
+            else
+                _LAST_DISCOVERY_ERROR="Failed to reach $target: $curl_error"
+            fi
+            _LAST_DISCOVERY_METHOD="curl to $target"
+            return 1
+        fi
+    fi
+
+    # Fallback to wget
+    if command -v wget &>/dev/null; then
+        if wget -q --timeout="$timeout" --spider "$target" 2>/dev/null; then
+            _LAST_DISCOVERY_METHOD="wget --spider to $target"
+            return 0
+        fi
+        _LAST_DISCOVERY_ERROR="wget failed to reach $target"
+        _LAST_DISCOVERY_METHOD="wget to $target"
+        return 1
+    fi
+
+    _LAST_DISCOVERY_ERROR="No curl or wget available to test connectivity"
+    _LAST_DISCOVERY_METHOD="tool availability check"
+    return 1
+}
+
+# Log a discovered error with full context
+log_discovered_error() {
+    local context="$1"
+    log_error "$context"
+    if [[ -n "$_LAST_DISCOVERY_ERROR" ]]; then
+        log_error "  Cause: $_LAST_DISCOVERY_ERROR"
+    fi
+    if [[ -n "$_LAST_DISCOVERY_METHOD" ]]; then
+        log_info "  Discovered via: $_LAST_DISCOVERY_METHOD"
+    fi
+}
+
+# -----------------------------------------------------------------------------
+
 # Run command with appropriate privileges
 run_privileged() {
     if [[ $EUID -ne 0 ]]; then
@@ -331,29 +522,61 @@ check_required_tools() {
     return 0
 }
 
-# Check network connectivity to GitHub with retry
+# Check network connectivity to GitHub using discovery-first approach
 check_network() {
     log_info "Checking network connectivity..."
 
-    local max_retries=3
-    local retry_delay=2
-    local attempt
+    # Use discovery function - it handles piped execution detection
+    if discover_network "https://github.com" 10; then
+        log_debug "Network connectivity confirmed ($_LAST_DISCOVERY_METHOD)"
+        return 0
+    fi
 
-    for ((attempt=1; attempt<=max_retries; attempt++)); do
-        if curl -fsSL --connect-timeout 10 --retry 2 "https://github.com" &>/dev/null; then
-            log_debug "Network connectivity confirmed on attempt $attempt"
-            return 0
-        fi
+    # First attempt failed - provide detailed diagnosis before retry
+    log_warn "Network check issue: $_LAST_DISCOVERY_ERROR"
 
-        if [[ $attempt -lt $max_retries ]]; then
-            log_warn "Network check failed (attempt $attempt/$max_retries), retrying in ${retry_delay}s..."
-            sleep "$retry_delay"
-            retry_delay=$((retry_delay * 2))
-        fi
-    done
+    # Retry with exponential backoff only if it makes sense
+    case "$_LAST_DISCOVERY_ERROR" in
+        *"DNS resolution failed"*)
+            log_error "DNS resolution failed for github.com"
+            log_info "Check: /etc/resolv.conf, try 'nslookup github.com'"
+            log_info "Fix:   Add 'nameserver 8.8.8.8' to /etc/resolv.conf"
+            return 1
+            ;;
+        *"SSL"*|*"certificate"*)
+            log_error "SSL/TLS error - certificate issue"
+            log_info "Check: System time (date), CA certificates"
+            log_info "Fix:   sudo apt-get install --reinstall ca-certificates"
+            return 1
+            ;;
+        *"Connection refused"*)
+            log_error "Connection refused by github.com - unusual, may be blocked"
+            log_info "Check: Firewall rules, proxy settings"
+            return 1
+            ;;
+        *)
+            # Transient error - worth retrying
+            local max_retries=3
+            local retry_delay=2
+            local attempt
 
-    log_error "Cannot reach GitHub after $max_retries attempts. Check your network connection."
-    return 1
+            for ((attempt=2; attempt<=max_retries; attempt++)); do
+                log_info "Retrying network check (attempt $attempt/$max_retries) in ${retry_delay}s..."
+                sleep "$retry_delay"
+
+                if discover_network "https://github.com" 10; then
+                    log_info "Network connectivity confirmed on attempt $attempt"
+                    return 0
+                fi
+
+                log_warn "Attempt $attempt failed: $_LAST_DISCOVERY_ERROR"
+                retry_delay=$((retry_delay * 2))
+            done
+
+            log_discovered_error "Cannot reach GitHub after $max_retries attempts"
+            return 1
+            ;;
+    esac
 }
 
 # Install Docker on the host system
@@ -462,67 +685,115 @@ install_docker() {
 validate_docker_requirements() {
     log_info "Validating Docker requirements..."
 
-    if ! command -v docker &>/dev/null; then
-        log_warn "Docker is not installed"
+    # Step 1: Discovery - what is the current Docker state?
+    if ! discover_docker; then
+        # Docker not working - discover WHY and take appropriate action
+        case "$_LAST_DISCOVERY_ERROR" in
+            *"not found in PATH"*)
+                # Docker binary not installed
+                log_warn "Docker is not installed"
+                if [[ -t 0 ]] || [[ -e /dev/tty ]]; then
+                    local response
+                    response=$(prompt_user "Would you like to install Docker now? [Y/n] ")
+                    if [[ "$response" =~ ^[Nn]$ ]]; then
+                        log_error "Docker is required for docker deployment mode"
+                        log_info "Install Docker manually: https://docs.docker.com/engine/install/"
+                        return 1
+                    fi
+                else
+                    log_info "Non-interactive mode detected, installing Docker automatically..."
+                fi
+                if ! install_docker; then
+                    log_error "Docker installation failed"
+                    return 1
+                fi
+                ;;
 
-        # Check if running in interactive mode
-        if [[ -t 0 ]] || [[ -e /dev/tty ]]; then
-            # Interactive: prompt user
-            local response
-            response=$(prompt_user "Would you like to install Docker now? [Y/n] ")
-            if [[ "$response" =~ ^[Nn]$ ]]; then
-                log_error "Docker is required for docker deployment mode"
-                log_info "Install Docker manually: https://docs.docker.com/engine/install/"
+            *"not root and not in docker group"*)
+                # Permission issue - need elevated privileges
+                log_warn "Docker access requires privileges"
+                log_info "  Discovered: $_LAST_DISCOVERY_ERROR"
+                log_info "Attempting with elevated privileges..."
+
+                # Try with sudo
+                if run_privileged docker info &>/dev/null; then
+                    log_info "Docker accessible with elevated privileges"
+                    # Continue - subsequent docker commands will use run_privileged
+                else
+                    log_error "Docker not accessible even with sudo"
+                    log_info "Fix: Add user to docker group: sudo usermod -aG docker $(whoami)"
+                    log_info "     Then log out and back in, or run: newgrp docker"
+                    return 1
+                fi
+                ;;
+
+            *"daemon not responding"*|*"daemon is not running"*|*"daemon stopped"*)
+                # Daemon not running - try to start it
+                log_info "Docker daemon not running, attempting to start..."
+                log_info "  Discovered via: $_LAST_DISCOVERY_METHOD"
+
+                if command -v systemctl &>/dev/null; then
+                    local start_error
+                    if ! start_error=$(run_privileged systemctl start docker 2>&1); then
+                        log_error "Failed to start Docker daemon"
+                        log_error "  Cause: $start_error"
+                        log_info "Check: sudo systemctl status docker"
+                        log_info "Logs:  sudo journalctl -xeu docker"
+                        return 1
+                    fi
+                    run_privileged systemctl enable docker 2>/dev/null || true
+                fi
+
+                # Wait for daemon with progress
+                local wait_count=0
+                log_info "Waiting for Docker daemon to respond..."
+                while ! discover_docker && [[ $wait_count -lt 15 ]]; do
+                    sleep 1
+                    wait_count=$((wait_count + 1))
+                done
+
+                if ! discover_docker; then
+                    log_discovered_error "Docker daemon failed to start after ${wait_count}s"
+                    log_info "Check: sudo systemctl status docker"
+                    log_info "Logs:  sudo journalctl -xeu docker"
+                    return 1
+                fi
+                log_info "Docker daemon started successfully"
+                ;;
+
+            *"socket does not exist"*)
+                # Socket missing - daemon never installed or completely broken
+                log_error "Docker socket missing - Docker may not be properly installed"
+                log_info "  Discovered: $_LAST_DISCOVERY_ERROR"
+                log_info "Try reinstalling Docker: https://docs.docker.com/engine/install/"
                 return 1
-            fi
-        else
-            # Non-interactive (piped execution): install automatically
-            log_info "Non-interactive mode detected, installing Docker automatically..."
-        fi
+                ;;
 
-        # Install Docker
-        if ! install_docker; then
-            log_error "Docker installation failed"
-            return 1
-        fi
+            *)
+                # Unknown error - report what we discovered
+                log_discovered_error "Docker validation failed"
+                return 1
+                ;;
+        esac
     fi
 
-    if ! docker compose version &>/dev/null; then
-        log_error "Docker Compose is not available"
-        log_info "Install Docker Compose plugin or standalone"
+    # Step 2: Verify Docker Compose
+    if ! discover_docker_compose; then
+        log_discovered_error "Docker Compose not available"
+
+        # Provide specific remediation based on discovery
+        if [[ "$_LAST_DISCOVERY_ERROR" == *"plugin"*"standalone"* ]]; then
+            log_info "Install Docker Compose plugin:"
+            log_info "  sudo apt-get install docker-compose-plugin"
+            log_info "Or standalone: https://docs.docker.com/compose/install/"
+        fi
         return 1
     fi
+    log_info "Docker Compose available ($_LAST_DISCOVERY_METHOD)"
 
-    # Check if docker daemon is running - start it if not
-    if ! docker info &>/dev/null; then
-        log_info "Docker daemon is not running, starting it..."
-
-        # Try systemctl first
-        if command -v systemctl &>/dev/null; then
-            run_privileged systemctl start docker 2>/dev/null || true
-            # Also enable it so it starts on boot
-            run_privileged systemctl enable docker 2>/dev/null || true
-        fi
-
-        # Wait a moment for docker to start
-        local wait_count=0
-        while ! docker info &>/dev/null && [[ $wait_count -lt 10 ]]; do
-            sleep 1
-            wait_count=$((wait_count + 1))
-        done
-
-        # Verify it started
-        if ! docker info &>/dev/null; then
-            log_error "Failed to start Docker daemon after ${wait_count}s"
-            log_info "Try manually: sudo systemctl start docker"
-            return 1
-        fi
-        log_info "Docker daemon started successfully"
-    fi
-
-    # Ensure docker is enabled for boot
+    # Step 3: Ensure docker is enabled for boot
     if command -v systemctl &>/dev/null; then
-        if ! systemctl is-enabled docker &>/dev/null; then
+        if ! systemctl is-enabled docker &>/dev/null 2>&1; then
             log_info "Enabling Docker to start on boot..."
             run_privileged systemctl enable docker 2>/dev/null || true
         fi

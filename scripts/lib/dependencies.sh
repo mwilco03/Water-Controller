@@ -410,21 +410,42 @@ install_python() {
     fi
     log_debug "pip3 version: $(pip3 --version 2>/dev/null | awk '{print $2}')"
 
-    # Install venv module
+    # Install venv module with discovery-first error handling
     log_info "Installing python3-venv..."
-    if ! python3 -c "import venv" 2>/dev/null; then
+
+    # Check current state with error capture
+    local venv_import_error
+    if ! venv_import_error=$(python3 -c "import venv" 2>&1); then
+        log_debug "venv not available: $venv_import_error"
+
         install_system_package "python3-venv" || {
             log_error "Failed to install python3-venv"
             return 1
         }
     fi
 
-    # Verify venv
-    if ! python3 -c "import venv" 2>/dev/null; then
+    # Verify venv with detailed error discovery
+    if ! venv_import_error=$(python3 -c "import venv; print(venv.__file__)" 2>&1); then
         log_error "python3-venv not available after installation"
+
+        # Discovery: WHY is it not available?
+        local python_path python_version
+        python_path=$(command -v python3)
+        python_version=$(python3 --version 2>&1)
+
+        if [[ "$venv_import_error" == *"No module named"* ]]; then
+            log_error "  Cause: Module 'venv' not found in Python's module path"
+            log_info "  Python: $python_version at $python_path"
+            log_info "  Check: python3 -c \"import sys; print(sys.path)\""
+            log_info "  Fix: Ensure python3-venv is installed for the correct Python version"
+        elif [[ "$venv_import_error" == *"Permission denied"* ]]; then
+            log_error "  Cause: Permission denied accessing venv module files"
+        else
+            log_error "  Cause: $venv_import_error"
+        fi
         return 1
     fi
-    log_debug "python3-venv: OK"
+    log_debug "python3-venv: OK (loaded from: $venv_import_error)"
 
     # Install python3-dev for native extensions
     log_info "Installing python3-dev..."

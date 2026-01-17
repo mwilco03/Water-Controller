@@ -242,17 +242,36 @@ acquire_source() {
 create_python_venv() {
     log_info "Creating Python virtual environment..."
 
-    # Check Python is available
+    # Discovery: Check Python availability with version info
     if ! command -v python3 >/dev/null 2>&1; then
         log_error "Python3 is not installed"
+        log_info "  Install: sudo apt-get install python3 python3-venv"
         return 3
     fi
 
-    # Check venv module is available
-    if ! python3 -c "import venv" 2>/dev/null; then
+    local python_path python_version
+    python_path=$(command -v python3)
+    python_version=$(python3 --version 2>&1)
+    log_debug "Using $python_version at $python_path"
+
+    # Discovery: Check venv module with error capture
+    local venv_error
+    if ! venv_error=$(python3 -c "import venv; print(venv.__file__)" 2>&1); then
         log_error "Python venv module not available"
+
+        # Provide specific diagnosis
+        if [[ "$venv_error" == *"No module named"* ]]; then
+            log_error "  Cause: venv module not installed for $python_version"
+            log_info "  Fix: sudo apt-get install python3-venv"
+            log_info "       Or for specific version: sudo apt-get install python3.X-venv"
+        elif [[ "$venv_error" == *"Permission denied"* ]]; then
+            log_error "  Cause: Permission denied accessing Python modules"
+        else
+            log_error "  Cause: $venv_error"
+        fi
         return 3
     fi
+    log_debug "venv module loaded from: $venv_error"
 
     # Create installation directory if needed
     if [ ! -d "$INSTALL_BASE" ]; then
