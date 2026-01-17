@@ -137,10 +137,28 @@ CREATE TABLE IF NOT EXISTS users (
     username VARCHAR(64) UNIQUE NOT NULL,
     password_hash VARCHAR(256) NOT NULL,
     role VARCHAR(32) NOT NULL DEFAULT 'operator' CHECK (role IN ('viewer', 'operator', 'engineer', 'admin')),
-    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    active BOOLEAN NOT NULL DEFAULT TRUE,
+    sync_to_rtus BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     last_login TIMESTAMPTZ
 );
+
+-- User sessions table (for authentication tokens)
+CREATE TABLE IF NOT EXISTS user_sessions (
+    token VARCHAR(256) PRIMARY KEY,
+    username VARCHAR(64) NOT NULL,
+    role VARCHAR(16) NOT NULL DEFAULT 'viewer',
+    groups TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_activity TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at TIMESTAMPTZ NOT NULL,
+    ip_address VARCHAR(45),
+    user_agent VARCHAR(256)
+);
+
+CREATE INDEX IF NOT EXISTS ix_user_sessions_expires ON user_sessions (expires_at);
+CREATE INDEX IF NOT EXISTS ix_user_sessions_username ON user_sessions (username);
 
 -- Audit Log table (hypertable)
 CREATE TABLE IF NOT EXISTS audit_log (
@@ -155,10 +173,7 @@ CREATE TABLE IF NOT EXISTS audit_log (
 -- Convert to hypertable
 SELECT create_hypertable('audit_log', 'time', if_not_exists => TRUE);
 
--- Insert default admin user (password: admin - should be changed!)
-INSERT INTO users (username, password_hash, role)
-VALUES ('admin', '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/X4.G5y5GJzfHJgP7.', 'admin')
-ON CONFLICT (username) DO NOTHING;
+-- Default admin user is created automatically by the API on startup via ensure_default_admin()
 
 -- Insert sample RTU devices
 INSERT INTO rtu_devices (station_name, ip_address, vendor_id, device_id, slot_count, connection_state)

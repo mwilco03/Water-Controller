@@ -23,6 +23,73 @@ from ..models.base import Base, SessionLocal, engine
 logger = logging.getLogger(__name__)
 
 
+def _migrate_users_table_schema():
+    """
+    Migrate users table schema for existing deployments.
+
+    Historical issue: The users table had 'enabled' column but SQLAlchemy model
+    expects 'active', 'sync_to_rtus', and 'updated_at' columns.
+
+    Per CLAUDE.md: "docker compose up should start a fully working system" -
+    this enables self-healing for existing deployments.
+    """
+    try:
+        with engine.connect() as conn:
+            dialect = engine.dialect.name
+            if dialect != "postgresql":
+                return  # Only needed for PostgreSQL (Docker setup)
+
+            # Check if users table exists
+            result = conn.execute(text(
+                "SELECT 1 FROM information_schema.tables "
+                "WHERE table_name = 'users'"
+            ))
+            if not result.fetchone():
+                return  # Table doesn't exist yet, init.sql will create it
+
+            # Check if we need to rename 'enabled' to 'active'
+            result = conn.execute(text(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = 'users' AND column_name = 'enabled'"
+            ))
+            if result.fetchone():
+                conn.execute(text(
+                    "ALTER TABLE users RENAME COLUMN enabled TO active"
+                ))
+                conn.commit()
+                logger.info("Migrated users.enabled -> users.active")
+
+            # Add sync_to_rtus column if missing
+            result = conn.execute(text(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = 'users' AND column_name = 'sync_to_rtus'"
+            ))
+            if not result.fetchone():
+                conn.execute(text(
+                    "ALTER TABLE users ADD COLUMN sync_to_rtus BOOLEAN "
+                    "NOT NULL DEFAULT TRUE"
+                ))
+                conn.commit()
+                logger.info("Added users.sync_to_rtus column")
+
+            # Add updated_at column if missing
+            result = conn.execute(text(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = 'users' AND column_name = 'updated_at'"
+            ))
+            if not result.fetchone():
+                conn.execute(text(
+                    "ALTER TABLE users ADD COLUMN updated_at TIMESTAMPTZ "
+                    "NOT NULL DEFAULT NOW()"
+                ))
+                conn.commit()
+                logger.info("Added users.updated_at column")
+
+    except Exception as e:
+        # Non-fatal: if migration fails, log but continue
+        logger.warning(f"Users table migration: {e}")
+
+
 def _cleanup_duplicate_indexes():
     """
     Remove duplicate indexes that may have been created by older code.
@@ -128,8 +195,12 @@ def init_database():
     Creates all tables defined in the models if they don't exist.
     Works with both SQLite (development) and PostgreSQL (production).
 
-    Includes self-healing for historical duplicate index issues.
+    Includes self-healing for historical schema issues.
     """
+    # Migrate users table schema for existing deployments
+    # This enables self-healing per CLAUDE.md
+    _migrate_users_table_schema()
+
     # Clean up any duplicate indexes from older code versions
     # This enables self-healing for existing deployments per CLAUDE.md
     _cleanup_duplicate_indexes()
