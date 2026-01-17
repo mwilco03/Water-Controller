@@ -23,7 +23,7 @@ set -euo pipefail
 # Constants
 # =============================================================================
 
-readonly BOOTSTRAP_VERSION="1.1.0"
+readonly BOOTSTRAP_VERSION="1.2.0"
 readonly REPO_URL="https://github.com/mwilco03/Water-Controller.git"
 readonly REPO_RAW_URL="https://raw.githubusercontent.com/mwilco03/Water-Controller"
 readonly INSTALL_DIR="/opt/water-controller"
@@ -684,13 +684,36 @@ EOF
     log_info "To use: source $commands_file"
 }
 
+# Cleanup partial Docker install on failure
+cleanup_docker_partial() {
+    log_warn "Cleaning up partial Docker installation..."
+    if command -v docker &>/dev/null && docker info &>/dev/null; then
+        # Stop and remove containers from this project
+        local containers
+        containers=$(docker ps -aq --filter "name=wtc-" 2>/dev/null || true)
+        if [[ -n "$containers" ]]; then
+            docker stop $containers 2>/dev/null || true
+            docker rm -f $containers 2>/dev/null || true
+        fi
+    fi
+}
+
 # Run Docker deployment
 do_docker_install() {
     log_step "Starting Docker deployment..."
 
+    # Set up cleanup trap for partial failure
+    local docker_install_failed="false"
+    trap 'docker_install_failed="true"' ERR
+
     # Pre-deployment checks (non-blocking, warnings only)
     check_docker_resources || log_warn "Resource checks failed, proceeding anyway..."
     check_port_conflicts || log_warn "Port conflicts detected, proceeding anyway..."
+
+    # Validate package-lock.json if repo is already cloned
+    if [[ -d "/opt/water-controller/web/ui" ]]; then
+        validate_package_lock "/opt/water-controller/web/ui" || log_warn "Package lock validation failed"
+    fi
 
     # Find docker directory
     local docker_dir=""
@@ -796,6 +819,7 @@ do_docker_install() {
         log_info "  - Missing build dependencies (should be auto-installed)"
         log_info "  - Network connectivity (required for package downloads)"
         log_info "  - Insufficient disk space"
+        cleanup_docker_partial
         return 1
     }
 
@@ -812,6 +836,7 @@ do_docker_install() {
     local result=$?
     if [[ $result -ne 0 ]]; then
         log_error "Docker deployment failed"
+        cleanup_docker_partial
         return $result
     fi
 
@@ -1023,6 +1048,52 @@ validate_environment() {
     check_disk_space "/opt" "$MIN_DISK_SPACE_MB" || return 1
 
     log_info "Environment validation passed"
+    return 0
+}
+
+# =============================================================================
+# Pre-Flight Validation
+# =============================================================================
+
+# Show disk space usage
+show_disk_space() {
+    local label="${1:-Current}"
+    log_info "═══ $label Disk Space ═══"
+    df -h / /var /tmp 2>/dev/null | head -5 || df -h / 2>/dev/null
+    if command -v docker &>/dev/null && docker info &>/dev/null; then
+        log_info "Docker disk usage:"
+        docker system df 2>/dev/null || true
+    fi
+}
+
+# Validate package-lock.json is in sync with package.json
+validate_package_lock() {
+    local ui_dir="${1:-/opt/water-controller/web/ui}"
+
+    if [[ ! -d "$ui_dir" ]]; then
+        log_debug "UI directory not found, skipping package-lock validation"
+        return 0
+    fi
+
+    if [[ ! -f "$ui_dir/package.json" ]] || [[ ! -f "$ui_dir/package-lock.json" ]]; then
+        log_warn "Missing package.json or package-lock.json in $ui_dir"
+        return 1
+    fi
+
+    log_step "Validating package-lock.json sync..."
+
+    # Run npm ci --dry-run to check if lock file is in sync
+    if command -v npm &>/dev/null; then
+        if (cd "$ui_dir" && npm ci --dry-run 2>&1) | grep -qiE "npm error|npm ERR"; then
+            log_error "package-lock.json is out of sync with package.json"
+            log_info "Run 'cd $ui_dir && npm install' to regenerate lock file"
+            return 1
+        fi
+        log_info "✓ package-lock.json is in sync"
+    else
+        log_warn "npm not available, skipping package-lock validation"
+    fi
+
     return 0
 }
 
@@ -1585,6 +1656,211 @@ do_remove() {
     return 0
 }
 
+# Wipe action - complete removal including Docker resources
+do_wipe() {
+    log_step "Starting complete system wipe..."
+    show_disk_space "Before Wipe"
+
+    # Stop all containers first
+    log_info "Stopping all Water-Controller containers..."
+    if command -v docker &>/dev/null && docker info &>/dev/null; then
+        # Stop containers by name pattern
+        local containers
+        containers=$(docker ps -aq --filter "name=wtc-" 2>/dev/null || true)
+        if [[ -n "$containers" ]]; then
+            docker stop $containers 2>/dev/null || true
+            docker rm -f $containers 2>/dev/null || true
+        fi
+
+        # Stop docker compose stack if compose file exists
+        if [[ -f "/opt/water-controller/docker/docker-compose.yml" ]]; then
+            (cd /opt/water-controller/docker && docker compose down -v --remove-orphans 2>/dev/null) || true
+        fi
+    fi
+
+    # Stop and disable systemd services
+    log_info "Stopping systemd services..."
+    local services=(
+        "water-controller"
+        "water-controller-api"
+        "water-controller-ui"
+        "water-controller-frontend"
+        "water-controller-hmi"
+        "water-controller-docker"
+    )
+    for svc in "${services[@]}"; do
+        run_privileged systemctl stop "${svc}.service" 2>/dev/null || true
+        run_privileged systemctl disable "${svc}.service" 2>/dev/null || true
+        run_privileged rm -f "/etc/systemd/system/${svc}.service" 2>/dev/null || true
+    done
+    run_privileged systemctl daemon-reload 2>/dev/null || true
+
+    # Remove Docker resources for this project
+    log_info "Removing Docker resources..."
+    if command -v docker &>/dev/null && docker info &>/dev/null; then
+        # Remove project images
+        local images
+        images=$(docker images --filter "reference=*water*" -q 2>/dev/null || true)
+        images="$images $(docker images --filter "reference=*wtc*" -q 2>/dev/null || true)"
+        if [[ -n "$images" ]]; then
+            docker rmi -f $images 2>/dev/null || true
+        fi
+
+        # Remove project volumes
+        local volumes
+        volumes=$(docker volume ls -q --filter "name=wtc" 2>/dev/null || true)
+        volumes="$volumes $(docker volume ls -q --filter "name=water" 2>/dev/null || true)"
+        if [[ -n "$volumes" ]]; then
+            docker volume rm -f $volumes 2>/dev/null || true
+        fi
+
+        # Remove project networks
+        local networks
+        networks=$(docker network ls -q --filter "name=wtc" 2>/dev/null || true)
+        networks="$networks $(docker network ls -q --filter "name=water" 2>/dev/null || true)"
+        if [[ -n "$networks" ]]; then
+            docker network rm $networks 2>/dev/null || true
+        fi
+
+        # Prune build cache
+        log_info "Pruning Docker build cache..."
+        docker builder prune -af 2>/dev/null || true
+
+        # General Docker cleanup (dangling only, not all)
+        docker system prune -f 2>/dev/null || true
+    fi
+
+    # Remove installation directory
+    log_info "Removing /opt/water-controller..."
+    run_privileged rm -rf /opt/water-controller 2>/dev/null || true
+
+    # Remove config directory
+    log_info "Removing /etc/water-controller..."
+    run_privileged rm -rf /etc/water-controller 2>/dev/null || true
+
+    # Remove data directory
+    log_info "Removing /var/lib/water-controller..."
+    run_privileged rm -rf /var/lib/water-controller 2>/dev/null || true
+
+    # Remove log directory
+    log_info "Removing /var/log/water-controller..."
+    run_privileged rm -rf /var/log/water-controller 2>/dev/null || true
+
+    # Remove backup directory
+    log_info "Removing /var/backups/water-controller..."
+    run_privileged rm -rf /var/backups/water-controller 2>/dev/null || true
+
+    # Remove credentials files
+    run_privileged rm -f /root/.water-controller-credentials 2>/dev/null || true
+
+    # Clean up temp files
+    run_privileged rm -rf /tmp/water-controller-* 2>/dev/null || true
+    run_privileged rm -rf /var/tmp/water-controller-* 2>/dev/null || true
+
+    show_disk_space "After Wipe"
+    log_info "✓ System wipe completed"
+    return 0
+}
+
+# Fresh install - wipe everything and reinstall from scratch
+do_fresh() {
+    local branch="${1:-main}"
+
+    log_step "Starting fresh install (wipe + install)..."
+    show_disk_space "Before Fresh Install"
+
+    # Wipe everything first
+    do_wipe || {
+        log_error "Wipe failed, aborting fresh install"
+        return 1
+    }
+
+    # Now do a clean install
+    log_step "Cloning and installing from scratch..."
+
+    # Validate environment
+    validate_environment || return 1
+
+    # Validate Docker requirements (always docker mode for fresh)
+    validate_docker_requirements || return 1
+
+    # Do Docker install
+    DEPLOYMENT_MODE="docker"
+    do_docker_install
+
+    local result=$?
+    show_disk_space "After Fresh Install"
+
+    if [[ $result -eq 0 ]]; then
+        log_info "✓ Fresh install completed successfully!"
+    else
+        log_error "Fresh install failed"
+    fi
+
+    return $result
+}
+
+# Reinstall/Upgrade - wipe and reinstall while attempting to preserve configs
+do_reinstall() {
+    local branch="${1:-main}"
+
+    log_step "Starting reinstall (upgrade with clean slate)..."
+    show_disk_space "Before Reinstall"
+
+    # Backup config if exists
+    local config_backup=""
+    if [[ -d "/opt/water-controller/config" ]]; then
+        config_backup="/tmp/water-controller-config-backup-$$"
+        log_info "Backing up configuration..."
+        cp -r /opt/water-controller/config "$config_backup" 2>/dev/null || true
+    fi
+
+    # Backup credentials
+    local creds_backup=""
+    if [[ -f "/opt/water-controller/config/.docker-credentials" ]]; then
+        creds_backup="/tmp/water-controller-creds-backup-$$"
+        cp /opt/water-controller/config/.docker-credentials "$creds_backup" 2>/dev/null || true
+    fi
+
+    # Wipe everything
+    do_wipe || {
+        log_error "Wipe failed, aborting reinstall"
+        return 1
+    }
+
+    # Validate environment
+    validate_environment || return 1
+    validate_docker_requirements || return 1
+
+    # Do Docker install
+    DEPLOYMENT_MODE="docker"
+    do_docker_install
+    local result=$?
+
+    # Restore config if backup exists
+    if [[ -n "$config_backup" ]] && [[ -d "$config_backup" ]] && [[ $result -eq 0 ]]; then
+        log_info "Restoring configuration backup..."
+        cp -r "$config_backup"/* /opt/water-controller/config/ 2>/dev/null || true
+        rm -rf "$config_backup"
+    fi
+
+    # Restore credentials if backup exists
+    if [[ -n "$creds_backup" ]] && [[ -f "$creds_backup" ]] && [[ $result -eq 0 ]]; then
+        cp "$creds_backup" /opt/water-controller/config/.docker-credentials 2>/dev/null || true
+        rm -f "$creds_backup"
+    fi
+
+    show_disk_space "After Reinstall"
+
+    if [[ $result -eq 0 ]]; then
+        log_info "✓ Reinstall completed successfully!"
+    else
+        log_error "Reinstall failed"
+    fi
+
+    return $result
+}
+
 # Extract version from JSON file without jq
 # Handles escaped quotes and multiline properly
 extract_json_value() {
@@ -1685,12 +1961,15 @@ ACTIONS:
     install     Install Water-Controller (default for fresh systems)
     upgrade     Upgrade existing installation (default for installed systems)
     remove      Remove Water-Controller from this system
+    wipe        Complete removal: containers, images, volumes, configs, logs
+    fresh       Wipe everything and install from scratch (automated)
+    reinstall   Wipe and reinstall, preserving configs where possible
 
 DEPLOYMENT MODE:
     --mode baremetal    Install directly on host (systemd services)
     --mode docker       Install using Docker containers
 
-    If not specified, defaults to baremetal.
+    If not specified, defaults to baremetal. fresh/reinstall always use docker.
 
 OPTIONS:
     --branch <name>     Use specific git branch (default: main)
@@ -1706,24 +1985,28 @@ LOGGING:
     Bootstrap operations are logged to: $BOOTSTRAP_LOG
     Backups are stored in: $BACKUP_DIR
 
-EXAMPLES:
-    # Install with baremetal (default)
-    curl -fsSL $REPO_RAW_URL/main/bootstrap.sh | bash -s -- install
+QUICK START:
+    # Fresh install (wipe + install from scratch)
+    curl -fsSL $REPO_RAW_URL/main/bootstrap.sh | sudo bash -s -- fresh
 
+    # Uninstall (complete removal)
+    curl -fsSL $REPO_RAW_URL/main/bootstrap.sh | sudo bash -s -- wipe
+
+    # Reinstall/Upgrade (wipe + install, preserve configs)
+    curl -fsSL $REPO_RAW_URL/main/bootstrap.sh | sudo bash -s -- reinstall
+
+EXAMPLES:
     # Install with Docker
-    curl -fsSL .../bootstrap.sh | bash -s -- install --mode docker
+    curl -fsSL .../bootstrap.sh | sudo bash -s -- install --mode docker
 
     # Install from develop branch
-    curl -fsSL .../bootstrap.sh | bash -s -- install --branch develop
+    curl -fsSL .../bootstrap.sh | sudo bash -s -- install --branch develop
 
     # Upgrade with dry-run
-    curl -fsSL .../bootstrap.sh | bash -s -- upgrade --dry-run
-
-    # Force reinstall
-    curl -fsSL .../bootstrap.sh | bash -s -- install --force
+    curl -fsSL .../bootstrap.sh | sudo bash -s -- upgrade --dry-run
 
     # Remove but keep config
-    curl -fsSL .../bootstrap.sh | bash -s -- remove --keep-config
+    curl -fsSL .../bootstrap.sh | sudo bash -s -- remove --keep-config
 
 ENVIRONMENT:
     INSTALL_DIR         Installation directory (default: /opt/water-controller)
@@ -1762,7 +2045,7 @@ main() {
     # Parse arguments
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            install|upgrade|remove)
+            install|upgrade|remove|wipe|fresh|reinstall)
                 action="$1"
                 shift
                 ;;
@@ -1841,11 +2124,27 @@ main() {
         esac
     fi
 
-    # Validate environment (except for remove action which has its own checks)
-    if [[ "$action" != "remove" ]]; then
+    # Validate environment (except for remove/wipe actions which have their own checks)
+    if [[ "$action" != "remove" ]] && [[ "$action" != "wipe" ]]; then
         validate_environment || exit 1
     else
         check_root || exit 1
+    fi
+
+    # Handle wipe/fresh/reinstall actions immediately
+    if [[ "$action" == "wipe" ]]; then
+        do_wipe
+        exit $?
+    fi
+
+    if [[ "$action" == "fresh" ]]; then
+        do_fresh "$branch"
+        exit $?
+    fi
+
+    if [[ "$action" == "reinstall" ]]; then
+        do_reinstall "$branch"
+        exit $?
     fi
 
     # Handle deployment mode for install action

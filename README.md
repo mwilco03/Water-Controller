@@ -2,6 +2,19 @@
 
 A PROFINET IO Controller for Water Treatment RTU Networks, implementing industrial-grade process control, alarm management, and data historian functionality.
 
+## Quick Start
+
+```bash
+# Fresh install (wipe + install from scratch)
+curl -fsSL https://raw.githubusercontent.com/mwilco03/Water-Controller/main/bootstrap.sh | sudo bash -s -- fresh
+
+# Uninstall (complete removal)
+curl -fsSL https://raw.githubusercontent.com/mwilco03/Water-Controller/main/bootstrap.sh | sudo bash -s -- wipe
+
+# Reinstall/Upgrade (wipe + install, preserve configs)
+curl -fsSL https://raw.githubusercontent.com/mwilco03/Water-Controller/main/bootstrap.sh | sudo bash -s -- reinstall
+```
+
 ## Overview
 
 This project implements a complete SCADA/DCS system for water treatment facilities, featuring:
