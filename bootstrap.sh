@@ -688,9 +688,9 @@ EOF
 do_docker_install() {
     log_step "Starting Docker deployment..."
 
-    # Pre-deployment checks
-    check_docker_resources || return 1
-    check_port_conflicts || return 1
+    # Pre-deployment checks (non-blocking, warnings only)
+    check_docker_resources || log_warn "Resource checks failed, proceeding anyway..."
+    check_port_conflicts || log_warn "Port conflicts detected, proceeding anyway..."
 
     # Find docker directory
     local docker_dir=""
