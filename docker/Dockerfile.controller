@@ -94,9 +94,9 @@ RUN groupadd -r wtc && useradd -r -g wtc wtc
 RUN chown -R wtc:wtc /var/log/water-controller
 
 # Set default environment
-ENV WT_INTERFACE=eth0
-ENV WT_CYCLE_TIME=1000
-ENV WT_LOG_LEVEL=INFO
+ENV WTC_INTERFACE=eth0
+ENV WTC_CYCLE_TIME=1000
+ENV WTC_LOG_LEVEL=INFO
 
 # Expose OPC UA port for debugging
 EXPOSE 4840/tcp
