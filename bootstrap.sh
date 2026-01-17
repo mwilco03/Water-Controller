@@ -279,7 +279,7 @@ check_root() {
     return 0
 }
 
-# Check required tools are present
+# Check required tools are present, install if missing
 check_required_tools() {
     local missing=()
     local tool
@@ -290,13 +290,44 @@ check_required_tools() {
         fi
     done
 
-    if [[ ${#missing[@]} -gt 0 ]]; then
-        log_error "Missing required tools: ${missing[*]}"
-        log_info "Install with: sudo apt-get install ${missing[*]}"
+    if [[ ${#missing[@]} -eq 0 ]]; then
+        log_debug "All required tools present: ${REQUIRED_TOOLS[*]}"
+        return 0
+    fi
+
+    log_warn "Missing required tools: ${missing[*]}"
+    log_info "Attempting to install missing tools..."
+
+    # Detect package manager and install
+    if command -v apt-get &>/dev/null; then
+        run_privileged apt-get update -qq
+        run_privileged apt-get install -y "${missing[@]}"
+    elif command -v dnf &>/dev/null; then
+        run_privileged dnf install -y "${missing[@]}"
+    elif command -v yum &>/dev/null; then
+        run_privileged yum install -y "${missing[@]}"
+    elif command -v pacman &>/dev/null; then
+        run_privileged pacman -Sy --noconfirm "${missing[@]}"
+    else
+        log_error "No supported package manager found (apt-get, dnf, yum, pacman)"
+        log_info "Please install manually: ${missing[*]}"
         return 1
     fi
 
-    log_debug "All required tools present: ${REQUIRED_TOOLS[*]}"
+    # Verify installation succeeded
+    local still_missing=()
+    for tool in "${missing[@]}"; do
+        if ! command -v "$tool" &>/dev/null; then
+            still_missing+=("$tool")
+        fi
+    done
+
+    if [[ ${#still_missing[@]} -gt 0 ]]; then
+        log_error "Failed to install: ${still_missing[*]}"
+        return 1
+    fi
+
+    log_info "Successfully installed: ${missing[*]}"
     return 0
 }
 
@@ -462,17 +493,38 @@ validate_docker_requirements() {
         return 1
     fi
 
-    # Check if docker daemon is running
+    # Check if docker daemon is running - start it if not
     if ! docker info &>/dev/null; then
-        log_warn "Docker daemon is not running"
-        log_info "Starting Docker daemon..."
-        run_privileged systemctl start docker
+        log_info "Docker daemon is not running, starting it..."
+
+        # Try systemctl first
+        if command -v systemctl &>/dev/null; then
+            run_privileged systemctl start docker 2>/dev/null || true
+            # Also enable it so it starts on boot
+            run_privileged systemctl enable docker 2>/dev/null || true
+        fi
+
+        # Wait a moment for docker to start
+        local wait_count=0
+        while ! docker info &>/dev/null && [[ $wait_count -lt 10 ]]; do
+            sleep 1
+            wait_count=$((wait_count + 1))
+        done
 
         # Verify it started
         if ! docker info &>/dev/null; then
-            log_error "Failed to start Docker daemon"
-            log_info "Start Docker manually: sudo systemctl start docker"
+            log_error "Failed to start Docker daemon after ${wait_count}s"
+            log_info "Try manually: sudo systemctl start docker"
             return 1
+        fi
+        log_info "Docker daemon started successfully"
+    fi
+
+    # Ensure docker is enabled for boot
+    if command -v systemctl &>/dev/null; then
+        if ! systemctl is-enabled docker &>/dev/null; then
+            log_info "Enabling Docker to start on boot..."
+            run_privileged systemctl enable docker 2>/dev/null || true
         fi
     fi
 

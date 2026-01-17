@@ -242,9 +242,6 @@ export async function commandControl(
   });
 }
 
-// Legacy alias for backward compatibility
-export const commandActuator = commandControl;
-
 // Alarm API
 export async function getAlarms(): Promise<Alarm[]> {
   const data = await apiFetch<{ alarms: Alarm[] }>('/api/v1/alarms');
@@ -319,14 +316,6 @@ export async function isAlarmShelved(rtuStation: string, slot: number): Promise<
 }
 
 // Control API
-// Note: PID loops are per-RTU. Global listing not supported by design.
-// Use getRtuPIDLoops(stationName) to get PID loops for a specific RTU.
-export async function getPIDLoops(): Promise<PIDLoop[]> {
-  // Global PID listing not supported - return empty array
-  // Callers should use getRtuPIDLoops(stationName) instead
-  return [];
-}
-
 export async function getRtuPIDLoops(stationName: string): Promise<PIDLoop[]> {
   const data = await apiFetch<{ loops: PIDLoop[] }>(
     `/api/v1/rtus/${encodeURIComponent(stationName)}/pid`
@@ -464,19 +453,6 @@ export async function refreshRTUInventory(stationName: string): Promise<RTUInven
 export async function discoverRTUDevices(stationName: string): Promise<unknown> {
   return apiFetch(`/api/v1/rtus/${encodeURIComponent(stationName)}/discover`, {
     method: 'POST',
-  });
-}
-
-// Alias for control command (uses same endpoint as commandControl)
-export async function sendControlCommand(
-  stationName: string,
-  controlTag: string,
-  command: string,
-  value?: number
-): Promise<void> {
-  await apiFetch(`/api/v1/rtus/${encodeURIComponent(stationName)}/controls/${encodeURIComponent(controlTag)}/command`, {
-    method: 'POST',
-    body: JSON.stringify({ command, value }),
   });
 }
 
