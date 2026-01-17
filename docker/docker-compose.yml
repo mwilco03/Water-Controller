@@ -87,9 +87,9 @@ services:
       - NET_ADMIN
       - NET_RAW
     environment:
-      WT_INTERFACE: ${PROFINET_INTERFACE:-eth0}
-      WT_CYCLE_TIME: 1000
-      WT_LOG_LEVEL: INFO
+      WTC_INTERFACE: ${WTC_INTERFACE:-eth0}
+      WTC_CYCLE_TIME: ${WTC_CYCLE_TIME:-1000}
+      WTC_LOG_LEVEL: ${WTC_LOG_LEVEL:-INFO}
     volumes:
       - ./config:/etc/water-controller:ro
       - controller_logs:/var/log/water-controller
