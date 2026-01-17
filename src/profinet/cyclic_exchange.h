@@ -49,15 +49,6 @@ wtc_result_t parse_input_frame(profinet_ar_t *ar,
                                 uint8_t *data_status);
 
 /**
- * Check for frame timeout on an AR
- *
- * @param ar          Application Relationship
- * @param timeout_us  Timeout in microseconds
- * @return true if timeout occurred, false otherwise
- */
-bool check_frame_timeout(profinet_ar_t *ar, uint32_t timeout_us);
-
-/**
  * Get input slot data as float with quality
  *
  * RTU dictates slot configuration; controller adapts dynamically.
@@ -107,26 +98,6 @@ wtc_result_t set_slot_output(profinet_ar_t *ar,
                               int slot_index,
                               uint8_t command,
                               uint8_t pwm_duty);
-
-/**
- * Get cycle counter for AR
- *
- * @param ar Application Relationship
- * @return Current cycle counter value
- */
-uint16_t get_cycle_counter(profinet_ar_t *ar);
-
-/**
- * Validate cyclic data timing
- *
- * @param ar                 Application Relationship
- * @param expected_cycle_us  Expected cycle time in microseconds
- * @param tolerance_percent  Allowed deviation percentage (e.g., 10 = 10%)
- * @return true if timing is valid, false otherwise
- */
-bool validate_cyclic_timing(profinet_ar_t *ar,
-                             uint32_t expected_cycle_us,
-                             uint32_t tolerance_percent);
 
 #ifdef __cplusplus
 }

@@ -196,31 +196,12 @@ wtc_result_t parse_input_frame(profinet_ar_t *ar,
     return WTC_OK;
 }
 
-/* Check for frame timeout */
-bool check_frame_timeout(profinet_ar_t *ar, uint32_t timeout_us) {
-    if (!ar) return true;
-
-    uint64_t now_us = time_get_monotonic_us();
-
-    for (int i = 0; i < ar->iocr_count; i++) {
-        if (ar->iocr[i].type == IOCR_TYPE_INPUT) {
-            if (ar->iocr[i].last_frame_time_us > 0 &&
-                now_us - ar->iocr[i].last_frame_time_us > timeout_us) {
-                return true;
-            }
-        }
-    }
-
-    return false;
-}
-
 /* Sensor data size: 5 bytes (Float32 + Quality byte) - current format */
 #define SENSOR_SLOT_SIZE 5
 /* Legacy sensor format: 4 bytes (Float32 only, no quality) */
 #define SENSOR_SLOT_SIZE_LEGACY 4
 
-/* Track format mismatch for logging (avoid spam) */
-static bool legacy_format_logged = false;
+/* Track format mismatch for logging (avoid spam) - rate limited via LOG_WARN_ONCE pattern */
 
 /* Unpack sensor data from PROFINET format with backwards compatibility
  *
@@ -265,6 +246,7 @@ wtc_result_t unpack_sensor_from_profinet(const uint8_t *data,
          */
         reading->quality = QUALITY_UNCERTAIN;
 
+        static bool legacy_format_logged = false;
         if (!legacy_format_logged) {
             LOG_WARN("Legacy 4-byte sensor format detected (no quality byte). "
                      "Treating as UNCERTAIN. Consider upgrading RTU firmware. "
@@ -276,28 +258,6 @@ wtc_result_t unpack_sensor_from_profinet(const uint8_t *data,
     reading->timestamp_us = time_get_monotonic_us();
 
     return WTC_OK;
-}
-
-/* Unpack sensor with explicit format detection
- * Returns detected format size for diagnostics
- */
-wtc_result_t unpack_sensor_with_format_detect(const uint8_t *data,
-                                               size_t len,
-                                               sensor_reading_t *reading,
-                                               int *detected_format_size) {
-    wtc_result_t result = unpack_sensor_from_profinet(data, len, reading);
-
-    if (detected_format_size) {
-        if (len >= SENSOR_SLOT_SIZE) {
-            *detected_format_size = SENSOR_SLOT_SIZE;
-        } else if (len >= SENSOR_SLOT_SIZE_LEGACY) {
-            *detected_format_size = SENSOR_SLOT_SIZE_LEGACY;
-        } else {
-            *detected_format_size = 0;
-        }
-    }
-
-    return result;
 }
 
 /* Get input slot data (float) with quality - dynamic slot support
@@ -441,41 +401,3 @@ void free_iocr_buffers(profinet_ar_t *ar) {
     ar->iocr_count = 0;
 }
 
-/* Get cycle counter for AR */
-uint16_t get_cycle_counter(profinet_ar_t *ar) {
-    if (!ar) return 0;
-
-    /* Find any IOCR and get its data */
-    for (int i = 0; i < ar->iocr_count; i++) {
-        if (ar->iocr[i].type == IOCR_TYPE_INPUT) {
-            /* Extract cycle counter from last received frame */
-            /* This is simplified - real implementation would track this */
-            return 0;
-        }
-    }
-    return 0;
-}
-
-/* Validate cyclic data timing */
-bool validate_cyclic_timing(profinet_ar_t *ar,
-                             uint32_t expected_cycle_us,
-                             uint32_t tolerance_percent) {
-    if (!ar || expected_cycle_us == 0) return false;
-
-    uint64_t now_us = time_get_monotonic_us();
-    uint64_t tolerance_us = (expected_cycle_us * tolerance_percent) / 100;
-
-    for (int i = 0; i < ar->iocr_count; i++) {
-        if (ar->iocr[i].type == IOCR_TYPE_INPUT &&
-            ar->iocr[i].last_frame_time_us > 0) {
-            uint64_t elapsed = now_us - ar->iocr[i].last_frame_time_us;
-
-            /* Allow some initial frames to establish timing */
-            if (elapsed > expected_cycle_us + tolerance_us) {
-                return false;
-            }
-        }
-    }
-
-    return true;
-}

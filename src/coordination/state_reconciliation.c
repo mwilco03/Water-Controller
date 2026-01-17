@@ -5,6 +5,7 @@
  */
 
 #include "state_reconciliation.h"
+#include "utils/crc.h"
 #include "utils/logger.h"
 #include "utils/time_utils.h"
 
@@ -16,32 +17,9 @@
 /* Maximum tracked RTUs */
 #define MAX_STATE_ENTRIES 256
 
-/* CRC32 lookup table */
-static uint32_t crc32_table[256];
-static bool crc32_initialized = false;
-
-/* Initialize CRC32 table */
-static void init_crc32_table(void) {
-    if (crc32_initialized) return;
-
-    for (uint32_t i = 0; i < 256; i++) {
-        uint32_t crc = i;
-        for (int j = 0; j < 8; j++) {
-            crc = (crc >> 1) ^ ((crc & 1) ? 0xEDB88320 : 0);
-        }
-        crc32_table[i] = crc;
-    }
-    crc32_initialized = true;
-}
-
-/* Compute CRC32 */
+/* Use centralized CRC32 implementation from utils/crc.h */
 static uint32_t compute_crc32(const uint8_t *data, size_t len) {
-    init_crc32_table();
-    uint32_t crc = 0xFFFFFFFF;
-    for (size_t i = 0; i < len; i++) {
-        crc = crc32_table[(crc ^ data[i]) & 0xFF] ^ (crc >> 8);
-    }
-    return crc ^ 0xFFFFFFFF;
+    return crc32(data, len);
 }
 
 /* State entry for a single RTU */
@@ -129,7 +107,6 @@ wtc_result_t state_reconciler_init(state_reconciler_t **reconciler,
     }
 
     pthread_mutex_init(&rec->lock, NULL);
-    init_crc32_table();
 
     *reconciler = rec;
     LOG_INFO("State reconciler initialized (snapshot_interval=%ums, persist=%s)",
