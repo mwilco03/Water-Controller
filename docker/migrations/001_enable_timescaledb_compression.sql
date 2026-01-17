@@ -123,18 +123,28 @@ JOIN historian_tags t ON h.tag_id = t.id
 WHERE h.time > NOW() - INTERVAL '7 days';
 
 -- View to get compressed statistics
+-- Uses hypertable_compression_stats() function (compressed_hypertable_stats view was removed in TimescaleDB 2.10+)
 CREATE OR REPLACE VIEW historian_compression_stats AS
 SELECT
     hypertable_name,
-    compression_status,
-    uncompressed_heap_size,
-    compressed_heap_size,
-    ROUND(
-        (1 - compressed_heap_size::numeric / NULLIF(uncompressed_heap_size, 0)) * 100,
-        2
-    ) AS compression_ratio_pct
-FROM timescaledb_information.compressed_hypertable_stats
-WHERE hypertable_name IN ('historian_data', 'historian_hourly', 'historian_daily');
+    total_chunks,
+    number_compressed_chunks AS compressed_chunks,
+    before_compression_total_bytes AS uncompressed_heap_size,
+    after_compression_total_bytes AS compressed_heap_size,
+    CASE WHEN before_compression_total_bytes > 0 THEN
+        ROUND(
+            (1 - after_compression_total_bytes::numeric / before_compression_total_bytes) * 100,
+            2
+        )
+    ELSE 0
+    END AS compression_ratio_pct
+FROM (
+    SELECT 'historian_data'::text AS hypertable_name, * FROM hypertable_compression_stats('historian_data')
+    UNION ALL
+    SELECT 'historian_hourly'::text AS hypertable_name, * FROM hypertable_compression_stats('historian_hourly')
+    UNION ALL
+    SELECT 'historian_daily'::text AS hypertable_name, * FROM hypertable_compression_stats('historian_daily')
+) stats;
 
 COMMENT ON VIEW historian_compression_stats IS
 'Shows compression statistics for historian tables. Typical compression ratios: 80-95%';

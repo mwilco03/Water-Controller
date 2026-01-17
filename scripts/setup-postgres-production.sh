@@ -317,9 +317,9 @@ BEGIN
         pg_size_pretty(hypertable_size(h.hypertable_name))::TEXT,
         (SELECT count(*) FROM timescaledb_information.chunks c WHERE c.hypertable_name = h.hypertable_name),
         COALESCE(
-            (SELECT 1.0 - (compressed_bytes::FLOAT / uncompressed_bytes::FLOAT)
+            (SELECT 1.0 - (after_compression_total_bytes::FLOAT / before_compression_total_bytes::FLOAT)
              FROM hypertable_compression_stats(h.hypertable_name)
-             WHERE uncompressed_bytes > 0
+             WHERE before_compression_total_bytes > 0
              LIMIT 1),
             0.0
         )
