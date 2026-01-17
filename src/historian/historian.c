@@ -14,40 +14,9 @@
 #include <stdio.h>
 #include <pthread.h>
 #include <math.h>
-#include <sys/stat.h>
-#include <errno.h>
 
 /* Default buffer size */
 #define DEFAULT_BUFFER_SIZE 1000
-
-/* Create directory and all parent directories (like mkdir -p) */
-static int mkdir_recursive(const char *path, mode_t mode) {
-    char tmp[512];
-    char *p = NULL;
-    size_t len;
-
-    snprintf(tmp, sizeof(tmp), "%s", path);
-    len = strlen(tmp);
-    if (len > 0 && tmp[len - 1] == '/') {
-        tmp[len - 1] = '\0';
-    }
-
-    for (p = tmp + 1; *p; p++) {
-        if (*p == '/') {
-            *p = '\0';
-            if (mkdir(tmp, mode) != 0 && errno != EEXIST) {
-                return -1;
-            }
-            *p = '/';
-        }
-    }
-
-    if (mkdir(tmp, mode) != 0 && errno != EEXIST) {
-        return -1;
-    }
-
-    return 0;
-}
 
 /* Tag buffer structure */
 typedef struct {
@@ -559,11 +528,10 @@ wtc_result_t historian_flush(historian_t *historian) {
 
         FILE *fp = fopen(filename, "ab"); /* Append binary */
         if (!fp) {
-            /* Try to create directory first (0755 = rwxr-xr-x) */
-            if (mkdir_recursive(data_dir, 0755) != 0) {
-                LOG_ERROR("Failed to create historian directory: %s", data_dir);
-                continue;
-            }
+            /* Try to create directory first */
+            char mkdir_cmd[300];
+            snprintf(mkdir_cmd, sizeof(mkdir_cmd), "mkdir -p %s", data_dir);
+            system(mkdir_cmd);
 
             fp = fopen(filename, "ab");
             if (!fp) {
