@@ -269,6 +269,7 @@ async def get_compression_stats(
     Shows compression ratios and storage savings from native compression.
     Typical compression ratios: 80-95% for industrial time-series data.
     """
+    # Use hypertable_compression_stats() function (compressed_hypertable_stats view was removed in TimescaleDB 2.10+)
     query = text("""
         SELECT
             hypertable_name,
@@ -279,17 +280,8 @@ async def get_compression_stats(
             END AS compression_pct,
             pg_size_pretty(uncompressed_heap_size) AS uncompressed_size,
             pg_size_pretty(compressed_heap_size) AS compressed_size,
-            CASE
-                WHEN uncompressed_heap_size > 0 THEN
-                    ROUND(
-                        (1 - compressed_heap_size::numeric / NULLIF(uncompressed_heap_size, 0)) * 100,
-                        2
-                    )
-                ELSE 0
-            END AS compression_ratio_pct
-        FROM timescaledb_information.compressed_hypertable_stats
-        WHERE hypertable_schema = 'public'
-            AND hypertable_name IN ('historian_data', 'historian_hourly', 'historian_daily')
+            compression_ratio_pct
+        FROM historian_compression_stats
     """)
 
     result = db.execute(query)
