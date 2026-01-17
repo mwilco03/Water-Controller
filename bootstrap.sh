@@ -434,13 +434,19 @@ validate_docker_requirements() {
     if ! command -v docker &>/dev/null; then
         log_warn "Docker is not installed"
 
-        # Offer to install Docker
-        local response
-        response=$(prompt_user "Would you like to install Docker now? [Y/n] ")
-        if [[ "$response" =~ ^[Nn]$ ]]; then
-            log_error "Docker is required for docker deployment mode"
-            log_info "Install Docker manually: https://docs.docker.com/engine/install/"
-            return 1
+        # Check if running in interactive mode
+        if [[ -t 0 ]] || [[ -e /dev/tty ]]; then
+            # Interactive: prompt user
+            local response
+            response=$(prompt_user "Would you like to install Docker now? [Y/n] ")
+            if [[ "$response" =~ ^[Nn]$ ]]; then
+                log_error "Docker is required for docker deployment mode"
+                log_info "Install Docker manually: https://docs.docker.com/engine/install/"
+                return 1
+            fi
+        else
+            # Non-interactive (piped execution): install automatically
+            log_info "Non-interactive mode detected, installing Docker automatically..."
         fi
 
         # Install Docker
