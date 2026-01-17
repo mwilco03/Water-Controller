@@ -306,6 +306,55 @@ docker compose --profile profinet --profile openplc up -d
 
 For detailed Docker instructions, see [Docker Deployment Guide](docs/guides/DOCKER_DEPLOYMENT.md).
 
+## Database Credentials
+
+**IMPORTANT**: This system uses hardcoded database credentials for maximum deployment simplicity and consistency.
+
+### PostgreSQL Credentials (Publicly Documented)
+
+```
+Database: water_treatment
+Username: wtc
+Password: wtc_password
+```
+
+These credentials are **hardcoded** in:
+- `docker/docker-compose.yml`
+- `docker/docker-compose.prod.yml`
+- `docker/grafana/provisioning/datasources/datasources.yml`
+
+### Security Model
+
+This configuration is **intentionally designed** for industrial control systems that operate on:
+
+1. **Isolated Networks**: Air-gapped or firewalled industrial networks with no internet access
+2. **Physical Security**: Facilities with restricted physical access and security controls
+3. **Network Segmentation**: Database runs on internal Docker network (`wtc-internal`) with no external exposure
+
+The PostgreSQL database container:
+- **NOT exposed** to external networks (internal Docker network only)
+- **NOT accessible** from outside the Docker network
+- Accessible only to other containers within the `wtc-internal` network
+- Runs on port 5432 internally (not mapped to host)
+
+### Deployment Benefits
+
+- ✅ **Zero configuration** - works out of the box
+- ✅ **Consistent passwords** - no environment variable mismatches
+- ✅ **Simple backups** - predictable credentials for restore operations
+- ✅ **Easy troubleshooting** - no "forgot password" scenarios
+- ✅ **Documented publicly** - clear expectations, no hidden secrets
+
+### When to Use Different Credentials
+
+If you need different credentials (e.g., compliance requirements, defense-in-depth):
+
+1. Edit the three files listed above and change `wtc_password` to your password
+2. Remove existing database volume: `docker volume rm wtc-db-data`
+3. Restart: `docker compose up -d`
+
+For most water treatment facilities, the default hardcoded password is appropriate given the network isolation and physical security controls already in place.
+
 ## Configuration
 
 ### Environment Variables

@@ -13,7 +13,7 @@ datasources:
     database: water_treatment
     user: wtc
     secureJsonData:
-      password: ${DB_PASSWORD:-wtc_password}
+      password: wtc_password
     jsonData:
       sslmode: disable
       maxOpenConns: 10
