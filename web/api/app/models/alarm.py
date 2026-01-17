@@ -78,7 +78,8 @@ class AlarmEvent(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     alarm_rule_id = Column(Integer, ForeignKey("alarm_rules.id", ondelete="CASCADE"), nullable=True)
-    rtu_station = Column(String(32), nullable=False, index=True)
+    # Note: index defined in __table_args__ as ix_alarm_events_rtu_station
+    rtu_station = Column(String(32), nullable=False)
     slot = Column(Integer, nullable=False)
 
     state = Column(String(16), nullable=False, default=AlarmState.ACTIVE)
@@ -152,7 +153,8 @@ class ScheduledMaintenance(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
 
     # Target: can be specific slot or entire RTU (slot=-1)
-    rtu_station = Column(String(32), nullable=False, index=True)
+    # Note: index defined in __table_args__ as ix_scheduled_maintenance_rtu
+    rtu_station = Column(String(32), nullable=False)
     slot = Column(Integer, nullable=False)  # -1 means all slots for this RTU
 
     # Scheduling
