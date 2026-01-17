@@ -278,11 +278,17 @@ services:
 
 volumes:
   db_data:
+    name: wtc-db-data
   controller_logs:
+    name: wtc-controller-logs
   grafana_data:
+    name: wtc-grafana-data
   loki_data:
+    name: wtc-loki-data
   promtail_positions:
+    name: wtc-promtail-positions
   openplc_data:
+    name: wtc-openplc-data
 
 networks:
   default:
