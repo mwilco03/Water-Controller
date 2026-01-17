@@ -317,6 +317,24 @@ docker compose --profile openplc up -d
 docker compose --profile profinet --profile openplc up -d
 ```
 
+#### Startup Modes
+
+The API service supports different startup validation modes:
+
+| Mode | Description | Default |
+|------|-------------|---------|
+| `development` | Lenient validation - downgrades path/UI failures to warnings | docker-compose.yml |
+| `production` | Strict validation - fails on critical issues | docker-compose.prod.yml |
+| `simulation` | Skips hardware/IPC checks for testing | Set explicitly |
+
+```bash
+# Override startup mode via environment variable
+WTC_STARTUP_MODE=production docker compose up -d
+
+# For development without the C controller or UI assets
+WTC_STARTUP_MODE=development WTC_SIMULATION_MODE=true docker compose up -d
+```
+
 For detailed Docker instructions, see [Docker Deployment Guide](docs/guides/DOCKER_DEPLOYMENT.md).
 
 ## Database Credentials

@@ -63,6 +63,13 @@ services:
       API_HOST: 0.0.0.0
       WTC_API_PORT: ${WTC_API_PORT:-8000}
       WTC_UI_PORT: ${WTC_UI_PORT:-8080}
+      # Development mode: lenient startup validation (downgrades path/UI failures to warnings)
+      # Set to "production" for strict validation in production environments
+      WTC_STARTUP_MODE: ${WTC_STARTUP_MODE:-development}
+      # Skip IPC check when running without the C controller
+      WTC_SIMULATION_MODE: ${WTC_SIMULATION_MODE:-true}
+      # Skip UI asset validation (UI is served by separate container)
+      WTC_API_ONLY: ${WTC_API_ONLY:-true}
     ports:
       - "${WTC_API_PORT:-8000}:${WTC_API_PORT:-8000}"
     depends_on:
