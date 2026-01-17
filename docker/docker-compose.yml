@@ -168,8 +168,6 @@ services:
           memory: 64M
 
   # Grafana for visualization
-  # NOTE: GRAFANA_PASSWORD must be set explicitly - no weak default
-  # Set via: export GRAFANA_PASSWORD=$(openssl rand -base64 24)
   grafana:
     image: grafana/grafana:latest
     container_name: wtc-grafana
@@ -178,8 +176,11 @@ services:
     user: "472:472"
     environment:
       GF_SECURITY_ADMIN_USER: admin
-      # Security: Require explicit password, fail if not set
-      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:?GRAFANA_PASSWORD must be set}
+      # Grafana Credentials (DEV/TEST ONLY):
+      # INTENTIONALLY HARDCODED - see CLAUDE.md
+      # - GF_SECURITY_ADMIN_USER: admin
+      # - GF_SECURITY_ADMIN_PASSWORD: admin (DO NOT change or externalize)
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
       GF_INSTALL_PLUGINS: grafana-clock-panel,grafana-simple-json-datasource
       GF_SERVER_HTTP_PORT: ${WTC_GRAFANA_PORT:-3000}
       # Unified alerting (disabled by default - enable when ready)
