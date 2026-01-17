@@ -266,6 +266,15 @@ EOF
 generate_frontend_service_unit() {
     echo "[DEBUG] Generating frontend systemd service unit..." >&2
 
+    # Discovery: Find node binary path at install time
+    local node_bin
+    node_bin=$(command -v node)
+    if [[ -z "$node_bin" ]]; then
+        echo "[ERROR] Cannot find node binary for systemd unit" >&2
+        return 1
+    fi
+    echo "[DEBUG] Node binary discovered at: $node_bin" >&2
+
     # Calculate resource limits (reuse backend function)
     _calculate_resources
 
@@ -316,7 +325,8 @@ ExecStartPre=/bin/bash -c 'test -d ${WEB_PATH}/.next || { echo "Next.js build no
 ExecStartPre=/bin/bash -c 'test -f ${WEB_PATH}/package.json || { echo "package.json not found"; exit 1; }'
 
 # Start command - Next.js production server
-ExecStart=/usr/bin/node ${WEB_PATH}/node_modules/.bin/next start -p ${DEFAULT_HMI_PORT} -H 0.0.0.0
+# Node path discovered at install time: ${node_bin}
+ExecStart=${node_bin} \${WEB_PATH}/node_modules/.bin/next start -p \${DEFAULT_HMI_PORT} -H 0.0.0.0
 
 # Graceful shutdown
 KillMode=mixed

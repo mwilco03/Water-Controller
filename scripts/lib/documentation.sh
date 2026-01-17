@@ -1048,7 +1048,12 @@ EOF
     # Restart service if it was running
     if [ $service_was_running -eq 1 ]; then
         log_info "Restarting service..."
-        sudo systemctl start water-controller.service 2>/dev/null || true
+        local start_error
+        if ! start_error=$(sudo systemctl start water-controller.service 2>&1); then
+            log_warn "Service restart after backup failed: ${start_error:-Unknown error}"
+            log_info "  Debug: sudo journalctl -xeu water-controller.service"
+            # Continue anyway - backup was created
+        fi
     fi
 
     # Add to backup manifest
@@ -1294,17 +1299,43 @@ perform_rollback() {
     # Restart service if it was running
     if [ $service_was_running -eq 1 ]; then
         log_info "Starting service..."
-        if sudo systemctl start water-controller.service 2>/dev/null; then
+
+        # Discovery: Capture actual start error
+        local start_error
+        if ! start_error=$(sudo systemctl start water-controller.service 2>&1); then
+            log_error "Failed to start service after rollback"
+
+            # Parse actual error for diagnosis
+            if [[ "$start_error" == *"not found"* ]] || [[ "$start_error" == *"No such file"* ]]; then
+                log_error "  Cause: Service unit file not found"
+                log_info "  Check: ls /etc/systemd/system/water-controller.service"
+            elif [[ "$start_error" == *"dependency"* ]]; then
+                log_error "  Cause: Service dependency failed"
+                log_info "  Check: systemctl list-dependencies water-controller.service"
+            else
+                log_error "  Cause: ${start_error:-Unknown error}"
+            fi
+            log_info "  Debug: sudo journalctl -xeu water-controller.service"
+            ((errors++))
+        else
             sleep 3
-            if systemctl is-active --quiet water-controller.service 2>/dev/null; then
+            # Verify service is actually running
+            local service_status
+            service_status=$(systemctl is-active water-controller.service 2>&1)
+
+            if [[ "$service_status" == "active" ]]; then
                 log_info "Service started successfully"
             else
                 log_error "Service failed to start after rollback"
+                log_error "  Status: $service_status"
+
+                # Get detailed failure reason
+                local status_output
+                status_output=$(systemctl status water-controller.service 2>&1 | head -20)
+                log_error "  Details: $status_output"
+                log_info "  Debug: sudo journalctl -xeu water-controller.service"
                 ((errors++))
             fi
-        else
-            log_error "Failed to start service after rollback"
-            ((errors++))
         fi
     fi
 

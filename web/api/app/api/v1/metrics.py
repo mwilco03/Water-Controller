@@ -398,8 +398,9 @@ async def get_metrics_json() -> dict[str, Any]:
     try:
         cache = get_cache()
         result["cache"] = cache.get_stats()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"Could not collect cache metrics: {e}")
+        result["cache"] = {"error": str(e)}
 
     # Add RTU stats
     try:
@@ -415,9 +416,13 @@ async def get_metrics_json() -> dict[str, Any]:
                 "active_alarms": status.get("active_alarms", 0),
             }
         else:
-            result["profinet"] = {"connected": False}
-    except Exception:
-        result["profinet"] = {"connected": False}
+            result["profinet"] = {"connected": False, "reason": "not connected"}
+    except ImportError as e:
+        logger.debug(f"PROFINET client not available: {e}")
+        result["profinet"] = {"connected": False, "reason": "module not available"}
+    except Exception as e:
+        logger.warning(f"PROFINET status check failed: {e}")
+        result["profinet"] = {"connected": False, "reason": f"error: {e}"}
 
     # Add WebSocket stats
     try:
@@ -425,7 +430,9 @@ async def get_metrics_json() -> dict[str, Any]:
         result["websocket"] = {
             "connections": manager.connection_count,
         }
-    except Exception:
-        pass
+    except ImportError as e:
+        logger.debug(f"WebSocket manager not available: {e}")
+    except Exception as e:
+        logger.debug(f"Could not collect WebSocket metrics: {e}")
 
     return result

@@ -191,6 +191,68 @@ _check_lib_installed() {
 }
 
 # =============================================================================
+# Discovery-First Package Installation
+# =============================================================================
+
+# Install a package with discovery-first error handling
+# Usage: install_package_discovered <package_name> <package_manager>
+# Returns: 0 on success, 1 on failure with detailed error in _PKG_INSTALL_ERROR
+_PKG_INSTALL_ERROR=""
+
+install_package_discovered() {
+    local pkg="$1"
+    local pm="$2"
+    local install_output
+    local exit_code
+
+    _PKG_INSTALL_ERROR=""
+
+    case "$pm" in
+        apt)
+            install_output=$(sudo apt-get install -y "$pkg" 2>&1)
+            exit_code=$?
+            ;;
+        dnf)
+            install_output=$(sudo dnf install -y "$pkg" 2>&1)
+            exit_code=$?
+            ;;
+        yum)
+            install_output=$(sudo yum install -y "$pkg" 2>&1)
+            exit_code=$?
+            ;;
+        *)
+            _PKG_INSTALL_ERROR="Unknown package manager: $pm"
+            return 1
+            ;;
+    esac
+
+    if [[ $exit_code -ne 0 ]]; then
+        # Parse the actual error to provide useful diagnosis
+        if [[ "$install_output" == *"Unable to locate package"* ]]; then
+            _PKG_INSTALL_ERROR="Package '$pkg' not found in repositories"
+        elif [[ "$install_output" == *"No package"*"available"* ]]; then
+            _PKG_INSTALL_ERROR="Package '$pkg' not available in enabled repos"
+        elif [[ "$install_output" == *"Could not get lock"* ]] || [[ "$install_output" == *"lock"* ]]; then
+            _PKG_INSTALL_ERROR="Package manager locked (another process running apt/dpkg?)"
+        elif [[ "$install_output" == *"Unable to fetch"* ]] || [[ "$install_output" == *"Failed to fetch"* ]]; then
+            _PKG_INSTALL_ERROR="Network error fetching package (check connectivity)"
+        elif [[ "$install_output" == *"unmet dependencies"* ]] || [[ "$install_output" == *"dependency"* ]]; then
+            _PKG_INSTALL_ERROR="Dependency conflict for '$pkg'"
+        elif [[ "$install_output" == *"No space left"* ]]; then
+            _PKG_INSTALL_ERROR="Insufficient disk space"
+        elif [[ "$install_output" == *"Permission denied"* ]] || [[ "$install_output" == *"permission denied"* ]]; then
+            _PKG_INSTALL_ERROR="Permission denied (sudo not working?)"
+        else
+            # Truncate long output for logging
+            _PKG_INSTALL_ERROR="${install_output:0:200}"
+        fi
+        return 1
+    fi
+
+    return 0
+}
+
+# =============================================================================
 # P-Net Installation
 # =============================================================================
 
@@ -200,9 +262,13 @@ install_pnet_build_deps() {
     log_info "Installing p-net build dependencies..."
 
     local packages=()
+    local pm=""
+    local failed_packages=()
+    local critical_failed=false
 
     # Detect package manager
     if command -v apt-get >/dev/null 2>&1; then
+        pm="apt"
         packages=(
             "build-essential"
             "cmake"
@@ -213,21 +279,22 @@ install_pnet_build_deps() {
             "graphviz"
         )
 
-        # Update package list
+        # Update package list with error capture
         log_info "Updating package list..."
-        sudo apt-get update -qq || {
-            log_warn "apt-get update failed, continuing anyway"
-        }
-
-        # Install packages
-        for pkg in "${packages[@]}"; do
-            log_info "Installing $pkg..."
-            if ! sudo apt-get install -y -qq "$pkg" 2>/dev/null; then
-                log_warn "Failed to install $pkg"
+        local update_output
+        if ! update_output=$(sudo apt-get update 2>&1); then
+            if [[ "$update_output" == *"Could not get lock"* ]]; then
+                log_error "Package manager is locked"
+                log_info "  Check: sudo lsof /var/lib/apt/lists/lock"
+                log_info "  Wait for other apt processes to finish, or:"
+                log_info "  Fix:   sudo rm /var/lib/apt/lists/lock (if stuck)"
+                return 1
             fi
-        done
+            log_warn "apt-get update had issues: ${update_output:0:100}"
+        fi
 
     elif command -v dnf >/dev/null 2>&1; then
+        pm="dnf"
         packages=(
             "gcc"
             "gcc-c++"
@@ -240,12 +307,8 @@ install_pnet_build_deps() {
             "graphviz"
         )
 
-        for pkg in "${packages[@]}"; do
-            log_info "Installing $pkg..."
-            sudo dnf install -y -q "$pkg" 2>/dev/null || log_warn "Failed to install $pkg"
-        done
-
     elif command -v yum >/dev/null 2>&1; then
+        pm="yum"
         packages=(
             "gcc"
             "gcc-c++"
@@ -256,14 +319,35 @@ install_pnet_build_deps() {
             "python3"
         )
 
-        for pkg in "${packages[@]}"; do
-            log_info "Installing $pkg..."
-            sudo yum install -y -q "$pkg" 2>/dev/null || log_warn "Failed to install $pkg"
-        done
-
     else
-        log_error "Unsupported package manager"
+        log_error "No supported package manager found (apt-get, dnf, yum)"
         return 1
+    fi
+
+    # Install packages with discovery-first error handling
+    for pkg in "${packages[@]}"; do
+        log_info "Installing $pkg..."
+        if ! install_package_discovered "$pkg" "$pm"; then
+            log_warn "Failed to install $pkg"
+            log_warn "  Cause: $_PKG_INSTALL_ERROR"
+            failed_packages+=("$pkg")
+
+            # Check if this is a critical package
+            case "$pkg" in
+                build-essential|gcc|cmake*|git|libpcap*)
+                    critical_failed=true
+                    ;;
+            esac
+        fi
+    done
+
+    # Report summary
+    if [[ ${#failed_packages[@]} -gt 0 ]]; then
+        log_warn "Failed to install ${#failed_packages[@]} package(s): ${failed_packages[*]}"
+        if [[ "$critical_failed" == "true" ]]; then
+            log_error "Critical build dependencies missing - build will likely fail"
+            return 1
+        fi
     fi
 
     log_info "Build dependencies installed"
@@ -370,6 +454,7 @@ build_pnet() {
     # Detect architecture-specific options
     local arch
     arch=$(uname -m)
+    log_debug "Detected architecture: $arch"
     case "$arch" in
         armv7l|armv6l)
             log_info "Configuring for ARM 32-bit..."
@@ -380,6 +465,10 @@ build_pnet() {
             ;;
         x86_64)
             log_info "Configuring for x86_64..."
+            ;;
+        *)
+            log_warn "Unknown architecture '$arch' - using default compiler options"
+            log_info "  Detected via: uname -m"
             ;;
     esac
 
@@ -832,24 +921,68 @@ EOF
     return 0
 }
 
-# Load required kernel modules for PROFINET
+# Load required kernel modules for PROFINET with discovery-first error handling
 # Returns: 0 on success, 1 on failure
 load_pnet_modules() {
     log_info "Loading PROFINET kernel modules..."
 
     local errors=0
+    local kernel_version
+    kernel_version=$(uname -r)
 
     for mod in "${PNET_KERNEL_MODULES[@]}"; do
-        if ! lsmod | grep -q "^${mod}"; then
-            log_info "Loading module: $mod"
-            if ! modprobe "$mod" 2>/dev/null; then
-                log_error "Failed to load module: $mod"
-                ((errors++))
-            fi
-        else
+        if lsmod | grep -q "^${mod}"; then
             log_info "Module already loaded: $mod"
+            continue
+        fi
+
+        log_info "Loading module: $mod"
+
+        # Discovery: Does the module exist?
+        local mod_path
+        mod_path=$(find "/lib/modules/${kernel_version}" -name "${mod}.ko*" 2>/dev/null | head -1)
+
+        if [[ -z "$mod_path" ]]; then
+            log_error "Module '$mod' not found for kernel $kernel_version"
+            log_info "  Searched: /lib/modules/${kernel_version}/"
+            log_info "  Fix: Install kernel headers/modules package, or module is not available"
+            ((errors++))
+            continue
+        fi
+
+        # Try to load with error capture
+        local modprobe_output
+        if ! modprobe_output=$(modprobe "$mod" 2>&1); then
+            log_error "Failed to load module: $mod"
+
+            # Parse the actual error
+            if [[ "$modprobe_output" == *"Permission denied"* ]] || [[ "$modprobe_output" == *"Operation not permitted"* ]]; then
+                log_error "  Cause: Permission denied (need root/sudo)"
+            elif [[ "$modprobe_output" == *"not found"* ]]; then
+                log_error "  Cause: Module not found in kernel modules path"
+            elif [[ "$modprobe_output" == *"Invalid module format"* ]]; then
+                log_error "  Cause: Module compiled for different kernel version"
+                log_info "  Running: $(uname -r), module may need recompilation"
+            elif [[ "$modprobe_output" == *"Required key not available"* ]]; then
+                log_error "  Cause: Secure Boot blocking unsigned module"
+                log_info "  Fix: Disable Secure Boot or sign the module"
+            elif [[ "$modprobe_output" == *"Unknown symbol"* ]]; then
+                log_error "  Cause: Module dependency missing"
+                log_info "  Check: modinfo $mod | grep depends"
+            else
+                log_error "  Cause: ${modprobe_output:-Unknown error}"
+            fi
+
+            log_info "  Module found at: $mod_path"
+            ((errors++))
+        else
+            log_info "Module loaded: $mod"
         fi
     done
+
+    if [[ $errors -gt 0 ]]; then
+        log_warn "$errors module(s) failed to load"
+    fi
 
     return $errors
 }

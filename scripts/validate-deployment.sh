@@ -107,42 +107,93 @@ validate_containers() {
 validate_database() {
     log_section "Database Connectivity"
 
+    # Discovery: Check Docker access first
+    local docker_error
+    if ! docker_error=$(docker ps --filter "name=wtc-database" 2>&1); then
+        log_fail "Cannot access Docker to check database container"
+        if [[ "$docker_error" == *"permission denied"* ]]; then
+            log_info "  Cause: Permission denied - run with sudo or add user to docker group"
+        elif [[ "$docker_error" == *"Cannot connect"* ]]; then
+            log_info "  Cause: Docker daemon not running"
+        else
+            log_info "  Cause: $docker_error"
+        fi
+        return 1
+    fi
+
     # Check if database container is running
     if ! docker ps --filter "name=wtc-database" --filter "status=running" | grep -q wtc-database; then
         log_fail "Database container not running"
+
+        # Discovery: WHY is it not running?
+        local container_status
+        container_status=$(docker ps -a --filter "name=wtc-database" --format "{{.Status}}" 2>/dev/null)
+        if [[ -z "$container_status" ]]; then
+            log_info "  Cause: Container does not exist"
+            log_info "  Fix: docker compose up -d database"
+        elif [[ "$container_status" == *"Exited"* ]]; then
+            log_info "  Cause: Container exited - $container_status"
+            log_info "  Check: docker logs wtc-database"
+        else
+            log_info "  Status: $container_status"
+        fi
         return 1
     fi
 
-    # Test PostgreSQL connection
-    if docker exec wtc-database pg_isready -U wtc -d water_treatment &> /dev/null; then
-        log_pass "PostgreSQL accepting connections"
-    else
+    # Test PostgreSQL connection with error capture
+    local pg_error
+    if ! pg_error=$(docker exec wtc-database pg_isready -U wtc -d water_treatment 2>&1); then
         log_fail "PostgreSQL not accepting connections"
+        if [[ "$pg_error" == *"rejecting"* ]]; then
+            log_info "  Cause: PostgreSQL is rejecting connections (starting up?)"
+        elif [[ "$pg_error" == *"no response"* ]]; then
+            log_info "  Cause: PostgreSQL not responding"
+        else
+            log_info "  Cause: $pg_error"
+        fi
+        log_info "  Check: docker logs wtc-database"
         return 1
     fi
+    log_pass "PostgreSQL accepting connections"
 
-    # Check if wtc user exists and can connect
-    if docker exec wtc-database psql -U wtc -d water_treatment -c "SELECT 1" &> /dev/null; then
-        log_pass "User 'wtc' can connect to database"
-    else
+    # Check if wtc user can connect with error capture
+    local psql_error
+    if ! psql_error=$(docker exec wtc-database psql -U wtc -d water_treatment -c "SELECT 1" 2>&1); then
         log_fail "User 'wtc' cannot connect to database"
-        log_info "Run: docker exec wtc-database psql -U postgres -d water_treatment -c \"CREATE USER wtc WITH PASSWORD 'wtc_password' SUPERUSER;\""
+        if [[ "$psql_error" == *"does not exist"* ]]; then
+            log_info "  Cause: User 'wtc' does not exist"
+        elif [[ "$psql_error" == *"authentication failed"* ]]; then
+            log_info "  Cause: Authentication failed for user 'wtc'"
+        elif [[ "$psql_error" == *"database"*"does not exist"* ]]; then
+            log_info "  Cause: Database 'water_treatment' does not exist"
+        else
+            log_info "  Cause: $psql_error"
+        fi
+        log_info "  Fix: docker exec wtc-database psql -U postgres -c \"CREATE USER wtc WITH PASSWORD 'wtc_password' SUPERUSER;\""
         return 1
     fi
+    log_pass "User 'wtc' can connect to database"
 
-    # Check TimescaleDB extension
-    if docker exec wtc-database psql -U wtc -d water_treatment -c "SELECT * FROM pg_extension WHERE extname='timescaledb';" 2>/dev/null | grep -q timescaledb; then
+    # Check TimescaleDB extension with error capture
+    local tsdb_output
+    tsdb_output=$(docker exec wtc-database psql -U wtc -d water_treatment -c "SELECT extname FROM pg_extension WHERE extname='timescaledb';" 2>&1)
+    if echo "$tsdb_output" | grep -q timescaledb; then
         log_pass "TimescaleDB extension enabled"
     else
         log_warn "TimescaleDB extension not enabled"
+        if [[ "$tsdb_output" == *"ERROR"* ]]; then
+            log_info "  Query error: $tsdb_output"
+        fi
     fi
 
-    # Check critical tables exist
+    # Check critical tables exist with error capture
     local tables=("users" "rtus" "sensors" "controls" "alarm_rules" "historian_samples")
     local tables_ok=true
 
     for table in "${tables[@]}"; do
-        if docker exec wtc-database psql -U wtc -d water_treatment -c "\dt $table" 2>/dev/null | grep -q "$table"; then
+        local table_check
+        table_check=$(docker exec wtc-database psql -U wtc -d water_treatment -c "\dt $table" 2>&1)
+        if echo "$table_check" | grep -q "$table"; then
             log_pass "Table '$table' exists"
         else
             log_fail "Table '$table' missing"
@@ -155,11 +206,16 @@ validate_database() {
         log_info "docker exec -i wtc-database psql -U wtc -d water_treatment < docker/init.sql"
     fi
 
-    # Check default admin user exists
-    if docker exec wtc-database psql -U wtc -d water_treatment -c "SELECT username FROM users WHERE username='admin';" 2>/dev/null | grep -q admin; then
+    # Check default admin user exists with error capture
+    local admin_check
+    admin_check=$(docker exec wtc-database psql -U wtc -d water_treatment -c "SELECT username FROM users WHERE username='admin';" 2>&1)
+    if echo "$admin_check" | grep -q admin; then
         log_pass "Default admin user exists"
     else
         log_warn "Default admin user missing"
+        if [[ "$admin_check" == *"ERROR"* ]]; then
+            log_info "  Query error: $admin_check"
+        fi
     fi
 }
 
