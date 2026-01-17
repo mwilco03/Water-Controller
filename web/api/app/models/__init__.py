@@ -66,3 +66,17 @@ __all__ = [
     "User",
     "UserSession",
 ]
+
+# Re-export submodules for Alembic migrations
+# Alembic's env.py needs to import submodule objects to discover all models
+from . import (
+    alarm,
+    audit,
+    config,
+    discovery,
+    historian,
+    pid,
+    rtu,
+    template,
+    user,
+)

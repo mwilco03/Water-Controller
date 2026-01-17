@@ -165,3 +165,12 @@ def full_initialize() -> bool:
 # Auto-initialize for backward compatibility (can be disabled via env var)
 if os.environ.get('WTC_DB_AUTO_INIT', '1') == '1':
     full_initialize()
+
+# Re-export submodules for code that needs module-level access
+# This allows both patterns to work:
+#   from persistence import get_alarm_rules  (function access)
+#   from persistence import alarms           (module access)
+from . import (
+    alarms,
+    modbus,
+)
