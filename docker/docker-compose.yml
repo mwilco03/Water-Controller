@@ -117,6 +117,10 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile.ui
+      args:
+        # Pass API_URL at build time for Next.js rewrites
+        # Uses container-to-container name resolution
+        API_URL: http://api:${WTC_API_PORT:-8000}
     container_name: wtc-ui
     restart: unless-stopped
     # DCK-H1 fix: Run as non-root user

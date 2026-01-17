@@ -36,6 +36,11 @@ RUN npm ci --legacy-peer-deps
 FROM base AS builder
 WORKDIR /app
 
+# API URL for rewrites (must be set at build time)
+# Default to container-to-container communication for Docker deployments
+ARG API_URL=http://api:8000
+ENV API_URL=${API_URL}
+
 # Copy dependencies from deps stage
 COPY --from=deps /app/node_modules ./node_modules
 COPY web/ui/ .
