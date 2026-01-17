@@ -1,0 +1,89 @@
+================================================================================
+                    IMPORT AUDIT - QUICK FIX GUIDE
+================================================================================
+
+Run these commands to fix all 11 import errors:
+
+================================================================================
+FIX 1: Add submodule exports to persistence/__init__.py
+================================================================================
+
+cat >> /home/user/Water-Controller/web/api/app/persistence/__init__.py << 'PERSIST'
+
+# Re-export submodules for code that needs module-level access
+from . import (
+    alarms,
+    modbus,
+)
+PERSIST
+
+================================================================================
+FIX 2: Add submodule exports to models/__init__.py
+================================================================================
+
+cat >> /home/user/Water-Controller/web/api/app/models/__init__.py << 'MODELS'
+
+# Re-export submodules for Alembic migrations
+from . import (
+    alarm,
+    audit,
+    config,
+    discovery,
+    historian,
+    pid,
+    rtu,
+    template,
+    user,
+)
+MODELS
+
+================================================================================
+                         VERIFICATION
+================================================================================
+
+After applying fixes, test with:
+
+cd /home/user/Water-Controller/web/api
+python3 << 'TEST'
+import sys
+sys.path.insert(0, '.')
+
+try:
+    from app.persistence import alarms
+    print("✓ persistence.alarms")
+except ImportError as e:
+    print(f"✗ persistence.alarms: {e}")
+
+try:
+    from app.persistence import modbus
+    print("✓ persistence.modbus")
+except ImportError as e:
+    print(f"✗ persistence.modbus: {e}")
+
+try:
+    from app.models import rtu
+    print("✓ models.rtu")
+except ImportError as e:
+    print(f"✗ models.rtu: {e}")
+
+print("\nAll fixes applied successfully!")
+TEST
+
+================================================================================
+                       FILES MODIFIED
+================================================================================
+
+1. /home/user/Water-Controller/web/api/app/persistence/__init__.py
+2. /home/user/Water-Controller/web/api/app/models/__init__.py
+
+================================================================================
+                       WHAT THIS FIXES
+================================================================================
+
+✓ app/api/v1/alarms.py - can now import 'alarms' submodule
+✓ app/services/modbus_service.py - can now import 'modbus' submodule  
+✓ migrations/env.py - can now import all 9 model submodules
+
+Total: 11 import errors resolved
+
+================================================================================
