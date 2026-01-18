@@ -60,7 +60,7 @@ export default function LoginPage() {
   return (
     <div className="min-h-[80vh] flex items-center justify-center">
       <div className="w-full max-w-md">
-        <div className="scada-panel p-8">
+        <div className="bg-hmi-panel border border-hmi-border rounded-lg shadow-hmi-card p-8">
           <div className="text-center mb-8">
             <h1 className="text-2xl font-bold text-hmi-text">Water Treatment Controller</h1>
             <p className="text-hmi-muted mt-2">Sign in to continue</p>
@@ -128,11 +128,11 @@ export default function LoginPage() {
                 </p>
                 <div className="bg-hmi-panel p-3 rounded border border-hmi-border">
                   <div className="text-hmi-muted">Admin Group:</div>
-                  <code className="text-status-normal">CN=WTC-Admins,OU=Groups,DC=example,DC=com</code>
+                  <code className="text-hmi-text font-mono">CN=WTC-Admins,OU=Groups,DC=example,DC=com</code>
                 </div>
                 <div className="bg-hmi-panel p-3 rounded border border-hmi-border">
                   <div className="text-hmi-muted">LDAP Server:</div>
-                  <code className="text-status-normal">ldap://dc.example.com:389</code>
+                  <code className="text-hmi-text font-mono">ldap://dc.example.com:389</code>
                 </div>
               </div>
             )}

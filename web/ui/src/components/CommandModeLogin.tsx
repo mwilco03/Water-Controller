@@ -53,7 +53,7 @@ export default function CommandModeLogin({ onClose, showButton = true }: Props) 
       {showButton && (
         <button
           onClick={() => setShowDialog(true)}
-          className="flex items-center gap-2 px-4 py-2 bg-orange-600 hover:bg-orange-500 rounded-lg text-white font-medium text-sm transition-colors"
+          className="hmi-btn flex items-center gap-2 bg-status-warning hover:bg-status-warning/90 text-white font-medium text-sm"
         >
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path
@@ -68,12 +68,12 @@ export default function CommandModeLogin({ onClose, showButton = true }: Props) 
       )}
 
       {showDialog && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
-          <div className="bg-gray-900 border border-gray-700 rounded-lg shadow-xl w-full max-w-md p-6">
-            <div className="flex items-center justify-between mb-6">
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="bg-hmi-panel border border-hmi-border rounded-lg shadow-hmi-modal w-full max-w-md">
+            <div className="flex items-center justify-between p-4 border-b border-hmi-border">
               <div className="flex items-center gap-3">
-                <div className="p-2 bg-orange-600/20 rounded-lg">
-                  <svg className="w-6 h-6 text-orange-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <div className="p-2 bg-status-warning-light rounded-lg">
+                  <svg className="w-5 h-5 text-status-warning" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path
                       strokeLinecap="round"
                       strokeLinejoin="round"
@@ -83,13 +83,13 @@ export default function CommandModeLogin({ onClose, showButton = true }: Props) 
                   </svg>
                 </div>
                 <div>
-                  <h2 className="text-lg font-semibold text-white">Enter Command Mode</h2>
-                  <p className="text-sm text-gray-400">Authenticate to send control commands</p>
+                  <h2 className="text-lg font-semibold text-hmi-text">Enter Command Mode</h2>
+                  <p className="text-sm text-hmi-muted">Authenticate to send control commands</p>
                 </div>
               </div>
               <button
                 onClick={handleClose}
-                className="text-gray-400 hover:text-white transition-colors"
+                className="text-hmi-muted hover:text-hmi-text transition-colors p-1"
               >
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -97,14 +97,14 @@ export default function CommandModeLogin({ onClose, showButton = true }: Props) 
               </button>
             </div>
 
-            <form onSubmit={handleSubmit} className="space-y-4">
+            <form onSubmit={handleSubmit} className="p-4 space-y-4">
               <div>
-                <label className="block text-sm text-gray-300 mb-1">Username</label>
+                <label className="block text-sm font-medium text-hmi-text mb-1">Username</label>
                 <input
                   type="text"
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
-                  className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white focus:border-orange-500 focus:ring-1 focus:ring-orange-500 outline-none"
+                  className="w-full px-3 py-2 bg-hmi-panel border border-hmi-border rounded text-hmi-text focus:border-status-info focus:ring-1 focus:ring-status-info outline-none"
                   placeholder="Enter username"
                   autoFocus
                   required
@@ -112,26 +112,26 @@ export default function CommandModeLogin({ onClose, showButton = true }: Props) 
               </div>
 
               <div>
-                <label className="block text-sm text-gray-300 mb-1">Password</label>
+                <label className="block text-sm font-medium text-hmi-text mb-1">Password</label>
                 <input
                   type="password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white focus:border-orange-500 focus:ring-1 focus:ring-orange-500 outline-none"
+                  className="w-full px-3 py-2 bg-hmi-panel border border-hmi-border rounded text-hmi-text focus:border-status-info focus:ring-1 focus:ring-status-info outline-none"
                   placeholder="Enter password"
                   required
                 />
               </div>
 
               {error && (
-                <div className="p-3 bg-red-900/50 border border-red-700 rounded text-red-200 text-sm">
+                <div className="p-3 bg-status-alarm-light border border-status-alarm/30 rounded text-status-alarm text-sm">
                   {error}
                 </div>
               )}
 
-              <div className="bg-gray-800/50 p-3 rounded text-sm text-gray-400">
-                <p className="font-medium text-gray-300 mb-1">Command Mode</p>
-                <ul className="list-disc list-inside space-y-1 text-xs">
+              <div className="bg-hmi-bg p-3 rounded border border-hmi-border text-sm">
+                <p className="font-medium text-hmi-text mb-2">Command Mode Info</p>
+                <ul className="list-disc list-inside space-y-1 text-xs text-hmi-muted">
                   <li>Allows sending control commands to RTU devices</li>
                   <li>Requires operator or admin role</li>
                   <li>Auto-exits after 5 minutes of inactivity</li>
@@ -143,14 +143,14 @@ export default function CommandModeLogin({ onClose, showButton = true }: Props) 
                 <button
                   type="button"
                   onClick={handleClose}
-                  className="flex-1 px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded text-white transition-colors"
+                  className="hmi-btn hmi-btn-secondary flex-1"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={loading}
-                  className="flex-1 px-4 py-2 bg-orange-600 hover:bg-orange-500 rounded text-white font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="hmi-btn hmi-btn-primary flex-1"
                 >
                   {loading ? 'Authenticating...' : 'Enter Command Mode'}
                 </button>
