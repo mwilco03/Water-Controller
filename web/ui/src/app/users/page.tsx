@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { authLogger } from '@/lib/logger';
 import { extractArrayData } from '@/lib/api';
+import { ConfirmModal } from '@/components/hmi';
 
 interface User {
   id: number;
@@ -32,6 +33,8 @@ export default function UsersPage() {
   const [showPasswordModal, setShowPasswordModal] = useState<User | null>(null);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [userToDelete, setUserToDelete] = useState<User | null>(null);
+  const [sessionToTerminate, setSessionToTerminate] = useState<string | null>(null);
 
   // Form state for adding user
   const [newUser, setNewUser] = useState({
@@ -201,24 +204,25 @@ export default function UsersPage() {
     }
   };
 
-  const deleteUser = async (user: User) => {
+  const handleDeleteClick = (user: User) => {
     if (user.username === 'admin') {
       showMessage('error', 'Cannot delete the admin user');
       return;
     }
+    setUserToDelete(user);
+  };
 
-    if (!confirm(`Are you sure you want to delete user "${user.username}"?`)) {
-      return;
-    }
+  const confirmDeleteUser = async () => {
+    if (!userToDelete) return;
 
     setLoading(true);
     try {
-      const res = await fetch(`/api/v1/users/${user.id}`, {
+      const res = await fetch(`/api/v1/users/${userToDelete.id}`, {
         method: 'DELETE',
       });
 
       if (res.ok) {
-        showMessage('success', `User ${user.username} deleted`);
+        showMessage('success', `User ${userToDelete.username} deleted`);
         fetchUsers();
       } else {
         const error = await res.json();
@@ -228,16 +232,19 @@ export default function UsersPage() {
       showMessage('error', 'Error deleting user');
     } finally {
       setLoading(false);
+      setUserToDelete(null);
     }
   };
 
-  const terminateSession = async (token: string) => {
-    if (!confirm('Are you sure you want to terminate this session?')) {
-      return;
-    }
+  const handleTerminateClick = (token: string) => {
+    setSessionToTerminate(token);
+  };
+
+  const confirmTerminateSession = async () => {
+    if (!sessionToTerminate) return;
 
     try {
-      const res = await fetch(`/api/v1/auth/sessions/${token}`, {
+      const res = await fetch(`/api/v1/auth/sessions/${sessionToTerminate}`, {
         method: 'DELETE',
       });
 
@@ -249,6 +256,8 @@ export default function UsersPage() {
       }
     } catch (error) {
       showMessage('error', 'Error terminating session');
+    } finally {
+      setSessionToTerminate(null);
     }
   };
 
@@ -374,7 +383,7 @@ export default function UsersPage() {
                       </button>
                       {user.username !== 'admin' && (
                         <button
-                          onClick={() => deleteUser(user)}
+                          onClick={() => handleDeleteClick(user)}
                           className="px-3 py-1 bg-status-alarm hover:bg-status-alarm/90 rounded text-sm text-white"
                         >
                           Delete
@@ -429,7 +438,7 @@ export default function UsersPage() {
                     </div>
                   </div>
                   <button
-                    onClick={() => terminateSession(session.token)}
+                    onClick={() => handleTerminateClick(session.token)}
                     className="px-3 py-1 bg-status-alarm hover:bg-status-alarm/90 rounded text-sm text-white"
                   >
                     Terminate
@@ -649,6 +658,31 @@ export default function UsersPage() {
           </div>
         </div>
       )}
+
+      {/* Delete User Confirmation */}
+      <ConfirmModal
+        isOpen={userToDelete !== null}
+        onClose={() => setUserToDelete(null)}
+        onConfirm={confirmDeleteUser}
+        title="Delete User"
+        message={`Are you sure you want to delete user "${userToDelete?.username}"? This action cannot be undone.`}
+        confirmLabel="Delete"
+        cancelLabel="Cancel"
+        variant="danger"
+        isLoading={loading}
+      />
+
+      {/* Terminate Session Confirmation */}
+      <ConfirmModal
+        isOpen={sessionToTerminate !== null}
+        onClose={() => setSessionToTerminate(null)}
+        onConfirm={confirmTerminateSession}
+        title="Terminate Session"
+        message="Are you sure you want to terminate this session? The user will be logged out immediately."
+        confirmLabel="Terminate"
+        cancelLabel="Cancel"
+        variant="warning"
+      />
     </div>
   );
 }

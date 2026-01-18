@@ -20,6 +20,7 @@ import { useEffect, useState, useCallback, useMemo } from 'react';
 import Link from 'next/link';
 import { systemLogger } from '@/lib/logger';
 import { extractArrayData } from '@/lib/api';
+import { ConfirmModal } from '@/components/hmi';
 import { useRTUStatusData } from '@/hooks/useRTUStatusData';
 import {
   PROFINET_STATES,
@@ -245,6 +246,7 @@ export default function SystemPage() {
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [serviceToRestart, setServiceToRestart] = useState<string | null>(null);
 
   // Get RTU data for RTU summary
   const { rtus, alarms } = useRTUStatusData();
@@ -406,21 +408,26 @@ export default function SystemPage() {
     return classes[level] || 'text-hmi-muted';
   };
 
-  const restartService = async (serviceName: string) => {
-    if (!confirm(`Restart service "${serviceName}"?`)) return;
+  const handleRestartClick = (serviceName: string) => {
+    setServiceToRestart(serviceName);
+  };
+
+  const confirmRestartService = async () => {
+    if (!serviceToRestart) return;
     setLoading(true);
     try {
-      const res = await fetch(`/api/v1/services/${serviceName}/restart`, { method: 'POST' });
+      const res = await fetch(`/api/v1/services/${serviceToRestart}/restart`, { method: 'POST' });
       if (res.ok) {
-        showMessage('success', `Service ${serviceName} restarting...`);
+        showMessage('success', `Service ${serviceToRestart} restarting...`);
         setTimeout(fetchServices, 2000);
       } else {
-        showMessage('error', `Failed to restart ${serviceName}`);
+        showMessage('error', `Failed to restart ${serviceToRestart}`);
       }
     } catch {
       showMessage('error', 'Error restarting service');
     } finally {
       setLoading(false);
+      setServiceToRestart(null);
     }
   };
 
@@ -669,7 +676,7 @@ export default function SystemPage() {
                       name={service.name}
                       status={service.status}
                       description={service.description}
-                      onRestart={() => restartService(service.name)}
+                      onRestart={() => handleRestartClick(service.name)}
                     />
                   ))}
                 </div>
@@ -904,6 +911,19 @@ export default function SystemPage() {
           </div>
         </div>
       )}
+
+      {/* Restart Service Confirmation */}
+      <ConfirmModal
+        isOpen={serviceToRestart !== null}
+        onClose={() => setServiceToRestart(null)}
+        onConfirm={confirmRestartService}
+        title="Restart Service"
+        message={`Are you sure you want to restart the "${serviceToRestart}" service? This may cause a brief interruption.`}
+        confirmLabel="Restart"
+        cancelLabel="Cancel"
+        variant="warning"
+        isLoading={loading}
+      />
     </div>
   );
 }

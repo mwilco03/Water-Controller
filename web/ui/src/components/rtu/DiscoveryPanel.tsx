@@ -13,7 +13,7 @@ export default function DiscoveryPanel({ onDeviceSelect }: Props) {
   const [scanning, setScanning] = useState(false);
   const [lastScan, setLastScan] = useState<Date | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [timeout, setTimeout] = useState(5000);
+  const [scanTimeout, setScanTimeout] = useState(5000);
 
   const handleScan = useCallback(async () => {
     if (scanning) return;
@@ -21,7 +21,7 @@ export default function DiscoveryPanel({ onDeviceSelect }: Props) {
     setError(null);
 
     try {
-      const discoveredDevices = await discoverRTUs(timeout);
+      const discoveredDevices = await discoverRTUs(scanTimeout);
       setDevices(discoveredDevices);
       setLastScan(new Date());
     } catch (err) {
@@ -29,7 +29,7 @@ export default function DiscoveryPanel({ onDeviceSelect }: Props) {
     } finally {
       setScanning(false);
     }
-  }, [scanning, timeout]);
+  }, [scanning, scanTimeout]);
 
   const handleLoadCached = useCallback(async () => {
     try {
@@ -77,8 +77,8 @@ export default function DiscoveryPanel({ onDeviceSelect }: Props) {
         <div className="flex items-center gap-2">
           <label className="text-sm text-gray-400">Timeout:</label>
           <select
-            value={timeout}
-            onChange={(e) => setTimeout(Number(e.target.value))}
+            value={scanTimeout}
+            onChange={(e) => setScanTimeout(Number(e.target.value))}
             className="px-2 py-1 bg-gray-800 border border-gray-700 rounded text-white text-sm"
             disabled={scanning}
           >
