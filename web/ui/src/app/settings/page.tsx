@@ -313,7 +313,13 @@ export default function SettingsPage() {
     try {
       const res = await fetch('/api/v1/services');
       if (res.ok) {
-        setServices(await res.json());
+        const json = await res.json();
+        // API may wrap in { data: {...} } or return directly
+        const obj = json.data || json.services || json;
+        // Ensure it's an object, not an array
+        if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
+          setServices(obj);
+        }
       }
     } catch (error) {
       systemLogger.error('Failed to fetch services', error);

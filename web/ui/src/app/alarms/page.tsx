@@ -160,18 +160,21 @@ export default function AlarmsPage() {
       if (!activeRes.ok) {
         setError(`Failed to fetch active alarms: ${activeRes.status}`);
       } else {
-        const data = await activeRes.json();
-        setAlarms(data.alarms || []);
+        const json = await activeRes.json();
+        const arr = Array.isArray(json) ? json : (json.data?.alarms || json.alarms || json.data || []);
+        setAlarms(Array.isArray(arr) ? arr : []);
       }
 
       if (historyRes.ok) {
-        const data = await historyRes.json();
-        setHistory(data.alarms || []);
+        const json = await historyRes.json();
+        const arr = Array.isArray(json) ? json : (json.data?.alarms || json.alarms || json.data || []);
+        setHistory(Array.isArray(arr) ? arr : []);
       }
 
       if (shelvedRes.ok) {
-        const data = await shelvedRes.json();
-        setShelvedAlarms(data.shelved_alarms || []);
+        const json = await shelvedRes.json();
+        const arr = Array.isArray(json) ? json : (json.data?.shelved_alarms || json.shelved_alarms || json.data || []);
+        setShelvedAlarms(Array.isArray(arr) ? arr : []);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Network error - unable to fetch alarms');
