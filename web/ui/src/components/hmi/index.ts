@@ -95,5 +95,8 @@ export { default as SideNav } from './SideNav';
 
 export { default as Sparkline } from './Sparkline';
 
+export { default as DataTableView } from './DataTableView';
+export type { DataPoint } from './DataTableView';
+
 // Form components
 export * from './forms';
