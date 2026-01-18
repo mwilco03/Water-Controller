@@ -53,22 +53,22 @@ const sizeConfig: Record<string, {
   padding: string;
 }> = {
   sm: {
-    icon: 'w-10 h-10',
+    icon: 'w-8 h-8 max-w-8 max-h-8',
+    title: 'text-sm',
+    description: 'text-xs',
+    padding: 'py-4 px-3',
+  },
+  md: {
+    icon: 'w-10 h-10 max-w-10 max-h-10',
     title: 'text-base',
     description: 'text-sm',
     padding: 'py-6 px-4',
   },
-  md: {
-    icon: 'w-14 h-14',
-    title: 'text-lg',
-    description: 'text-base',
-    padding: 'py-10 px-6',
-  },
   lg: {
-    icon: 'w-20 h-20',
-    title: 'text-xl',
-    description: 'text-base',
-    padding: 'py-16 px-8',
+    icon: 'w-12 h-12 max-w-12 max-h-12',
+    title: 'text-lg',
+    description: 'text-sm',
+    padding: 'py-8 px-6',
   },
 };
 
