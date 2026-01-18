@@ -464,7 +464,7 @@ export default function WizardPage() {
               </div>
               <button
                 onClick={nextStep}
-                className="px-8 py-3 bg-status-info hover:bg-status-info/90 rounded-lg font-semibold"
+                className="px-6 py-2.5 bg-status-info hover:bg-status-info/90 rounded-lg font-semibold"
               >
                 Get Started
               </button>

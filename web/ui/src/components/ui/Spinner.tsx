@@ -56,7 +56,7 @@ export function Spinner({
  */
 export function PageSpinner({ label = 'Loading...' }: { label?: string }) {
   return (
-    <div className="flex items-center justify-center py-8">
+    <div className="flex items-center justify-center py-6">
       <Spinner size="md" label={label} />
     </div>
   );
