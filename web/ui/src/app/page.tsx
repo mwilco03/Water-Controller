@@ -101,7 +101,7 @@ export default function RTUStatusPage() {
   // Error state - use actionable ErrorMessage
   if (error && rtus.length === 0) {
     return (
-      <div className="flex items-center justify-center py-12">
+      <div className="flex items-center justify-center py-4">
         <div className="max-w-md w-full">
           <ErrorMessage
             {...ErrorPresets.connectionFailed(refetch)}

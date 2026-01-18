@@ -385,7 +385,7 @@ export default function UsersPage() {
           </table>
 
           {users.length === 0 && (
-            <p className="text-hmi-muted text-center py-8">No users found</p>
+            <p className="text-hmi-muted text-center py-3 text-sm">No users found</p>
           )}
         </div>
       )}

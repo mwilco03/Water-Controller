@@ -434,7 +434,7 @@ export default function RTUsPage() {
               </div>
             </div>
           ) : (
-            <div className="flex items-center justify-center py-8 text-hmi-muted">
+            <div className="flex items-center justify-center py-4 text-hmi-muted text-sm">
               Select an RTU to view details
             </div>
           )}

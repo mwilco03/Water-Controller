@@ -462,7 +462,7 @@ export default function ProfinetDiagnosticsPanel({ stationName, onClose }: Props
               );
             })}
             {modules.length === 0 && (
-              <div className="text-center py-8 text-gray-400">No modules configured</div>
+              <div className="text-center py-3 text-gray-400 text-sm">No modules configured</div>
             )}
           </div>
         )}
@@ -470,7 +470,7 @@ export default function ProfinetDiagnosticsPanel({ stationName, onClose }: Props
         {activeTab === 'alarms' && (
           <div className="space-y-3">
             {alarms.length === 0 ? (
-              <div className="text-center py-8 text-gray-400">No diagnostic alarms</div>
+              <div className="text-center py-3 text-gray-400 text-sm">No diagnostic alarms</div>
             ) : (
               alarms.map((alarm, index) => {
                 const config = severityConfig[alarm.severity];

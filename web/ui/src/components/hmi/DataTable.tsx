@@ -183,9 +183,9 @@ export function DataTable<T>({
   if (loading) {
     return (
       <div className={clsx('rounded-hmi border border-hmi-border bg-hmi-panel', className)}>
-        <div className="p-8 text-center">
+        <div className="p-4 text-center">
           <svg
-            className="w-8 h-8 mx-auto text-hmi-muted animate-spin"
+            className="w-5 h-5 mx-auto text-hmi-muted animate-spin"
             fill="none"
             viewBox="0 0 24 24"
           >

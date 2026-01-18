@@ -117,9 +117,9 @@ export default function RTUDetailPage() {
 
   if (error || !rtu) {
     return (
-      <div className="text-center py-12">
-        <div className="text-status-alarm mb-4">{error || 'RTU not found'}</div>
-        <Link href="/rtus" className="text-status-info hover:underline">
+      <div className="text-center py-4">
+        <div className="text-status-alarm mb-2 text-sm">{error || 'RTU not found'}</div>
+        <Link href="/rtus" className="text-status-info hover:underline text-sm">
           Back to RTU List
         </Link>
       </div>

@@ -428,15 +428,15 @@ export default function WizardPage() {
         )}
 
         {/* Step Content */}
-        <div className="bg-hmi-panel rounded-lg p-8">
+        <div className="bg-hmi-panel rounded-lg p-4">
           {/* Welcome Step */}
           {currentStep === 'welcome' && (
             <div className="text-center">
-              <h1 className="text-3xl font-bold mb-4">Configuration Wizard</h1>
-              <p className="text-hmi-muted mb-8">
+              <h1 className="text-xl font-bold mb-2">Configuration Wizard</h1>
+              <p className="text-hmi-muted mb-4 text-sm">
                 This wizard will help you set up your Water Treatment Controller by guiding you through:
               </p>
-              <div className="grid grid-cols-2 gap-4 max-w-md mx-auto text-left mb-8">
+              <div className="grid grid-cols-2 gap-3 max-w-md mx-auto text-left mb-4 text-sm">
                 <div className="flex items-center space-x-2">
                   <span className="text-green-400">1.</span>
                   <span>Adding an RTU device</span>
@@ -770,8 +770,8 @@ export default function WizardPage() {
                   </div>
                 </>
               ) : (
-                <div className="text-center py-8">
-                  <p className="text-hmi-muted mb-4">No sensors discovered. You can configure sensors manually later.</p>
+                <div className="text-center py-3">
+                  <p className="text-hmi-muted text-sm">No sensors discovered. You can configure sensors manually later.</p>
                 </div>
               )}
 
@@ -803,11 +803,11 @@ export default function WizardPage() {
               </p>
 
               {!testResults ? (
-                <div className="text-center py-8">
+                <div className="text-center py-4">
                   <button
                     onClick={runTest}
                     disabled={loading}
-                    className="px-8 py-3 bg-status-ok hover:bg-status-ok/90 rounded-lg font-semibold disabled:opacity-50"
+                    className="px-4 py-2 bg-status-ok hover:bg-status-ok/90 rounded font-medium disabled:opacity-50"
                   >
                     {loading ? 'Running Test...' : 'Run Test'}
                   </button>

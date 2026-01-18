@@ -58,12 +58,12 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-[80vh] flex items-center justify-center">
-      <div className="w-full max-w-md">
-        <div className="bg-hmi-panel border border-hmi-border rounded-lg shadow-hmi-card p-8">
-          <div className="text-center mb-8">
-            <h1 className="text-2xl font-bold text-hmi-text">Water Treatment Controller</h1>
-            <p className="text-hmi-muted mt-2">Sign in to continue</p>
+    <div className="min-h-[60vh] flex items-center justify-center">
+      <div className="w-full max-w-sm">
+        <div className="bg-hmi-panel border border-hmi-border rounded-lg shadow-hmi-card p-4">
+          <div className="text-center mb-4">
+            <h1 className="text-lg font-bold text-hmi-text">Water Treatment Controller</h1>
+            <p className="text-hmi-muted mt-1 text-sm">Sign in to continue</p>
           </div>
 
           {error && (

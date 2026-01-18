@@ -59,16 +59,16 @@ const sizeConfig: Record<string, {
     padding: 'py-4 px-3',
   },
   md: {
+    icon: 'w-8 h-8 max-w-8 max-h-8',
+    title: 'text-sm',
+    description: 'text-xs',
+    padding: 'py-3 px-3',
+  },
+  lg: {
     icon: 'w-10 h-10 max-w-10 max-h-10',
     title: 'text-base',
     description: 'text-sm',
-    padding: 'py-6 px-4',
-  },
-  lg: {
-    icon: 'w-12 h-12 max-w-12 max-h-12',
-    title: 'text-lg',
-    description: 'text-sm',
-    padding: 'py-8 px-6',
+    padding: 'py-4 px-4',
   },
 };
 
