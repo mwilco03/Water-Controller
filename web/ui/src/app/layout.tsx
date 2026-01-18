@@ -128,10 +128,32 @@ function AppShell({ children }: { children: React.ReactNode }) {
         onLogoutClick={exitCommandMode}
       />
 
-      {/* Main content area - right margin for icon rail on desktop */}
-      <div className="flex-1 flex flex-col lg:mr-12">
+      {/* Main content area - left margin for icon rail on desktop */}
+      <div className="flex-1 flex flex-col lg:ml-14">
         {/* Command Mode Banner */}
         <CommandModeBanner />
+
+        {/* ALARM BANNER - Attention seeking when alarms active */}
+        {activeAlarmCount > 0 && (
+          <Link
+            href="/alarms"
+            className={`
+              flex items-center justify-center gap-3 px-4 py-2 text-white font-medium
+              ${highestAlarmSeverity === 'CRITICAL' || highestAlarmSeverity === 'HIGH'
+                ? 'bg-red-600 animate-pulse'
+                : 'bg-orange-500'
+              }
+              hover:brightness-110 transition-all
+            `}
+          >
+            <span className="text-xl">⚠️</span>
+            <span>
+              {activeAlarmCount} Active Alarm{activeAlarmCount !== 1 ? 's' : ''}
+              {highestAlarmSeverity && ` - ${highestAlarmSeverity}`}
+            </span>
+            <span className="text-sm opacity-80">Click to view →</span>
+          </Link>
+        )}
 
         {/* Mobile Header - only on smaller screens */}
         <header className="lg:hidden hmi-nav sticky top-0 z-30">
