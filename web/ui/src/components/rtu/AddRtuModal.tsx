@@ -194,16 +194,38 @@ export default function AddRtuModal({
         return;
       }
 
-      if (res.status === 400) {
+      // Handle Pydantic validation errors (422) and general bad requests (400)
+      if (res.status === 400 || res.status === 422) {
         const data = await res.json();
         if (data.detail) {
-          // Check for field-specific errors from server
-          if (data.detail.includes('name') || data.detail.includes('station')) {
-            setFieldErrors([{ field: 'station_name', message: data.detail }]);
-          } else if (data.detail.includes('IP') || data.detail.includes('address')) {
-            setFieldErrors([{ field: 'ip_address', message: data.detail }]);
+          // Pydantic returns detail as array of validation errors
+          if (Array.isArray(data.detail)) {
+            const errors: FieldError[] = [];
+            for (const err of data.detail) {
+              const fieldName = err.loc?.[err.loc.length - 1];
+              const message = err.msg || 'Invalid value';
+              if (fieldName && fieldName in INITIAL_FORM_DATA) {
+                errors.push({ field: fieldName as keyof RtuFormData, message });
+              } else {
+                // If we can't map to a specific field, show as server error
+                setServerError(message);
+              }
+            }
+            if (errors.length > 0) {
+              setFieldErrors(errors);
+            }
+          } else if (typeof data.detail === 'string') {
+            // Check for field-specific errors from server
+            if (data.detail.includes('name') || data.detail.includes('station')) {
+              setFieldErrors([{ field: 'station_name', message: data.detail }]);
+            } else if (data.detail.includes('IP') || data.detail.includes('address')) {
+              setFieldErrors([{ field: 'ip_address', message: data.detail }]);
+            } else {
+              setServerError(data.detail);
+            }
           } else {
-            setServerError(data.detail);
+            // Unknown detail format - stringify it safely
+            setServerError('Validation error. Please check your input.');
           }
         } else {
           setServerError('Invalid request. Please check your input.');
