@@ -8,6 +8,7 @@ import { useWebSocket } from '@/hooks/useWebSocket';
 import { DiscoveryPanel, RtuStateBadge, AddRtuModal, DeleteRtuModal, StaleIndicator } from '@/components/rtu';
 import { useHMIToast } from '@/components/hmi';
 import type { DiscoveredDevice } from '@/lib/api';
+import { extractArrayData, extractObjectData } from '@/lib/api';
 import { wsLogger, rtuLogger } from '@/lib/logger';
 
 interface RTUDevice {
@@ -60,12 +61,15 @@ export default function RTUsPage() {
     try {
       const res = await fetch('/api/v1/rtus');
       if (res.ok) {
-        const data = await res.json();
+        const json = await res.json();
+        const data = extractArrayData<RTUDevice>(json);
         setRtus(data);
 
-        // Fetch health for each RTU
-        for (const rtu of data) {
-          fetchHealth(rtu.station_name);
+        // Fetch health for all RTUs in parallel with error handling
+        if (data.length > 0) {
+          await Promise.allSettled(
+            data.map(rtu => fetchHealth(rtu.station_name))
+          );
         }
       }
     } catch (error) {
@@ -122,7 +126,15 @@ export default function RTUsPage() {
     try {
       const res = await fetch(`/api/v1/rtus/${stationName}/health`);
       if (res.ok) {
-        const health = await res.json();
+        const json = await res.json();
+        const health = extractObjectData<RTUHealth>(json, {
+          station_name: stationName,
+          connection_state: 'UNKNOWN',
+          healthy: false,
+          packet_loss_percent: 0,
+          consecutive_failures: 0,
+          in_failover: false,
+        });
         setRtuHealth((prev) => ({ ...prev, [stationName]: health }));
       }
     } catch {

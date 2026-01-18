@@ -11,7 +11,7 @@
  * - Focus trap for accessibility
  */
 
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef, useCallback, useState } from 'react';
 
 type DialogVariant = 'destructive' | 'warning' | 'confirm';
 
@@ -188,24 +188,68 @@ export default function ConfirmDialog({
 }
 
 /**
- * Hook for managing confirm dialog state
+ * Hook for managing confirm dialog state with promise-based API.
+ *
+ * Usage:
+ * ```tsx
+ * const { isOpen, dialogProps, confirm } = useConfirmDialog();
+ *
+ * // In an event handler:
+ * const confirmed = await confirm({
+ *   title: 'Delete Item',
+ *   message: 'Are you sure?',
+ *   variant: 'destructive',
+ * });
+ * if (confirmed) {
+ *   // proceed with action
+ * }
+ *
+ * // In your JSX:
+ * <ConfirmDialog {...dialogProps} />
+ * ```
  */
 export function useConfirmDialog() {
-  const dialogRef = useRef<{
-    resolve: (value: boolean) => void;
-  } | null>(null);
+  const [isOpen, setIsOpen] = useState(false);
+  const [dialogOptions, setDialogOptions] = useState<Omit<ConfirmDialogProps, 'isOpen' | 'onConfirm' | 'onCancel'> | null>(null);
+  const resolveRef = useRef<((value: boolean) => void) | null>(null);
 
   const confirm = useCallback(async (
     options: Omit<ConfirmDialogProps, 'isOpen' | 'onConfirm' | 'onCancel'>
   ): Promise<boolean> => {
-    return new Promise((resolve) => {
-      dialogRef.current = { resolve };
-      // The actual dialog rendering would be handled by a parent component
-      // that uses this hook's returned state
+    setDialogOptions(options);
+    setIsOpen(true);
+
+    return new Promise<boolean>((resolve) => {
+      resolveRef.current = resolve;
     });
   }, []);
 
-  return { confirm };
+  const handleConfirm = useCallback(() => {
+    setIsOpen(false);
+    resolveRef.current?.(true);
+    resolveRef.current = null;
+  }, []);
+
+  const handleCancel = useCallback(() => {
+    setIsOpen(false);
+    resolveRef.current?.(false);
+    resolveRef.current = null;
+  }, []);
+
+  const dialogProps: ConfirmDialogProps = {
+    isOpen,
+    onConfirm: handleConfirm,
+    onCancel: handleCancel,
+    title: dialogOptions?.title ?? '',
+    message: dialogOptions?.message ?? '',
+    consequences: dialogOptions?.consequences,
+    confirmLabel: dialogOptions?.confirmLabel,
+    cancelLabel: dialogOptions?.cancelLabel,
+    variant: dialogOptions?.variant,
+    isLoading: dialogOptions?.isLoading,
+  };
+
+  return { isOpen, dialogProps, confirm };
 }
 
 export { ConfirmDialog };
