@@ -64,62 +64,48 @@ interface StatusHeaderProps {
 }
 
 const statusConfig: Record<SystemStatus, {
-  icon: ReactNode;
+  badge: string;
+  badgeClass: string;
   bgClass: string;
   textClass: string;
   borderClass: string;
   defaultHeadline: string;
 }> = {
   ok: {
-    icon: (
-      <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 20 20">
-        <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-      </svg>
-    ),
+    badge: 'OK',
+    badgeClass: 'bg-status-ok text-white',
     bgClass: 'bg-status-ok-light',
     textClass: 'text-status-ok-dark',
     borderClass: 'border-status-ok',
     defaultHeadline: 'System Normal',
   },
   warning: {
-    icon: (
-      <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 20 20">
-        <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
-      </svg>
-    ),
+    badge: 'WARN',
+    badgeClass: 'bg-status-warning text-white',
     bgClass: 'bg-status-warning-light',
     textClass: 'text-status-warning-dark',
     borderClass: 'border-status-warning',
     defaultHeadline: 'Attention Required',
   },
   alarm: {
-    icon: (
-      <svg className="w-6 h-6 animate-alarm-flash" fill="currentColor" viewBox="0 0 20 20">
-        <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
-      </svg>
-    ),
+    badge: 'ALARM',
+    badgeClass: 'bg-status-alarm text-white animate-alarm-flash',
     bgClass: 'bg-status-alarm-light',
     textClass: 'text-status-alarm-dark',
     borderClass: 'border-status-alarm',
     defaultHeadline: 'Active Alarms',
   },
   offline: {
-    icon: (
-      <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-        <path strokeLinecap="round" strokeLinejoin="round" d="M18.364 5.636a9 9 0 010 12.728m0 0l-2.829-2.829m2.829 2.829L21 21M15.536 8.464a5 5 0 010 7.072m0 0l-2.829-2.829m-4.243 2.829a4.978 4.978 0 01-1.414-2.83m-1.414 5.658a9 9 0 01-2.167-9.238m7.824 2.167a1 1 0 111.414 1.414m-1.414-1.414L3 3m8.293 8.293l1.414 1.414" />
-      </svg>
-    ),
+    badge: 'OFFLINE',
+    badgeClass: 'bg-hmi-muted text-white',
     bgClass: 'bg-status-offline-light',
     textClass: 'text-status-offline-dark',
     borderClass: 'border-hmi-border',
     defaultHeadline: 'System Offline',
   },
   connecting: {
-    icon: (
-      <svg className="w-6 h-6 animate-spin-slow" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-        <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-      </svg>
-    ),
+    badge: 'SYNC',
+    badgeClass: 'bg-status-info text-white animate-pulse',
     bgClass: 'bg-status-info-light',
     textClass: 'text-status-info-dark',
     borderClass: 'border-status-info',
@@ -184,9 +170,15 @@ export function StatusHeader({
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         {/* Status indicator */}
         <div className="flex items-center gap-3">
-          <div className={config.textClass} aria-hidden="true">
-            {config.icon}
-          </div>
+          <span
+            className={clsx(
+              'px-2 py-1 rounded text-xs font-bold uppercase tracking-wide',
+              config.badgeClass
+            )}
+            aria-hidden="true"
+          >
+            {config.badge}
+          </span>
           <div>
             <h1 className={clsx('text-lg font-semibold', config.textClass)}>
               {displayHeadline}
@@ -220,9 +212,9 @@ export function StatusHeader({
             {!hideTimestamp && lastUpdate && (
               <div className={clsx('flex items-center gap-1.5', isStale && 'text-status-warning-dark')}>
                 {isStale && (
-                  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clipRule="evenodd" />
-                  </svg>
+                  <span className="px-1 py-0.5 rounded text-xs font-bold bg-status-warning text-white">
+                    STALE
+                  </span>
                 )}
                 <span className={isStale ? undefined : 'text-hmi-muted'}>
                   {formatLastUpdate(lastUpdate)}

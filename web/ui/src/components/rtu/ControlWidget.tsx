@@ -55,9 +55,7 @@ function ConfirmationModal({
       <div className="bg-gray-800 rounded-lg p-6 max-w-md w-full mx-4 border border-gray-600">
         <div className="flex items-center gap-3 mb-4">
           <div className="w-10 h-10 rounded-full bg-yellow-600/20 flex items-center justify-center">
-            <svg className="w-6 h-6 text-yellow-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-            </svg>
+            <span className="text-yellow-500 text-xl font-bold">!</span>
           </div>
           <h3 className="text-lg font-semibold text-white">Confirm Control Action</h3>
         </div>
@@ -149,49 +147,16 @@ export default function ControlWidget({
     }
   };
 
-  // Get icon based on control type
-  const getIcon = () => {
-    switch (control.control_type) {
-      case 'pump':
-        return (
-          <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
-            <circle cx="12" cy="12" r="3" />
-            <path d="M12 2v4m0 12v4M4.93 4.93l2.83 2.83m8.48 8.48l2.83 2.83M2 12h4m12 0h4M4.93 19.07l2.83-2.83m8.48-8.48l2.83-2.83" stroke="currentColor" strokeWidth="2" fill="none" />
-          </svg>
-        );
-      case 'valve':
-        return (
-          <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
-            <path d="M12 2L8 6h8l-4-4zM8 18l4 4 4-4H8zM2 8v8h4V8H2zm16 0v8h4V8h-4zM8 8v8h8V8H8z" />
-          </svg>
-        );
-      case 'motor':
-        return (
-          <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
-            <rect x="2" y="6" width="20" height="12" rx="2" />
-            <circle cx="6" cy="12" r="2" fill="rgba(0,0,0,0.3)" />
-            <path d="M10 9h8v6h-8z" fill="rgba(0,0,0,0.2)" />
-          </svg>
-        );
-      case 'heater':
-        return (
-          <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
-            <path d="M12 2a7 7 0 0 0-7 7c0 2.38 1.19 4.47 3 5.74V17a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-2.26c1.81-1.27 3-3.36 3-5.74a7 7 0 0 0-7-7zm2 18H10v1a1 1 0 0 0 1 1h2a1 1 0 0 0 1-1v-1z" />
-          </svg>
-        );
-      case 'dosing':
-        return (
-          <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
-            <path d="M6 3v18h12V3H6zm10 16H8v-2h8v2zm0-4H8v-2h8v2zm0-4H8V9h8v2zm0-4H8V5h8v2z" />
-          </svg>
-        );
-      default:
-        return (
-          <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
-            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z" />
-          </svg>
-        );
-    }
+  // Get text badge based on control type
+  const getTypeBadge = () => {
+    const badges: Record<string, string> = {
+      pump: 'P',
+      valve: 'V',
+      motor: 'M',
+      heater: 'H',
+      dosing: 'D',
+    };
+    return badges[control.control_type] || 'C';
   };
 
   const stateColor = getStateColor();
@@ -338,7 +303,12 @@ export default function ControlWidget({
       >
         {/* Header */}
         <div className="flex items-center gap-2 mb-3">
-          <span style={{ color: stateColor }}>{getIcon()}</span>
+          <span
+            className="w-5 h-5 flex items-center justify-center text-xs font-bold rounded"
+            style={{ backgroundColor: `${stateColor}30`, color: stateColor }}
+          >
+            {getTypeBadge()}
+          </span>
           <span className="font-medium text-white flex-1 truncate" title={control.name}>
             {control.name}
           </span>

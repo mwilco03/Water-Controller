@@ -62,9 +62,7 @@ export default function DiscoveryPanel({ onDeviceSelect }: Props) {
       {/* Header */}
       <div className="flex items-center justify-between">
         <h3 className="text-lg font-semibold text-white flex items-center gap-2">
-          <svg className="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-          </svg>
+          <span className="text-blue-400 font-bold">[*]</span>
           Network Discovery
         </h3>
         <div className="flex items-center gap-2 text-sm text-gray-400">
@@ -103,22 +101,11 @@ export default function DiscoveryPanel({ onDeviceSelect }: Props) {
             }
           `}
         >
-          <svg
-            className={`w-4 h-4 ${scanning ? 'animate-spin' : ''}`}
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d={scanning
-                ? "M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-                : "M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
-              }
-            />
-          </svg>
+          {scanning ? (
+            <span className="inline-block w-4 h-4 border-2 border-blue-300/30 border-t-blue-300 rounded-full animate-spin" />
+          ) : (
+            <span className="font-bold">[*]</span>
+          )}
           {scanning ? 'Scanning...' : 'Scan Network'}
         </button>
 
@@ -219,10 +206,7 @@ export default function DiscoveryPanel({ onDeviceSelect }: Props) {
                   <td className="px-4 py-3">
                     {device.added_to_registry ? (
                       <span className="inline-flex items-center gap-1 px-2 py-1 bg-green-900/50 text-green-300 rounded text-xs">
-                        <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
-                          <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                        </svg>
-                        Added
+                        [OK] Added
                       </span>
                     ) : (
                       <span className="px-2 py-1 bg-blue-900/50 text-blue-300 rounded text-xs">
@@ -250,9 +234,7 @@ export default function DiscoveryPanel({ onDeviceSelect }: Props) {
       {/* Empty state */}
       {!scanning && devices.length === 0 && (
         <div className="text-center py-6 text-gray-400">
-          <svg className="w-10 h-10 max-w-10 max-h-10 mx-auto mb-3 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-          </svg>
+          <div className="text-3xl mb-3 opacity-50">[?]</div>
           <p className="text-base font-medium text-gray-300">No devices found</p>
           <p className="text-sm mt-1">
             Click &quot;Scan Network&quot; to discover PROFINET devices

@@ -185,9 +185,7 @@ export function ShiftHandoff({ rtus, alarms, onClose, isModal = false }: ShiftHa
         <summary className="p-4 cursor-pointer bg-hmi-bg border-b border-hmi-border hover:bg-hmi-border/30 transition-colors list-none">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <svg className="w-5 h-5 text-status-info" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
-              </svg>
+              <span className="w-5 h-5 flex items-center justify-center text-status-info font-bold text-sm">[H]</span>
               <span className="font-semibold text-hmi-text">Shift Handoff</span>
             </div>
             <div className="flex items-center gap-2 text-sm text-hmi-muted">
@@ -205,20 +203,16 @@ export function ShiftHandoff({ rtus, alarms, onClose, isModal = false }: ShiftHa
       {isModal && (
         <div className="p-4 border-b border-hmi-border bg-hmi-bg flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <svg className="w-5 h-5 text-status-info" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
-            </svg>
+            <span className="w-5 h-5 flex items-center justify-center text-status-info font-bold text-sm">[H]</span>
             <span className="font-semibold text-hmi-text">Shift Handoff Summary</span>
           </div>
           {onClose && (
             <button
               onClick={onClose}
-              className="p-2 hover:bg-hmi-border/50 rounded-lg transition-colors"
+              className="p-2 hover:bg-hmi-border/50 rounded-lg transition-colors text-hmi-muted font-bold"
               aria-label="Close"
             >
-              <svg className="w-5 h-5 text-hmi-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-              </svg>
+              X
             </button>
           )}
         </div>
@@ -266,9 +260,7 @@ export function ShiftHandoff({ rtus, alarms, onClose, isModal = false }: ShiftHa
         {criticalAlarms.length > 0 && (
           <div className="p-3 bg-status-alarm-light border border-status-alarm rounded-lg">
             <div className="flex items-center gap-2 font-semibold text-status-alarm-dark mb-2">
-              <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
-                <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
-              </svg>
+              <span className="w-5 h-5 flex items-center justify-center bg-status-alarm text-white rounded text-xs font-bold">!</span>
               {criticalAlarms.length} CRITICAL ALARM{criticalAlarms.length > 1 ? 'S' : ''}
             </div>
             {criticalAlarms.slice(0, 3).map(alarm => (
@@ -363,16 +355,12 @@ export function ShiftHandoff({ rtus, alarms, onClose, isModal = false }: ShiftHa
           >
             {copySuccess ? (
               <>
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                </svg>
+                <span className="text-sm font-bold">[OK]</span>
                 Copied!
               </>
             ) : (
               <>
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                </svg>
+                <span className="text-sm font-bold">[=]</span>
                 Copy Summary
               </>
             )}
@@ -381,9 +369,7 @@ export function ShiftHandoff({ rtus, alarms, onClose, isModal = false }: ShiftHa
             onClick={printSummary}
             className="flex items-center gap-2 px-4 py-2 bg-hmi-bg border border-hmi-border text-hmi-text rounded-lg font-medium hover:bg-hmi-border/50 transition-colors min-h-touch"
           >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
-            </svg>
+            <span className="text-sm font-bold">[P]</span>
             Print
           </button>
         </div>

@@ -138,11 +138,9 @@ export default function RTUDetailPage() {
         <div className="flex items-center gap-4">
           <Link
             href="/rtus"
-            className="p-2 rounded-lg bg-hmi-bg hover:bg-hmi-border transition-colors"
+            className="p-2 rounded-lg bg-hmi-bg hover:bg-hmi-border transition-colors flex items-center justify-center"
           >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-            </svg>
+            <span className="text-lg">&lt;</span>
           </Link>
           <div>
             <div className="flex items-center gap-3">
@@ -285,9 +283,7 @@ export default function RTUDetailPage() {
             {/* Empty State */}
             {sensors.length === 0 && controls.length === 0 && (
               <div className="text-center py-4 text-hmi-muted">
-                <svg className="w-8 h-8 max-w-8 max-h-8 mx-auto mb-2 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z" />
-                </svg>
+                <span className="block text-2xl mb-2 opacity-50">[--]</span>
                 <p className="text-sm">No inventory data</p>
                 <p className="text-xs mt-1">Click &quot;Refresh Inventory&quot; to query the RTU</p>
               </div>
@@ -327,9 +323,7 @@ export default function RTUDetailPage() {
             {mode === 'view' && controls.length > 0 && (
               <div className="flex items-center justify-between p-4 bg-orange-900/20 border border-orange-700/50 rounded-lg">
                 <div className="flex items-center gap-3">
-                  <svg className="w-5 h-5 text-orange-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
+                  <span className="text-orange-400 text-lg font-bold">(i)</span>
                   <div>
                     <p className="text-orange-200 font-medium">View Mode Active</p>
                     <p className="text-sm text-orange-300/70">Enter Command Mode to control equipment</p>

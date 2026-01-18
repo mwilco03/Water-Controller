@@ -33,14 +33,14 @@ interface TrendData {
 // Loading fallback for Suspense
 function TrendsLoading() {
   return (
-    <div className="p-6">
+    <div className="p-4">
       <div className="animate-pulse">
-        <div className="h-8 bg-hmi-panel rounded w-48 mb-6"></div>
-        <div className="h-64 bg-hmi-panel rounded mb-4"></div>
-        <div className="grid grid-cols-3 gap-4">
-          <div className="h-20 bg-hmi-panel rounded"></div>
-          <div className="h-20 bg-hmi-panel rounded"></div>
-          <div className="h-20 bg-hmi-panel rounded"></div>
+        <div className="h-6 bg-hmi-panel rounded w-40 mb-4"></div>
+        <div className="h-40 bg-hmi-panel rounded mb-3"></div>
+        <div className="grid grid-cols-3 gap-3">
+          <div className="h-12 bg-hmi-panel rounded"></div>
+          <div className="h-12 bg-hmi-panel rounded"></div>
+          <div className="h-12 bg-hmi-panel rounded"></div>
         </div>
       </div>
     </div>
@@ -433,13 +433,9 @@ function TrendsContent() {
               disabled={Object.keys(trendData).length === 0}
               className="flex items-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-700 rounded text-white disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-              </svg>
+              <span>&#8595;</span>
               Export
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-              </svg>
+              <span>&#9662;</span>
             </button>
 
             {showExportMenu && (
@@ -453,27 +449,21 @@ function TrendsContent() {
                     onClick={() => handleExport('csv')}
                     className="w-full px-4 py-2 text-left text-sm text-hmi-muted hover:text-hmi-text hover:bg-hmi-bg flex items-center gap-3"
                   >
-                    <svg className="w-4 h-4 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                    </svg>
+                    <span className="text-green-400 font-mono text-xs">[CSV]</span>
                     Export as CSV
                   </button>
                   <button
                     onClick={() => handleExport('excel')}
                     className="w-full px-4 py-2 text-left text-sm text-hmi-muted hover:text-hmi-text hover:bg-hmi-bg flex items-center gap-3"
                   >
-                    <svg className="w-4 h-4 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2" />
-                    </svg>
+                    <span className="text-green-500 font-mono text-xs">[XLS]</span>
                     Export as Excel
                   </button>
                   <button
                     onClick={() => handleExport('json')}
                     className="w-full px-4 py-2 text-left text-sm text-hmi-muted hover:text-hmi-text hover:bg-hmi-bg flex items-center gap-3"
                   >
-                    <svg className="w-4 h-4 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
-                    </svg>
+                    <span className="text-blue-400 font-mono text-xs">{'{}'}</span>
                     Export as JSON
                   </button>
                 </div>

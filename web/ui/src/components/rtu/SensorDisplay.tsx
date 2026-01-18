@@ -69,41 +69,29 @@ export default function SensorDisplay({ sensor, size = 'md', showDetails = false
     }
   };
 
-  // Get icon based on sensor type
-  const getIcon = () => {
+  // Get label based on sensor type
+  const getTypeLabel = () => {
     switch (sensor.sensor_type) {
       case 'temperature':
-        return (
-          <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
-            <path d="M12 2a2 2 0 0 0-2 2v9.354A4 4 0 1 0 16 17V4a2 2 0 0 0-2-2h-2zm0 18a2 2 0 1 1 0-4 2 2 0 0 1 0 4z" />
-          </svg>
-        );
+        return <span className="text-xs font-bold">T</span>;
       case 'ph':
         return <span className="text-xs font-bold">pH</span>;
       case 'level':
-        return (
-          <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
-            <path d="M12 2l-5.5 9h11L12 2zm0 11c-2.76 0-5 2.24-5 5s2.24 5 5 5 5-2.24 5-5-2.24-5-5-5z" />
-          </svg>
-        );
+        return <span className="text-xs font-bold">L</span>;
       case 'pressure':
-        return (
-          <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
-            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-1-13h2v6h-2zm0 8h2v2h-2z" />
-          </svg>
-        );
+        return <span className="text-xs font-bold">P</span>;
       case 'flow':
-        return (
-          <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
-            <path d="M17.66 8L12 2.35 6.34 8C4.78 9.56 4 11.64 4 13.64s.78 4.11 2.34 5.67 3.61 2.35 5.66 2.35 4.1-.79 5.66-2.35S20 15.64 20 13.64 19.22 9.56 17.66 8z" />
-          </svg>
-        );
+        return <span className="text-xs font-bold">F</span>;
+      case 'turbidity':
+        return <span className="text-xs font-bold">Tu</span>;
+      case 'chlorine':
+        return <span className="text-xs font-bold">Cl</span>;
+      case 'conductivity':
+        return <span className="text-xs font-bold">EC</span>;
+      case 'dissolved_oxygen':
+        return <span className="text-xs font-bold">DO</span>;
       default:
-        return (
-          <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
-            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z" />
-          </svg>
-        );
+        return <span className="text-xs font-bold">S</span>;
     }
   };
 
@@ -135,7 +123,7 @@ export default function SensorDisplay({ sensor, size = 'md', showDetails = false
       <div className="relative p-2 flex flex-col h-full">
         {/* Header */}
         <div className="flex items-center gap-1 text-gray-400 mb-1">
-          <span style={{ color }}>{getIcon()}</span>
+          <span style={{ color }}>{getTypeLabel()}</span>
           <span className="text-xs truncate flex-1" title={sensor.name}>
             {sensor.name}
           </span>

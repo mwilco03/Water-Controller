@@ -54,9 +54,7 @@ function AckDialog({
       <div className="bg-hmi-panel rounded-lg p-6 max-w-md w-full mx-4 border border-hmi-border shadow-lg">
         <div className="flex items-center gap-3 mb-4">
           <div className="w-10 h-10 rounded-full bg-status-info/10 flex items-center justify-center">
-            <svg className="w-6 h-6 text-status-info" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-            </svg>
+            <span className="text-xl font-bold text-status-info">[OK]</span>
           </div>
           <h3 className="text-lg font-semibold text-hmi-text">
             {isBulk ? 'Acknowledge All Alarms' : 'Acknowledge Alarm'}
@@ -247,22 +245,18 @@ export default function AlarmSummary({ alarms, onShelve }: Props) {
                   <div className="flex gap-1 flex-shrink-0">
                     <Link
                       href={`/trends?rtu=${encodeURIComponent(alarm.rtu_station)}&slot=${alarm.slot}`}
-                      className="text-xs bg-status-info hover:bg-status-info/90 text-white px-2 py-1.5 rounded transition-colors"
+                      className="text-xs bg-status-info hover:bg-status-info/90 text-white px-2 py-1.5 rounded transition-colors font-medium"
                       title="View sensor trend"
                     >
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z" />
-                      </svg>
+                      [~]
                     </Link>
                     {onShelve && (
                       <button
                         onClick={() => onShelve(alarm)}
-                        className="text-xs bg-purple-600 hover:bg-purple-700 text-white px-2 py-1.5 rounded transition-colors"
+                        className="text-xs bg-purple-600 hover:bg-purple-700 text-white px-2 py-1.5 rounded transition-colors font-medium"
                         title="Shelve alarm"
                       >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                        </svg>
+                        [-]
                       </button>
                     )}
                     {isUnack && (

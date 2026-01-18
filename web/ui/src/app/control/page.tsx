@@ -358,14 +358,12 @@ export default function ControlPage() {
       {alarmSummary.total > 0 && (
         <Link href="/alarms" className={`flex items-center justify-between px-3 sm:px-4 py-2 ${alarmSummary.critical > 0 ? 'bg-red-600 animate-pulse' : 'bg-orange-500'} text-white text-sm`}>
           <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
-            <svg className="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-            </svg>
+            <span className="w-5 h-5 flex-shrink-0 flex items-center justify-center font-bold text-lg">!</span>
             <span className="font-semibold">{alarmSummary.total} ALARM{alarmSummary.total !== 1 ? 'S' : ''}</span>
             {alarmSummary.critical > 0 && <span className="bg-white/20 px-2 py-0.5 rounded text-xs">{alarmSummary.critical} CRIT</span>}
             {alarmSummary.unack > 0 && <span className="bg-white/20 px-2 py-0.5 rounded text-xs hidden sm:inline">{alarmSummary.unack} UNACK</span>}
           </div>
-          <span className="text-xs">→</span>
+          <span className="text-xs">&rarr;</span>
         </Link>
       )}
 

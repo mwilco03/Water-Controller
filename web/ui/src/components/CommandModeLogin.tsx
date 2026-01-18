@@ -55,14 +55,7 @@ export default function CommandModeLogin({ onClose, showButton = true }: Props) 
           onClick={() => setShowDialog(true)}
           className="hmi-btn flex items-center gap-2 bg-status-warning hover:bg-status-warning/90 text-white font-medium text-sm"
         >
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"
-            />
-          </svg>
+          <span className="text-sm font-bold">[+]</span>
           Enter Command Mode
         </button>
       )}
@@ -73,14 +66,7 @@ export default function CommandModeLogin({ onClose, showButton = true }: Props) 
             <div className="flex items-center justify-between p-4 border-b border-hmi-border">
               <div className="flex items-center gap-3">
                 <div className="p-2 bg-status-warning-light rounded-lg">
-                  <svg className="w-5 h-5 text-status-warning" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"
-                    />
-                  </svg>
+                  <span className="text-lg font-bold text-status-warning">[+]</span>
                 </div>
                 <div>
                   <h2 className="text-lg font-semibold text-hmi-text">Enter Command Mode</h2>
@@ -89,11 +75,9 @@ export default function CommandModeLogin({ onClose, showButton = true }: Props) 
               </div>
               <button
                 onClick={handleClose}
-                className="text-hmi-muted hover:text-hmi-text transition-colors p-1"
+                className="text-hmi-muted hover:text-hmi-text transition-colors p-1 text-xl font-bold leading-none"
               >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
+                X
               </button>
             </div>
 

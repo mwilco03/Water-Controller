@@ -55,11 +55,6 @@ const labelSizeClasses: Record<SelectSize, string> = {
   lg: 'text-base mb-2',
 };
 
-const iconSizeClasses: Record<SelectSize, string> = {
-  sm: 'right-2 w-4 h-4',
-  md: 'right-3 w-5 h-5',
-  lg: 'right-4 w-6 h-6',
-};
 
 export const Select = forwardRef<HTMLSelectElement, SelectProps>(
   (
@@ -166,25 +161,18 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(
           </select>
 
           {/* Dropdown arrow */}
-          <div
+          <span
             className={clsx(
               'absolute top-1/2 -translate-y-1/2 text-hmi-muted pointer-events-none',
-              iconSizeClasses[size]
+              'text-xs',
+              size === 'sm' && 'right-2',
+              size === 'md' && 'right-3',
+              size === 'lg' && 'right-4'
             )}
+            aria-hidden="true"
           >
-            <svg
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              strokeWidth={2}
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M19 9l-7 7-7-7"
-              />
-            </svg>
-          </div>
+            ▼
+          </span>
         </div>
 
         {/* Helper/Error text */}
@@ -198,13 +186,7 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(
             role={hasError ? 'alert' : undefined}
           >
             {hasError && (
-              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                <path
-                  fillRule="evenodd"
-                  d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z"
-                  clipRule="evenodd"
-                />
-              </svg>
+              <span className="font-bold" aria-hidden="true">!</span>
             )}
             <span>{message}</span>
           </div>

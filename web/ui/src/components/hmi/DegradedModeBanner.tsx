@@ -85,9 +85,7 @@ export default function DegradedModeBanner({
       <div className="hmi-container py-3 flex items-center justify-between gap-4 flex-wrap">
         {/* Warning Info */}
         <div className="flex items-center gap-3">
-          <svg className="w-6 h-6 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-          </svg>
+          <span className="w-6 h-6 shrink-0 inline-flex items-center justify-center text-base font-bold" aria-hidden="true">/!\</span>
           <div className="flex items-center gap-2 flex-wrap">
             <span className="font-bold text-base">{isCritical ? '⚠️ STALE DATA' : title}</span>
             <span className="opacity-70">|</span>
@@ -122,9 +120,7 @@ export default function DegradedModeBanner({
               className="p-1 hover:bg-black/20 rounded transition-colors"
               aria-label="Dismiss"
             >
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-              </svg>
+              <span className="w-4 h-4 inline-flex items-center justify-center text-sm font-bold" aria-hidden="true">X</span>
             </button>
           )}
         </div>

@@ -210,19 +210,7 @@ export function QuickControlPanel({ className }: QuickControlPanelProps) {
       {/* Header */}
       <div className="p-4 border-b border-hmi-border flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <svg
-            className="w-5 h-5 text-status-info"
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-            strokeWidth={2}
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"
-            />
-          </svg>
+          <span className="text-status-info font-bold">[CTRL]</span>
           <span className="font-semibold text-hmi-text">Quick Controls</span>
         </div>
         <div className="flex items-center gap-2">
@@ -316,7 +304,7 @@ export function QuickControlPanel({ className }: QuickControlPanelProps) {
                       onClick={() => adjustSetpoint(loop, -selectedIncrement * 5)}
                       disabled={!canCommand}
                       className={clsx(
-                        'w-12 h-12 rounded-lg font-bold text-lg transition-colors',
+                        'w-9 h-9 rounded-lg font-bold text-base transition-colors',
                         'bg-status-alarm/20 text-status-alarm hover:bg-status-alarm/30',
                         'disabled:opacity-50 disabled:cursor-not-allowed',
                         'touch-manipulation'
@@ -329,7 +317,7 @@ export function QuickControlPanel({ className }: QuickControlPanelProps) {
                       onClick={() => adjustSetpoint(loop, -selectedIncrement)}
                       disabled={!canCommand}
                       className={clsx(
-                        'w-14 h-14 rounded-lg font-bold text-xl transition-colors',
+                        'w-10 h-10 rounded-lg font-bold text-lg transition-colors',
                         'bg-status-alarm/20 text-status-alarm hover:bg-status-alarm/30',
                         'disabled:opacity-50 disabled:cursor-not-allowed',
                         'touch-manipulation'
@@ -352,7 +340,7 @@ export function QuickControlPanel({ className }: QuickControlPanelProps) {
                       onClick={() => adjustSetpoint(loop, selectedIncrement)}
                       disabled={!canCommand}
                       className={clsx(
-                        'w-14 h-14 rounded-lg font-bold text-xl transition-colors',
+                        'w-10 h-10 rounded-lg font-bold text-lg transition-colors',
                         'bg-status-ok/20 text-status-ok hover:bg-status-ok/30',
                         'disabled:opacity-50 disabled:cursor-not-allowed',
                         'touch-manipulation'
@@ -365,7 +353,7 @@ export function QuickControlPanel({ className }: QuickControlPanelProps) {
                       onClick={() => adjustSetpoint(loop, selectedIncrement * 5)}
                       disabled={!canCommand}
                       className={clsx(
-                        'w-12 h-12 rounded-lg font-bold text-lg transition-colors',
+                        'w-9 h-9 rounded-lg font-bold text-base transition-colors',
                         'bg-status-ok/20 text-status-ok hover:bg-status-ok/30',
                         'disabled:opacity-50 disabled:cursor-not-allowed',
                         'touch-manipulation'
