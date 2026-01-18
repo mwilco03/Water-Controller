@@ -219,19 +219,23 @@ async function apiFetch<T>(
 
 // RTU API
 export async function getRTUs(): Promise<RTUDevice[]> {
-  const data = await apiFetch<{ rtus: RTUDevice[] }>('/api/v1/rtus');
-  return data.rtus || [];
+  const response = await apiFetch<{ data?: RTUDevice[]; rtus?: RTUDevice[] }>('/api/v1/rtus');
+  // Handle both { data: [...] } and { rtus: [...] } formats
+  return response.data || response.rtus || [];
 }
 
 export async function getRTU(stationName: string): Promise<RTUDevice> {
-  return apiFetch<RTUDevice>(`/api/v1/rtus/${encodeURIComponent(stationName)}`);
+  const response = await apiFetch<{ data?: RTUDevice } | RTUDevice>(`/api/v1/rtus/${encodeURIComponent(stationName)}`);
+  // Handle both { data: {...} } and direct object formats
+  return (response as { data?: RTUDevice }).data || (response as RTUDevice);
 }
 
 export async function getSensors(stationName: string): Promise<SensorData[]> {
-  const data = await apiFetch<{ sensors: SensorData[] }>(
+  const response = await apiFetch<{ data?: SensorData[]; sensors?: SensorData[] }>(
     `/api/v1/rtus/${encodeURIComponent(stationName)}/sensors`
   );
-  return data.sensors || [];
+  // Handle both { data: [...] } and { sensors: [...] } formats
+  return response.data || response.sensors || [];
 }
 
 export async function commandControl(
@@ -248,15 +252,17 @@ export async function commandControl(
 
 // Alarm API
 export async function getAlarms(): Promise<Alarm[]> {
-  const data = await apiFetch<{ alarms: Alarm[] }>('/api/v1/alarms');
-  return data.alarms || [];
+  const response = await apiFetch<{ data?: Alarm[]; alarms?: Alarm[] }>('/api/v1/alarms');
+  // Handle both { data: [...] } and { alarms: [...] } formats
+  return response.data || response.alarms || [];
 }
 
 export async function getAlarmHistory(limit = 100): Promise<Alarm[]> {
-  const data = await apiFetch<{ alarms: Alarm[] }>(
+  const response = await apiFetch<{ data?: Alarm[]; alarms?: Alarm[] }>(
     `/api/v1/alarms/history?limit=${limit}`
   );
-  return data.alarms || [];
+  // Handle both { data: [...] } and { alarms: [...] } formats
+  return response.data || response.alarms || [];
 }
 
 export async function acknowledgeAlarm(alarmId: number, user: string, note?: string): Promise<void> {

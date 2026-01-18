@@ -328,7 +328,9 @@ export default function SystemPage() {
     try {
       const res = await fetch(`/api/v1/system/logs?limit=100&level=${logFilter}`);
       if (res.ok) {
-        setLogs(await res.json());
+        const json = await res.json();
+        const arr = Array.isArray(json) ? json : (json.data || json.logs || []);
+        setLogs(arr);
       }
     } catch (error) {
       systemLogger.error('Failed to fetch logs', error);
@@ -339,7 +341,9 @@ export default function SystemPage() {
     try {
       const res = await fetch('/api/v1/system/audit?limit=50');
       if (res.ok) {
-        setAuditLog(await res.json());
+        const json = await res.json();
+        const arr = Array.isArray(json) ? json : (json.data || json.entries || []);
+        setAuditLog(arr);
       }
     } catch (error) {
       systemLogger.error('Failed to fetch audit log', error);

@@ -61,7 +61,9 @@ export default function UsersPage() {
     try {
       const res = await fetch('/api/v1/users');
       if (res.ok) {
-        setUsers(await res.json());
+        const json = await res.json();
+        const arr = Array.isArray(json) ? json : (json.data || json.users || []);
+        setUsers(arr);
       }
     } catch (error) {
       authLogger.error('Failed to fetch users', error);
@@ -72,7 +74,9 @@ export default function UsersPage() {
     try {
       const res = await fetch('/api/v1/auth/sessions');
       if (res.ok) {
-        setSessions(await res.json());
+        const json = await res.json();
+        const arr = Array.isArray(json) ? json : (json.data || json.sessions || []);
+        setSessions(arr);
       }
     } catch (error) {
       authLogger.error('Failed to fetch sessions', error);
