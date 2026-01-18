@@ -67,7 +67,7 @@ export default function KeyboardShortcutsHelp({ isOpen, onClose }: Props) {
 
         {/* Shortcut Groups */}
         {Object.entries(groupedShortcuts).length === 0 ? (
-          <div className="text-center py-8 text-gray-400">
+          <div className="text-center py-3 text-gray-400 text-sm">
             <p>No keyboard shortcuts available on this page.</p>
           </div>
         ) : (

@@ -109,17 +109,17 @@ export default function RTUDetailPage() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-[400px]">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-status-info" />
+      <div className="flex items-center justify-center py-6">
+        <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-status-info" />
       </div>
     );
   }
 
   if (error || !rtu) {
     return (
-      <div className="text-center py-12">
-        <div className="text-status-alarm mb-4">{error || 'RTU not found'}</div>
-        <Link href="/rtus" className="text-status-info hover:underline">
+      <div className="text-center py-4">
+        <div className="text-status-alarm mb-2 text-sm">{error || 'RTU not found'}</div>
+        <Link href="/rtus" className="text-status-info hover:underline text-sm">
           Back to RTU List
         </Link>
       </div>
@@ -284,12 +284,12 @@ export default function RTUDetailPage() {
 
             {/* Empty State */}
             {sensors.length === 0 && controls.length === 0 && (
-              <div className="text-center py-8 text-hmi-muted">
-                <svg className="w-12 h-12 mx-auto mb-3 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <div className="text-center py-4 text-hmi-muted">
+                <svg className="w-8 h-8 max-w-8 max-h-8 mx-auto mb-2 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z" />
                 </svg>
-                <p>No inventory data</p>
-                <p className="text-sm mt-1">Click &quot;Refresh Inventory&quot; to query the RTU</p>
+                <p className="text-sm">No inventory data</p>
+                <p className="text-xs mt-1">Click &quot;Refresh Inventory&quot; to query the RTU</p>
               </div>
             )}
 

@@ -377,10 +377,10 @@ export default function WizardPage() {
   };
 
   return (
-    <div className="min-h-screen bg-hmi-bg text-hmi-text p-6">
+    <div className="min-h-screen bg-hmi-bg text-hmi-text p-4">
       <div className="max-w-4xl mx-auto">
         {/* Progress Bar */}
-        <div className="mb-8">
+        <div className="mb-4">
           <div className="flex items-center justify-between">
             <button
               onClick={cancelWizard}
@@ -428,15 +428,15 @@ export default function WizardPage() {
         )}
 
         {/* Step Content */}
-        <div className="bg-hmi-panel rounded-lg p-8">
+        <div className="bg-hmi-panel rounded-lg p-4">
           {/* Welcome Step */}
           {currentStep === 'welcome' && (
             <div className="text-center">
-              <h1 className="text-3xl font-bold mb-4">Configuration Wizard</h1>
-              <p className="text-hmi-muted mb-8">
+              <h1 className="text-xl font-bold mb-2">Configuration Wizard</h1>
+              <p className="text-hmi-muted mb-4 text-sm">
                 This wizard will help you set up your Water Treatment Controller by guiding you through:
               </p>
-              <div className="grid grid-cols-2 gap-4 max-w-md mx-auto text-left mb-8">
+              <div className="grid grid-cols-2 gap-3 max-w-md mx-auto text-left mb-4 text-sm">
                 <div className="flex items-center space-x-2">
                   <span className="text-green-400">1.</span>
                   <span>Adding an RTU device</span>
@@ -474,8 +474,8 @@ export default function WizardPage() {
           {/* Add RTU Step */}
           {currentStep === 'add-rtu' && (
             <div>
-              <h2 className="text-2xl font-bold mb-6">Add RTU Device</h2>
-              <p className="text-hmi-muted mb-6">
+              <h2 className="text-lg font-bold mb-3">Add RTU Device</h2>
+              <p className="text-hmi-muted text-sm mb-3">
                 Enter the details of your Remote Terminal Unit (RTU). The RTU should be powered on and connected to the network.
               </p>
 
@@ -540,7 +540,7 @@ export default function WizardPage() {
                 </div>
               </div>
 
-              <div className="flex justify-between mt-8">
+              <div className="flex justify-between mt-4">
                 <button
                   onClick={prevStep}
                   className="px-6 py-2 bg-hmi-panel hover:bg-hmi-panel/80 rounded border border-hmi-border"
@@ -561,13 +561,13 @@ export default function WizardPage() {
           {/* Connect Step */}
           {currentStep === 'connect' && (
             <div>
-              <h2 className="text-2xl font-bold mb-6">Connect to RTU</h2>
-              <p className="text-hmi-muted mb-6">
+              <h2 className="text-lg font-bold mb-3">Connect to RTU</h2>
+              <p className="text-hmi-muted text-sm mb-3">
                 Establish a PROFINET connection to <strong>{rtuConfig.station_name}</strong> at {rtuConfig.ip_address}.
               </p>
 
               {/* Connection Status */}
-              <div className="bg-hmi-panel border border-hmi-border p-6 rounded-lg mb-6">
+              <div className="bg-hmi-panel border border-hmi-border p-4 rounded-lg mb-3">
                 <div className="flex items-center justify-between mb-4">
                   <h3 className="font-semibold">Connection Status</h3>
                   <RtuStateBadge state={connectionState} size="md" />
@@ -583,7 +583,7 @@ export default function WizardPage() {
                 )}
               </div>
 
-              <div className="bg-hmi-panel border border-hmi-border p-6 rounded-lg mb-6">
+              <div className="bg-hmi-panel border border-hmi-border p-4 rounded-lg mb-3">
                 <h3 className="font-semibold mb-4">Pre-flight Checklist</h3>
                 <ul className="space-y-2 text-hmi-muted">
                   <li className="flex items-center space-x-2">
@@ -640,12 +640,12 @@ export default function WizardPage() {
           {/* Discover Step */}
           {currentStep === 'discover' && (
             <div>
-              <h2 className="text-2xl font-bold mb-6">Discover Sensors</h2>
-              <p className="text-hmi-muted mb-6">
+              <h2 className="text-lg font-bold mb-3">Discover Sensors</h2>
+              <p className="text-hmi-muted text-sm mb-3">
                 Scan the RTU&apos;s I2C buses and 1-Wire interfaces to discover connected sensors.
               </p>
 
-              <div className="bg-hmi-panel border border-hmi-border p-6 rounded-lg mb-6">
+              <div className="bg-hmi-panel border border-hmi-border p-4 rounded-lg mb-3">
                 <h3 className="font-semibold mb-4">Supported Sensors</h3>
                 <div className="grid grid-cols-2 gap-4 text-sm text-hmi-muted">
                   <div>
@@ -702,11 +702,11 @@ export default function WizardPage() {
           {/* Configure Step */}
           {currentStep === 'configure' && (
             <div>
-              <h2 className="text-2xl font-bold mb-6">Configure Sensors</h2>
+              <h2 className="text-lg font-bold mb-3">Configure Sensors</h2>
 
               {discoveredSensors.length > 0 ? (
                 <>
-                  <p className="text-hmi-muted mb-6">
+                  <p className="text-hmi-muted text-sm mb-3">
                     Found {discoveredSensors.length} sensor(s). Select which ones to configure:
                   </p>
 
@@ -770,8 +770,8 @@ export default function WizardPage() {
                   </div>
                 </>
               ) : (
-                <div className="text-center py-8">
-                  <p className="text-hmi-muted mb-4">No sensors discovered. You can configure sensors manually later.</p>
+                <div className="text-center py-3">
+                  <p className="text-hmi-muted text-sm">No sensors discovered. You can configure sensors manually later.</p>
                 </div>
               )}
 
@@ -796,18 +796,18 @@ export default function WizardPage() {
           {/* Test Step */}
           {currentStep === 'test' && (
             <div>
-              <h2 className="text-2xl font-bold mb-6">Test RTU</h2>
-              <p className="text-hmi-muted mb-6">
+              <h2 className="text-lg font-bold mb-3">Test RTU</h2>
+              <p className="text-hmi-muted text-sm mb-3">
                 Run a functionality test to verify communication and actuator operation.
                 This will briefly blink all actuator outputs for visual verification.
               </p>
 
               {!testResults ? (
-                <div className="text-center py-8">
+                <div className="text-center py-4">
                   <button
                     onClick={runTest}
                     disabled={loading}
-                    className="px-8 py-3 bg-status-ok hover:bg-status-ok/90 rounded-lg font-semibold disabled:opacity-50"
+                    className="px-4 py-2 bg-status-ok hover:bg-status-ok/90 rounded font-medium disabled:opacity-50"
                   >
                     {loading ? 'Running Test...' : 'Run Test'}
                   </button>
@@ -857,7 +857,7 @@ export default function WizardPage() {
                 </div>
               )}
 
-              <div className="flex justify-between mt-8">
+              <div className="flex justify-between mt-4">
                 <button
                   onClick={prevStep}
                   className="px-6 py-2 bg-hmi-panel hover:bg-hmi-panel/80 rounded border border-hmi-border"
@@ -887,18 +887,18 @@ export default function WizardPage() {
           {/* Complete Step */}
           {currentStep === 'complete' && (
             <div className="text-center">
-              <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-status-ok flex items-center justify-center">
-                <svg className="w-10 h-10 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <div className="w-10 h-10 mx-auto mb-3 rounded-full bg-status-ok flex items-center justify-center">
+                <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                 </svg>
               </div>
-              <h2 className="text-3xl font-bold mb-4">Setup Complete!</h2>
-              <p className="text-hmi-muted mb-8">
+              <h2 className="text-lg font-bold mb-2">Setup Complete!</h2>
+              <p className="text-hmi-muted text-sm mb-4">
                 Your RTU <strong>{rtuConfig.station_name}</strong> has been configured successfully.
               </p>
 
-              <div className="bg-hmi-panel border border-hmi-border p-6 rounded-lg mb-8 text-left max-w-md mx-auto">
-                <h3 className="font-semibold mb-4">Summary</h3>
+              <div className="bg-hmi-panel border border-hmi-border p-4 rounded-lg mb-4 text-left max-w-md mx-auto">
+                <h3 className="font-semibold mb-2 text-sm">Summary</h3>
                 <div className="space-y-2 text-hmi-muted">
                   <div className="flex justify-between">
                     <span>Station Name:</span>

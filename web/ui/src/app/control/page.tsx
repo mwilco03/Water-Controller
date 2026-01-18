@@ -506,7 +506,7 @@ export default function ControlPage() {
               );
             })}
             {filteredLoops.length === 0 && !loading && (
-              <tr><td colSpan={5} className="px-3 py-8 text-center text-gray-400 text-sm">
+              <tr><td colSpan={5} className="px-3 py-3 text-center text-gray-400 text-sm">
                 {pidLoops.length === 0 ? 'No PID loops configured' : 'No loops match filter'}
               </td></tr>
             )}

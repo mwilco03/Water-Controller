@@ -407,10 +407,10 @@ export default function ModbusPage() {
 
       {/* Server Config Tab */}
       {activeTab === 'server' && serverConfig && (
-        <div className="hmi-card p-6">
-          <h2 className="text-lg font-semibold text-hmi-text mb-6">Modbus Server Configuration</h2>
+        <div className="hmi-card p-4">
+          <h2 className="text-base font-semibold text-hmi-text mb-4">Modbus Server Configuration</h2>
 
-          <div className="grid grid-cols-2 gap-8">
+          <div className="grid grid-cols-2 gap-4">
             {/* TCP Settings */}
             <div className="space-y-4">
               <h3 className="font-medium text-hmi-muted border-b border-hmi-border pb-2">TCP Server</h3>

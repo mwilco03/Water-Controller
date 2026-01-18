@@ -385,7 +385,7 @@ export default function IOTagsPage() {
           </table>
 
           {slotConfigs.length === 0 && (
-            <p className="text-hmi-muted text-center py-8">
+            <p className="text-hmi-muted text-center py-3 text-sm">
               No slot configurations. Click &quot;Auto-Discover Slots&quot; to detect connected devices.
             </p>
           )}
@@ -465,7 +465,7 @@ export default function IOTagsPage() {
           </table>
 
           {historianTags.length === 0 && (
-            <p className="text-hmi-muted text-center py-8">
+            <p className="text-hmi-muted text-center py-3 text-sm">
               No historian tags configured. Add tags to start collecting historical data.
             </p>
           )}
@@ -474,7 +474,7 @@ export default function IOTagsPage() {
 
       {/* Edit Slot Modal */}
       {showEditModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 overflow-y-auto py-8">
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 overflow-y-auto py-4">
           <div className="bg-white p-6 rounded-lg w-full max-w-2xl">
             <h2 className="text-xl font-semibold text-hmi-text mb-4">
               Edit Slot {showEditModal.slot} - {showEditModal.rtu_station}

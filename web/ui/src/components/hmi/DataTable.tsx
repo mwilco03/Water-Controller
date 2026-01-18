@@ -183,9 +183,9 @@ export function DataTable<T>({
   if (loading) {
     return (
       <div className={clsx('rounded-hmi border border-hmi-border bg-hmi-panel', className)}>
-        <div className="p-8 text-center">
+        <div className="p-4 text-center">
           <svg
-            className="w-8 h-8 mx-auto text-hmi-muted animate-spin"
+            className="w-5 h-5 mx-auto text-hmi-muted animate-spin"
             fill="none"
             viewBox="0 0 24 24"
           >
@@ -213,10 +213,10 @@ export function DataTable<T>({
   if (data.length === 0) {
     return (
       <div className={clsx('rounded-hmi border border-hmi-border bg-hmi-panel', className)}>
-        <div className="p-8 text-center">
+        <div className="p-4 text-center">
           {emptyIcon || (
             <svg
-              className="w-12 h-12 mx-auto text-hmi-muted"
+              className="w-8 h-8 max-w-8 max-h-8 mx-auto text-hmi-muted"
               fill="none"
               viewBox="0 0 24 24"
               stroke="currentColor"
@@ -229,7 +229,7 @@ export function DataTable<T>({
               />
             </svg>
           )}
-          <p className="mt-3 text-hmi-muted">{emptyMessage}</p>
+          <p className="mt-2 text-sm text-hmi-muted">{emptyMessage}</p>
         </div>
       </div>
     );

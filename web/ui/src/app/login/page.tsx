@@ -58,12 +58,12 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-[80vh] flex items-center justify-center">
-      <div className="w-full max-w-md">
-        <div className="bg-hmi-panel border border-hmi-border rounded-lg shadow-hmi-card p-8">
-          <div className="text-center mb-8">
-            <h1 className="text-2xl font-bold text-hmi-text">Water Treatment Controller</h1>
-            <p className="text-hmi-muted mt-2">Sign in to continue</p>
+    <div className="min-h-[60vh] flex items-center justify-center">
+      <div className="w-full max-w-sm">
+        <div className="bg-hmi-panel border border-hmi-border rounded-lg shadow-hmi-card p-4">
+          <div className="text-center mb-4">
+            <h1 className="text-lg font-bold text-hmi-text">Water Treatment Controller</h1>
+            <p className="text-hmi-muted mt-1 text-sm">Sign in to continue</p>
           </div>
 
           {error && (
@@ -106,13 +106,13 @@ export default function LoginPage() {
             <button
               type="submit"
               disabled={loading}
-              className="w-full py-3 bg-status-info hover:bg-status-info/90 rounded text-white font-medium disabled:opacity-50 transition-colors"
+              className="w-full py-2 bg-status-info hover:bg-status-info/90 rounded text-white text-sm font-medium disabled:opacity-50 transition-colors"
             >
               {loading ? 'Signing in...' : 'Sign In'}
             </button>
           </form>
 
-          <div className="mt-6 pt-6 border-t border-hmi-border">
+          <div className="mt-4 pt-4 border-t border-hmi-border">
             <button
               onClick={() => setShowLdapConfig(!showLdapConfig)}
               className="text-sm text-hmi-muted hover:text-hmi-text transition-colors"

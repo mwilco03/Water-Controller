@@ -408,9 +408,9 @@ export default function AlarmsPage() {
         {/* Alarm List */}
         <div className="hmi-card p-4">
           {loading ? (
-            <div className="text-center text-hmi-muted py-8">
-              <div className="inline-block animate-spin rounded-full h-8 w-8 border-4 border-hmi-border border-t-status-info mb-2"></div>
-              <p>Loading alarms...</p>
+            <div className="text-center text-hmi-muted py-3">
+              <div className="inline-block animate-spin rounded-full h-5 w-5 border-2 border-hmi-border border-t-status-info mb-1"></div>
+              <p className="text-sm">Loading alarms...</p>
             </div>
           ) : activeTab === 'active' ? (
             <div>
@@ -430,7 +430,7 @@ export default function AlarmsPage() {
           ) : activeTab === 'shelved' ? (
             <div>
               {shelvedAlarms.length === 0 ? (
-                <div className="text-center text-hmi-muted py-8">No shelved alarms</div>
+                <div className="text-center text-hmi-muted py-3 text-sm">No shelved alarms</div>
               ) : (
                 <div className="overflow-x-auto">
                   <table className="w-full">

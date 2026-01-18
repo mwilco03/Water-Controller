@@ -279,7 +279,7 @@ export default function AlarmSummary({ alarms, onShelve }: Props) {
             );
           })}
           {filteredAlarms.length === 0 && (
-            <div className="text-center text-hmi-muted py-8">
+            <div className="text-center text-hmi-muted py-3 text-sm">
               No alarms to display
             </div>
           )}

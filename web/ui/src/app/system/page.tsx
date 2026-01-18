@@ -600,8 +600,8 @@ export default function SystemPage() {
             </div>
             <div className="hmi-card-body">
               {rtus.length === 0 ? (
-                <div className="text-center py-8">
-                  <p className="text-hmi-muted mb-4">No RTUs configured</p>
+                <div className="text-center py-3">
+                  <p className="text-hmi-muted mb-2 text-sm">No RTUs configured</p>
                   <Link href="/rtus" className="hmi-btn hmi-btn-primary text-sm">
                     Add RTU
                   </Link>
@@ -677,7 +677,7 @@ export default function SystemPage() {
           <div className="hmi-card-body">
             <div className="bg-hmi-bg rounded p-4 font-mono text-sm max-h-[500px] overflow-y-auto">
               {logs.length === 0 ? (
-                <p className="text-hmi-muted text-center py-8">No log entries</p>
+                <p className="text-hmi-muted text-center py-3 text-sm">No log entries</p>
               ) : (
                 <table className="w-full">
                   <tbody>
@@ -711,7 +711,7 @@ export default function SystemPage() {
           <div className="hmi-card-header">Audit Trail</div>
           <div className="hmi-card-body overflow-x-auto">
             {auditLog.length === 0 ? (
-              <p className="text-hmi-muted text-center py-8">No audit entries</p>
+              <p className="text-hmi-muted text-center py-3 text-sm">No audit entries</p>
             ) : (
               <table className="w-full text-sm">
                 <thead>
