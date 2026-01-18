@@ -1,9 +1,7 @@
 'use client';
 
 /**
- * SideNav - SAP Fiori style icon rail with slide-out panel
- *
- * Design: Icon buttons on right edge, panel slides out on click
+ * SideNav - Icon rail with slide-out panel (LEFT side)
  */
 
 import { useState, useEffect } from 'react';
@@ -19,7 +17,7 @@ import {
   ComputerDesktopIcon,
   UserCircleIcon,
   XMarkIcon,
-  ChevronLeftIcon,
+  ChevronRightIcon,
   TagIcon,
   GlobeAltIcon,
   UsersIcon,
@@ -85,8 +83,8 @@ export function SideNav({
 
   return (
     <>
-      {/* Icon Rail - Right side */}
-      <aside className="hidden lg:flex flex-col fixed right-0 top-0 bottom-0 w-12 bg-white border-l border-gray-200 z-40">
+      {/* Icon Rail - LEFT side */}
+      <aside className="hidden lg:flex flex-col fixed left-0 top-0 bottom-0 w-12 bg-white border-r border-gray-200 z-40">
         {/* Main nav icons */}
         <div className="flex-1 flex flex-col items-center py-2 gap-1">
           {MAIN_NAV.map((item) => (
@@ -150,7 +148,7 @@ export function SideNav({
         </div>
       </aside>
 
-      {/* Slide-out Panel */}
+      {/* Slide-out Panel - appears to RIGHT of icon rail */}
       {activePanel && (
         <>
           {/* Backdrop */}
@@ -160,7 +158,7 @@ export function SideNav({
           />
 
           {/* Panel */}
-          <div className="hidden lg:block fixed right-12 top-0 bottom-0 w-64 bg-white border-l border-gray-200 shadow-lg z-35 animate-slide-in">
+          <div className="hidden lg:block fixed left-12 top-0 bottom-0 w-64 bg-white border-r border-gray-200 shadow-lg z-35 animate-slide-in">
             {/* Panel Header */}
             <div className="h-14 flex items-center justify-between px-4 border-b border-gray-200">
               <h2 className="font-semibold text-gray-900">
@@ -200,7 +198,7 @@ export function SideNav({
                   onClick={closePanel}
                   className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm bg-blue-50 text-blue-600"
                 >
-                  <ChevronLeftIcon className="w-4 h-4" />
+                  <ChevronRightIcon className="w-4 h-4" />
                   Go to {MAIN_NAV.find(n => n.id === activePanel)?.label}
                 </Link>
               )}
@@ -212,7 +210,7 @@ export function SideNav({
       <style jsx>{`
         @keyframes slide-in {
           from {
-            transform: translateX(100%);
+            transform: translateX(-100%);
             opacity: 0;
           }
           to {

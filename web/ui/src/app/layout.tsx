@@ -128,8 +128,8 @@ function AppShell({ children }: { children: React.ReactNode }) {
         onLogoutClick={exitCommandMode}
       />
 
-      {/* Main content area - right margin for icon rail on desktop */}
-      <div className="flex-1 flex flex-col lg:mr-12">
+      {/* Main content area - left margin for icon rail on desktop */}
+      <div className="flex-1 flex flex-col lg:ml-12">
         {/* Command Mode Banner */}
         <CommandModeBanner />
 
