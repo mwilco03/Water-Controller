@@ -12,6 +12,7 @@
 #   curl -fsSL .../bootstrap.sh | bash -s -- install --branch develop
 #   curl -fsSL .../bootstrap.sh | bash -s -- upgrade --dry-run
 #   curl -fsSL .../bootstrap.sh | bash -s -- remove --keep-config
+#   curl -fsSL .../bootstrap.sh | bash -s -- fresh --verbose
 #
 # Copyright (C) 2024-2025
 # SPDX-License-Identifier: GPL-3.0-or-later
@@ -23,7 +24,7 @@ set -euo pipefail
 # Constants
 # =============================================================================
 
-readonly BOOTSTRAP_VERSION="1.2.0"
+readonly BOOTSTRAP_VERSION="1.3.0"
 readonly REPO_URL="https://github.com/mwilco03/Water-Controller.git"
 readonly REPO_RAW_URL="https://raw.githubusercontent.com/mwilco03/Water-Controller"
 readonly INSTALL_DIR="/opt/water-controller"
@@ -44,6 +45,7 @@ readonly WTC_DOCKER_SERVICE="water-controller-docker"
 
 # Global state
 QUIET_MODE="false"
+VERBOSE_MODE="false"  # Show detailed output for debugging
 DEPLOYMENT_MODE=""  # baremetal or docker
 CLEANUP_DIRS=()  # Stack of directories to clean up
 
@@ -132,6 +134,14 @@ log_step() {
 log_debug() {
     write_log "DEBUG" "$1"
     # Debug only goes to log file, never to console
+}
+
+log_verbose() {
+    write_log "VERBOSE" "$1"
+    # Verbose output only shown with --verbose flag
+    if [[ "$VERBOSE_MODE" == "true" ]] && [[ "$QUIET_MODE" != "true" ]]; then
+        echo -e "  $1" >&2
+    fi
 }
 
 # =============================================================================
@@ -1426,13 +1436,47 @@ validate_environment() {
 # =============================================================================
 
 # Show disk space usage
+# Default: concise one-liner summary
+# With --verbose: full breakdown
 show_disk_space() {
     local label="${1:-Current}"
-    log_info "═══ $label Disk Space ═══"
-    df -h / /var /tmp 2>/dev/null | head -5 || df -h / 2>/dev/null
-    if command -v docker &>/dev/null && docker info &>/dev/null; then
-        log_info "Docker disk usage:"
-        docker system df 2>/dev/null || true
+
+    # Get root filesystem stats
+    local df_line
+    df_line=$(df -h / 2>/dev/null | tail -1)
+    local size avail used_pct
+    size=$(echo "$df_line" | awk '{print $2}')
+    avail=$(echo "$df_line" | awk '{print $4}')
+    used_pct=$(echo "$df_line" | awk '{print $5}')
+
+    # Get Docker reclaimable space if available
+    local docker_reclaimable=""
+    local docker_total=""
+    if command -v docker &>/dev/null && docker info &>/dev/null 2>&1; then
+        local docker_df
+        docker_df=$(docker system df --format "{{.Type}}\t{{.Size}}\t{{.Reclaimable}}" 2>/dev/null)
+        if [[ -n "$docker_df" ]]; then
+            # Sum up reclaimable space (extract numeric values)
+            docker_total=$(docker system df --format "{{.Size}}" 2>/dev/null | paste -sd+ | bc 2>/dev/null || echo "")
+            docker_reclaimable=$(docker system df --format "{{.Reclaimable}}" 2>/dev/null | grep -oP '[\d.]+[KMGT]?B' | head -1 || echo "")
+        fi
+    fi
+
+    if [[ "$VERBOSE_MODE" == "true" ]]; then
+        # Verbose: full breakdown
+        log_info "═══ $label Disk Space ═══"
+        df -h / /var /tmp 2>/dev/null | head -5 || df -h / 2>/dev/null
+        if command -v docker &>/dev/null && docker info &>/dev/null 2>&1; then
+            log_info "Docker disk usage:"
+            docker system df 2>/dev/null || true
+        fi
+    else
+        # Concise: one-liner summary
+        local summary="Disk: ${avail} available of ${size} (${used_pct} used)"
+        if [[ -n "$docker_reclaimable" ]]; then
+            summary="$summary, Docker reclaimable: ~${docker_reclaimable}"
+        fi
+        log_info "$summary"
     fi
 }
 
@@ -2042,24 +2086,31 @@ do_wipe() {
     show_disk_space "Before Wipe"
 
     # Stop all containers first
-    log_info "Stopping all Water-Controller containers..."
     if command -v docker &>/dev/null && docker info &>/dev/null; then
         # Stop containers by name pattern
         local containers
         containers=$(docker ps -aq --filter "name=wtc-" 2>/dev/null || true)
+        local container_count=0
         if [[ -n "$containers" ]]; then
-            docker stop $containers 2>/dev/null || true
-            docker rm -f $containers 2>/dev/null || true
+            container_count=$(echo "$containers" | wc -w)
+            log_info "Stopping $container_count container(s)..."
+            if [[ "$VERBOSE_MODE" == "true" ]]; then
+                docker stop $containers 2>&1 || true
+                docker rm -f $containers 2>&1 || true
+            else
+                docker stop $containers >/dev/null 2>&1 || true
+                docker rm -f $containers >/dev/null 2>&1 || true
+            fi
         fi
 
         # Stop docker compose stack if compose file exists
         if [[ -f "/opt/water-controller/docker/docker-compose.yml" ]]; then
+            log_verbose "Stopping docker compose stack..."
             (cd /opt/water-controller/docker && docker compose down -v --remove-orphans 2>/dev/null) || true
         fi
     fi
 
     # Stop and disable systemd services
-    log_info "Stopping systemd services..."
     local services=(
         "water-controller"
         "water-controller-api"
@@ -2068,66 +2119,95 @@ do_wipe() {
         "water-controller-hmi"
         "water-controller-docker"
     )
+    local stopped_services=0
     for svc in "${services[@]}"; do
+        if systemctl is-active --quiet "${svc}.service" 2>/dev/null; then
+            ((stopped_services++))
+            log_verbose "Stopping ${svc}.service"
+        fi
         run_privileged systemctl stop "${svc}.service" 2>/dev/null || true
         run_privileged systemctl disable "${svc}.service" 2>/dev/null || true
         run_privileged rm -f "/etc/systemd/system/${svc}.service" 2>/dev/null || true
     done
+    if [[ $stopped_services -gt 0 ]]; then
+        log_info "Stopped $stopped_services systemd service(s)"
+    fi
     run_privileged systemctl daemon-reload 2>/dev/null || true
 
     # Remove Docker resources for this project
-    log_info "Removing Docker resources..."
     if command -v docker &>/dev/null && docker info &>/dev/null; then
+        # Count resources before removal
+        local image_count=0 volume_count=0 network_count=0
+
         # Remove project images
         local images
         images=$(docker images --filter "reference=*water*" -q 2>/dev/null || true)
         images="$images $(docker images --filter "reference=*wtc*" -q 2>/dev/null || true)"
+        images=$(echo "$images" | xargs -n1 2>/dev/null | sort -u | xargs 2>/dev/null || true)
         if [[ -n "$images" ]]; then
-            docker rmi -f $images 2>/dev/null || true
+            image_count=$(echo "$images" | wc -w)
+            if [[ "$VERBOSE_MODE" == "true" ]]; then
+                docker rmi -f $images 2>&1 || true
+            else
+                docker rmi -f $images >/dev/null 2>&1 || true
+            fi
         fi
 
         # Remove project volumes
         local volumes
         volumes=$(docker volume ls -q --filter "name=wtc" 2>/dev/null || true)
         volumes="$volumes $(docker volume ls -q --filter "name=water" 2>/dev/null || true)"
+        volumes=$(echo "$volumes" | xargs -n1 2>/dev/null | sort -u | xargs 2>/dev/null || true)
         if [[ -n "$volumes" ]]; then
-            docker volume rm -f $volumes 2>/dev/null || true
+            volume_count=$(echo "$volumes" | wc -w)
+            if [[ "$VERBOSE_MODE" == "true" ]]; then
+                docker volume rm -f $volumes 2>&1 || true
+            else
+                docker volume rm -f $volumes >/dev/null 2>&1 || true
+            fi
         fi
 
         # Remove project networks
         local networks
         networks=$(docker network ls -q --filter "name=wtc" 2>/dev/null || true)
         networks="$networks $(docker network ls -q --filter "name=water" 2>/dev/null || true)"
+        networks=$(echo "$networks" | xargs -n1 2>/dev/null | sort -u | xargs 2>/dev/null || true)
         if [[ -n "$networks" ]]; then
-            docker network rm $networks 2>/dev/null || true
+            network_count=$(echo "$networks" | wc -w)
+            if [[ "$VERBOSE_MODE" == "true" ]]; then
+                docker network rm $networks 2>&1 || true
+            else
+                docker network rm $networks >/dev/null 2>&1 || true
+            fi
         fi
 
-        # Prune build cache
-        log_info "Pruning Docker build cache..."
-        docker builder prune -af 2>/dev/null || true
+        # Summary of Docker cleanup
+        if [[ $image_count -gt 0 ]] || [[ $volume_count -gt 0 ]] || [[ $network_count -gt 0 ]]; then
+            log_info "Removed Docker resources: ${image_count} image(s), ${volume_count} volume(s), ${network_count} network(s)"
+        fi
 
-        # General Docker cleanup (dangling only, not all)
-        docker system prune -f 2>/dev/null || true
+        # Prune build cache (silent unless verbose)
+        log_verbose "Pruning Docker build cache..."
+        if [[ "$VERBOSE_MODE" == "true" ]]; then
+            docker builder prune -af 2>&1 || true
+            docker system prune -f 2>&1 || true
+        else
+            docker builder prune -af >/dev/null 2>&1 || true
+            docker system prune -f >/dev/null 2>&1 || true
+        fi
     fi
 
-    # Remove installation directory
-    log_info "Removing /opt/water-controller..."
+    # Remove all directories (consolidated log message)
+    log_info "Removing installation directories..."
+    log_verbose "/opt/water-controller"
     run_privileged rm -rf /opt/water-controller 2>/dev/null || true
-
-    # Remove config directory
-    log_info "Removing /etc/water-controller..."
+    log_verbose "/etc/water-controller"
     run_privileged rm -rf /etc/water-controller 2>/dev/null || true
-
-    # Remove data directory
-    log_info "Removing /var/lib/water-controller..."
+    log_verbose "/var/lib/water-controller"
     run_privileged rm -rf /var/lib/water-controller 2>/dev/null || true
-
-    # Remove log directory
-    log_info "Removing /var/log/water-controller..."
+    log_verbose "/var/log/water-controller"
     run_privileged rm -rf /var/log/water-controller 2>/dev/null || true
-
-    # Remove backup directory
-    log_info "Removing /var/backups/water-controller..."
+    log_verbose "/var/backups/water-controller"
     run_privileged rm -rf /var/backups/water-controller 2>/dev/null || true
 
     # Remove credentials files
@@ -2380,6 +2460,7 @@ OPTIONS:
     --keep-config       Keep configuration files when removing
     --yes, -y           Answer yes to all prompts
     --quiet, -q         Suppress non-essential output (errors still shown)
+    --verbose, -v       Show detailed output for debugging
     --help, -h          Show this help message
     --version           Show version information
 
@@ -2484,6 +2565,10 @@ main() {
                 QUIET_MODE="true"
                 shift
                 ;;
+            --verbose|-v)
+                VERBOSE_MODE="true"
+                shift
+                ;;
             --help|-h)
                 show_help
                 exit 0
@@ -2502,7 +2587,7 @@ main() {
 
     # Initialize logging
     init_logging
-    log_debug "Bootstrap started with args: action=$action branch=$branch force=$force dry_run=$dry_run"
+    log_debug "Bootstrap started with args: action=$action branch=$branch force=$force dry_run=$dry_run verbose=$VERBOSE_MODE"
 
     # If no action specified, auto-detect based on system state
     if [[ -z "$action" ]]; then
