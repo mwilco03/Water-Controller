@@ -106,13 +106,13 @@ export default function LoginPage() {
             <button
               type="submit"
               disabled={loading}
-              className="w-full py-3 bg-status-info hover:bg-status-info/90 rounded text-white font-medium disabled:opacity-50 transition-colors"
+              className="w-full py-2 bg-status-info hover:bg-status-info/90 rounded text-white text-sm font-medium disabled:opacity-50 transition-colors"
             >
               {loading ? 'Signing in...' : 'Sign In'}
             </button>
           </form>
 
-          <div className="mt-6 pt-6 border-t border-hmi-border">
+          <div className="mt-4 pt-4 border-t border-hmi-border">
             <button
               onClick={() => setShowLdapConfig(!showLdapConfig)}
               className="text-sm text-hmi-muted hover:text-hmi-text transition-colors"

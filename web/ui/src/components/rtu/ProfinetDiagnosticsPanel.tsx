@@ -263,7 +263,7 @@ export default function ProfinetDiagnosticsPanel({ stationName, onClose }: Props
       </div>
 
       {/* Tab Content */}
-      <div className="min-h-[400px]">
+      <div>
         {activeTab === 'overview' && (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {/* Device Info */}
