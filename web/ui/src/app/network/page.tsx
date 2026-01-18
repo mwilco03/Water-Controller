@@ -90,7 +90,9 @@ export default function NetworkPage() {
     try {
       const res = await fetch('/api/v1/system/interfaces');
       if (res.ok) {
-        setInterfaces(await res.json());
+        const json = await res.json();
+        const arr = Array.isArray(json) ? json : (json.data || json.interfaces || []);
+        setInterfaces(arr);
       }
     } catch (error) {
       networkLogger.error('Failed to fetch interfaces', error);

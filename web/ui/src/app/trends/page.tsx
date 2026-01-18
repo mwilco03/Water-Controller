@@ -120,11 +120,12 @@ function TrendsContent() {
     try {
       const res = await fetch('/api/v1/trends/tags');
       if (res.ok) {
-        let data = await res.json();
+        const json = await res.json();
+        let arr = Array.isArray(json) ? json : (json.data || json.tags || []);
         if (rtuFilter) {
-          data = data.filter((t: HistorianTag) => t.rtu_station === rtuFilter);
+          arr = arr.filter((t: HistorianTag) => t.rtu_station === rtuFilter);
         }
-        setTags(data);
+        setTags(arr);
       }
     } catch (error) {
       logger.error('Failed to fetch tags', error);

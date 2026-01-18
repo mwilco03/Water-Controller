@@ -60,11 +60,12 @@ export default function RTUsPage() {
     try {
       const res = await fetch('/api/v1/rtus');
       if (res.ok) {
-        const data = await res.json();
-        setRtus(data);
+        const json = await res.json();
+        const arr = Array.isArray(json) ? json : (json.data || []);
+        setRtus(arr);
 
         // Fetch health for each RTU
-        for (const rtu of data) {
+        for (const rtu of arr) {
           fetchHealth(rtu.station_name);
         }
       }

@@ -134,7 +134,9 @@ export default function ModbusPage() {
     try {
       const res = await fetch('/api/v1/modbus/downstream');
       if (res.ok) {
-        setDownstreamDevices(await res.json());
+        const json = await res.json();
+        const arr = Array.isArray(json) ? json : (json.data || []);
+        setDownstreamDevices(arr);
       }
     } catch (error) {
       modbusLogger.error('Failed to fetch downstream devices', error);
@@ -145,7 +147,9 @@ export default function ModbusPage() {
     try {
       const res = await fetch('/api/v1/modbus/mappings');
       if (res.ok) {
-        setRegisterMappings(await res.json());
+        const json = await res.json();
+        const arr = Array.isArray(json) ? json : (json.data || []);
+        setRegisterMappings(arr);
       }
     } catch (error) {
       modbusLogger.error('Failed to fetch register mappings', error);
@@ -167,7 +171,9 @@ export default function ModbusPage() {
     try {
       const res = await fetch('/api/v1/rtus');
       if (res.ok) {
-        setRtus(await res.json());
+        const json = await res.json();
+        const arr = Array.isArray(json) ? json : (json.data || []);
+        setRtus(arr);
       }
     } catch (error) {
       modbusLogger.error('Failed to fetch RTUs', error);

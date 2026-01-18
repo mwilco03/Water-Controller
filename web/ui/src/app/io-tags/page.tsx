@@ -57,10 +57,11 @@ export default function IOTagsPage() {
     try {
       const res = await fetch('/api/v1/rtus');
       if (res.ok) {
-        const data = await res.json();
-        setRtus(data);
-        if (data.length > 0 && !selectedRtu) {
-          setSelectedRtu(data[0].station_name);
+        const json = await res.json();
+        const arr = Array.isArray(json) ? json : (json.data || []);
+        setRtus(arr);
+        if (arr.length > 0 && !selectedRtu) {
+          setSelectedRtu(arr[0].station_name);
         }
       }
     } catch (error) {
@@ -73,7 +74,9 @@ export default function IOTagsPage() {
     try {
       const res = await fetch(`/api/v1/rtus/${selectedRtu}/slots`);
       if (res.ok) {
-        setSlotConfigs(await res.json());
+        const json = await res.json();
+        const arr = Array.isArray(json) ? json : (json.data || []);
+        setSlotConfigs(arr);
       }
     } catch (error) {
       configLogger.error('Failed to fetch slot configs', error);
@@ -84,8 +87,9 @@ export default function IOTagsPage() {
     try {
       const res = await fetch('/api/v1/trends/tags');
       if (res.ok) {
-        const data = await res.json();
-        setHistorianTags(data.filter((t: HistorianTag) => !selectedRtu || t.rtu_station === selectedRtu));
+        const json = await res.json();
+        const arr = Array.isArray(json) ? json : (json.data || json.tags || []);
+        setHistorianTags(arr.filter((t: HistorianTag) => !selectedRtu || t.rtu_station === selectedRtu));
       }
     } catch (error) {
       configLogger.error('Failed to fetch historian tags', error);
