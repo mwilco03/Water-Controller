@@ -145,7 +145,8 @@ export default function BulkOperationsPanel({ rtus, onRefresh }: Props) {
     setCurrentOperation(operation);
     setShowConfirm(null);
 
-    // Simulate operation execution
+    // Simulate operation execution with immutable state updates
+    let currentResults: OperationResult[] = [];
     for (let i = 0; i < selectedRtus.length; i++) {
       const rtuName = selectedRtus[i];
       await new Promise(r => setTimeout(r, 500 + Math.random() * 1000));
@@ -158,15 +159,26 @@ export default function BulkOperationsPanel({ rtus, onRefresh }: Props) {
         duration_ms: Math.floor(Math.random() * 500) + 100,
       };
 
-      operation.results.push(result);
-      operation.progress = ((i + 1) / selectedRtus.length) * 100;
-      setCurrentOperation({ ...operation });
+      // Use immutable update - create new array instead of mutating
+      currentResults = [...currentResults, result];
+      const progress = ((i + 1) / selectedRtus.length) * 100;
+      setCurrentOperation(prev => prev ? {
+        ...prev,
+        results: currentResults,
+        progress,
+      } : null);
     }
 
-    operation.status = operation.results.every(r => r.success) ? 'completed' : 'failed';
-    operation.completed_at = new Date().toISOString();
-    setCurrentOperation({ ...operation });
-    setOperationHistory(prev => [operation, ...prev.slice(0, 9)]);
+    // Final status update with immutable pattern
+    const finalStatus: BulkOperation['status'] = currentResults.every(r => r.success) ? 'completed' : 'failed';
+    const completedOperation: BulkOperation = {
+      ...operation,
+      status: finalStatus,
+      results: currentResults,
+      completed_at: new Date().toISOString(),
+    };
+    setCurrentOperation(completedOperation);
+    setOperationHistory(prev => [completedOperation, ...prev.slice(0, 9)]);
 
     // Auto-clear after 5 seconds
     setTimeout(() => {

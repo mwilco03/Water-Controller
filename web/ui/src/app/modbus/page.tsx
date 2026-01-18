@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import { modbusLogger } from '@/lib/logger';
-import { useHMIToast } from '@/components/hmi';
+import { useHMIToast, ConfirmModal } from '@/components/hmi';
+import { extractArrayData, extractObjectData } from '@/lib/api';
 
 interface ModbusServerConfig {
   tcp_enabled: boolean;
@@ -76,6 +77,8 @@ export default function ModbusPage() {
   const [showMappingModal, setShowMappingModal] = useState(false);
   const [editingDevice, setEditingDevice] = useState<ModbusDownstreamDevice | null>(null);
   const [editingMapping, setEditingMapping] = useState<ModbusRegisterMapping | null>(null);
+  const [deviceToDelete, setDeviceToDelete] = useState<number | null>(null);
+  const [mappingToDelete, setMappingToDelete] = useState<number | null>(null);
 
   // New device form
   const [newDevice, setNewDevice] = useState<ModbusDownstreamDevice>({
@@ -123,7 +126,8 @@ export default function ModbusPage() {
     try {
       const res = await fetch('/api/v1/modbus/server');
       if (res.ok) {
-        setServerConfig(await res.json());
+        const json = await res.json();
+        setServerConfig(extractObjectData<ModbusServerConfig>(json, serverConfig!));
       }
     } catch (error) {
       modbusLogger.error('Failed to fetch server config', error);
@@ -135,8 +139,7 @@ export default function ModbusPage() {
       const res = await fetch('/api/v1/modbus/downstream');
       if (res.ok) {
         const json = await res.json();
-        const arr = Array.isArray(json) ? json : (json.data || []);
-        setDownstreamDevices(arr);
+        setDownstreamDevices(extractArrayData<ModbusDownstreamDevice>(json));
       }
     } catch (error) {
       modbusLogger.error('Failed to fetch downstream devices', error);
@@ -148,8 +151,7 @@ export default function ModbusPage() {
       const res = await fetch('/api/v1/modbus/mappings');
       if (res.ok) {
         const json = await res.json();
-        const arr = Array.isArray(json) ? json : (json.data || []);
-        setRegisterMappings(arr);
+        setRegisterMappings(extractArrayData<ModbusRegisterMapping>(json));
       }
     } catch (error) {
       modbusLogger.error('Failed to fetch register mappings', error);
@@ -160,7 +162,8 @@ export default function ModbusPage() {
     try {
       const res = await fetch('/api/v1/modbus/stats');
       if (res.ok) {
-        setStats(await res.json());
+        const json = await res.json();
+        setStats(extractObjectData<ModbusStats>(json, stats!));
       }
     } catch (error) {
       modbusLogger.error('Failed to fetch stats', error);
@@ -172,8 +175,7 @@ export default function ModbusPage() {
       const res = await fetch('/api/v1/rtus');
       if (res.ok) {
         const json = await res.json();
-        const arr = Array.isArray(json) ? json : (json.data || []);
-        setRtus(arr);
+        setRtus(extractArrayData<RTUDevice>(json));
       }
     } catch (error) {
       modbusLogger.error('Failed to fetch RTUs', error);
@@ -256,11 +258,15 @@ export default function ModbusPage() {
     }
   };
 
-  const deleteDevice = async (deviceId: number) => {
-    if (!confirm('Are you sure you want to delete this device?')) return;
+  const handleDeleteDevice = (deviceId: number) => {
+    setDeviceToDelete(deviceId);
+  };
+
+  const confirmDeleteDevice = async () => {
+    if (deviceToDelete === null) return;
 
     try {
-      const res = await fetch(`/api/v1/modbus/downstream/${deviceId}`, {
+      const res = await fetch(`/api/v1/modbus/downstream/${deviceToDelete}`, {
         method: 'DELETE',
       });
       if (res.ok) {
@@ -271,6 +277,8 @@ export default function ModbusPage() {
       }
     } catch (error) {
       showMessage('error', 'Error deleting device');
+    } finally {
+      setDeviceToDelete(null);
     }
   };
 
@@ -321,11 +329,15 @@ export default function ModbusPage() {
     }
   };
 
-  const deleteMapping = async (mappingId: number) => {
-    if (!confirm('Are you sure you want to delete this mapping?')) return;
+  const handleDeleteMapping = (mappingId: number) => {
+    setMappingToDelete(mappingId);
+  };
+
+  const confirmDeleteMapping = async () => {
+    if (mappingToDelete === null) return;
 
     try {
-      const res = await fetch(`/api/v1/modbus/mappings/${mappingId}`, {
+      const res = await fetch(`/api/v1/modbus/mappings/${mappingToDelete}`, {
         method: 'DELETE',
       });
       if (res.ok) {
@@ -336,6 +348,8 @@ export default function ModbusPage() {
       }
     } catch (error) {
       showMessage('error', 'Error deleting mapping');
+    } finally {
+      setMappingToDelete(null);
     }
   };
 
@@ -565,7 +579,7 @@ export default function ModbusPage() {
                           Edit
                         </button>
                         <button
-                          onClick={() => deleteMapping(mapping.mapping_id!)}
+                          onClick={() => handleDeleteMapping(mapping.mapping_id!)}
                           className="text-red-400 hover:text-red-300"
                         >
                           Delete
@@ -628,7 +642,7 @@ export default function ModbusPage() {
                       Edit
                     </button>
                     <button
-                      onClick={() => deleteDevice(device.device_id!)}
+                      onClick={() => handleDeleteDevice(device.device_id!)}
                       className="px-3 py-1 bg-status-alarm hover:bg-status-alarm rounded text-sm"
                     >
                       Delete
@@ -1059,6 +1073,30 @@ export default function ModbusPage() {
           </div>
         </div>
       )}
+
+      {/* Delete Device Confirmation */}
+      <ConfirmModal
+        isOpen={deviceToDelete !== null}
+        onClose={() => setDeviceToDelete(null)}
+        onConfirm={confirmDeleteDevice}
+        title="Delete Device"
+        message="Are you sure you want to delete this downstream device? This will also remove any associated register mappings."
+        confirmLabel="Delete"
+        cancelLabel="Cancel"
+        variant="danger"
+      />
+
+      {/* Delete Mapping Confirmation */}
+      <ConfirmModal
+        isOpen={mappingToDelete !== null}
+        onClose={() => setMappingToDelete(null)}
+        onConfirm={confirmDeleteMapping}
+        title="Delete Mapping"
+        message="Are you sure you want to delete this register mapping?"
+        confirmLabel="Delete"
+        cancelLabel="Cancel"
+        variant="danger"
+      />
     </div>
   );
 }

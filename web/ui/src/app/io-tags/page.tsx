@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { rtuLogger, configLogger } from '@/lib/logger';
 import { useHMIToast, ConfirmModal } from '@/components/hmi';
+import { extractArrayData } from '@/lib/api';
 
 interface RTUDevice {
   station_name: string;
@@ -58,10 +59,10 @@ export default function IOTagsPage() {
       const res = await fetch('/api/v1/rtus');
       if (res.ok) {
         const json = await res.json();
-        const arr = Array.isArray(json) ? json : (json.data || []);
-        setRtus(arr);
-        if (arr.length > 0 && !selectedRtu) {
-          setSelectedRtu(arr[0].station_name);
+        const data = extractArrayData<RTUDevice>(json);
+        setRtus(data);
+        if (data.length > 0 && !selectedRtu) {
+          setSelectedRtu(data[0].station_name);
         }
       }
     } catch (error) {
@@ -75,8 +76,7 @@ export default function IOTagsPage() {
       const res = await fetch(`/api/v1/rtus/${selectedRtu}/slots`);
       if (res.ok) {
         const json = await res.json();
-        const arr = Array.isArray(json) ? json : (json.data || []);
-        setSlotConfigs(arr);
+        setSlotConfigs(extractArrayData<SlotConfig>(json));
       }
     } catch (error) {
       configLogger.error('Failed to fetch slot configs', error);
@@ -88,8 +88,8 @@ export default function IOTagsPage() {
       const res = await fetch('/api/v1/trends/tags');
       if (res.ok) {
         const json = await res.json();
-        const arr = Array.isArray(json) ? json : (json.data || json.tags || []);
-        setHistorianTags(arr.filter((t: HistorianTag) => !selectedRtu || t.rtu_station === selectedRtu));
+        const data = extractArrayData<HistorianTag>(json);
+        setHistorianTags(data.filter((t: HistorianTag) => !selectedRtu || t.rtu_station === selectedRtu));
       }
     } catch (error) {
       configLogger.error('Failed to fetch historian tags', error);

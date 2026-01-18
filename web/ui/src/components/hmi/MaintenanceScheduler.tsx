@@ -16,6 +16,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { format, parseISO, addHours, addDays } from 'date-fns';
+import { ConfirmModal } from './Modal';
 
 interface MaintenanceWindow {
   id: number;
@@ -42,6 +43,7 @@ export default function MaintenanceScheduler({ rtus: propRtus, onScheduled }: Ma
   const [showForm, setShowForm] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [windowToCancel, setWindowToCancel] = useState<MaintenanceWindow | null>(null);
 
   // Fetch RTUs if not provided
   useEffect(() => {
@@ -155,11 +157,15 @@ export default function MaintenanceScheduler({ rtus: propRtus, onScheduled }: Ma
     }
   };
 
-  const handleCancel = async (windowId: number) => {
-    if (!confirm('Cancel this maintenance window?')) return;
+  const handleCancelClick = (window: MaintenanceWindow) => {
+    setWindowToCancel(window);
+  };
+
+  const confirmCancelWindow = async () => {
+    if (!windowToCancel) return;
 
     try {
-      const response = await fetch(`/api/v1/alarms/maintenance/${windowId}`, {
+      const response = await fetch(`/api/v1/alarms/maintenance/${windowToCancel.id}`, {
         method: 'DELETE',
       });
 
@@ -168,6 +174,8 @@ export default function MaintenanceScheduler({ rtus: propRtus, onScheduled }: Ma
       }
     } catch (err) {
       console.error('Failed to cancel maintenance window:', err);
+    } finally {
+      setWindowToCancel(null);
     }
   };
 
@@ -384,7 +392,7 @@ export default function MaintenanceScheduler({ rtus: propRtus, onScheduled }: Ma
 
                 {(window.status === 'SCHEDULED' || window.status === 'ACTIVE') && (
                   <button
-                    onClick={() => handleCancel(window.id)}
+                    onClick={() => handleCancelClick(window)}
                     className="px-2 py-1 text-xs bg-status-alarm/20 hover:bg-status-alarm/30 text-status-alarm rounded transition-colors"
                     title="Cancel maintenance window"
                   >
@@ -396,6 +404,18 @@ export default function MaintenanceScheduler({ rtus: propRtus, onScheduled }: Ma
           ))}
         </div>
       )}
+
+      {/* Cancel Maintenance Window Confirmation */}
+      <ConfirmModal
+        isOpen={windowToCancel !== null}
+        onClose={() => setWindowToCancel(null)}
+        onConfirm={confirmCancelWindow}
+        title="Cancel Maintenance Window"
+        message={`Are you sure you want to cancel the maintenance window for ${windowToCancel?.rtu_station}? Alarm suppression will end immediately.`}
+        confirmLabel="Cancel Window"
+        cancelLabel="Keep Active"
+        variant="warning"
+      />
     </div>
   );
 }
