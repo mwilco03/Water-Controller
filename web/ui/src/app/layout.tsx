@@ -20,6 +20,7 @@ import { QueryClientProvider } from '@/contexts/QueryClientProvider';
 import CommandModeBanner from '@/components/CommandModeBanner';
 import { HMIToastProvider, AuthenticationModal, GlobalStatusBar } from '@/components/hmi';
 import SideNav from '@/components/hmi/SideNav';
+import BottomNavigation from '@/components/hmi/BottomNavigation';
 import { useWebSocket } from '@/hooks/useWebSocket';
 import { useRTUStatusData } from '@/hooks/useRTUStatusData';
 import { useKeyboardShortcuts, commonShortcuts } from '@/hooks/useKeyboardShortcuts';
@@ -127,8 +128,8 @@ function AppShell({ children }: { children: React.ReactNode }) {
         onLogoutClick={exitCommandMode}
       />
 
-      {/* Main content area */}
-      <div className="flex-1 flex flex-col lg:ml-14">
+      {/* Main content area - right margin for icon rail on desktop */}
+      <div className="flex-1 flex flex-col lg:mr-12">
         {/* Command Mode Banner */}
         <CommandModeBanner />
 
@@ -222,7 +223,7 @@ function AppShell({ children }: { children: React.ReactNode }) {
       </div>
 
       {/* Mobile Bottom Navigation */}
-      <MobileBottomNav activeAlarmCount={activeAlarmCount} />
+      <BottomNavigation activeAlarmCount={activeAlarmCount} />
 
       {/* Login Modal */}
       <AuthenticationModal
@@ -287,64 +288,3 @@ function AppShell({ children }: { children: React.ReactNode }) {
   );
 }
 
-/**
- * Mobile Bottom Navigation
- * - 5 tabs max
- * - NO horizontal scroll
- * - Alarm badge visible
- */
-function MobileBottomNav({ activeAlarmCount }: { activeAlarmCount: number }) {
-  const pathname = usePathname();
-
-  const navItems = [
-    { href: '/', label: 'Status', icon: '📊' },
-    { href: '/rtus', label: 'RTUs', icon: '📡' },
-    { href: '/alarms', label: 'Alarms', icon: '⚠️', badge: activeAlarmCount },
-    { href: '/control', label: 'Control', icon: '⚙️' },
-    { href: '/system', label: 'More', icon: '☰' },
-  ];
-
-  const isActive = (href: string) => {
-    if (href === '/') return pathname === '/';
-    if (href === '/system') {
-      // "More" is active for system and config pages
-      return pathname.startsWith('/system') ||
-             pathname.startsWith('/io-tags') ||
-             pathname.startsWith('/modbus') ||
-             pathname.startsWith('/network') ||
-             pathname.startsWith('/users') ||
-             pathname.startsWith('/settings');
-    }
-    return pathname.startsWith(href);
-  };
-
-  return (
-    <nav className="lg:hidden fixed bottom-0 left-0 right-0 bg-hmi-panel border-t border-hmi-border z-40">
-      <div className="flex justify-around items-stretch h-14 safe-area-pb">
-        {navItems.map((item) => (
-          <Link
-            key={item.href}
-            href={item.href}
-            className={`
-              flex-1 flex flex-col items-center justify-center gap-0.5
-              text-xs font-medium transition-colors
-              ${isActive(item.href)
-                ? 'text-status-info'
-                : 'text-hmi-muted'}
-            `}
-          >
-            <span className="relative text-lg">
-              {item.icon}
-              {item.badge && item.badge > 0 && (
-                <span className="absolute -top-1 -right-2 min-w-[16px] h-4 px-1 bg-status-alarm text-white text-[10px] font-bold rounded-full flex items-center justify-center">
-                  {item.badge > 99 ? '99+' : item.badge}
-                </span>
-              )}
-            </span>
-            <span>{item.label}</span>
-          </Link>
-        ))}
-      </div>
-    </nav>
-  );
-}
