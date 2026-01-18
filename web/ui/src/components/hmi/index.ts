@@ -91,5 +91,7 @@ export { default as MaintenanceScheduler } from './MaintenanceScheduler';
 export { default as GlobalStatusBar } from './GlobalStatusBar';
 export type { RTUStatusSummary, GlobalStatusBarProps } from './GlobalStatusBar';
 
+export { default as SideNav } from './SideNav';
+
 // Form components
 export * from './forms';

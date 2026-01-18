@@ -37,10 +37,10 @@
 
   /* Mobile-First Touch Targets & Spacing */
   --touch-target-min: 44px;
-  --touch-target-comfortable: 48px;
+  --touch-target-comfortable: 44px;
   --button-min-height: 36px;
-  --list-item-min-height: 48px;
-  --nav-item-min-height: 48px;
+  --list-item-min-height: 44px;
+  --nav-item-min-height: 44px;
 
   /* Spacing Scale */
   --space-xs: 4px;
@@ -57,7 +57,7 @@
   --safe-area-inset-right: env(safe-area-inset-right, 0px);
 
   /* Bottom Navigation Height */
-  --bottom-nav-height: 64px;
+  --bottom-nav-height: 56px;
 
   /* Typography Scale */
   --font-size-xs: 0.75rem;
@@ -534,6 +534,11 @@ body {
   .has-bottom-nav {
     padding-bottom: calc(var(--bottom-nav-height) + var(--safe-area-inset-bottom) + var(--space-md));
   }
+}
+
+/* Safe area padding for bottom navigation */
+.safe-area-pb {
+  padding-bottom: var(--safe-area-inset-bottom);
 }
 
 /* ========================================
