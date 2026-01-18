@@ -88,5 +88,8 @@ export { default as AlarmInsights } from './AlarmInsights';
 
 export { default as MaintenanceScheduler } from './MaintenanceScheduler';
 
+export { default as GlobalStatusBar } from './GlobalStatusBar';
+export type { RTUStatusSummary, GlobalStatusBarProps } from './GlobalStatusBar';
+
 // Form components
 export * from './forms';

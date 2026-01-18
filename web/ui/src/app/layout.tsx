@@ -8,19 +8,21 @@
  * - Gray is normal, color is abnormal
  * - Responsive navigation for all screen sizes
  * - Minimal visual clutter
+ * - SINGLE source of truth for system state (no contradictory indicators)
  */
 
 import './globals.css';
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { CommandModeProvider, useCommandMode } from '@/contexts/CommandModeContext';
 import { QueryClientProvider } from '@/contexts/QueryClientProvider';
 import CommandModeBanner from '@/components/CommandModeBanner';
-import { HMIToastProvider, AuthenticationModal, DegradedModeBanner, BottomNavigation } from '@/components/hmi';
+import { HMIToastProvider, AuthenticationModal, BottomNavigation, GlobalStatusBar } from '@/components/hmi';
 import { useWebSocket } from '@/hooks/useWebSocket';
 import { useRTUStatusData } from '@/hooks/useRTUStatusData';
-import { useKeyboardShortcuts, commonShortcuts, getRegisteredShortcuts, formatShortcut } from '@/hooks/useKeyboardShortcuts';
+import { useKeyboardShortcuts, commonShortcuts } from '@/hooks/useKeyboardShortcuts';
+import { PROFINET_STATES } from '@/constants/system';
 
 // Navigation items configuration
 const NAV_ITEMS = [
@@ -75,7 +77,8 @@ function AppShell({ children }: { children: React.ReactNode }) {
   const [configMenuOpen, setConfigMenuOpen] = useState(false);
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [showShortcutsHelp, setShowShortcutsHelp] = useState(false);
-  const [degradedSince, setDegradedSince] = useState<Date | null>(null);
+  const [isApiConnected, setIsApiConnected] = useState(true);
+  const lastUpdateRef = useRef<Date>(new Date());
   const { isAuthenticated, exitCommandMode } = useCommandMode();
 
   // Global keyboard shortcuts for veteran operators
@@ -93,15 +96,45 @@ function AppShell({ children }: { children: React.ReactNode }) {
 
   useKeyboardShortcuts(shortcuts);
 
-  // Get alarm data for bottom nav badge
-  const { alarms } = useRTUStatusData();
-  const activeAlarmCount = alarms.filter(a => a.state !== 'CLEARED').length;
+  // Get RTU and alarm data for status bar
+  const { rtus, alarms, error, dataMode, connected: wsConnected } = useRTUStatusData();
 
-  // WebSocket connection status
-  const { connected } = useWebSocket({
-    onConnect: () => setDegradedSince(null),
-    onDisconnect: () => setDegradedSince(new Date()),
-  });
+  // Track API connection status based on error state
+  useEffect(() => {
+    if (error) {
+      setIsApiConnected(false);
+    } else if (rtus.length >= 0) {
+      setIsApiConnected(true);
+      lastUpdateRef.current = new Date();
+    }
+  }, [error, rtus]);
+
+  // Calculate alarm summary
+  const activeAlarms = useMemo(() =>
+    alarms.filter(a => a.state !== 'CLEARED'),
+    [alarms]
+  );
+  const activeAlarmCount = activeAlarms.length;
+  const highestAlarmSeverity = useMemo(() => {
+    if (activeAlarms.length === 0) return null;
+    const severityOrder = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'INFO'] as const;
+    for (const severity of severityOrder) {
+      if (activeAlarms.some(a => a.severity === severity)) {
+        return severity;
+      }
+    }
+    return 'MEDIUM' as const;
+  }, [activeAlarms]);
+
+  // Prepare RTU status summary for GlobalStatusBar
+  const rtuStatusSummary = useMemo(() =>
+    rtus.map(rtu => ({
+      stationName: rtu.station_name,
+      state: rtu.state,
+      hasAlarms: (rtu.alarm_count ?? 0) > 0,
+    })),
+    [rtus]
+  );
 
   // Close mobile menu on route change
   useEffect(() => {
@@ -111,14 +144,6 @@ function AppShell({ children }: { children: React.ReactNode }) {
 
   const isActive = (path: string) => pathname === path;
   const isConfigActive = CONFIG_ITEMS.some(item => pathname.startsWith(item.href));
-
-  // Degraded mode info
-  const degradedInfo = !connected ? {
-    reason: 'websocket_disconnected' as const,
-    message: 'Real-time updates unavailable. Using polling.',
-    details: 'Attempting to reconnect...',
-    since: degradedSince || undefined,
-  } : null;
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -130,12 +155,10 @@ function AppShell({ children }: { children: React.ReactNode }) {
       {/* Command Mode Banner */}
       <CommandModeBanner />
 
-      {/* Degraded Mode Banner */}
-      {degradedInfo && <DegradedModeBanner degradedInfo={degradedInfo} />}
-
       {/* Header */}
       <header className="hmi-nav sticky top-0 z-50">
         <div className="hmi-container">
+          {/* Primary Row: Logo, Nav, Auth */}
           <div className="flex items-center justify-between h-14">
             {/* Logo */}
             <Link href="/" className="flex items-center gap-3 shrink-0">
@@ -200,14 +223,8 @@ function AppShell({ children }: { children: React.ReactNode }) {
               </Link>
             </nav>
 
-            {/* Right Side - Status & Auth */}
+            {/* Right Side - Auth Only */}
             <div className="flex items-center gap-3">
-              {/* Connection Status */}
-              <div className="hidden sm:flex items-center gap-2 text-sm">
-                <span className={`status-dot ${connected ? 'ok' : 'offline'}`} />
-                <span className="text-hmi-muted">{connected ? 'Online' : 'Offline'}</span>
-              </div>
-
               {/* Auth Button */}
               {isAuthenticated ? (
                 <button
@@ -240,6 +257,19 @@ function AppShell({ children }: { children: React.ReactNode }) {
                 </svg>
               </button>
             </div>
+          </div>
+
+          {/* Status Row: GlobalStatusBar - Visible on all screens */}
+          <div className="border-t border-hmi-border py-2">
+            <GlobalStatusBar
+              isApiConnected={isApiConnected}
+              isWebSocketConnected={wsConnected}
+              profinetState={PROFINET_STATES.RUN}
+              rtus={rtuStatusSummary}
+              activeAlarmCount={activeAlarmCount}
+              highestAlarmSeverity={highestAlarmSeverity}
+              lastUpdate={lastUpdateRef.current}
+            />
           </div>
 
           {/* Mobile Navigation */}
