@@ -91,5 +91,12 @@ export { default as MaintenanceScheduler } from './MaintenanceScheduler';
 export { default as GlobalStatusBar } from './GlobalStatusBar';
 export type { RTUStatusSummary, GlobalStatusBarProps } from './GlobalStatusBar';
 
+export { default as SideNav } from './SideNav';
+
+export { default as Sparkline } from './Sparkline';
+
+export { default as DataTableView } from './DataTableView';
+export type { DataPoint } from './DataTableView';
+
 // Form components
 export * from './forms';

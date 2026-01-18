@@ -4,11 +4,11 @@
  * Root Layout - ISA-101 Compliant SCADA HMI
  *
  * Design principles:
- * - Clean, professional industrial interface
- * - Gray is normal, color is abnormal
- * - Responsive navigation for all screen sizes
- * - Minimal visual clutter
- * - SINGLE source of truth for system state (no contradictory indicators)
+ * - Desktop: Collapsible side panel (icons-only default)
+ * - Mobile: Bottom navigation (no horizontal scroll)
+ * - Tablet: Collapsed side panel (icons only)
+ * - Login de-emphasized (in side panel, not header)
+ * - Alarm count always visible
  */
 
 import './globals.css';
@@ -18,28 +18,12 @@ import Link from 'next/link';
 import { CommandModeProvider, useCommandMode } from '@/contexts/CommandModeContext';
 import { QueryClientProvider } from '@/contexts/QueryClientProvider';
 import CommandModeBanner from '@/components/CommandModeBanner';
-import { HMIToastProvider, AuthenticationModal, BottomNavigation, GlobalStatusBar } from '@/components/hmi';
+import { HMIToastProvider, AuthenticationModal, GlobalStatusBar } from '@/components/hmi';
+import SideNav from '@/components/hmi/SideNav';
 import { useWebSocket } from '@/hooks/useWebSocket';
 import { useRTUStatusData } from '@/hooks/useRTUStatusData';
 import { useKeyboardShortcuts, commonShortcuts } from '@/hooks/useKeyboardShortcuts';
 import { PROFINET_STATES } from '@/constants/system';
-
-// Navigation items configuration
-const NAV_ITEMS = [
-  { href: '/', label: 'Status', icon: 'grid' },
-  { href: '/rtus', label: 'RTUs', icon: 'server' },
-  { href: '/alarms', label: 'Alarms', icon: 'bell' },
-  { href: '/trends', label: 'Trends', icon: 'chart' },
-  { href: '/control', label: 'Control', icon: 'sliders' },
-] as const;
-
-const CONFIG_ITEMS = [
-  { href: '/io-tags', label: 'I/O Tags' },
-  { href: '/modbus', label: 'Modbus' },
-  { href: '/network', label: 'Network' },
-  { href: '/users', label: 'Users' },
-  { href: '/settings', label: 'Settings' },
-] as const;
 
 export default function RootLayout({
   children,
@@ -53,8 +37,6 @@ export default function RootLayout({
         <meta name="description" content="SCADA HMI for Water Treatment RTU Network" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-        {/* Local fonts for air-gapped deployment - no external network calls */}
-        {/* eslint-disable-next-line @next/next/no-css-tags -- Intentional for air-gapped deployments */}
         <link rel="stylesheet" href="/fonts/fonts.css" />
       </head>
       <body className="bg-hmi-bg text-hmi-text">
@@ -73,33 +55,28 @@ export default function RootLayout({
 function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [configMenuOpen, setConfigMenuOpen] = useState(false);
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [showShortcutsHelp, setShowShortcutsHelp] = useState(false);
   const [isApiConnected, setIsApiConnected] = useState(true);
   const lastUpdateRef = useRef<Date>(new Date());
   const { isAuthenticated, exitCommandMode } = useCommandMode();
 
-  // Global keyboard shortcuts for veteran operators
+  // Global keyboard shortcuts
   const shortcuts = useMemo(() => [
-    // Single-key navigation (no modifiers required)
     { key: 'a', description: 'Go to Alarms', handler: () => router.push('/alarms') },
     { key: 'c', description: 'Go to Control', handler: () => router.push('/control') },
     { key: 't', description: 'Go to Trends', handler: () => router.push('/trends') },
     { key: 's', description: 'Go to Status (home)', handler: () => router.push('/') },
     { key: 'r', description: 'Go to RTUs', handler: () => router.push('/rtus') },
-    // Help shortcut
     commonShortcuts.help(() => setShowShortcutsHelp(true)),
     commonShortcuts.escape(() => setShowShortcutsHelp(false)),
   ], [router]);
 
   useKeyboardShortcuts(shortcuts);
 
-  // Get RTU and alarm data for status bar
-  const { rtus, alarms, error, dataMode, connected: wsConnected } = useRTUStatusData();
+  // Get RTU and alarm data
+  const { rtus, alarms, error, connected: wsConnected } = useRTUStatusData();
 
-  // Track API connection status based on error state
   useEffect(() => {
     if (error) {
       setIsApiConnected(false);
@@ -126,7 +103,6 @@ function AppShell({ children }: { children: React.ReactNode }) {
     return 'MEDIUM' as const;
   }, [activeAlarms]);
 
-  // Prepare RTU status summary for GlobalStatusBar
   const rtuStatusSummary = useMemo(() =>
     rtus.map(rtu => ({
       stationName: rtu.station_name,
@@ -136,125 +112,81 @@ function AppShell({ children }: { children: React.ReactNode }) {
     [rtus]
   );
 
-  // Close mobile menu on route change
-  useEffect(() => {
-    setMobileMenuOpen(false);
-    setConfigMenuOpen(false);
-  }, [pathname]);
-
-  const isActive = (path: string) => pathname === path;
-  const isConfigActive = CONFIG_ITEMS.some(item => pathname.startsWith(item.href));
-
   return (
-    <div className="min-h-screen flex flex-col">
+    <div className="min-h-screen flex">
       {/* Skip Link */}
       <a href="#main-content" className="skip-link">
         Skip to main content
       </a>
 
-      {/* Command Mode Banner */}
-      <CommandModeBanner />
+      {/* Desktop Side Navigation */}
+      <SideNav
+        activeAlarmCount={activeAlarmCount}
+        isAuthenticated={isAuthenticated}
+        onLoginClick={() => setShowLoginModal(true)}
+        onLogoutClick={exitCommandMode}
+      />
 
-      {/* Header */}
-      <header className="hmi-nav sticky top-0 z-50">
-        <div className="hmi-container">
-          {/* Primary Row: Logo, Nav, Auth */}
-          <div className="flex items-center justify-between h-14">
-            {/* Logo */}
-            <Link href="/" className="flex items-center gap-3 shrink-0">
-              <div className="w-8 h-8 rounded-lg bg-status-info flex items-center justify-center">
-                <span className="text-white text-xs font-bold">WTC</span>
-              </div>
-              <div className="hidden sm:block">
-                <div className="font-semibold text-hmi-text leading-tight">Water Treatment</div>
-                <div className="text-xs text-hmi-muted">SCADA/HMI</div>
-              </div>
-            </Link>
+      {/* Main content area */}
+      <div className="flex-1 flex flex-col lg:ml-14">
+        {/* Command Mode Banner */}
+        <CommandModeBanner />
 
-            {/* Desktop Navigation */}
-            <nav className="hidden lg:flex items-center gap-1">
-              {NAV_ITEMS.map((item) => (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  className={`hmi-nav-link ${isActive(item.href) ? 'active' : ''}`}
-                >
-                  <NavIcon name={item.icon} />
-                  {item.label}
-                </Link>
-              ))}
-
-              {/* Config Dropdown */}
-              <div className="relative ml-2">
-                <button
-                  onClick={() => setConfigMenuOpen(!configMenuOpen)}
-                  className={`hmi-nav-link ${isConfigActive ? 'active' : ''}`}
-                >
-                  <NavIcon name="cog" />
-                  Config
-                  <span className="ml-1 text-xs">▼</span>
-                </button>
-
-                {configMenuOpen && (
-                  <>
-                    <div className="fixed inset-0 z-40" onClick={() => setConfigMenuOpen(false)} />
-                    <div className="absolute right-0 mt-2 w-48 bg-hmi-panel rounded-lg shadow-card-hover border border-hmi-border py-1 z-50">
-                      {CONFIG_ITEMS.map((item) => (
-                        <Link
-                          key={item.href}
-                          href={item.href}
-                          className="block px-4 py-2 text-sm text-hmi-text hover:bg-hmi-bg"
-                        >
-                          {item.label}
-                        </Link>
-                      ))}
-                    </div>
-                  </>
-                )}
-              </div>
-
-              <Link href="/system" className={`hmi-nav-link ${isActive('/system') ? 'active' : ''}`}>
-                <NavIcon name="activity" />
-                System
+        {/* Mobile Header - only on smaller screens */}
+        <header className="lg:hidden hmi-nav sticky top-0 z-30">
+          <div className="hmi-container">
+            <div className="flex items-center justify-between h-12">
+              {/* Logo */}
+              <Link href="/" className="flex items-center gap-2">
+                <span className="text-lg font-bold text-status-info">WTC</span>
+                <span className="text-sm text-hmi-muted hidden sm:inline">Water Treatment</span>
               </Link>
-            </nav>
 
-            {/* Right Side - Auth Only */}
-            <div className="flex items-center gap-3">
-              {/* Auth Button */}
-              {isAuthenticated ? (
-                <button
-                  onClick={exitCommandMode}
-                  className="hmi-btn hmi-btn-secondary text-sm"
-                >
-                  Logout
-                </button>
-              ) : (
-                <button
-                  onClick={() => setShowLoginModal(true)}
-                  className="hmi-btn hmi-btn-primary text-sm"
-                >
-                  Login
-                </button>
-              )}
+              {/* Status indicators */}
+              <div className="flex items-center gap-3">
+                {/* Connection status */}
+                <span
+                  className={`w-2 h-2 rounded-full ${isApiConnected ? 'bg-status-ok' : 'bg-status-alarm'}`}
+                  title={isApiConnected ? 'Connected' : 'Disconnected'}
+                />
 
-              {/* Mobile Menu Button */}
-              <button
-                onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-                className="lg:hidden p-2 rounded-md hover:bg-hmi-bg text-hmi-text font-medium"
-                aria-label="Toggle menu"
-              >
-                {mobileMenuOpen ? (
-                  <span className="text-lg">×</span>
-                ) : (
-                  <span className="text-sm">Menu</span>
+                {/* Alarm badge - links to alarms */}
+                {activeAlarmCount > 0 && (
+                  <Link
+                    href="/alarms"
+                    className="flex items-center gap-1 px-2 py-1 bg-status-alarm/10 text-status-alarm rounded text-sm font-medium"
+                  >
+                    <span>⚠️</span>
+                    <span>{activeAlarmCount}</span>
+                  </Link>
                 )}
-              </button>
+
+                {/* Auth button - de-emphasized */}
+                {isAuthenticated ? (
+                  <button
+                    onClick={exitCommandMode}
+                    className="p-2 text-hmi-muted hover:text-hmi-text"
+                    title="Logout"
+                  >
+                    🔓
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => setShowLoginModal(true)}
+                    className="p-2 text-hmi-muted hover:text-hmi-text"
+                    title="Login"
+                  >
+                    🔐
+                  </button>
+                )}
+              </div>
             </div>
           </div>
+        </header>
 
-          {/* Status Row: GlobalStatusBar - Visible on all screens */}
-          <div className="border-t border-hmi-border py-2">
+        {/* Desktop Header - minimal status bar */}
+        <header className="hidden lg:block border-b border-hmi-border bg-hmi-panel">
+          <div className="px-4 py-2">
             <GlobalStatusBar
               isApiConnected={isApiConnected}
               isWebSocketConnected={wsConnected}
@@ -265,67 +197,32 @@ function AppShell({ children }: { children: React.ReactNode }) {
               lastUpdate={lastUpdateRef.current}
             />
           </div>
+        </header>
 
-          {/* Mobile Navigation */}
-          {mobileMenuOpen && (
-            <nav className="lg:hidden py-4 border-t border-hmi-border">
-              <div className="grid gap-1">
-                {NAV_ITEMS.map((item) => (
-                  <Link
-                    key={item.href}
-                    href={item.href}
-                    className={`hmi-nav-link ${isActive(item.href) ? 'active' : ''}`}
-                  >
-                    <NavIcon name={item.icon} />
-                    {item.label}
-                  </Link>
-                ))}
-                <div className="border-t border-hmi-border my-2" />
-                <div className="text-xs font-medium text-hmi-muted uppercase px-4 py-2">Configuration</div>
-                {CONFIG_ITEMS.map((item) => (
-                  <Link
-                    key={item.href}
-                    href={item.href}
-                    className={`hmi-nav-link ${isActive(item.href) ? 'active' : ''}`}
-                  >
-                    {item.label}
-                  </Link>
-                ))}
-                <div className="border-t border-hmi-border my-2" />
-                <Link href="/system" className={`hmi-nav-link ${isActive('/system') ? 'active' : ''}`}>
-                  <NavIcon name="activity" />
-                  System
-                </Link>
-              </div>
-            </nav>
-          )}
-        </div>
-      </header>
+        {/* Main Content */}
+        <main id="main-content" className="flex-1">
+          <div className="hmi-container py-4">
+            {children}
+          </div>
+        </main>
 
-      {/* Main Content */}
-      <main id="main-content" className="flex-1 has-bottom-nav">
-        <div className="hmi-container py-6">
-          {children}
-        </div>
-      </main>
-
-      {/* Footer */}
-      <footer className="border-t border-hmi-border py-4 mt-auto">
-        <div className="hmi-container flex flex-col sm:flex-row items-center justify-between gap-2 text-xs text-hmi-muted">
-          <span>Water Treatment Controller SCADA/HMI</span>
-          <div className="flex items-center gap-4">
+        {/* Footer - minimal, desktop only */}
+        <footer className="hidden lg:block border-t border-hmi-border py-2">
+          <div className="hmi-container flex items-center justify-between text-xs text-hmi-muted">
+            <span>Water Treatment Controller v1.0</span>
             <button
               onClick={() => setShowShortcutsHelp(true)}
               className="hover:text-hmi-text transition-colors flex items-center gap-1"
-              title="Keyboard shortcuts"
             >
-              <kbd className="px-1.5 py-0.5 bg-hmi-bg rounded border border-hmi-border text-xs">?</kbd>
+              <kbd className="px-1 py-0.5 bg-hmi-bg rounded border border-hmi-border">?</kbd>
               <span>Shortcuts</span>
             </button>
-            <span>PROFINET I/O Controller v1.0</span>
           </div>
-        </div>
-      </footer>
+        </footer>
+      </div>
+
+      {/* Mobile Bottom Navigation */}
+      <MobileBottomNav activeAlarmCount={activeAlarmCount} />
 
       {/* Login Modal */}
       <AuthenticationModal
@@ -335,80 +232,119 @@ function AppShell({ children }: { children: React.ReactNode }) {
         onSuccess={() => setShowLoginModal(false)}
       />
 
-      {/* Keyboard Shortcuts Help Dialog */}
+      {/* Keyboard Shortcuts Dialog */}
       {showShortcutsHelp && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setShowShortcutsHelp(false)}>
-          <div className="bg-hmi-panel rounded-lg p-6 max-w-md w-full mx-4 border border-hmi-border shadow-lg" onClick={e => e.stopPropagation()}>
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold text-hmi-text">Keyboard Shortcuts</h3>
+        <div
+          className="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+          onClick={() => setShowShortcutsHelp(false)}
+        >
+          <div
+            className="bg-hmi-panel rounded-lg p-4 max-w-sm w-full mx-4 border border-hmi-border shadow-lg"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-semibold text-hmi-text">Keyboard Shortcuts</h3>
               <button
                 onClick={() => setShowShortcutsHelp(false)}
-                className="p-1 hover:bg-hmi-bg rounded text-hmi-muted text-xl leading-none"
-                aria-label="Close"
+                className="p-1 hover:bg-hmi-bg rounded text-hmi-muted"
               >
-                ×
+                ✕
               </button>
             </div>
 
-            <div className="space-y-3">
-              <div className="text-sm text-hmi-muted mb-2">Navigation</div>
-              <div className="grid gap-2">
+            <div className="space-y-2 text-sm">
+              <div className="text-xs text-hmi-muted uppercase mb-2">Navigation</div>
+              {[
+                { key: 'A', desc: 'Alarms' },
+                { key: 'C', desc: 'Control' },
+                { key: 'T', desc: 'Trends' },
+                { key: 'S', desc: 'Status' },
+                { key: 'R', desc: 'RTUs' },
+              ].map(({ key, desc }) => (
+                <div key={key} className="flex items-center justify-between py-1">
+                  <span className="text-hmi-text">{desc}</span>
+                  <kbd className="px-2 py-0.5 bg-hmi-bg rounded border border-hmi-border text-xs font-mono">{key}</kbd>
+                </div>
+              ))}
+
+              <div className="border-t border-hmi-border pt-2 mt-2">
+                <div className="text-xs text-hmi-muted uppercase mb-2">General</div>
                 {[
-                  { key: 'A', desc: 'Go to Alarms' },
-                  { key: 'C', desc: 'Go to Control' },
-                  { key: 'T', desc: 'Go to Trends' },
-                  { key: 'S', desc: 'Go to Status (home)' },
-                  { key: 'R', desc: 'Go to RTUs' },
+                  { key: '?', desc: 'This help' },
+                  { key: 'Esc', desc: 'Close dialogs' },
                 ].map(({ key, desc }) => (
                   <div key={key} className="flex items-center justify-between py-1">
-                    <span className="text-hmi-text text-sm">{desc}</span>
-                    <kbd className="px-2 py-1 bg-hmi-bg rounded border border-hmi-border text-xs font-mono text-hmi-text">{key}</kbd>
+                    <span className="text-hmi-text">{desc}</span>
+                    <kbd className="px-2 py-0.5 bg-hmi-bg rounded border border-hmi-border text-xs font-mono">{key}</kbd>
                   </div>
                 ))}
               </div>
-
-              <div className="border-t border-hmi-border pt-3 mt-3">
-                <div className="text-sm text-hmi-muted mb-2">General</div>
-                <div className="grid gap-2">
-                  {[
-                    { key: 'Shift + ?', desc: 'Show this help' },
-                    { key: 'Esc', desc: 'Close dialogs' },
-                    { key: 'Enter', desc: 'Confirm action' },
-                  ].map(({ key, desc }) => (
-                    <div key={key} className="flex items-center justify-between py-1">
-                      <span className="text-hmi-text text-sm">{desc}</span>
-                      <kbd className="px-2 py-1 bg-hmi-bg rounded border border-hmi-border text-xs font-mono text-hmi-text">{key}</kbd>
-                    </div>
-                  ))}
-                </div>
-              </div>
             </div>
-
-            <p className="text-xs text-hmi-muted mt-4">
-              Shortcuts are disabled when typing in input fields
-            </p>
           </div>
         </div>
       )}
-
-      {/* Bottom Navigation (Mobile) */}
-      <BottomNavigation activeAlarmCount={activeAlarmCount} />
     </div>
   );
 }
 
-// Simple text-based icon component (no SVGs)
-function NavIcon({ name }: { name: string }) {
-  // Text-based icon alternatives - navigation items already have text labels
-  // These are minimal visual markers to maintain spacing consistency
-  const icons: Record<string, React.ReactNode> = {
-    grid: <span className="text-xs font-mono">::</span>,
-    server: <span className="text-xs font-mono">[]</span>,
-    bell: <span className="text-xs font-mono">!</span>,
-    chart: <span className="text-xs font-mono">~</span>,
-    sliders: <span className="text-xs font-mono">=</span>,
-    cog: <span className="text-xs font-mono">*</span>,
-    activity: <span className="text-xs font-mono">#</span>,
+/**
+ * Mobile Bottom Navigation
+ * - 5 tabs max
+ * - NO horizontal scroll
+ * - Alarm badge visible
+ */
+function MobileBottomNav({ activeAlarmCount }: { activeAlarmCount: number }) {
+  const pathname = usePathname();
+
+  const navItems = [
+    { href: '/', label: 'Status', icon: '📊' },
+    { href: '/rtus', label: 'RTUs', icon: '📡' },
+    { href: '/alarms', label: 'Alarms', icon: '⚠️', badge: activeAlarmCount },
+    { href: '/control', label: 'Control', icon: '⚙️' },
+    { href: '/system', label: 'More', icon: '☰' },
+  ];
+
+  const isActive = (href: string) => {
+    if (href === '/') return pathname === '/';
+    if (href === '/system') {
+      // "More" is active for system and config pages
+      return pathname.startsWith('/system') ||
+             pathname.startsWith('/io-tags') ||
+             pathname.startsWith('/modbus') ||
+             pathname.startsWith('/network') ||
+             pathname.startsWith('/users') ||
+             pathname.startsWith('/settings');
+    }
+    return pathname.startsWith(href);
   };
-  return icons[name] || null;
+
+  return (
+    <nav className="lg:hidden fixed bottom-0 left-0 right-0 bg-hmi-panel border-t border-hmi-border z-40">
+      <div className="flex justify-around items-stretch h-14 safe-area-pb">
+        {navItems.map((item) => (
+          <Link
+            key={item.href}
+            href={item.href}
+            className={`
+              flex-1 flex flex-col items-center justify-center gap-0.5
+              text-xs font-medium transition-colors
+              ${isActive(item.href)
+                ? 'text-status-info'
+                : 'text-hmi-muted'}
+            `}
+          >
+            <span className="relative text-lg">
+              {item.icon}
+              {item.badge && item.badge > 0 && (
+                <span className="absolute -top-1 -right-2 min-w-[16px] h-4 px-1 bg-status-alarm text-white text-[10px] font-bold rounded-full flex items-center justify-center">
+                  {item.badge > 99 ? '99+' : item.badge}
+                </span>
+              )}
+            </span>
+            <span>{item.label}</span>
+          </Link>
+        ))}
+      </div>
+    </nav>
+  );
 }

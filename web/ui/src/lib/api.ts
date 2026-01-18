@@ -154,6 +154,10 @@ export interface RTUControl {
   last_command: string | null;
   last_update: string | null;
   created_at: string;
+  /** True if control is in manual override mode (local control, not auto/PID) */
+  is_manual?: boolean;
+  /** Mode of operation: 'auto', 'manual', 'local', 'remote' */
+  mode?: 'auto' | 'manual' | 'local' | 'remote';
 }
 
 export interface RTUInventory {
