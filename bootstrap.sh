@@ -1128,18 +1128,16 @@ do_docker_install() {
 
     # Generate required passwords if not already set
     if [[ -z "${GRAFANA_PASSWORD:-}" ]]; then
-        log_info "Generating secure Grafana password..."
         export GRAFANA_PASSWORD=$(generate_password 24)
     fi
 
     if [[ -z "${DB_PASSWORD:-}" ]]; then
-        log_info "Generating secure database password..."
         export DB_PASSWORD=$(generate_password 32)
     fi
 
     # Save passwords to PERSISTENT location
     local creds_file="/opt/water-controller/config/.docker-credentials"
-    log_info "Saving credentials to: $creds_file"
+    log_info "Configuring service credentials..."
     run_privileged mkdir -p "$(dirname "$creds_file")"
     {
         echo "# Water-Controller Docker Credentials"
@@ -1178,18 +1176,19 @@ do_docker_install() {
         export DB_PASSWORD="$DB_PASSWORD"
 
         docker compose build --no-cache --progress=plain 2>&1 | while IFS= read -r line; do
-            # Show meaningful build steps and progress
-            if echo "$line" | grep -qE "Building|FROM|Step [0-9]+|writing image|FINISHED"; then
+            # Show build step numbers only (e.g., "#7" from "#7 [api 1/8] FROM docker...")
+            if echo "$line" | grep -qE "^#[0-9]+ \["; then
+                step=$(echo "$line" | grep -oE "^#[0-9]+")
+                echo "[BUILD] $step" >&2
+            # Show image building status
+            elif echo "$line" | grep -qE "Image docker-[a-z]+ Building"; then
                 echo "[BUILD] $line" >&2
-            elif echo "$line" | grep -qE "=> \["; then
-                # Show layer progress indicators
+            # Show completion/finish messages
+            elif echo "$line" | grep -qE "writing image|FINISHED|exporting"; then
                 echo "[BUILD] $line" >&2
-            elif echo "$line" | grep -qiE "error|ERROR|failed|FAILED|posix-ipc|Python\.h|fatal"; then
-                # Show error messages and posix-ipc related output
+            # Always show errors
+            elif echo "$line" | grep -qiE "error|ERROR|failed|FAILED|fatal"; then
                 echo "[BUILD ERROR] $line" >&2
-            elif echo "$line" | grep -qE "Building wheel|pip install|gcc|collecting"; then
-                # Show pip/gcc activity for debugging
-                echo "[BUILD] $line" >&2
             fi
         done
     ) || {
@@ -1355,12 +1354,12 @@ check_docker_resources() {
         log_info "CPU check passed: ${cpu_cores} cores available"
     fi
 
-    # Check disk space (minimum 10GB for Docker images + data)
+    # Check disk space (minimum 5GB for Docker images + data)
     local available_gb
     available_gb=$(df -BG / 2>/dev/null | awk 'NR==2 {print $4}' | tr -d 'G')
 
-    if [[ -n "$available_gb" ]] && [[ "$available_gb" -lt 10 ]]; then
-        log_error "Insufficient disk space: ${available_gb}GB available, 10GB minimum required for Docker deployment"
+    if [[ -n "$available_gb" ]] && [[ "$available_gb" -lt 5 ]]; then
+        log_error "Insufficient disk space: ${available_gb}GB available, 5GB minimum required for Docker deployment"
         errors=$((errors + 1))
     elif [[ -n "$available_gb" ]]; then
         log_info "Disk space check passed: ${available_gb}GB available"
