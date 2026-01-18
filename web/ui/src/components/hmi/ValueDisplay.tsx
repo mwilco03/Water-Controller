@@ -101,41 +101,25 @@ const qualityStyles: Record<ValueQuality, {
   uncertain: {
     container: 'bg-status-warning-light border-status-warning border-dashed',
     value: 'text-status-warning-dark italic',
-    icon: (
-      <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-        <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
-      </svg>
-    ),
+    icon: <span className="text-sm font-bold" aria-hidden="true">?</span>,
     label: 'Uncertain',
   },
   bad: {
     container: 'bg-status-alarm-light border-status-alarm',
     value: 'text-status-alarm-dark line-through',
-    icon: (
-      <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-        <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
-      </svg>
-    ),
+    icon: <span className="text-sm font-bold" aria-hidden="true">X</span>,
     label: 'Bad Quality',
   },
   stale: {
     container: 'bg-hmi-bg border-hmi-border border-dashed',
     value: 'text-hmi-muted',
-    icon: (
-      <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-        <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clipRule="evenodd" />
-      </svg>
-    ),
+    icon: <span className="text-sm" aria-hidden="true">...</span>,
     label: 'Stale Data',
   },
   notConnected: {
     container: 'bg-hmi-bg border-hmi-border',
     value: 'text-hmi-offline',
-    icon: (
-      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-        <path strokeLinecap="round" strokeLinejoin="round" d="M18.364 5.636a9 9 0 010 12.728m0 0l-2.829-2.829m2.829 2.829L21 21M15.536 8.464a5 5 0 010 7.072m0 0l-2.829-2.829m-4.243 2.829a4.978 4.978 0 01-1.414-2.83m-1.414 5.658a9 9 0 01-2.167-9.238m7.824 2.167a1 1 0 111.414 1.414m-1.414-1.414L3 3m8.293 8.293l1.414 1.414" />
-      </svg>
-    ),
+    icon: <span className="text-sm font-bold" aria-hidden="true">/</span>,
     label: 'Not Connected',
   },
 };
@@ -154,24 +138,16 @@ function getTrendColor(trend: ValueTrend, meaning: TrendMeaning): string {
 const TrendIcon = ({ trend, meaning }: { trend: ValueTrend; meaning: TrendMeaning }) => {
   const colorClass = getTrendColor(trend, meaning);
 
-  if (trend === 'up') {
-    return (
-      <svg className={clsx('w-4 h-4', colorClass)} fill="currentColor" viewBox="0 0 20 20">
-        <path fillRule="evenodd" d="M5.293 9.707a1 1 0 010-1.414l4-4a1 1 0 011.414 0l4 4a1 1 0 01-1.414 1.414L11 7.414V15a1 1 0 11-2 0V7.414L6.707 9.707a1 1 0 01-1.414 0z" clipRule="evenodd" />
-      </svg>
-    );
-  }
-  if (trend === 'down') {
-    return (
-      <svg className={clsx('w-4 h-4', colorClass)} fill="currentColor" viewBox="0 0 20 20">
-        <path fillRule="evenodd" d="M14.707 10.293a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 111.414-1.414L9 12.586V5a1 1 0 012 0v7.586l2.293-2.293a1 1 0 011.414 0z" clipRule="evenodd" />
-      </svg>
-    );
-  }
+  const trendSymbols: Record<ValueTrend, string> = {
+    up: '\u2191',    // ↑
+    down: '\u2193',  // ↓
+    stable: '\u2192' // →
+  };
+
   return (
-    <svg className={clsx('w-4 h-4', colorClass)} fill="currentColor" viewBox="0 0 20 20">
-      <path fillRule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clipRule="evenodd" />
-    </svg>
+    <span className={clsx('text-sm font-bold', colorClass)} aria-hidden="true">
+      {trendSymbols[trend]}
+    </span>
   );
 };
 

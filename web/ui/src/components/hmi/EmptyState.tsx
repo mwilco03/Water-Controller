@@ -3,17 +3,8 @@
 /**
  * HMI Empty State Component
  *
- * Displays a message when there's no data or content to show:
- * - No alarms (positive empty state)
- * - No search results
- * - No data available
- * - Error loading data
- *
- * Design principles:
- * - Clear, concise messaging
- * - Appropriate icons for context
- * - Optional action button
- * - ISA-101 compliant colors
+ * Displays a message when there's no data or content to show.
+ * Uses text-only design for clarity per ISA-101 guidelines.
  */
 
 import { ReactNode } from 'react';
@@ -26,9 +17,9 @@ interface EmptyStateProps {
   title: string;
   /** Description text */
   description?: string;
-  /** Variant determines icon and colors */
+  /** Variant determines colors */
   variant?: EmptyStateVariant;
-  /** Custom icon (overrides variant icon) */
+  /** Custom icon (deprecated - ignored) */
   icon?: ReactNode;
   /** Primary action */
   action?: {
@@ -47,80 +38,60 @@ interface EmptyStateProps {
 }
 
 const sizeConfig: Record<string, {
-  icon: string;
   title: string;
   description: string;
   padding: string;
+  indicator: string;
 }> = {
   sm: {
-    icon: 'w-8 h-8 max-w-8 max-h-8',
     title: 'text-sm',
     description: 'text-xs',
     padding: 'py-4 px-3',
+    indicator: 'text-xs px-2 py-0.5',
   },
   md: {
-    icon: 'w-8 h-8 max-w-8 max-h-8',
     title: 'text-sm',
     description: 'text-xs',
     padding: 'py-3 px-3',
+    indicator: 'text-xs px-2 py-0.5',
   },
   lg: {
-    icon: 'w-10 h-10 max-w-10 max-h-10',
     title: 'text-base',
     description: 'text-sm',
     padding: 'py-4 px-4',
+    indicator: 'text-sm px-3 py-1',
   },
 };
 
 const variantConfig: Record<EmptyStateVariant, {
-  iconBg: string;
-  iconColor: string;
-  icon: ReactNode;
+  bg: string;
+  text: string;
+  label: string;
 }> = {
   default: {
-    iconBg: 'bg-hmi-bg',
-    iconColor: 'text-hmi-muted',
-    icon: (
-      <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-        <path strokeLinecap="round" strokeLinejoin="round" d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" />
-      </svg>
-    ),
+    bg: 'bg-hmi-bg',
+    text: 'text-hmi-muted',
+    label: '—',
   },
   success: {
-    iconBg: 'bg-status-ok-light',
-    iconColor: 'text-status-ok-dark',
-    icon: (
-      <svg fill="currentColor" viewBox="0 0 20 20">
-        <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-      </svg>
-    ),
+    bg: 'bg-status-ok-light',
+    text: 'text-status-ok-dark',
+    label: 'OK',
   },
   warning: {
-    iconBg: 'bg-status-warning-light',
-    iconColor: 'text-status-warning-dark',
-    icon: (
-      <svg fill="currentColor" viewBox="0 0 20 20">
-        <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
-      </svg>
-    ),
+    bg: 'bg-status-warning-light',
+    text: 'text-status-warning-dark',
+    label: 'WARN',
   },
   error: {
-    iconBg: 'bg-status-alarm-light',
-    iconColor: 'text-status-alarm-dark',
-    icon: (
-      <svg fill="currentColor" viewBox="0 0 20 20">
-        <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
-      </svg>
-    ),
+    bg: 'bg-status-alarm-light',
+    text: 'text-status-alarm-dark',
+    label: 'ERROR',
   },
   offline: {
-    iconBg: 'bg-status-offline-light',
-    iconColor: 'text-status-offline-dark',
-    icon: (
-      <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-        <path strokeLinecap="round" strokeLinejoin="round" d="M18.364 5.636a9 9 0 010 12.728m0 0l-2.829-2.829m2.829 2.829L21 21M15.536 8.464a5 5 0 010 7.072m0 0l-2.829-2.829m-4.243 2.829a4.978 4.978 0 01-1.414-2.83m-1.414 5.658a9 9 0 01-2.167-9.238m7.824 2.167a1 1 0 111.414 1.414m-1.414-1.414L3 3m8.293 8.293l1.414 1.414" />
-      </svg>
-    ),
+    bg: 'bg-status-offline-light',
+    text: 'text-status-offline-dark',
+    label: 'OFFLINE',
   },
 };
 
@@ -128,7 +99,6 @@ export function EmptyState({
   title,
   description,
   variant = 'default',
-  icon,
   action,
   secondaryAction,
   size = 'md',
@@ -145,21 +115,19 @@ export function EmptyState({
         className
       )}
     >
-      {/* Icon */}
-      <div
-        className={clsx(
-          'flex items-center justify-center rounded-full mb-4',
-          sizeStyles.icon,
-          'p-3',
-          variantStyles.iconBg,
-          variantStyles.iconColor
-        )}
-        aria-hidden="true"
-      >
-        <div className="w-full h-full">
-          {icon || variantStyles.icon}
-        </div>
-      </div>
+      {/* Status indicator */}
+      {variant !== 'default' && (
+        <span
+          className={clsx(
+            'rounded font-mono font-bold mb-2',
+            sizeStyles.indicator,
+            variantStyles.bg,
+            variantStyles.text
+          )}
+        >
+          {variantStyles.label}
+        </span>
+      )}
 
       {/* Title */}
       <h3
@@ -185,13 +153,13 @@ export function EmptyState({
 
       {/* Actions */}
       {(action || secondaryAction) && (
-        <div className="flex flex-col sm:flex-row items-center gap-3 mt-6">
+        <div className="flex flex-col sm:flex-row items-center gap-3 mt-4">
           {action && (
             <button
               type="button"
               onClick={action.onClick}
               className={clsx(
-                'min-h-touch px-5 py-2.5 rounded-hmi font-medium',
+                'min-h-touch px-4 py-2 rounded-hmi font-medium text-sm',
                 'bg-status-info text-white',
                 'hover:bg-status-info/90',
                 'transition-colors duration-fast',
@@ -207,7 +175,7 @@ export function EmptyState({
               type="button"
               onClick={secondaryAction.onClick}
               className={clsx(
-                'min-h-touch px-5 py-2.5 rounded-hmi font-medium',
+                'min-h-touch px-4 py-2 rounded-hmi font-medium text-sm',
                 'text-hmi-text',
                 'hover:bg-hmi-bg',
                 'transition-colors duration-fast',
@@ -233,7 +201,7 @@ export function NoAlarmsState({ className }: { className?: string }) {
     <EmptyState
       variant="success"
       title="No Active Alarms"
-      description="All systems are operating normally. No alarms require attention."
+      description="All systems operating normally."
       className={className}
     />
   );
@@ -250,7 +218,7 @@ export function NoDataState({
     <EmptyState
       variant="default"
       title="No Data Available"
-      description="There is no data to display at this time."
+      description="There is no data to display."
       action={onRetry ? { label: 'Refresh', onClick: onRetry } : undefined}
       className={className}
     />
@@ -268,8 +236,8 @@ export function ConnectionErrorState({
     <EmptyState
       variant="offline"
       title="Connection Lost"
-      description="Unable to connect to the system. Please check your network connection and try again."
-      action={onRetry ? { label: 'Retry Connection', onClick: onRetry } : undefined}
+      description="Unable to connect. Check network and retry."
+      action={onRetry ? { label: 'Retry', onClick: onRetry } : undefined}
       className={className}
     />
   );
@@ -288,8 +256,8 @@ export function LoadErrorState({
     <EmptyState
       variant="error"
       title="Failed to Load"
-      description={message || "Something went wrong while loading the data. Please try again."}
-      action={onRetry ? { label: 'Try Again', onClick: onRetry } : undefined}
+      description={message || "Something went wrong. Please try again."}
+      action={onRetry ? { label: 'Retry', onClick: onRetry } : undefined}
       className={className}
     />
   );
@@ -307,18 +275,13 @@ export function NoSearchResultsState({
   return (
     <EmptyState
       variant="default"
-      title="No Results Found"
+      title="No Results"
       description={
         query
-          ? `No results match "${query}". Try adjusting your search or filters.`
-          : "No results match your search criteria."
+          ? `No results for "${query}".`
+          : "No results match your criteria."
       }
-      action={onClear ? { label: 'Clear Search', onClick: onClear } : undefined}
-      icon={
-        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-        </svg>
-      }
+      action={onClear ? { label: 'Clear', onClick: onClear } : undefined}
       className={className}
     />
   );

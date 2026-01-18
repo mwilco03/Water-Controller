@@ -178,9 +178,7 @@ export default function DeleteRtuModal({
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-700">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-full bg-red-600/20 flex items-center justify-center">
-              <svg className="w-5 h-5 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-              </svg>
+              <span className="text-red-400 text-xl font-bold">!!</span>
             </div>
             <h2 className="text-lg font-semibold text-white">
               Delete RTU: <span className="text-red-400">{stationName}</span>
@@ -189,11 +187,9 @@ export default function DeleteRtuModal({
           <button
             onClick={handleClose}
             disabled={deleting}
-            className="text-gray-400 hover:text-white transition-colors disabled:opacity-50"
+            className="text-gray-400 hover:text-white transition-colors disabled:opacity-50 w-6 h-6 flex items-center justify-center text-lg font-bold"
           >
-            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
+            &times;
           </button>
         </div>
 
@@ -202,9 +198,7 @@ export default function DeleteRtuModal({
           {/* Delete Error Banner */}
           {deleteError && (
             <div className="flex items-start gap-3 p-3 bg-red-900/30 border border-red-800 rounded-lg">
-              <svg className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-              </svg>
+              <span className="w-5 h-5 flex-shrink-0 mt-0.5 flex items-center justify-center bg-red-600 text-white text-xs font-bold rounded">!</span>
               <div className="flex-1">
                 <p className="text-red-300 text-sm">{deleteError}</p>
                 <button
@@ -225,22 +219,7 @@ export default function DeleteRtuModal({
           {/* Impact Summary */}
           {loadingImpact ? (
             <div className="flex items-center gap-3 p-4 bg-gray-800 rounded-lg">
-              <svg className="animate-spin h-5 w-5 text-blue-400" viewBox="0 0 24 24">
-                <circle
-                  className="opacity-25"
-                  cx="12"
-                  cy="12"
-                  r="10"
-                  stroke="currentColor"
-                  strokeWidth="4"
-                  fill="none"
-                />
-                <path
-                  className="opacity-75"
-                  fill="currentColor"
-                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-                />
-              </svg>
+              <span className="text-blue-400 animate-pulse font-mono">...</span>
               <span className="text-gray-400">Loading deletion impact...</span>
             </div>
           ) : impactError ? (
@@ -346,22 +325,7 @@ export default function DeleteRtuModal({
             className="px-4 py-2 bg-red-600 hover:bg-red-500 rounded text-white font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
           >
             {deleting && (
-              <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
-                <circle
-                  className="opacity-25"
-                  cx="12"
-                  cy="12"
-                  r="10"
-                  stroke="currentColor"
-                  strokeWidth="4"
-                  fill="none"
-                />
-                <path
-                  className="opacity-75"
-                  fill="currentColor"
-                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-                />
-              </svg>
+              <span className="inline-block animate-pulse">...</span>
             )}
             {deleting ? 'Deleting...' : 'Delete RTU'}
           </button>

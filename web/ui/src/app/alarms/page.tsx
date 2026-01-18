@@ -74,9 +74,7 @@ function ShelveDialog({
       <div className="bg-hmi-panel rounded-lg p-6 max-w-md w-full mx-4 border border-hmi-border shadow-lg">
         <div className="flex items-center gap-3 mb-4">
           <div className="w-10 h-10 rounded-full bg-status-info/10 flex items-center justify-center">
-            <svg className="w-6 h-6 text-status-info" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
+            <span className="text-status-info text-xl">&#128339;</span>
           </div>
           <h3 className="text-lg font-semibold text-hmi-text">Shelve Alarm</h3>
         </div>
@@ -389,9 +387,7 @@ export default function AlarmsPage() {
         {/* Error state - ISA-101: red for errors */}
         {error && (
           <div className="bg-quality-bad border border-status-alarm/30 rounded-lg p-4 flex items-center gap-3">
-            <svg className="w-6 h-6 text-status-alarm flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
+            <span className="text-status-alarm flex-shrink-0 text-xl font-bold">!</span>
             <div className="flex-1">
               <p className="text-status-alarm font-medium">Error Loading Alarms</p>
               <p className="text-hmi-muted text-sm">{error}</p>
@@ -416,9 +412,7 @@ export default function AlarmsPage() {
             <div>
               {canCommand && alarms.length > 0 && (
                 <div className="mb-4 p-3 bg-status-info/10 border border-status-info/30 rounded text-sm text-status-info">
-                  <svg className="w-4 h-4 inline mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
+                  <span className="inline mr-2 font-bold">(i)</span>
                   Click the clock icon to shelve an alarm temporarily (ISA-18.2)
                 </div>
               )}

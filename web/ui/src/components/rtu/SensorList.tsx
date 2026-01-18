@@ -47,9 +47,7 @@ export default function SensorList({ sensors, groupByType = true, size = 'md' }:
   if (sensors.length === 0) {
     return (
       <div className="text-center py-4 text-gray-400">
-        <svg className="w-8 h-8 max-w-8 max-h-8 mx-auto mb-2 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z" />
-        </svg>
+        <span className="block text-2xl font-bold mb-2 opacity-50">[SENSOR]</span>
         <p className="text-sm">No sensors discovered</p>
         <p className="text-xs mt-1">Refresh inventory to discover sensors from RTU</p>
       </div>
@@ -100,38 +98,23 @@ function formatTypeLabel(type: string): string {
 }
 
 function getGroupIcon(groupName: string) {
-  const iconClass = 'w-4 h-4 text-gray-500';
+  const labelClass = 'text-xs font-medium text-gray-500';
   switch (groupName.toLowerCase()) {
     case 'temperature':
-      return (
-        <svg className={iconClass} fill="currentColor" viewBox="0 0 24 24">
-          <path d="M12 2a2 2 0 0 0-2 2v9.354A4 4 0 1 0 16 17V4a2 2 0 0 0-2-2h-2z" />
-        </svg>
-      );
+      return <span className={labelClass}>[TEMP]</span>;
     case 'level':
-      return (
-        <svg className={iconClass} fill="currentColor" viewBox="0 0 24 24">
-          <path d="M12 2l-5.5 9h11L12 2zm0 11c-2.76 0-5 2.24-5 5s2.24 5 5 5 5-2.24 5-5-2.24-5-5-5z" />
-        </svg>
-      );
+      return <span className={labelClass}>[LVL]</span>;
     case 'pressure':
-      return (
-        <svg className={iconClass} fill="currentColor" viewBox="0 0 24 24">
-          <circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" strokeWidth="2" />
-          <path d="M12 6v6l4 2" stroke="currentColor" strokeWidth="2" fill="none" />
-        </svg>
-      );
+      return <span className={labelClass}>[PSI]</span>;
     case 'flow':
-      return (
-        <svg className={iconClass} fill="currentColor" viewBox="0 0 24 24">
-          <path d="M17.66 8L12 2.35 6.34 8C4.78 9.56 4 11.64 4 13.64s.78 4.11 2.34 5.67 3.61 2.35 5.66 2.35 4.1-.79 5.66-2.35S20 15.64 20 13.64 19.22 9.56 17.66 8z" />
-        </svg>
-      );
+      return <span className={labelClass}>[FLOW]</span>;
+    case 'ph':
+      return <span className={labelClass}>[pH]</span>;
+    case 'turbidity':
+      return <span className={labelClass}>[TURB]</span>;
+    case 'chlorine':
+      return <span className={labelClass}>[CL]</span>;
     default:
-      return (
-        <svg className={iconClass} fill="currentColor" viewBox="0 0 24 24">
-          <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z" />
-        </svg>
-      );
+      return <span className={labelClass}>[SENS]</span>;
   }
 }

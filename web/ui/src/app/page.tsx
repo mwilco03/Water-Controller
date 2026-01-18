@@ -7,7 +7,7 @@
  * Design principles:
  * - Mobile-first (360-390px width primary)
  * - Touch-friendly (48px+ targets)
- * - Status uses color + icon + text (never color alone)
+ * - Status uses color + text (text-only, no icons)
  * - Progressive disclosure
  * - Skeleton loading for stable layout
  */
@@ -20,10 +20,9 @@ import {
   SkeletonStats,
   ErrorMessage,
   ErrorPresets,
-  LiveTimestamp,
-  useHMIToast,
   ShiftHandoff,
   QuickControlPanel,
+  useHMIToast,
 } from '@/components/hmi';
 import type { RTUStatusData } from '@/components/hmi';
 import Link from 'next/link';
@@ -52,8 +51,6 @@ export default function RTUStatusPage() {
   // Alarm acknowledgment handler
   const handleAcknowledge = useCallback(async (alarmId: number | string) => {
     try {
-      // User is obtained from session in backend via require_control_access
-      // API expects numeric alarm ID
       const numericId = typeof alarmId === 'string' ? parseInt(alarmId, 10) : alarmId;
       await acknowledgeAlarm(numericId, 'operator');
       showMessage('success', `Alarm ${alarmId} acknowledged`);
@@ -66,7 +63,6 @@ export default function RTUStatusPage() {
   // Acknowledge all alarms handler
   const handleAcknowledgeAll = useCallback(async () => {
     try {
-      // User is obtained from session in backend via require_control_access
       await acknowledgeAllAlarms('operator');
       showMessage('success', 'All alarms acknowledged');
       refetch();
@@ -79,7 +75,6 @@ export default function RTUStatusPage() {
   if (loading) {
     return (
       <div className="space-y-6" aria-label="Loading RTU status...">
-        {/* Header skeleton */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
             <div className="skeleton h-7 w-32 mb-2" />
@@ -87,8 +82,6 @@ export default function RTUStatusPage() {
           </div>
           <SkeletonStats />
         </div>
-
-        {/* RTU grid skeleton */}
         <div className="hmi-grid hmi-grid-auto">
           {[1, 2, 3, 4].map((i) => (
             <SkeletonRTUCard key={i} />
@@ -159,9 +152,7 @@ export default function RTUStatusPage() {
         <div className="hmi-card p-4">
           <div className="flex items-center justify-between mb-3">
             <h2 className="font-semibold text-hmi-text flex items-center gap-2">
-              <svg className="w-5 h-5 text-status-alarm" fill="currentColor" viewBox="0 0 20 20">
-                <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
-              </svg>
+              <span className="px-2 py-0.5 rounded bg-status-alarm text-white text-xs font-bold">!</span>
               Active Alarms
             </h2>
             <div className="flex items-center gap-3">
@@ -196,13 +187,11 @@ export default function RTUStatusPage() {
                     } ${isUnacked ? 'animate-pulse-subtle' : ''}`}
                   >
                     <div className="flex items-center gap-3 min-w-0 flex-1">
-                      {/* Severity badge */}
                       <span className={`shrink-0 px-2 py-0.5 rounded text-xs font-bold text-white ${
                         isCritical ? 'bg-status-alarm' : 'bg-status-warning'
                       }`}>
                         {alarm.severity || 'HIGH'}
                       </span>
-                      {/* Alarm info */}
                       <div className="min-w-0 flex-1">
                         <div className="font-medium text-hmi-text truncate">
                           {alarm.rtu_station}{alarm.slot !== undefined ? ` - Slot ${alarm.slot}` : ''}
@@ -211,13 +200,11 @@ export default function RTUStatusPage() {
                           {alarm.message}
                         </div>
                       </div>
-                      {/* Unacked indicator */}
                       {isUnacked && (
                         <span className="shrink-0 w-2 h-2 rounded-full bg-status-alarm animate-pulse"
                               title="Unacknowledged" />
                       )}
                     </div>
-                    {/* Quick ACK button */}
                     <button
                       onClick={() => handleAcknowledge(alarm.alarm_id)}
                       className="shrink-0 px-3 py-2 rounded-lg bg-hmi-panel border border-hmi-border hover:bg-hmi-bg text-sm font-medium text-hmi-text transition-colors touch-manipulation min-h-touch"
@@ -254,11 +241,6 @@ export default function RTUStatusPage() {
         </div>
       ) : (
         <div className="hmi-card p-6 text-center">
-          <div className="w-12 h-12 max-w-12 max-h-12 mx-auto mb-3 rounded-full bg-hmi-bg flex items-center justify-center">
-            <svg className="w-6 h-6 text-hmi-equipment" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z" />
-            </svg>
-          </div>
           <h3 className="text-base font-medium text-hmi-text mb-1">No RTUs Configured</h3>
           <p className="text-hmi-muted text-sm mb-4">Add RTU devices to start monitoring</p>
           <a href="/rtus" className="hmi-btn hmi-btn-primary">
@@ -273,9 +255,7 @@ export default function RTUStatusPage() {
       {/* Data Mode Indicator */}
       {dataMode === 'polling' && (
         <div className="p-3 bg-quality-uncertain border border-status-warning/30 rounded-lg flex items-center gap-3 text-sm">
-          <svg className="w-5 h-5 text-status-warning shrink-0" fill="currentColor" viewBox="0 0 20 20">
-            <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
-          </svg>
+          <span className="px-2 py-0.5 rounded bg-status-warning text-white text-xs font-bold shrink-0">WARN</span>
           <span className="text-hmi-text">
             <strong>Polling Mode:</strong> WebSocket disconnected. Data updates every {TIMING.POLLING.NORMAL / 1000} seconds.
           </span>
@@ -284,9 +264,7 @@ export default function RTUStatusPage() {
 
       {dataMode === 'disconnected' && (
         <div className="p-3 bg-quality-bad border border-status-alarm/30 rounded-lg flex items-center gap-3 text-sm">
-          <svg className="w-5 h-5 text-status-alarm shrink-0" fill="currentColor" viewBox="0 0 20 20">
-            <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
-          </svg>
+          <span className="px-2 py-0.5 rounded bg-status-alarm text-white text-xs font-bold shrink-0">ERROR</span>
           <span className="text-hmi-text flex-1">
             <strong>Disconnected:</strong> Cannot reach API server.
           </span>
@@ -299,39 +277,16 @@ export default function RTUStatusPage() {
   );
 }
 
-// Status icons for ISA-101 compliance (never color alone)
-const StatusIcon = ({ state }: { state: string }) => {
+// Status text for ISA-101 compliance (never color alone)
+const StatusText = ({ state }: { state: string }) => {
   const isOnline = state === 'RUNNING';
   const isOffline = state === 'STOPPED' || state === 'OFFLINE';
   const isFault = state === 'FAULT' || state === 'ERROR';
 
-  if (isOnline) {
-    return (
-      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-        <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-      </svg>
-    );
-  }
-  if (isFault) {
-    return (
-      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-        <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-      </svg>
-    );
-  }
-  if (isOffline) {
-    return (
-      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-        <circle cx="12" cy="12" r="9" />
-      </svg>
-    );
-  }
-  // Warning/connecting
-  return (
-    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-    </svg>
-  );
+  if (isOnline) return <span className="font-mono text-xs">OK</span>;
+  if (isFault) return <span className="font-mono text-xs">!</span>;
+  if (isOffline) return <span className="font-mono text-xs">--</span>;
+  return <span className="font-mono text-xs">?</span>;
 };
 
 // RTU Card Component - Touch-friendly with 48px+ targets
@@ -342,20 +297,18 @@ function RTUCard({ rtu }: { rtu: RTUStatusData }) {
   const stateClass = isOnline ? 'ok' : isOffline ? 'offline' : isFault ? 'alarm' : 'warning';
   const hasAlarms = (rtu.alarm_count ?? 0) > 0;
 
-  // State label for accessibility
   const stateLabel = isOnline ? 'Running' :
     isFault ? 'Fault' :
     isOffline ? 'Offline' : rtu.state;
 
   return (
     <div className={`hmi-card overflow-hidden ${hasAlarms ? 'border-l-4 border-l-status-alarm' : ''}`}>
-      {/* Header - Status with icon + color + text */}
+      {/* Header - Status with color + text */}
       <div className="p-4 border-b border-hmi-border">
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-3 min-w-0">
-            {/* Status indicator with icon */}
             <div className={`status-indicator ${stateClass}`} aria-hidden="true">
-              <StatusIcon state={rtu.state} />
+              <StatusText state={rtu.state} />
             </div>
             <div className="min-w-0">
               <h3 className="font-medium text-hmi-text truncate">{rtu.station_name}</h3>
@@ -364,11 +317,8 @@ function RTUCard({ rtu }: { rtu: RTUStatusData }) {
               )}
             </div>
           </div>
-          {/* Status badge with icon + text */}
-          <span className={`status-badge ${stateClass} flex items-center gap-1`}>
-            <StatusIcon state={rtu.state} />
-            <span className="sr-only">{stateLabel}</span>
-            <span aria-hidden="true">{stateLabel}</span>
+          <span className={`status-badge ${stateClass}`}>
+            {stateLabel}
           </span>
         </div>
       </div>
@@ -389,12 +339,7 @@ function RTUCard({ rtu }: { rtu: RTUStatusData }) {
             <div className="text-xs text-hmi-muted">Actuators</div>
           </div>
           <div className="py-1">
-            <div className={`text-lg font-semibold font-mono flex items-center justify-center gap-1 ${hasAlarms ? 'text-status-alarm' : 'text-hmi-text'}`}>
-              {hasAlarms && (
-                <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true">
-                  <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
-                </svg>
-              )}
+            <div className={`text-lg font-semibold font-mono ${hasAlarms ? 'text-status-alarm' : 'text-hmi-text'}`}>
               {rtu.alarm_count ?? 0}
             </div>
             <div className="text-xs text-hmi-muted">Alarms</div>
@@ -408,9 +353,7 @@ function RTUCard({ rtu }: { rtu: RTUStatusData }) {
         className="flex items-center justify-between px-4 py-3 bg-hmi-bg border-t border-hmi-border min-h-[48px] hover:bg-hmi-border/50 transition-colors touch-list-item"
       >
         <span className="text-sm text-status-info font-medium">View Details</span>
-        <svg className="w-5 h-5 text-hmi-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-        </svg>
+        <span className="text-hmi-muted font-mono">&rarr;</span>
       </Link>
     </div>
   );

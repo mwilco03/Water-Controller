@@ -360,18 +360,10 @@ export default function WizardPage() {
 
   const getStepIcon = (stepId: WizardStep, index: number) => {
     if (completedSteps.includes(stepId)) {
-      return (
-        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-        </svg>
-      );
+      return <span className="text-lg font-bold">&#10003;</span>;
     }
     if (skippedSteps.includes(stepId)) {
-      return (
-        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 5l7 7-7 7M5 5l7 7-7 7" />
-        </svg>
-      );
+      return <span className="text-sm font-bold">&gt;&gt;</span>;
     }
     return index + 1;
   };
@@ -386,9 +378,7 @@ export default function WizardPage() {
               onClick={cancelWizard}
               className="text-hmi-muted hover:text-hmi-text text-sm flex items-center gap-1"
             >
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
+              <span className="font-bold">&#215;</span>
               Cancel
             </button>
             <span className="text-sm text-hmi-muted">Step {currentStepIndex + 1} of {steps.length}</span>
@@ -574,10 +564,7 @@ export default function WizardPage() {
                 </div>
                 {loading && (
                   <div className="flex items-center gap-3 text-blue-400">
-                    <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                    </svg>
+                    <span className="animate-pulse font-bold">[...]</span>
                     <span>Establishing connection...</span>
                   </div>
                 )}
@@ -625,10 +612,7 @@ export default function WizardPage() {
                     className="px-6 py-2 bg-status-info hover:bg-status-info/90 rounded disabled:opacity-50 flex items-center gap-2 inline-flex"
                   >
                     {loading && (
-                      <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                      </svg>
+                      <span className="animate-pulse font-bold">[...]</span>
                     )}
                     {loading ? 'Connecting...' : 'Connect'}
                   </button>
@@ -687,10 +671,7 @@ export default function WizardPage() {
                     className="px-6 py-2 bg-status-info hover:bg-status-info/90 rounded disabled:opacity-50 inline-flex items-center gap-2"
                   >
                     {loading && (
-                      <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                      </svg>
+                      <span className="animate-pulse font-bold">[...]</span>
                     )}
                     {loading ? 'Scanning...' : 'Scan for Sensors'}
                   </button>
@@ -888,9 +869,7 @@ export default function WizardPage() {
           {currentStep === 'complete' && (
             <div className="text-center">
               <div className="w-10 h-10 mx-auto mb-3 rounded-full bg-status-ok flex items-center justify-center">
-                <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                </svg>
+                <span className="text-xl font-bold text-white">&#10003;</span>
               </div>
               <h2 className="text-lg font-bold mb-2">Setup Complete!</h2>
               <p className="text-hmi-muted text-sm mb-4">

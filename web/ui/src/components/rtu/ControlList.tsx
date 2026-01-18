@@ -57,10 +57,7 @@ export default function ControlList({
   if (controls.length === 0) {
     return (
       <div className="text-center py-4 text-gray-400">
-        <svg className="w-8 h-8 max-w-8 max-h-8 mx-auto mb-2 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-        </svg>
+        <span className="block text-2xl font-bold mb-2 opacity-50">[CTRL]</span>
         <p className="text-sm">No controls discovered</p>
         <p className="text-xs mt-1">Refresh inventory to discover controls from RTU</p>
       </div>
@@ -111,39 +108,23 @@ function formatTypeLabel(type: string): string {
 }
 
 function getGroupIcon(groupName: string) {
-  const iconClass = 'w-4 h-4 text-gray-500';
+  const labelClass = 'text-xs font-medium text-gray-500';
   switch (groupName.toLowerCase()) {
     case 'pumps':
-      return (
-        <svg className={iconClass} fill="currentColor" viewBox="0 0 24 24">
-          <circle cx="12" cy="12" r="3" />
-          <path d="M12 2v4m0 12v4M4.93 4.93l2.83 2.83m8.48 8.48l2.83 2.83M2 12h4m12 0h4M4.93 19.07l2.83-2.83m8.48-8.48l2.83-2.83" stroke="currentColor" strokeWidth="2" fill="none" />
-        </svg>
-      );
+      return <span className={labelClass}>[PUMP]</span>;
     case 'valves':
-      return (
-        <svg className={iconClass} fill="currentColor" viewBox="0 0 24 24">
-          <path d="M12 2L8 6h8l-4-4zM8 18l4 4 4-4H8zM2 8v8h4V8H2zm16 0v8h4V8h-4zM8 8v8h8V8H8z" />
-        </svg>
-      );
+      return <span className={labelClass}>[VLV]</span>;
     case 'motors':
-      return (
-        <svg className={iconClass} fill="currentColor" viewBox="0 0 24 24">
-          <rect x="2" y="6" width="20" height="12" rx="2" />
-          <circle cx="6" cy="12" r="2" fill="rgba(0,0,0,0.3)" />
-        </svg>
-      );
+      return <span className={labelClass}>[MTR]</span>;
     case 'heaters':
-      return (
-        <svg className={iconClass} fill="currentColor" viewBox="0 0 24 24">
-          <path d="M12 2a7 7 0 0 0-7 7c0 2.38 1.19 4.47 3 5.74V17a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-2.26c1.81-1.27 3-3.36 3-5.74a7 7 0 0 0-7-7z" />
-        </svg>
-      );
+      return <span className={labelClass}>[HTR]</span>;
+    case 'dosing':
+      return <span className={labelClass}>[DOS]</span>;
+    case 'relays':
+      return <span className={labelClass}>[RLY]</span>;
+    case 'actuators':
+      return <span className={labelClass}>[ACT]</span>;
     default:
-      return (
-        <svg className={iconClass} fill="currentColor" viewBox="0 0 24 24">
-          <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z" />
-        </svg>
-      );
+      return <span className={labelClass}>[CTRL]</span>;
   }
 }

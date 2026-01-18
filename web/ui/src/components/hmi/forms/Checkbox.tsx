@@ -121,40 +121,32 @@ export const Checkbox = forwardRef<HTMLInputElement, CheckboxProps>(
             />
 
             {/* Check icon */}
-            <svg
+            <span
               className={clsx(
                 'absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2',
-                'text-white pointer-events-none',
+                'text-white pointer-events-none font-bold',
                 'opacity-0 peer-checked:opacity-100',
                 'transition-opacity duration-fast',
-                config.icon,
+                'text-xs leading-none',
                 indeterminate && 'hidden'
               )}
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              strokeWidth={3}
               aria-hidden="true"
             >
-              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-            </svg>
+              ✓
+            </span>
 
             {/* Indeterminate icon (minus) */}
             {indeterminate && (
-              <svg
+              <span
                 className={clsx(
                   'absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2',
-                  'text-white pointer-events-none',
-                  config.icon
+                  'text-white pointer-events-none font-bold',
+                  'text-xs leading-none'
                 )}
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-                strokeWidth={3}
                 aria-hidden="true"
               >
-                <path strokeLinecap="round" strokeLinejoin="round" d="M5 12h14" />
-              </svg>
+                −
+              </span>
             )}
           </div>
 
@@ -180,9 +172,7 @@ export const Checkbox = forwardRef<HTMLInputElement, CheckboxProps>(
             className="flex items-center gap-1.5 mt-1.5 text-sm text-status-alarm-dark"
             role="alert"
           >
-            <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-              <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
-            </svg>
+            <span className="font-bold" aria-hidden="true">!</span>
             <span>{errorMessage}</span>
           </div>
         )}

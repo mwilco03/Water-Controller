@@ -198,9 +198,7 @@ export default function MaintenanceScheduler({ rtus: propRtus, onScheduled }: Ma
     <div className="hmi-card p-4">
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2">
-          <svg className="w-5 h-5 text-status-info" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-          </svg>
+          <span className="w-5 h-5 inline-flex items-center justify-center text-sm font-bold text-status-info" aria-hidden="true">[C]</span>
           <h3 className="font-semibold text-hmi-text">Maintenance Windows</h3>
           {windows.filter(w => w.status === 'ACTIVE').length > 0 && (
             <span className="px-2 py-0.5 text-xs font-medium bg-status-ok text-white rounded">

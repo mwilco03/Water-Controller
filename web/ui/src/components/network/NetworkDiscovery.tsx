@@ -35,29 +35,19 @@ interface Props {
 
 const deviceTypeIcons: Record<string, JSX.Element> = {
   'IO-Device': (
-    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z" />
-    </svg>
+    <span className="text-sm font-bold">[IO]</span>
   ),
   'Controller': (
-    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01" />
-    </svg>
+    <span className="text-sm font-bold">[CTL]</span>
   ),
   'Switch': (
-    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 9l4-4 4 4m0 6l-4 4-4-4" />
-    </svg>
+    <span className="text-sm font-bold">[SW]</span>
   ),
   'HMI': (
-    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-    </svg>
+    <span className="text-sm font-bold">[HMI]</span>
   ),
   'Drive': (
-    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-    </svg>
+    <span className="text-sm font-bold">[VFD]</span>
   ),
 };
 
@@ -255,17 +245,12 @@ export default function NetworkDiscovery({ onDeviceSelect, onAddDevice }: Props)
           >
             {scanning ? (
               <>
-                <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                </svg>
+                <span className="inline-block w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
                 Scanning...
               </>
             ) : (
               <>
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                </svg>
+                <span className="text-sm font-bold">[*]</span>
                 Start Scan
               </>
             )}
@@ -327,9 +312,7 @@ export default function NetworkDiscovery({ onDeviceSelect, onAddDevice }: Props)
         <div className="space-y-3 max-h-[600px] overflow-y-auto">
           {filteredDevices.length === 0 && !scanning ? (
             <div className="text-center py-6 text-gray-400">
-              <svg className="w-10 h-10 max-w-10 max-h-10 mx-auto mb-3 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-              </svg>
+              <div className="text-3xl mb-3 opacity-50">[?]</div>
               <p className="text-base">No devices found</p>
               <p className="text-sm mt-1">Click &quot;Start Scan&quot; to discover network devices</p>
             </div>
@@ -475,9 +458,7 @@ export default function NetworkDiscovery({ onDeviceSelect, onAddDevice }: Props)
             </div>
           ) : (
             <div className="text-center py-6 text-gray-400">
-              <svg className="w-8 h-8 max-w-8 max-h-8 mx-auto mb-2 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 15l-2 5L9 9l11 4-5 2zm0 0l5 5M7.188 2.239l.777 2.897M5.136 7.965l-2.898-.777M13.95 4.05l-2.122 2.122m-5.657 5.656l-2.12 2.122" />
-              </svg>
+              <div className="text-2xl mb-2 opacity-50">[+]</div>
               <p className="text-sm">Select a device to view details</p>
             </div>
           )}
