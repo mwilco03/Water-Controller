@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { rtuLogger, configLogger } from '@/lib/logger';
 import { useHMIToast, ConfirmModal } from '@/components/hmi';
 import { extractArrayData } from '@/lib/api';
+import { useModalBehavior } from '@/hooks/useModalBehavior';
 
 interface RTUDevice {
   station_name: string;
@@ -53,6 +54,16 @@ export default function IOTagsPage() {
   const [tagToDelete, setTagToDelete] = useState<HistorianTag | null>(null);
   const [loading, setLoading] = useState(false);
   const { showMessage } = useHMIToast();
+
+  // Modal behavior hooks
+  const editSlotModalBehavior = useModalBehavior({
+    isOpen: showEditModal !== null,
+    onClose: () => setShowEditModal(null),
+  });
+  const historianModalBehavior = useModalBehavior({
+    isOpen: showHistorianModal !== null,
+    onClose: () => setShowHistorianModal(null),
+  });
 
   const fetchRtus = useCallback(async () => {
     try {
@@ -478,9 +489,20 @@ export default function IOTagsPage() {
 
       {/* Edit Slot Modal */}
       {showEditModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 overflow-y-auto py-4">
-          <div className="bg-white p-6 rounded-lg w-full max-w-2xl">
-            <h2 className="text-xl font-semibold text-hmi-text mb-4">
+        <div
+          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-modal overflow-y-auto py-4"
+          onClick={editSlotModalBehavior.handleBackdropClick}
+        >
+          <div
+            ref={editSlotModalBehavior.modalRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="edit-slot-modal-title"
+            tabIndex={-1}
+            className="bg-white p-6 rounded-lg w-full max-w-2xl outline-none"
+            onClick={e => e.stopPropagation()}
+          >
+            <h2 id="edit-slot-modal-title" className="text-xl font-semibold text-hmi-text mb-4">
               Edit Slot {showEditModal.slot} - {showEditModal.rtu_station}
             </h2>
 
@@ -678,9 +700,20 @@ export default function IOTagsPage() {
 
       {/* Historian Tag Modal */}
       {showHistorianModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white p-6 rounded-lg w-full max-w-md">
-            <h2 className="text-xl font-semibold text-hmi-text mb-4">
+        <div
+          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-modal"
+          onClick={historianModalBehavior.handleBackdropClick}
+        >
+          <div
+            ref={historianModalBehavior.modalRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="historian-tag-modal-title"
+            tabIndex={-1}
+            className="bg-white p-6 rounded-lg w-full max-w-md outline-none"
+            onClick={e => e.stopPropagation()}
+          >
+            <h2 id="historian-tag-modal-title" className="text-xl font-semibold text-hmi-text mb-4">
               {showHistorianModal.id ? 'Edit' : 'Add'} Historian Tag
             </h2>
 

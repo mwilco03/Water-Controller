@@ -462,9 +462,15 @@ export default function NetworkPage() {
 
       {/* Apply Confirmation Modal */}
       {showApplyConfirm && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-hmi-bg p-6 rounded-lg w-full max-w-md">
-            <h2 className="text-xl font-semibold text-hmi-text mb-4">Apply Network Configuration</h2>
+        <div
+          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-modal"
+          onClick={(e) => e.target === e.currentTarget && setShowApplyConfirm(false)}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="apply-confirm-modal-title"
+        >
+          <div className="bg-hmi-bg p-6 rounded-lg w-full max-w-md" onClick={e => e.stopPropagation()}>
+            <h2 id="apply-confirm-modal-title" className="text-xl font-semibold text-hmi-text mb-4">Apply Network Configuration</h2>
 
             <div className="bg-status-warning text-white p-4 rounded mb-4">
               <strong>Warning:</strong> Changing network settings may cause you to lose connection to

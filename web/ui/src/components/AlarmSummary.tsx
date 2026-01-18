@@ -75,12 +75,25 @@ function AckDialog({
     onClose();
   };
 
+  // Handle backdrop click
+  const handleBackdropClick = (e: React.MouseEvent) => {
+    if (e.target === e.currentTarget) {
+      handleClose();
+    }
+  };
+
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-hmi-panel rounded-lg p-4 max-w-md w-full mx-4 border border-hmi-border shadow-lg">
+    <div
+      className="fixed inset-0 bg-black/50 flex items-center justify-center z-modal"
+      onClick={handleBackdropClick}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="ack-dialog-title"
+    >
+      <div className="bg-hmi-panel rounded-lg p-4 max-w-md w-full mx-4 border border-hmi-border shadow-lg" onClick={e => e.stopPropagation()}>
         <div className="flex items-center gap-3 mb-3">
-          <span className="text-xl">✓</span>
-          <h3 className="font-semibold text-hmi-text">
+          <span className="text-xl">&#10003;</span>
+          <h3 id="ack-dialog-title" className="font-semibold text-hmi-text">
             {isBulk ? 'Acknowledge All Alarms' : groupCount && groupCount > 1 ? `Acknowledge ${groupCount} Alarms` : 'Acknowledge Alarm'}
           </h3>
         </div>

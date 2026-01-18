@@ -708,9 +708,15 @@ export default function ModbusPage() {
 
       {/* Device Modal */}
       {showDeviceModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-hmi-panel p-6 rounded-lg w-full max-w-lg max-h-[90vh] overflow-y-auto">
-            <h2 className="text-xl font-semibold text-hmi-text mb-4">
+        <div
+          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-modal"
+          onClick={(e) => e.target === e.currentTarget && setShowDeviceModal(false)}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="device-modal-title"
+        >
+          <div className="bg-hmi-panel p-6 rounded-lg w-full max-w-lg max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+            <h2 id="device-modal-title" className="text-xl font-semibold text-hmi-text mb-4">
               {editingDevice ? 'Edit Device' : 'Add Downstream Device'}
             </h2>
 
@@ -882,9 +888,15 @@ export default function ModbusPage() {
 
       {/* Mapping Modal */}
       {showMappingModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-hmi-panel p-6 rounded-lg w-full max-w-lg max-h-[90vh] overflow-y-auto">
-            <h2 className="text-xl font-semibold text-hmi-text mb-4">
+        <div
+          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-modal"
+          onClick={(e) => e.target === e.currentTarget && setShowMappingModal(false)}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="mapping-modal-title"
+        >
+          <div className="bg-hmi-panel p-6 rounded-lg w-full max-w-lg max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+            <h2 id="mapping-modal-title" className="text-xl font-semibold text-hmi-text mb-4">
               {editingMapping ? 'Edit Mapping' : 'Add Register Mapping'}
             </h2>
 

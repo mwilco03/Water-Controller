@@ -327,9 +327,15 @@ export default function ControlPage() {
     <div className="flex flex-col h-[calc(100vh-4rem)]">
       {/* Confirm Dialog - touch friendly */}
       {confirmAction && (
-        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50 p-4" onClick={() => setConfirmAction(null)}>
+        <div
+          className="fixed inset-0 bg-black/30 flex items-center justify-center z-modal p-4"
+          onClick={() => setConfirmAction(null)}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="confirm-dialog-title"
+        >
           <div className="bg-white rounded-lg shadow-lg p-4 max-w-sm w-full" onClick={e => e.stopPropagation()}>
-            <p className="text-base font-medium mb-4">{confirmAction.message}</p>
+            <p id="confirm-dialog-title" className="text-base font-medium mb-4">{confirmAction.message}</p>
             <div className="flex gap-3">
               <button onClick={() => setConfirmAction(null)} className="flex-1 px-4 py-3 text-base border rounded-lg hover:bg-gray-50 active:bg-gray-100">Cancel</button>
               <button onClick={() => { confirmAction.onConfirm(); setConfirmAction(null); }} className="flex-1 px-4 py-3 text-base bg-blue-600 text-white rounded-lg hover:bg-blue-700 active:bg-blue-800">OK</button>
@@ -340,9 +346,15 @@ export default function ControlPage() {
 
       {/* Auth Dialog - touch friendly */}
       {showAuth && (
-        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50 p-4" onClick={() => setShowAuth(false)}>
+        <div
+          className="fixed inset-0 bg-black/30 flex items-center justify-center z-modal p-4"
+          onClick={() => setShowAuth(false)}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="auth-dialog-title"
+        >
           <form onSubmit={handleAuth} className="bg-white rounded-lg shadow-lg p-4 w-full max-w-sm" onClick={e => e.stopPropagation()}>
-            <div className="text-base font-medium mb-4">Enter Command Mode</div>
+            <div id="auth-dialog-title" className="text-base font-medium mb-4">Enter Command Mode</div>
             <input type="text" placeholder="Username" value={authUser} onChange={e => setAuthUser(e.target.value)} className="w-full border rounded-lg px-3 py-3 text-base mb-3" autoFocus />
             <input type="password" placeholder="Password" value={authPass} onChange={e => setAuthPass(e.target.value)} className="w-full border rounded-lg px-3 py-3 text-base mb-3" />
             {authError && <div className="text-sm text-red-600 mb-3">{authError}</div>}

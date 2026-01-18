@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { useCommandMode } from '@/contexts/CommandModeContext';
 
 interface Props {
@@ -43,6 +43,35 @@ export default function CommandModeLogin({ onClose, showButton = true }: Props) 
     onClose?.();
   }, [onClose]);
 
+  const modalRef = useRef<HTMLDivElement>(null);
+
+  // Handle escape key and body scroll lock
+  useEffect(() => {
+    if (!showDialog) return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !loading) {
+        handleClose();
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    document.body.style.overflow = 'hidden';
+    modalRef.current?.focus();
+
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+      document.body.style.overflow = '';
+    };
+  }, [showDialog, loading, handleClose]);
+
+  // Handle backdrop click
+  const handleBackdropClick = useCallback((event: React.MouseEvent) => {
+    if (event.target === event.currentTarget && !loading) {
+      handleClose();
+    }
+  }, [loading, handleClose]);
+
   // Don't show button if already in command mode
   if (mode === 'command') {
     return null;
@@ -61,15 +90,26 @@ export default function CommandModeLogin({ onClose, showButton = true }: Props) 
       )}
 
       {showDialog && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <div className="bg-hmi-panel border border-hmi-border rounded-lg shadow-hmi-modal w-full max-w-md">
+        <div
+          className="fixed inset-0 bg-black/40 flex items-center justify-center z-modal p-4"
+          onClick={handleBackdropClick}
+        >
+          <div
+            ref={modalRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="command-mode-modal-title"
+            tabIndex={-1}
+            className="bg-hmi-panel border border-hmi-border rounded-lg shadow-hmi-modal w-full max-w-md outline-none"
+            onClick={e => e.stopPropagation()}
+          >
             <div className="flex items-center justify-between p-4 border-b border-hmi-border">
               <div className="flex items-center gap-3">
                 <div className="p-2 bg-status-warning-light rounded-lg">
                   <span className="text-lg font-bold text-status-warning">[+]</span>
                 </div>
                 <div>
-                  <h2 className="text-lg font-semibold text-hmi-text">Enter Command Mode</h2>
+                  <h2 id="command-mode-modal-title" className="text-lg font-semibold text-hmi-text">Enter Command Mode</h2>
                   <p className="text-sm text-hmi-muted">Authenticate to send control commands</p>
                 </div>
               </div>
