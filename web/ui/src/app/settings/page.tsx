@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { configLogger, systemLogger, modbusLogger } from '@/lib/logger';
 import { ConfirmModal } from '@/components/hmi';
+import { extractArrayData, extractObjectData } from '@/lib/api';
 
 const PAGE_TITLE = 'Settings - Water Treatment Controller';
 
@@ -349,10 +350,12 @@ export default function SettingsPage() {
       ]);
 
       if (serverRes.ok) {
-        setModbusConfig(await serverRes.json());
+        const json = await serverRes.json();
+        setModbusConfig(extractObjectData<ModbusServerConfig>(json, modbusConfig!));
       }
       if (devicesRes.ok) {
-        setDownstreamDevices(await devicesRes.json());
+        const json = await devicesRes.json();
+        setDownstreamDevices(extractArrayData<ModbusDownstreamDevice>(json));
       }
     } catch (error) {
       modbusLogger.error('Failed to fetch Modbus config', error);
@@ -403,11 +406,14 @@ export default function SettingsPage() {
       ]);
 
       if (configRes.ok) {
-        setLogConfig(await configRes.json());
+        const json = await configRes.json();
+        setLogConfig(extractObjectData<LogForwardingConfig>(json, logConfig!));
       }
       if (destRes.ok) {
-        const data = await destRes.json();
-        setLogDestinations(data.destinations || []);
+        const json = await destRes.json();
+        // Destinations are nested under 'destinations' key or in 'data'
+        const data = json.data || json;
+        setLogDestinations(Array.isArray(data.destinations) ? data.destinations : []);
       }
     } catch (error) {
       configLogger.error('Failed to fetch log config', error);

@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { rtuLogger, configLogger } from '@/lib/logger';
 import { useHMIToast, ConfirmModal } from '@/components/hmi';
+import { extractArrayData } from '@/lib/api';
 
 interface RTUDevice {
   station_name: string;
@@ -57,7 +58,8 @@ export default function IOTagsPage() {
     try {
       const res = await fetch('/api/v1/rtus');
       if (res.ok) {
-        const data = await res.json();
+        const json = await res.json();
+        const data = extractArrayData<RTUDevice>(json);
         setRtus(data);
         if (data.length > 0 && !selectedRtu) {
           setSelectedRtu(data[0].station_name);
@@ -73,7 +75,8 @@ export default function IOTagsPage() {
     try {
       const res = await fetch(`/api/v1/rtus/${selectedRtu}/slots`);
       if (res.ok) {
-        setSlotConfigs(await res.json());
+        const json = await res.json();
+        setSlotConfigs(extractArrayData<SlotConfig>(json));
       }
     } catch (error) {
       configLogger.error('Failed to fetch slot configs', error);
@@ -84,7 +87,8 @@ export default function IOTagsPage() {
     try {
       const res = await fetch('/api/v1/trends/tags');
       if (res.ok) {
-        const data = await res.json();
+        const json = await res.json();
+        const data = extractArrayData<HistorianTag>(json);
         setHistorianTags(data.filter((t: HistorianTag) => !selectedRtu || t.rtu_station === selectedRtu));
       }
     } catch (error) {

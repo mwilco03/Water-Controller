@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { authLogger } from '@/lib/logger';
+import { extractArrayData } from '@/lib/api';
 
 interface User {
   id: number;
@@ -61,7 +62,8 @@ export default function UsersPage() {
     try {
       const res = await fetch('/api/v1/users');
       if (res.ok) {
-        setUsers(await res.json());
+        const json = await res.json();
+        setUsers(extractArrayData<User>(json));
       }
     } catch (error) {
       authLogger.error('Failed to fetch users', error);
@@ -72,7 +74,8 @@ export default function UsersPage() {
     try {
       const res = await fetch('/api/v1/auth/sessions');
       if (res.ok) {
-        setSessions(await res.json());
+        const json = await res.json();
+        setSessions(extractArrayData<Session>(json));
       }
     } catch (error) {
       authLogger.error('Failed to fetch sessions', error);

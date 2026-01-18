@@ -19,6 +19,7 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import Link from 'next/link';
 import { systemLogger } from '@/lib/logger';
+import { extractArrayData } from '@/lib/api';
 import { useRTUStatusData } from '@/hooks/useRTUStatusData';
 import {
   PROFINET_STATES,
@@ -328,7 +329,10 @@ export default function SystemPage() {
     try {
       const res = await fetch(`/api/v1/system/logs?limit=100&level=${logFilter}`);
       if (res.ok) {
-        setLogs(await res.json());
+        const json = await res.json();
+        // Handle wrapped response { data: { logs: [...] } } or { logs: [...] } or raw array
+        const data = json.data || json;
+        setLogs(Array.isArray(data) ? data : (data.logs || []));
       }
     } catch (error) {
       systemLogger.error('Failed to fetch logs', error);
@@ -339,7 +343,10 @@ export default function SystemPage() {
     try {
       const res = await fetch('/api/v1/system/audit?limit=50');
       if (res.ok) {
-        setAuditLog(await res.json());
+        const json = await res.json();
+        // Handle wrapped response { data: { entries: [...] } } or { entries: [...] } or raw array
+        const data = json.data || json;
+        setAuditLog(Array.isArray(data) ? data : (data.entries || data.audit || []));
       }
     } catch (error) {
       systemLogger.error('Failed to fetch audit log', error);

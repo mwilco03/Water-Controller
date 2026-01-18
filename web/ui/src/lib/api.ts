@@ -480,3 +480,77 @@ export async function getCachedDiscovery(): Promise<DiscoveredDevice[]> {
 export async function clearDiscoveryCache(): Promise<void> {
   await apiFetch('/api/v1/discover/cache', { method: 'DELETE' });
 }
+
+// ============== Response Data Extraction Utilities ==============
+// These utilities safely handle API responses that may be wrapped in { data: ... }
+// or returned as raw arrays/objects, preventing "x.map is not a function" errors.
+
+/**
+ * Safely extracts array data from API responses.
+ * Handles both raw arrays and wrapped { data: [...] } responses.
+ *
+ * @param response - The JSON response from the API
+ * @returns The extracted array, or empty array if extraction fails
+ *
+ * @example
+ * const res = await fetch('/api/v1/users');
+ * const json = await res.json();
+ * setUsers(extractArrayData<User>(json));
+ */
+export function extractArrayData<T>(response: unknown): T[] {
+  // Handle null/undefined
+  if (response == null) {
+    return [];
+  }
+
+  // If it's already an array, return it
+  if (Array.isArray(response)) {
+    return response as T[];
+  }
+
+  // If it's a wrapped response with 'data' property
+  if (typeof response === 'object' && 'data' in response) {
+    const data = (response as { data: unknown }).data;
+    if (Array.isArray(data)) {
+      return data as T[];
+    }
+  }
+
+  // Return empty array as fallback
+  return [];
+}
+
+/**
+ * Safely extracts object data from API responses.
+ * Handles both raw objects and wrapped { data: {...} } responses.
+ *
+ * @param response - The JSON response from the API
+ * @param fallback - Fallback value if extraction fails
+ * @returns The extracted object, or fallback if extraction fails
+ *
+ * @example
+ * const res = await fetch('/api/v1/config');
+ * const json = await res.json();
+ * setConfig(extractObjectData<Config>(json, defaultConfig));
+ */
+export function extractObjectData<T extends object>(response: unknown, fallback: T): T {
+  // Handle null/undefined
+  if (response == null) {
+    return fallback;
+  }
+
+  // If it's an object (but not array)
+  if (typeof response === 'object' && !Array.isArray(response)) {
+    // If it has a 'data' property that's an object, extract it
+    if ('data' in response) {
+      const data = (response as { data: unknown }).data;
+      if (data != null && typeof data === 'object' && !Array.isArray(data)) {
+        return data as T;
+      }
+    }
+    // Otherwise return the response itself (it might be the raw data)
+    return response as T;
+  }
+
+  return fallback;
+}

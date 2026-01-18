@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { networkLogger } from '@/lib/logger';
 import { PORTS, getCurrentHost } from '@/config/ports';
+import { extractArrayData, extractObjectData } from '@/lib/api';
 
 interface NetworkConfig {
   mode: 'dhcp' | 'static';
@@ -68,7 +69,8 @@ export default function NetworkPage() {
     try {
       const res = await fetch('/api/v1/system/network');
       if (res.ok) {
-        setNetworkConfig(await res.json());
+        const json = await res.json();
+        setNetworkConfig(extractObjectData<NetworkConfig>(json, networkConfig));
       }
     } catch (error) {
       networkLogger.error('Failed to fetch network config', error);
@@ -79,7 +81,8 @@ export default function NetworkPage() {
     try {
       const res = await fetch('/api/v1/system/web');
       if (res.ok) {
-        setWebConfig(await res.json());
+        const json = await res.json();
+        setWebConfig(extractObjectData<WebConfig>(json, webConfig));
       }
     } catch (error) {
       networkLogger.error('Failed to fetch web config', error);
@@ -90,7 +93,8 @@ export default function NetworkPage() {
     try {
       const res = await fetch('/api/v1/system/interfaces');
       if (res.ok) {
-        setInterfaces(await res.json());
+        const json = await res.json();
+        setInterfaces(extractArrayData<NetworkInterface>(json));
       }
     } catch (error) {
       networkLogger.error('Failed to fetch interfaces', error);

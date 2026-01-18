@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { modbusLogger } from '@/lib/logger';
 import { useHMIToast } from '@/components/hmi';
+import { extractArrayData, extractObjectData } from '@/lib/api';
 
 interface ModbusServerConfig {
   tcp_enabled: boolean;
@@ -123,7 +124,8 @@ export default function ModbusPage() {
     try {
       const res = await fetch('/api/v1/modbus/server');
       if (res.ok) {
-        setServerConfig(await res.json());
+        const json = await res.json();
+        setServerConfig(extractObjectData<ModbusServerConfig>(json, serverConfig!));
       }
     } catch (error) {
       modbusLogger.error('Failed to fetch server config', error);
@@ -134,7 +136,8 @@ export default function ModbusPage() {
     try {
       const res = await fetch('/api/v1/modbus/downstream');
       if (res.ok) {
-        setDownstreamDevices(await res.json());
+        const json = await res.json();
+        setDownstreamDevices(extractArrayData<ModbusDownstreamDevice>(json));
       }
     } catch (error) {
       modbusLogger.error('Failed to fetch downstream devices', error);
@@ -145,7 +148,8 @@ export default function ModbusPage() {
     try {
       const res = await fetch('/api/v1/modbus/mappings');
       if (res.ok) {
-        setRegisterMappings(await res.json());
+        const json = await res.json();
+        setRegisterMappings(extractArrayData<ModbusRegisterMapping>(json));
       }
     } catch (error) {
       modbusLogger.error('Failed to fetch register mappings', error);
@@ -156,7 +160,8 @@ export default function ModbusPage() {
     try {
       const res = await fetch('/api/v1/modbus/stats');
       if (res.ok) {
-        setStats(await res.json());
+        const json = await res.json();
+        setStats(extractObjectData<ModbusStats>(json, stats!));
       }
     } catch (error) {
       modbusLogger.error('Failed to fetch stats', error);
@@ -167,7 +172,8 @@ export default function ModbusPage() {
     try {
       const res = await fetch('/api/v1/rtus');
       if (res.ok) {
-        setRtus(await res.json());
+        const json = await res.json();
+        setRtus(extractArrayData<RTUDevice>(json));
       }
     } catch (error) {
       modbusLogger.error('Failed to fetch RTUs', error);
