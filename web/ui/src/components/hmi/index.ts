@@ -93,5 +93,7 @@ export type { RTUStatusSummary, GlobalStatusBarProps } from './GlobalStatusBar';
 
 export { default as SideNav } from './SideNav';
 
+export { default as Sparkline } from './Sparkline';
+
 // Form components
 export * from './forms';

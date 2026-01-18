@@ -312,6 +312,15 @@ export default function ControlWidget({
           <span className="font-medium text-white flex-1 truncate" title={control.name}>
             {control.name}
           </span>
+          {/* Manual override indicator - shown as inline icon, not banner */}
+          {(control.is_manual || control.mode === 'manual' || control.mode === 'local') && (
+            <span
+              className="text-xs px-1.5 py-0.5 rounded bg-orange-500/20 text-orange-400 font-medium flex items-center gap-1"
+              title={control.mode === 'local' ? 'Local control (at device)' : 'Manual override active'}
+            >
+              🔧 {control.mode === 'local' ? 'LOC' : 'MAN'}
+            </span>
+          )}
           <span
             className="text-xs px-2 py-0.5 rounded capitalize"
             style={{
