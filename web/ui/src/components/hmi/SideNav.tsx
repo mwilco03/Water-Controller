@@ -1,27 +1,30 @@
 'use client';
 
 /**
- * SideNav - Collapsible side navigation for desktop
+ * SideNav - SAP Fiori style icon rail with slide-out panel
  *
- * Design principles:
- * - Icons-only by default (collapsed state)
- * - Expands on click to show labels
- * - Persists preference in localStorage
- * - Alarm badge always visible
- * - Config section collapsed by default
+ * Design: Icon buttons on right edge, panel slides out on click
  */
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-
-interface NavItem {
-  href: string;
-  label: string;
-  icon: string;
-  shortLabel: string;
-  badge?: number;
-}
+import {
+  Squares2X2Icon,
+  ServerStackIcon,
+  BellAlertIcon,
+  ChartBarSquareIcon,
+  AdjustmentsHorizontalIcon,
+  Cog6ToothIcon,
+  ComputerDesktopIcon,
+  UserCircleIcon,
+  XMarkIcon,
+  ChevronLeftIcon,
+  TagIcon,
+  GlobeAltIcon,
+  UsersIcon,
+  CpuChipIcon,
+} from '@heroicons/react/24/outline';
 
 interface SideNavProps {
   activeAlarmCount?: number;
@@ -30,209 +33,198 @@ interface SideNavProps {
   onLogoutClick?: () => void;
 }
 
-const STORAGE_KEY = 'sidenav-expanded';
+interface NavItem {
+  id: string;
+  href: string;
+  label: string;
+  Icon: React.ComponentType<{ className?: string }>;
+}
 
-const NAV_ITEMS: NavItem[] = [
-  { href: '/', label: 'Status', icon: '📊', shortLabel: 'STS' },
-  { href: '/rtus', label: 'RTUs', icon: '📡', shortLabel: 'RTU' },
-  { href: '/alarms', label: 'Alarms', icon: '⚠️', shortLabel: 'ALM' },
-  { href: '/trends', label: 'Trends', icon: '📈', shortLabel: 'TRD' },
-  { href: '/control', label: 'Control', icon: '⚙️', shortLabel: 'CTL' },
+const MAIN_NAV: NavItem[] = [
+  { id: 'status', href: '/', label: 'Status', Icon: Squares2X2Icon },
+  { id: 'rtus', href: '/rtus', label: 'RTUs', Icon: ServerStackIcon },
+  { id: 'alarms', href: '/alarms', label: 'Alarms', Icon: BellAlertIcon },
+  { id: 'trends', href: '/trends', label: 'Trends', Icon: ChartBarSquareIcon },
+  { id: 'control', href: '/control', label: 'Control', Icon: AdjustmentsHorizontalIcon },
 ];
 
-const CONFIG_ITEMS: NavItem[] = [
-  { href: '/io-tags', label: 'I/O Tags', icon: '🏷️', shortLabel: 'I/O' },
-  { href: '/modbus', label: 'Modbus', icon: '🔌', shortLabel: 'MOD' },
-  { href: '/network', label: 'Network', icon: '🌐', shortLabel: 'NET' },
-  { href: '/users', label: 'Users', icon: '👤', shortLabel: 'USR' },
-  { href: '/settings', label: 'Settings', icon: '🛠️', shortLabel: 'SET' },
+const CONFIG_NAV: NavItem[] = [
+  { id: 'io-tags', href: '/io-tags', label: 'I/O Tags', Icon: TagIcon },
+  { id: 'modbus', href: '/modbus', label: 'Modbus', Icon: CpuChipIcon },
+  { id: 'network', href: '/network', label: 'Network', Icon: GlobeAltIcon },
+  { id: 'users', href: '/users', label: 'Users', Icon: UsersIcon },
+  { id: 'settings', href: '/settings', label: 'Settings', Icon: Cog6ToothIcon },
 ];
-
-const SYSTEM_ITEM: NavItem = { href: '/system', label: 'System', icon: '🖥️', shortLabel: 'SYS' };
 
 export function SideNav({
   activeAlarmCount = 0,
   isAuthenticated = false,
   onLoginClick,
-  onLogoutClick
+  onLogoutClick,
 }: SideNavProps) {
   const pathname = usePathname();
-  const [isExpanded, setIsExpanded] = useState(false);
-  const [configOpen, setConfigOpen] = useState(false);
+  const [activePanel, setActivePanel] = useState<string | null>(null);
   const [mounted, setMounted] = useState(false);
 
-  // Load preference from localStorage
   useEffect(() => {
     setMounted(true);
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored === 'true') {
-      setIsExpanded(true);
-    }
   }, []);
-
-  // Save preference
-  const toggleExpanded = () => {
-    const next = !isExpanded;
-    setIsExpanded(next);
-    localStorage.setItem(STORAGE_KEY, String(next));
-  };
 
   const isActive = (href: string) => {
     if (href === '/') return pathname === '/';
     return pathname.startsWith(href);
   };
 
-  const isConfigActive = CONFIG_ITEMS.some(item => isActive(item.href));
+  const togglePanel = (panelId: string) => {
+    setActivePanel(activePanel === panelId ? null : panelId);
+  };
 
-  // Don't render until mounted to avoid hydration mismatch
+  const closePanel = () => setActivePanel(null);
+
   if (!mounted) return null;
 
   return (
-    <aside
-      className={`
-        hidden lg:flex flex-col
-        fixed left-0 top-0 bottom-0
-        bg-hmi-panel border-r border-hmi-border
-        transition-all duration-200 ease-out
-        z-40
-        ${isExpanded ? 'w-48' : 'w-14'}
-      `}
-    >
-      {/* Toggle button */}
-      <button
-        onClick={toggleExpanded}
-        className="h-14 flex items-center justify-center border-b border-hmi-border hover:bg-hmi-bg transition-colors"
-        aria-label={isExpanded ? 'Collapse navigation' : 'Expand navigation'}
-        title={isExpanded ? 'Collapse' : 'Expand'}
-      >
-        <span className="text-lg">{isExpanded ? '◀' : '▶'}</span>
-      </button>
-
-      {/* Main navigation */}
-      <nav className="flex-1 py-2 overflow-y-auto">
-        <ul className="space-y-1 px-2">
-          {NAV_ITEMS.map((item) => (
-            <li key={item.href}>
-              <Link
-                href={item.href}
-                className={`
-                  flex items-center gap-3 px-2 py-2 rounded-md
-                  transition-colors text-sm font-medium
-                  ${isActive(item.href)
-                    ? 'bg-status-info/10 text-status-info'
-                    : 'text-hmi-muted hover:bg-hmi-bg hover:text-hmi-text'}
-                `}
-                title={!isExpanded ? item.label : undefined}
-              >
-                <span className="relative flex-shrink-0 w-6 text-center">
-                  {item.href === '/alarms' && activeAlarmCount > 0 && (
-                    <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 bg-status-alarm text-white text-[10px] font-bold rounded-full flex items-center justify-center">
-                      {activeAlarmCount > 99 ? '99+' : activeAlarmCount}
-                    </span>
-                  )}
-                  <span>{item.icon}</span>
+    <>
+      {/* Icon Rail - Right side */}
+      <aside className="hidden lg:flex flex-col fixed right-0 top-0 bottom-0 w-12 bg-white border-l border-gray-200 z-40">
+        {/* Main nav icons */}
+        <div className="flex-1 flex flex-col items-center py-2 gap-1">
+          {MAIN_NAV.map((item) => (
+            <button
+              key={item.id}
+              onClick={() => togglePanel(item.id)}
+              className={`w-10 h-10 flex items-center justify-center rounded-lg transition-colors relative ${
+                activePanel === item.id || isActive(item.href)
+                  ? 'bg-blue-100 text-blue-600'
+                  : 'text-gray-500 hover:bg-gray-100 hover:text-gray-700'
+              }`}
+              title={item.label}
+            >
+              <item.Icon className="w-5 h-5" />
+              {item.id === 'alarms' && activeAlarmCount > 0 && (
+                <span className="absolute top-0.5 right-0.5 min-w-[16px] h-4 px-1 bg-red-500 text-white text-[9px] font-bold rounded-full flex items-center justify-center">
+                  {activeAlarmCount > 99 ? '99+' : activeAlarmCount}
                 </span>
-                {isExpanded && <span>{item.label}</span>}
-              </Link>
-            </li>
+              )}
+            </button>
           ))}
-        </ul>
 
-        {/* Config section - collapsible */}
-        <div className="mt-4 pt-4 border-t border-hmi-border px-2">
+          <div className="w-6 border-t border-gray-200 my-2" />
+
+          {/* Config button */}
           <button
-            onClick={() => setConfigOpen(!configOpen)}
-            className={`
-              w-full flex items-center gap-3 px-2 py-2 rounded-md
-              transition-colors text-sm font-medium
-              ${isConfigActive
-                ? 'bg-status-info/10 text-status-info'
-                : 'text-hmi-muted hover:bg-hmi-bg hover:text-hmi-text'}
-            `}
-            title={!isExpanded ? 'Config' : undefined}
+            onClick={() => togglePanel('config')}
+            className={`w-10 h-10 flex items-center justify-center rounded-lg transition-colors ${
+              activePanel === 'config'
+                ? 'bg-blue-100 text-blue-600'
+                : 'text-gray-500 hover:bg-gray-100 hover:text-gray-700'
+            }`}
+            title="Configuration"
           >
-            <span className="flex-shrink-0 w-6 text-center">🔧</span>
-            {isExpanded && (
-              <>
-                <span className="flex-1 text-left">Config</span>
-                <span className="text-xs">{configOpen ? '▼' : '▶'}</span>
-              </>
-            )}
+            <Cog6ToothIcon className="w-5 h-5" />
           </button>
 
-          {configOpen && (
-            <ul className="mt-1 space-y-1 ml-2">
-              {CONFIG_ITEMS.map((item) => (
-                <li key={item.href}>
-                  <Link
-                    href={item.href}
-                    className={`
-                      flex items-center gap-3 px-2 py-1.5 rounded-md
-                      transition-colors text-sm
-                      ${isActive(item.href)
-                        ? 'bg-status-info/10 text-status-info'
-                        : 'text-hmi-muted hover:bg-hmi-bg hover:text-hmi-text'}
-                    `}
-                    title={!isExpanded ? item.label : undefined}
-                  >
-                    <span className="flex-shrink-0 w-5 text-center text-xs">{item.icon}</span>
-                    {isExpanded && <span>{item.label}</span>}
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-
-        {/* System link */}
-        <div className="mt-2 px-2">
+          {/* System */}
           <Link
-            href={SYSTEM_ITEM.href}
-            className={`
-              flex items-center gap-3 px-2 py-2 rounded-md
-              transition-colors text-sm font-medium
-              ${isActive(SYSTEM_ITEM.href)
-                ? 'bg-status-info/10 text-status-info'
-                : 'text-hmi-muted hover:bg-hmi-bg hover:text-hmi-text'}
-            `}
-            title={!isExpanded ? SYSTEM_ITEM.label : undefined}
+            href="/system"
+            className={`w-10 h-10 flex items-center justify-center rounded-lg transition-colors ${
+              isActive('/system')
+                ? 'bg-blue-100 text-blue-600'
+                : 'text-gray-500 hover:bg-gray-100 hover:text-gray-700'
+            }`}
+            title="System"
           >
-            <span className="flex-shrink-0 w-6 text-center">{SYSTEM_ITEM.icon}</span>
-            {isExpanded && <span>{SYSTEM_ITEM.label}</span>}
+            <ComputerDesktopIcon className="w-5 h-5" />
           </Link>
         </div>
-      </nav>
 
-      {/* User section at bottom */}
-      <div className="border-t border-hmi-border p-2">
-        {isAuthenticated ? (
+        {/* User at bottom */}
+        <div className="py-2 flex flex-col items-center border-t border-gray-200">
           <button
-            onClick={onLogoutClick}
-            className="w-full flex items-center gap-3 px-2 py-2 rounded-md text-sm text-hmi-muted hover:bg-hmi-bg hover:text-hmi-text transition-colors"
-            title={!isExpanded ? 'Logout' : undefined}
+            onClick={isAuthenticated ? onLogoutClick : onLoginClick}
+            className="w-10 h-10 flex items-center justify-center rounded-lg text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition-colors"
+            title={isAuthenticated ? 'Logout' : 'Login'}
           >
-            <span className="flex-shrink-0 w-6 text-center">🔓</span>
-            {isExpanded && <span>Logout</span>}
+            <UserCircleIcon className="w-5 h-5" />
           </button>
-        ) : (
-          <button
-            onClick={onLoginClick}
-            className="w-full flex items-center gap-3 px-2 py-2 rounded-md text-sm text-hmi-muted hover:bg-hmi-bg hover:text-hmi-text transition-colors"
-            title={!isExpanded ? 'Login' : undefined}
-          >
-            <span className="flex-shrink-0 w-6 text-center">🔐</span>
-            {isExpanded && <span>Login</span>}
-          </button>
-        )}
+        </div>
+      </aside>
 
-        {/* Keyboard shortcuts hint */}
-        {isExpanded && (
-          <div className="mt-2 px-2 py-1 text-xs text-hmi-muted">
-            Press <kbd className="px-1 bg-hmi-bg rounded border border-hmi-border">?</kbd> for shortcuts
+      {/* Slide-out Panel */}
+      {activePanel && (
+        <>
+          {/* Backdrop */}
+          <div
+            className="hidden lg:block fixed inset-0 bg-black/20 z-30"
+            onClick={closePanel}
+          />
+
+          {/* Panel */}
+          <div className="hidden lg:block fixed right-12 top-0 bottom-0 w-64 bg-white border-l border-gray-200 shadow-lg z-35 animate-slide-in">
+            {/* Panel Header */}
+            <div className="h-14 flex items-center justify-between px-4 border-b border-gray-200">
+              <h2 className="font-semibold text-gray-900">
+                {activePanel === 'config' ? 'Configuration' : MAIN_NAV.find(n => n.id === activePanel)?.label}
+              </h2>
+              <button
+                onClick={closePanel}
+                className="w-8 h-8 flex items-center justify-center rounded-lg text-gray-500 hover:bg-gray-100"
+              >
+                <XMarkIcon className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Panel Content */}
+            <div className="p-2">
+              {activePanel === 'config' ? (
+                <nav className="space-y-1">
+                  {CONFIG_NAV.map((item) => (
+                    <Link
+                      key={item.id}
+                      href={item.href}
+                      onClick={closePanel}
+                      className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm ${
+                        isActive(item.href)
+                          ? 'bg-blue-50 text-blue-600'
+                          : 'text-gray-700 hover:bg-gray-50'
+                      }`}
+                    >
+                      <item.Icon className="w-5 h-5" />
+                      {item.label}
+                    </Link>
+                  ))}
+                </nav>
+              ) : (
+                <Link
+                  href={MAIN_NAV.find(n => n.id === activePanel)?.href || '/'}
+                  onClick={closePanel}
+                  className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm bg-blue-50 text-blue-600"
+                >
+                  <ChevronLeftIcon className="w-4 h-4" />
+                  Go to {MAIN_NAV.find(n => n.id === activePanel)?.label}
+                </Link>
+              )}
+            </div>
           </div>
-        )}
-      </div>
-    </aside>
+        </>
+      )}
+
+      <style jsx>{`
+        @keyframes slide-in {
+          from {
+            transform: translateX(100%);
+            opacity: 0;
+          }
+          to {
+            transform: translateX(0);
+            opacity: 1;
+          }
+        }
+        .animate-slide-in {
+          animation: slide-in 0.15s ease-out;
+        }
+      `}</style>
+    </>
   );
 }
 
