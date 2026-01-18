@@ -207,3 +207,37 @@ class TestResponse(BaseModel):
     station_name: str = Field(description="RTU station name")
     tests: dict[str, TestResult] = Field(description="Individual test results")
     overall_passed: bool = Field(description="Whether all tests passed")
+
+
+class ReceivedSlot(BaseModel):
+    """Slot data received from RTU during discovery or enumeration."""
+
+    slot: int = Field(ge=1, le=64, description="Slot number (1-indexed)")
+    module_id: str | None = Field(None, description="Module identifier (hex)")
+    module_type: str | None = Field(None, description="Module type name")
+    status: str = Field("OK", description="Slot status: OK, EMPTY, FAULT")
+    subslots: list[dict[str, Any]] = Field(default_factory=list, description="Optional subslot data")
+
+
+class RtuSlotsReceivedRequest(BaseModel):
+    """
+    Request body for RTU-reported slot configuration.
+
+    Called by the controller when an RTU reports its actual module configuration.
+    This is the RTU-dictated slot data (vs controller-owned initial slot_count).
+    """
+
+    slots: list[ReceivedSlot] = Field(description="Slots reported by the RTU")
+    update_slot_count: bool = Field(
+        True,
+        description="If true, adjust RTU slot_count to match received data"
+    )
+
+
+class RtuSlotsReceivedResponse(BaseModel):
+    """Response for RTU slots received operation."""
+
+    station_name: str = Field(description="RTU station name")
+    slots_updated: int = Field(description="Number of slots updated")
+    slots_added: int = Field(description="Number of new slots added")
+    message: str = Field(description="Status message")
