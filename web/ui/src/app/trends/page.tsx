@@ -33,14 +33,14 @@ interface TrendData {
 // Loading fallback for Suspense
 function TrendsLoading() {
   return (
-    <div className="p-6">
+    <div className="p-4">
       <div className="animate-pulse">
-        <div className="h-8 bg-hmi-panel rounded w-48 mb-6"></div>
-        <div className="h-64 bg-hmi-panel rounded mb-4"></div>
-        <div className="grid grid-cols-3 gap-4">
-          <div className="h-20 bg-hmi-panel rounded"></div>
-          <div className="h-20 bg-hmi-panel rounded"></div>
-          <div className="h-20 bg-hmi-panel rounded"></div>
+        <div className="h-6 bg-hmi-panel rounded w-40 mb-4"></div>
+        <div className="h-40 bg-hmi-panel rounded mb-3"></div>
+        <div className="grid grid-cols-3 gap-3">
+          <div className="h-12 bg-hmi-panel rounded"></div>
+          <div className="h-12 bg-hmi-panel rounded"></div>
+          <div className="h-12 bg-hmi-panel rounded"></div>
         </div>
       </div>
     </div>

@@ -184,9 +184,9 @@ export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(
   ({ icon, size = 'md', className, ...props }, ref) => {
     // All sizes meet 44px minimum touch target (WCAG 2.1)
     const sizeSquareClasses: Record<ButtonSize, string> = {
-      sm: 'w-11 h-11 p-0',
+      sm: 'w-10 h-10 p-0',
       md: 'w-11 h-11 p-0',
-      lg: 'w-12 h-12 p-0',
+      lg: 'w-11 h-11 p-0',
     };
 
     return (

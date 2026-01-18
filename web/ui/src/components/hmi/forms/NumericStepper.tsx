@@ -67,23 +67,23 @@ const sizeConfig: Record<StepperSize, {
   container: string;
 }> = {
   sm: {
-    button: 'w-10 h-10',
-    icon: 'w-5 h-5',
-    input: 'text-lg h-10',
+    button: 'w-9 h-9',
+    icon: 'w-4 h-4',
+    input: 'text-base h-9',
     label: 'text-sm',
     container: 'gap-1',
   },
   md: {
-    button: 'w-12 h-12',
-    icon: 'w-6 h-6',
-    input: 'text-2xl h-12',
+    button: 'w-10 h-10',
+    icon: 'w-5 h-5',
+    input: 'text-xl h-10',
     label: 'text-base',
     container: 'gap-2',
   },
   lg: {
-    button: 'w-14 h-14',
-    icon: 'w-7 h-7',
-    input: 'text-3xl h-14',
+    button: 'w-11 h-11',
+    icon: 'w-6 h-6',
+    input: 'text-2xl h-11',
     label: 'text-lg',
     container: 'gap-2',
   },

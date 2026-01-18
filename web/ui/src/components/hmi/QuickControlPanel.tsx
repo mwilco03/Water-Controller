@@ -316,7 +316,7 @@ export function QuickControlPanel({ className }: QuickControlPanelProps) {
                       onClick={() => adjustSetpoint(loop, -selectedIncrement * 5)}
                       disabled={!canCommand}
                       className={clsx(
-                        'w-12 h-12 rounded-lg font-bold text-lg transition-colors',
+                        'w-9 h-9 rounded-lg font-bold text-base transition-colors',
                         'bg-status-alarm/20 text-status-alarm hover:bg-status-alarm/30',
                         'disabled:opacity-50 disabled:cursor-not-allowed',
                         'touch-manipulation'
@@ -329,7 +329,7 @@ export function QuickControlPanel({ className }: QuickControlPanelProps) {
                       onClick={() => adjustSetpoint(loop, -selectedIncrement)}
                       disabled={!canCommand}
                       className={clsx(
-                        'w-14 h-14 rounded-lg font-bold text-xl transition-colors',
+                        'w-10 h-10 rounded-lg font-bold text-lg transition-colors',
                         'bg-status-alarm/20 text-status-alarm hover:bg-status-alarm/30',
                         'disabled:opacity-50 disabled:cursor-not-allowed',
                         'touch-manipulation'
@@ -352,7 +352,7 @@ export function QuickControlPanel({ className }: QuickControlPanelProps) {
                       onClick={() => adjustSetpoint(loop, selectedIncrement)}
                       disabled={!canCommand}
                       className={clsx(
-                        'w-14 h-14 rounded-lg font-bold text-xl transition-colors',
+                        'w-10 h-10 rounded-lg font-bold text-lg transition-colors',
                         'bg-status-ok/20 text-status-ok hover:bg-status-ok/30',
                         'disabled:opacity-50 disabled:cursor-not-allowed',
                         'touch-manipulation'
@@ -365,7 +365,7 @@ export function QuickControlPanel({ className }: QuickControlPanelProps) {
                       onClick={() => adjustSetpoint(loop, selectedIncrement * 5)}
                       disabled={!canCommand}
                       className={clsx(
-                        'w-12 h-12 rounded-lg font-bold text-lg transition-colors',
+                        'w-9 h-9 rounded-lg font-bold text-base transition-colors',
                         'bg-status-ok/20 text-status-ok hover:bg-status-ok/30',
                         'disabled:opacity-50 disabled:cursor-not-allowed',
                         'touch-manipulation'
