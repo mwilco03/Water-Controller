@@ -192,7 +192,7 @@ export function SideNav({
           />
 
           {/* Panel */}
-          <div className="hidden lg:block fixed left-14 top-0 bottom-0 w-56 bg-white border-r border-gray-200 shadow-lg z-35">
+          <div className="hidden lg:block fixed left-14 top-0 bottom-0 w-56 bg-white border-r border-gray-200 shadow-lg z-40">
             {/* Panel Header */}
             <div className="h-14 flex items-center justify-between px-4 border-b border-gray-200">
               <h2 className="font-semibold text-gray-900">Configuration</h2>
