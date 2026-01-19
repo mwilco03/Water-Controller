@@ -135,13 +135,6 @@ class RtuListResponse(BaseModel):
     meta: dict[str, Any] = Field(default_factory=dict)
 
 
-class DeletionImpact(BaseModel):
-    """Preview of what will be deleted with an RTU."""
-
-    rtu: str = Field(description="RTU station name")
-    impact: dict[str, Any] = Field(description="Resources to be deleted")
-
-
 class ConnectRequest(BaseModel):
     """Request to connect to an RTU."""
 

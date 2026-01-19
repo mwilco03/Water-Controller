@@ -26,7 +26,6 @@ from ...services.profinet_client import get_profinet_client
 from ...schemas.rtu import (
     ConnectRequest,
     ConnectResponse,
-    DeletionImpact,
     DisconnectResponse,
     DiscoverResponse,
     DiscoverSummary,

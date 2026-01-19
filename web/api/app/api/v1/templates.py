@@ -62,7 +62,6 @@ async def list_templates(
             vendor_id=tpl.vendor_id,
             device_id=tpl.device_id,
             slot_count=tpl.slot_count,
-            slots=config.get("slots", []),
             sensors=config.get("sensors", []),
             controls=config.get("controls", []),
             alarms=config.get("alarms", []),
@@ -92,9 +91,8 @@ async def create_template(
             details={"field": "name"}
         )
 
-    # Build config data
+    # Build config data (slot_number is metadata on sensors/controls, not separate entities)
     config_data = {
-        "slots": [s.model_dump() for s in request.slots],
         "sensors": [s.model_dump() for s in request.sensors],
         "controls": [c.model_dump() for c in request.controls],
         "alarms": [a.model_dump() for a in request.alarms],
@@ -122,7 +120,6 @@ async def create_template(
         vendor_id=template.vendor_id,
         device_id=template.device_id,
         slot_count=template.slot_count,
-        slots=config_data["slots"],
         sensors=config_data["sensors"],
         controls=config_data["controls"],
         alarms=config_data["alarms"],
@@ -156,7 +153,6 @@ async def get_template(
         vendor_id=template.vendor_id,
         device_id=template.device_id,
         slot_count=template.slot_count,
-        slots=config.get("slots", []),
         sensors=config.get("sensors", []),
         controls=config.get("controls", []),
         alarms=config.get("alarms", []),
