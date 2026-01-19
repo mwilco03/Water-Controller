@@ -78,6 +78,36 @@ When implementing features:
 
 **Rule of thumb:** If you write "The user must manually...", you're doing it wrong. Fix the automation instead.
 
+## Slots Architecture Decision (2026-01)
+
+**Decision**: Slots are PROFINET frame positions, NOT database entities.
+
+**Context**: The Water-Treat RTU (https://github.com/mwilco03/Water-Treat) uses PROFINET slots 1-8 for inputs (sensors) and slots 9-15 for outputs (actuators). These are cyclic I/O frame positions, not physical entities that need their own database table.
+
+**Why NOT to create a Slot table**:
+- RTUs report their sensor/control configuration directly
+- The slot position is just metadata (which byte offset in the PROFINET frame)
+- A Slot table adds a required intermediary that blocks sensor/control creation
+- The system worked without slots being populated - they were vestigial infrastructure
+
+**Do NOT**:
+- Create a separate `slots` or `slot_configs` table/model
+- Make `slot_id` a required foreign key on sensors/controls
+- Block sensor/control creation until slots exist
+- Create empty slot entities when adding RTUs
+
+**Do**:
+- Store `slot_number` as an optional integer on sensors/controls (nullable)
+- Let RTUs report their configuration dynamically
+- Allow sensors/controls to exist with NULL slot_number
+- Keep RTU `slot_count` as informational metadata (reported by RTU after connection)
+
+**Code locations where this is documented**:
+- `web/api/app/models/rtu.py` - Sensor/Control have nullable slot_number
+- `web/api/app/persistence/rtu.py` - No slot lookup required
+- `web/api/app/models/__init__.py` - No Slot export
+- `docker/init.sql` - No slot_configs table
+
 ## References
 
 - Architecture: `/docs/architecture/SYSTEM_DESIGN.md`

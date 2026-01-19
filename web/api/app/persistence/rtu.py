@@ -5,15 +5,16 @@ SPDX-License-Identifier: GPL-3.0-or-later
 
 RTU device, sensor, and control operations using SQLAlchemy ORM models.
 
-Uses DictSerializableMixin.to_dict() from models/base.py for serialization.
-Uses unified ORM models: RTU, Sensor, Control, Slot from models/rtu.py.
+Architecture Decision (2026-01): Slots are NOT database entities.
+slot_number is optional metadata on sensors/controls indicating PROFINET frame position.
+See CLAUDE.md for full rationale.
 """
 
 from datetime import UTC, datetime
 from typing import Any
 
 from ..core.config import settings
-from ..models.rtu import RTU, Control, RtuState, Sensor, Slot, SlotStatus
+from ..models.rtu import RTU, Control, RtuState, Sensor
 from .audit import log_audit
 from .base import get_db
 
@@ -44,32 +45,23 @@ def get_rtu_by_id(rtu_id: int) -> dict[str, Any] | None:
 
 
 def create_rtu_device(device: dict[str, Any]) -> int:
-    """Create a new RTU device with default slots."""
+    """Create a new RTU device.
+
+    Note: slot_count is optional metadata reported by RTU after connection.
+    No slot entities are created - sensors/controls are associated directly with RTU.
+    """
     defaults = settings.rtu_defaults
     with get_db() as db:
-        # Create RTU with ORM model
-        slot_count = device.get('slot_count', defaults.SLOT_COUNT)
         new_device = RTU(
             station_name=device['station_name'],
             ip_address=device['ip_address'],
             vendor_id=_format_hex_id(device.get('vendor_id', defaults.VENDOR_ID)),
             device_id=_format_hex_id(device.get('device_id', defaults.DEVICE_ID)),
-            slot_count=slot_count,
+            slot_count=device.get('slot_count'),  # NULL until RTU reports
             state=RtuState.OFFLINE,
             state_since=datetime.now(UTC),
         )
         db.add(new_device)
-        db.flush()  # Get the ID
-
-        # Create default empty slots
-        for slot_num in range(1, slot_count + 1):
-            slot = Slot(
-                rtu_id=new_device.id,
-                slot_number=slot_num,
-                status=SlotStatus.EMPTY,
-            )
-            db.add(slot)
-
         db.commit()
         db.refresh(new_device)
         log_audit('system', 'create', 'rtu_device', device['station_name'],
@@ -91,11 +83,9 @@ def update_rtu_device(station_name: str, device: dict[str, Any]) -> bool:
         existing.vendor_id = _format_hex_id(device.get('vendor_id', defaults.VENDOR_ID))
         existing.device_id = _format_hex_id(device.get('device_id', defaults.DEVICE_ID))
 
-        # Handle slot count changes
-        new_slot_count = device.get('slot_count', defaults.SLOT_COUNT)
-        if new_slot_count != existing.slot_count:
-            _update_slot_count(db, existing, new_slot_count)
-            existing.slot_count = new_slot_count
+        # slot_count is informational only (reported by RTU)
+        if 'slot_count' in device:
+            existing.slot_count = device['slot_count']
 
         existing.updated_at = datetime.now(UTC)
         db.commit()
@@ -115,7 +105,7 @@ def update_rtu_state(station_name: str, state: str, error: str | None = None,
 
 
 def delete_rtu_device(station_name: str) -> bool:
-    """Delete an RTU device (cascade deletes slots, sensors, controls)."""
+    """Delete an RTU device (cascade deletes sensors, controls)."""
     with get_db() as db:
         device = db.query(RTU).filter(
             RTU.station_name == station_name
@@ -164,18 +154,12 @@ def upsert_rtu_sensor(sensor: dict[str, Any]) -> int:
         if not rtu:
             return -1
 
-        # Get slot (default to slot 1 if not specified)
-        slot_number = sensor.get('slot_number', 1)
-        slot = db.query(Slot).filter(
-            Slot.rtu_id == rtu.id,
-            Slot.slot_number == slot_number
-        ).first()
-        if not slot:
-            return -1
-
         # Check for existing sensor by tag (unique identifier)
         tag = sensor.get('sensor_id', sensor.get('tag'))
         existing = db.query(Sensor).filter(Sensor.tag == tag).first()
+
+        # slot_number is optional metadata
+        slot_number = sensor.get('slot_number')
 
         if existing:
             existing.sensor_type = sensor['sensor_type']
@@ -185,12 +169,14 @@ def upsert_rtu_sensor(sensor: dict[str, Any]) -> int:
             existing.eng_min = sensor.get('eng_min', sensor.get('scale_min', 0))
             existing.eng_max = sensor.get('eng_max', sensor.get('scale_max', 100))
             existing.channel = sensor.get('channel', 0)
+            if slot_number is not None:
+                existing.slot_number = slot_number
             db.commit()
             return existing.id
         else:
             new_sensor = Sensor(
                 rtu_id=rtu.id,
-                slot_id=slot.id,
+                slot_number=slot_number,
                 tag=tag,
                 channel=sensor.get('channel', 0),
                 sensor_type=sensor['sensor_type'],
@@ -269,18 +255,12 @@ def upsert_rtu_control(control: dict[str, Any]) -> int:
         if not rtu:
             return -1
 
-        # Get slot (default to slot 1 if not specified)
-        slot_number = control.get('slot_number', 1)
-        slot = db.query(Slot).filter(
-            Slot.rtu_id == rtu.id,
-            Slot.slot_number == slot_number
-        ).first()
-        if not slot:
-            return -1
-
         # Check for existing control by tag (unique identifier)
         tag = control.get('control_id', control.get('tag'))
         existing = db.query(Control).filter(Control.tag == tag).first()
+
+        # slot_number is optional metadata
+        slot_number = control.get('slot_number')
 
         # Map legacy command_type to control_type
         control_type = control.get('control_type')
@@ -294,12 +274,14 @@ def upsert_rtu_control(control: dict[str, Any]) -> int:
             existing.max_value = control.get('range_max', control.get('max_value'))
             existing.unit = control.get('unit')
             existing.channel = control.get('channel', 0)
+            if slot_number is not None:
+                existing.slot_number = slot_number
             db.commit()
             return existing.id
         else:
             new_control = Control(
                 rtu_id=rtu.id,
-                slot_id=slot.id,
+                slot_number=slot_number,
                 tag=tag,
                 channel=control.get('channel', 0),
                 control_type=control_type or 'discrete',
@@ -360,43 +342,6 @@ def get_rtu_inventory(rtu_station: str) -> dict[str, Any] | None:
     }
 
 
-# ============== Slot Operations ==============
-
-def get_rtu_slots(rtu_station: str) -> list[dict[str, Any]]:
-    """Get all slots for an RTU."""
-    with get_db() as db:
-        rtu = db.query(RTU).filter(RTU.station_name == rtu_station).first()
-        if not rtu:
-            return []
-        slots = db.query(Slot).filter(
-            Slot.rtu_id == rtu.id
-        ).order_by(Slot.slot_number).all()
-        return [s.to_dict() for s in slots]
-
-
-def update_slot(rtu_station: str, slot_number: int, **kwargs: Any) -> bool:
-    """Update a slot's module information."""
-    with get_db() as db:
-        rtu = db.query(RTU).filter(RTU.station_name == rtu_station).first()
-        if not rtu:
-            return False
-
-        slot = db.query(Slot).filter(
-            Slot.rtu_id == rtu.id,
-            Slot.slot_number == slot_number
-        ).first()
-        if not slot:
-            return False
-
-        for key, value in kwargs.items():
-            if hasattr(slot, key):
-                setattr(slot, key, value)
-
-        slot.updated_at = datetime.now(UTC)
-        db.commit()
-        return True
-
-
 # ============== Helper Functions ==============
 
 def _format_hex_id(value: int | str) -> str:
@@ -406,27 +351,6 @@ def _format_hex_id(value: int | str) -> str:
             return value
         return f"0x{int(value):04X}"
     return f"0x{value:04X}"
-
-
-def _update_slot_count(db: Any, rtu: RTU, new_count: int) -> None:
-    """Add or remove slots to match new count."""
-    current_slots = db.query(Slot).filter(Slot.rtu_id == rtu.id).count()
-
-    if new_count > current_slots:
-        # Add new slots
-        for slot_num in range(current_slots + 1, new_count + 1):
-            slot = Slot(
-                rtu_id=rtu.id,
-                slot_number=slot_num,
-                status=SlotStatus.EMPTY,
-            )
-            db.add(slot)
-    elif new_count < current_slots:
-        # Remove extra slots (and their sensors/controls via cascade)
-        db.query(Slot).filter(
-            Slot.rtu_id == rtu.id,
-            Slot.slot_number > new_count
-        ).delete()
 
 
 def _sensor_to_legacy_dict(sensor: Sensor, rtu_station: str) -> dict[str, Any]:
@@ -443,7 +367,7 @@ def _sensor_to_legacy_dict(sensor: Sensor, rtu_station: str) -> dict[str, Any]:
         "eng_min": sensor.eng_min,
         "eng_max": sensor.eng_max,
         "channel": sensor.channel,
-        "slot_id": sensor.slot_id,
+        "slot_number": sensor.slot_number,
         "created_at": sensor.created_at.isoformat() if sensor.created_at else None,
         "updated_at": sensor.updated_at.isoformat() if sensor.updated_at else None,
     }
@@ -463,7 +387,7 @@ def _control_to_legacy_dict(control: Control, rtu_station: str) -> dict[str, Any
         "range_max": control.max_value,
         "unit": control.unit,
         "channel": control.channel,
-        "slot_id": control.slot_id,
+        "slot_number": control.slot_number,
         "created_at": control.created_at.isoformat() if control.created_at else None,
         "updated_at": control.updated_at.isoformat() if control.updated_at else None,
     }

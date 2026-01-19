@@ -3,15 +3,15 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
-import { getRTU, getRTUInventory, refreshRTUInventory, getSlots } from '@/lib/api';
-import type { RTUDevice, RTUInventory, SlotConfig } from '@/lib/api';
+import { getRTU, getRTUInventory, refreshRTUInventory } from '@/lib/api';
+import type { RTUDevice, RTUInventory } from '@/lib/api';
 import { SensorList, ControlList, InventoryRefresh, RtuStateBadge, ProfinetStatus, StaleIndicator } from '@/components/rtu';
 import { useWebSocket } from '@/hooks/useWebSocket';
 import { useCommandMode } from '@/contexts/CommandModeContext';
 import CommandModeLogin from '@/components/CommandModeLogin';
 import { rtuLogger } from '@/lib/logger';
 
-type Tab = 'overview' | 'slots' | 'sensors' | 'controls' | 'profinet';
+type Tab = 'overview' | 'sensors' | 'controls' | 'profinet';
 
 export default function RTUDetailPage() {
   const params = useParams();
@@ -20,7 +20,6 @@ export default function RTUDetailPage() {
 
   const [rtu, setRtu] = useState<RTUDevice | null>(null);
   const [inventory, setInventory] = useState<RTUInventory | null>(null);
-  const [slots, setSlots] = useState<SlotConfig[]>([]);
   const [activeTab, setActiveTab] = useState<Tab>('overview');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -28,14 +27,12 @@ export default function RTUDetailPage() {
 
   const fetchData = useCallback(async () => {
     try {
-      const [rtuData, inventoryData, slotsData] = await Promise.all([
+      const [rtuData, inventoryData] = await Promise.all([
         getRTU(stationName),
         getRTUInventory(stationName),
-        getSlots(stationName),
       ]);
       setRtu(rtuData);
       setInventory(inventoryData);
-      setSlots(slotsData);
       setError(null);
     } catch (err) {
       rtuLogger.error('Failed to fetch RTU data', err);
@@ -198,7 +195,7 @@ export default function RTUDetailPage() {
       {/* Tabs */}
       <div className="border-b border-hmi-border">
         <nav className="flex gap-4">
-          {(['overview', 'slots', 'sensors', 'controls', 'profinet'] as Tab[]).map((tab) => (
+          {(['overview', 'sensors', 'controls', 'profinet'] as Tab[]).map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
@@ -209,7 +206,6 @@ export default function RTUDetailPage() {
               }`}
             >
               {tab === 'overview' && 'Overview'}
-              {tab === 'slots' && `Slots (${slots.length})`}
               {tab === 'sensors' && `Sensors (${sensors.length})`}
               {tab === 'controls' && `Controls (${controls.length})`}
               {tab === 'profinet' && 'PROFINET'}
@@ -314,83 +310,6 @@ export default function RTUDetailPage() {
                 PID Control
               </Link>
             </div>
-          </div>
-        )}
-
-        {activeTab === 'slots' && (
-          <div className="space-y-4">
-            <h3 className="text-lg font-semibold text-hmi-text">Slot Configuration</h3>
-            {slots.length === 0 ? (
-              <div className="text-center py-8 text-hmi-muted">
-                <span className="block text-2xl mb-2 opacity-50">[--]</span>
-                <p className="text-sm">No slots configured</p>
-              </div>
-            ) : (
-              <div className="grid gap-3">
-                {slots.map((slot) => (
-                  <div
-                    key={slot.slot}
-                    className={`p-4 rounded-lg border ${
-                      slot.status === 'OK' ? 'border-status-ok/30 bg-status-ok/5' :
-                      slot.status === 'FAULT' ? 'border-status-alarm/30 bg-status-alarm/5' :
-                      slot.status === 'EMPTY' ? 'border-hmi-border bg-hmi-bg/50' :
-                      'border-status-warning/30 bg-status-warning/5'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="flex items-center gap-3">
-                        <span className="text-lg font-bold text-hmi-text">Slot {slot.slot}</span>
-                        <span className={`px-2 py-0.5 rounded text-xs font-medium ${
-                          slot.status === 'OK' ? 'bg-status-ok/20 text-status-ok' :
-                          slot.status === 'FAULT' ? 'bg-status-alarm/20 text-status-alarm' :
-                          slot.status === 'EMPTY' ? 'bg-hmi-border text-hmi-muted' :
-                          'bg-status-warning/20 text-status-warning'
-                        }`}>
-                          {slot.status}
-                        </span>
-                      </div>
-                      {slot.module_type && (
-                        <span className="text-sm text-hmi-muted font-mono">{slot.module_type}</span>
-                      )}
-                    </div>
-                    {slot.configured && (
-                      <div className="grid grid-cols-2 gap-4 mt-3 pt-3 border-t border-hmi-border/50">
-                        <div>
-                          <div className="text-xs text-hmi-muted mb-1">Sensors ({slot.sensors.length})</div>
-                          {slot.sensors.length > 0 ? (
-                            <div className="space-y-1">
-                              {slot.sensors.map((s) => (
-                                <div key={s.id} className="text-sm text-hmi-text">
-                                  <span className="font-mono">{s.tag}</span>
-                                  <span className="text-hmi-muted ml-2">({s.type})</span>
-                                </div>
-                              ))}
-                            </div>
-                          ) : (
-                            <span className="text-sm text-hmi-muted">None</span>
-                          )}
-                        </div>
-                        <div>
-                          <div className="text-xs text-hmi-muted mb-1">Controls ({slot.controls.length})</div>
-                          {slot.controls.length > 0 ? (
-                            <div className="space-y-1">
-                              {slot.controls.map((c) => (
-                                <div key={c.id} className="text-sm text-hmi-text">
-                                  <span className="font-mono">{c.tag}</span>
-                                  <span className="text-hmi-muted ml-2">({c.type})</span>
-                                </div>
-                              ))}
-                            </div>
-                          ) : (
-                            <span className="text-sm text-hmi-muted">None</span>
-                          )}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
           </div>
         )}
 
