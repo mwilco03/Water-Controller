@@ -109,8 +109,16 @@ async def discover_rtus(
         clean = mac.replace(":", "").replace("-", "").lower()
         return int(clean[-6:], 16) if clean else 0
 
-    # Get network interface from environment
-    interface = os.environ.get("WTC_INTERFACE", "eth0")
+    # Get network interface - use auto-detection if not specified
+    from ...core.network import get_profinet_interface
+    try:
+        interface = get_profinet_interface()
+    except RuntimeError as e:
+        logger.error(f"No network interface available: {e}")
+        raise HTTPException(
+            status_code=503,
+            detail=f"No network interface available for DCP discovery: {e}"
+        )
 
     # Perform real DCP discovery
     logger.info(f"Starting DCP discovery on {interface} (timeout: {timeout_sec}s)")

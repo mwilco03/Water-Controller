@@ -286,14 +286,20 @@ async def discover_profinet_devices(
     Async wrapper for PROFINET DCP discovery.
 
     Args:
-        interface: Network interface to use. Defaults to WTC_INTERFACE env var or eth0.
+        interface: Network interface to use. Auto-detected if not specified.
         timeout_sec: Discovery timeout in seconds.
 
     Returns:
         List of discovered device dictionaries.
     """
     if interface is None:
-        interface = os.environ.get("WTC_INTERFACE", "eth0")
+        # Use auto-detection instead of hardcoded eth0
+        from ..core.network import get_profinet_interface
+        try:
+            interface = get_profinet_interface()
+        except RuntimeError as e:
+            logger.error(f"Interface auto-detection failed: {e}")
+            return []
 
     # Run synchronous discovery in thread pool
     loop = asyncio.get_event_loop()

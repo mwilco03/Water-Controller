@@ -7,7 +7,6 @@
 # =============================================================================
 # Stage 1: Build Water Controller
 # =============================================================================
-# --- builder stage ---
 FROM debian:bookworm-slim AS builder
 
 RUN apt-get update && apt-get install -y \
@@ -25,53 +24,34 @@ COPY src/ src/
 COPY shared/ shared/
 COPY tests/ tests/
 
+# Build controller (release mode, no tests)
+# Build as STATIC libraries to avoid shared library issues in runtime
 RUN mkdir build && cd build && \
-    cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=OFF .. && \
-    make -j$(nproc)
-
-# Collect runtime deps
-RUN mkdir /tmp/libs && \
-    ldd /app/build/water_treat_controller \
-      | awk '/=> \// { print $3 }' \
-      | sort -u \
-      | tar -chf /tmp/libs/libs.tar -T -
-
-# --- runtime stage ---
-FROM debian:bookworm-slim
-
-RUN apt-get update && apt-get install -y \
-    procps \
-    && rm -rf /var/lib/apt/lists/*
-
-COPY --from=builder /app/build/water_treat_controller /usr/local/bin/
-COPY --from=builder /tmp/libs/ /
-RUN ldconfig
-
-RUN mkdir -p /etc/water-controller /var/log/water-controller
-RUN groupadd -r wtc && useradd -r -g wtc wtc
-RUN chown -R wtc:wtc /var/log/water-controller
-
+    cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=OFF -DBUILD_SHARED_LIBS=OFF .. && \
+    make -j$(nproc) && \
+    echo "=== BUILD VERIFICATION ===" && \
+    ls -la water_treat_controller && \
+    ldd water_treat_controller || true
 
 # =============================================================================
 # Stage 2: Runtime image (minimal)
 # =============================================================================
 FROM debian:bookworm-slim
 
-# Install runtime dependencies only
+# Install runtime dependencies only (includes iproute2 for interface auto-detection)
 RUN apt-get update && apt-get install -y \
     libpq5 \
     libjson-c5 \
     procps \
+    iproute2 \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy controller binary
+# Copy controller binary (statically linked to internal libs)
 COPY --from=builder /app/build/water_treat_controller /usr/local/bin/
-# Copy required shared libraries
-# Rebuild dynamic linker cache
-COPY --from=builder /tmp/libs/libs.tar /tmp/libs.tar
-RUN tar -xf /tmp/libs.tar -C / && rm /tmp/libs.tar
-RUN ldconfig
 
+# Copy entrypoint script for interface auto-detection
+COPY docker/controller-entrypoint.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/controller-entrypoint.sh
 
 # Create config and log directories
 RUN mkdir -p /etc/water-controller /var/log/water-controller
@@ -80,8 +60,8 @@ RUN mkdir -p /etc/water-controller /var/log/water-controller
 RUN groupadd -r wtc && useradd -r -g wtc wtc
 RUN chown -R wtc:wtc /var/log/water-controller
 
-# Set default environment
-ENV WTC_INTERFACE=eth0
+# Set default environment - NO hardcoded interface
+# WTC_INTERFACE can be set to override auto-detection, or left unset for auto
 ENV WTC_CYCLE_TIME=1000
 ENV WTC_LOG_LEVEL=INFO
 
@@ -94,5 +74,6 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
 
 # Run with capabilities for raw sockets
 # docker run --cap-add=NET_ADMIN --cap-add=NET_RAW
-ENTRYPOINT ["water_treat_controller"]
-CMD ["-i", "eth0", "-t", "1000"]
+# Interface is auto-detected by entrypoint script if WTC_INTERFACE not set
+ENTRYPOINT ["/usr/local/bin/controller-entrypoint.sh"]
+CMD []
