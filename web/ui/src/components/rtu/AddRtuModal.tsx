@@ -5,8 +5,13 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 interface RtuFormData {
   station_name: string;
   ip_address: string;
-  vendor_id: string;
-  device_id: string;
+}
+
+interface PrefillData {
+  station_name?: string;
+  ip_address?: string;
+  vendor_id?: string;
+  device_id?: string;
 }
 
 interface FieldError {
@@ -18,14 +23,12 @@ interface Props {
   isOpen: boolean;
   onClose: () => void;
   onSuccess: (rtu: RtuFormData) => void;
-  prefillData?: Partial<RtuFormData>;
+  prefillData?: PrefillData;
 }
 
 const INITIAL_FORM_DATA: RtuFormData = {
   station_name: '',
   ip_address: '',
-  vendor_id: '0x0000',
-  device_id: '0x0000',
 };
 
 // Validation functions
@@ -33,11 +36,11 @@ function validateStationName(value: string): string | null {
   if (!value.trim()) {
     return 'Station name is required';
   }
-  if (!/^[a-zA-Z0-9_-]+$/.test(value)) {
-    return 'Only alphanumeric characters, hyphens, and underscores allowed';
+  if (!/^[a-z][a-z0-9-]*$/.test(value)) {
+    return 'Must start with letter, use lowercase letters, numbers, and hyphens only';
   }
-  if (value.length > 64) {
-    return 'Station name must be 64 characters or less';
+  if (value.length < 3 || value.length > 32) {
+    return 'Station name must be 3-32 characters';
   }
   return null;
 }
@@ -52,18 +55,6 @@ function validateIpAddress(value: string): string | null {
   }
   return null;
 }
-
-function validateHexId(value: string, fieldName: string): string | null {
-  if (!value.trim()) {
-    return `${fieldName} is required`;
-  }
-  const hexRegex = /^0x[0-9a-fA-F]{4}$/;
-  if (!hexRegex.test(value)) {
-    return 'Enter a valid hex value (e.g., 0x0493)';
-  }
-  return null;
-}
-
 
 export default function AddRtuModal({
   isOpen,
@@ -102,10 +93,8 @@ export default function AddRtuModal({
   useEffect(() => {
     if (isOpen) {
       setFormData({
-        ...INITIAL_FORM_DATA,
-        ...prefillData,
-        vendor_id: prefillData?.vendor_id || INITIAL_FORM_DATA.vendor_id,
-        device_id: prefillData?.device_id || INITIAL_FORM_DATA.device_id,
+        station_name: prefillData?.station_name || '',
+        ip_address: prefillData?.ip_address || '',
       });
       setFieldErrors([]);
       setServerError(null);
@@ -124,10 +113,6 @@ export default function AddRtuModal({
         return validateStationName(value);
       case 'ip_address':
         return validateIpAddress(value);
-      case 'vendor_id':
-        return validateHexId(value, 'Vendor ID');
-      case 'device_id':
-        return validateHexId(value, 'Device ID');
       default:
         return null;
     }
@@ -167,17 +152,16 @@ export default function AddRtuModal({
   const validateAllFields = useCallback((): boolean => {
     const errors: FieldError[] = [];
 
-    (Object.keys(formData) as Array<keyof RtuFormData>).forEach(field => {
-      const error = validateField(field, formData[field]);
-      if (error) {
-        errors.push({ field, message: error });
-      }
-    });
+    const stationError = validateStationName(formData.station_name);
+    if (stationError) errors.push({ field: 'station_name', message: stationError });
+
+    const ipError = validateIpAddress(formData.ip_address);
+    if (ipError) errors.push({ field: 'ip_address', message: ipError });
 
     setFieldErrors(errors);
-    setTouched(new Set(Object.keys(formData) as Array<keyof RtuFormData>));
+    setTouched(new Set(['station_name', 'ip_address']));
     return errors.length === 0;
-  }, [formData, validateField]);
+  }, [formData]);
 
   const handleSubmit = async () => {
     if (!validateAllFields()) {
@@ -188,16 +172,25 @@ export default function AddRtuModal({
     setServerError(null);
 
     try {
+      // Build request - only station_name and ip_address are required
+      // vendor_id and device_id use prefill (from discovery) or backend defaults
+      const requestBody: Record<string, string> = {
+        station_name: formData.station_name,
+        ip_address: formData.ip_address,
+      };
+
+      // Include vendor/device IDs if provided by discovery prefill
+      if (prefillData?.vendor_id) {
+        requestBody.vendor_id = prefillData.vendor_id;
+      }
+      if (prefillData?.device_id) {
+        requestBody.device_id = prefillData.device_id;
+      }
+
       const res = await fetch('/api/v1/rtus', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          station_name: formData.station_name,
-          ip_address: formData.ip_address,
-          vendor_id: formData.vendor_id,
-          device_id: formData.device_id,
-          // slot_count defaults to 8 on backend, updated from RTU after connection
-        }),
+        body: JSON.stringify(requestBody),
       });
 
       if (res.status === 201 || res.ok) {
@@ -209,24 +202,12 @@ export default function AddRtuModal({
       if (res.status === 400 || res.status === 422) {
         const data = await res.json();
         if (data.detail) {
-          // Pydantic returns detail as array of validation errors
           if (Array.isArray(data.detail)) {
-            const errors: FieldError[] = [];
-            for (const err of data.detail) {
-              const fieldName = err.loc?.[err.loc.length - 1];
-              const message = err.msg || 'Invalid value';
-              if (fieldName && fieldName in INITIAL_FORM_DATA) {
-                errors.push({ field: fieldName as keyof RtuFormData, message });
-              } else {
-                // If we can't map to a specific field, show as server error
-                setServerError(message);
-              }
-            }
-            if (errors.length > 0) {
-              setFieldErrors(errors);
-            }
+            const messages = data.detail
+              .map((err: { msg?: string }) => err.msg || 'Invalid value')
+              .join('; ');
+            setServerError(messages || 'Validation failed');
           } else if (typeof data.detail === 'string') {
-            // Check for field-specific errors from server
             if (data.detail.includes('name') || data.detail.includes('station')) {
               setFieldErrors([{ field: 'station_name', message: data.detail }]);
             } else if (data.detail.includes('IP') || data.detail.includes('address')) {
@@ -234,8 +215,9 @@ export default function AddRtuModal({
             } else {
               setServerError(data.detail);
             }
+          } else if (typeof data.detail === 'object' && data.detail.msg) {
+            setServerError(data.detail.msg);
           } else {
-            // Unknown detail format - stringify it safely
             setServerError('Validation error. Please check your input.');
           }
         } else {
@@ -246,7 +228,6 @@ export default function AddRtuModal({
 
       if (res.status === 409) {
         const data = await res.json();
-        // Handle different detail formats (string, object, or array)
         let detailMessage = 'An RTU with this name or IP already exists';
         if (typeof data.detail === 'string') {
           detailMessage = data.detail;
@@ -267,7 +248,7 @@ export default function AddRtuModal({
       }
 
       setServerError('Failed to add RTU. Please try again.');
-    } catch (err) {
+    } catch {
       setServerError('Unable to reach server. Check connection and try again.');
     } finally {
       setLoading(false);
@@ -283,6 +264,7 @@ export default function AddRtuModal({
   if (!isOpen) return null;
 
   const hasErrors = fieldErrors.length > 0 || serverError !== null;
+  const isFromDiscovery = !!(prefillData?.vendor_id || prefillData?.device_id);
 
   // Handle backdrop click
   const handleBackdropClick = (event: React.MouseEvent) => {
@@ -311,7 +293,12 @@ export default function AddRtuModal({
             <div className="w-10 h-10 rounded-full bg-blue-600/20 flex items-center justify-center">
               <span className="text-blue-400 text-xl font-bold">+</span>
             </div>
-            <h2 id="add-rtu-modal-title" className="text-lg font-semibold text-white">Add New RTU</h2>
+            <div>
+              <h2 id="add-rtu-modal-title" className="text-lg font-semibold text-white">Add New RTU</h2>
+              {isFromDiscovery && (
+                <p className="text-xs text-green-400">From network discovery</p>
+              )}
+            </div>
           </div>
           <button
             onClick={handleClose}
@@ -348,7 +335,7 @@ export default function AddRtuModal({
             <input
               type="text"
               value={formData.station_name}
-              onChange={e => handleChange('station_name', e.target.value)}
+              onChange={e => handleChange('station_name', e.target.value.toLowerCase())}
               onBlur={() => handleBlur('station_name')}
               placeholder="e.g., water-treat-rtu-1"
               disabled={loading}
@@ -359,7 +346,7 @@ export default function AddRtuModal({
             {getFieldError('station_name') && (
               <p className="text-red-400 text-xs mt-1">{getFieldError('station_name')}</p>
             )}
-            <p className="text-gray-500 text-xs mt-1">Unique alphanumeric identifier</p>
+            <p className="text-gray-500 text-xs mt-1">Lowercase letters, numbers, hyphens (3-32 chars)</p>
           </div>
 
           {/* IP Address */}
@@ -383,47 +370,22 @@ export default function AddRtuModal({
             )}
           </div>
 
-          {/* Vendor ID & Device ID */}
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-300 mb-1">
-                Vendor ID <span className="text-red-400">*</span>
-              </label>
-              <input
-                type="text"
-                value={formData.vendor_id}
-                onChange={e => handleChange('vendor_id', e.target.value)}
-                onBlur={() => handleBlur('vendor_id')}
-                placeholder="0x0493"
-                disabled={loading}
-                className={`w-full px-3 py-2 bg-gray-800 border rounded text-white font-mono placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 ${
-                  getFieldError('vendor_id') ? 'border-red-500' : 'border-gray-700'
-                }`}
-              />
-              {getFieldError('vendor_id') && (
-                <p className="text-red-400 text-xs mt-1">{getFieldError('vendor_id')}</p>
-              )}
+          {/* Discovery info (read-only, shown only if from discovery) */}
+          {isFromDiscovery && (
+            <div className="p-3 bg-gray-800/50 border border-gray-700 rounded-lg">
+              <p className="text-xs text-gray-400 mb-2">Discovered device info:</p>
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <div>
+                  <span className="text-gray-500">Vendor ID:</span>
+                  <span className="text-gray-300 font-mono ml-1">{prefillData?.vendor_id || '0x0000'}</span>
+                </div>
+                <div>
+                  <span className="text-gray-500">Device ID:</span>
+                  <span className="text-gray-300 font-mono ml-1">{prefillData?.device_id || '0x0000'}</span>
+                </div>
+              </div>
             </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-300 mb-1">
-                Device ID <span className="text-red-400">*</span>
-              </label>
-              <input
-                type="text"
-                value={formData.device_id}
-                onChange={e => handleChange('device_id', e.target.value)}
-                onBlur={() => handleBlur('device_id')}
-                placeholder="0x0001"
-                disabled={loading}
-                className={`w-full px-3 py-2 bg-gray-800 border rounded text-white font-mono placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 ${
-                  getFieldError('device_id') ? 'border-red-500' : 'border-gray-700'
-                }`}
-              />
-              {getFieldError('device_id') && (
-                <p className="text-red-400 text-xs mt-1">{getFieldError('device_id')}</p>
-              )}
-            </div>
-          </div>
+          )}
         </div>
 
         {/* Footer */}

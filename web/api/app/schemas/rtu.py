@@ -39,8 +39,8 @@ class RtuCreate(BaseModel):
         description="Unique station name (lowercase, starts with letter)"
     )
     ip_address: str = Field(..., description="IPv4 address of the RTU")
-    vendor_id: str = Field(..., description="PROFINET vendor ID (hex string, e.g., '0x002A')")
-    device_id: str = Field(..., description="PROFINET device ID (hex string, e.g., '0x0405')")
+    vendor_id: str = Field("0x0000", description="PROFINET vendor ID (hex string, e.g., '0x002A')")
+    device_id: str = Field("0x0000", description="PROFINET device ID (hex string, e.g., '0x0405')")
     slot_count: int = Field(8, ge=1, le=64, description="Number of I/O slots")
 
     @field_validator("station_name")

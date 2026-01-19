@@ -38,8 +38,6 @@ interface WizardState {
   rtuConfig: {
     station_name: string;
     ip_address: string;
-    vendor_id: number;
-    device_id: number;
   };
   completedSteps: WizardStep[];
   skippedSteps: WizardStep[];
@@ -84,12 +82,11 @@ export default function WizardPage() {
   const [connectionState, setConnectionState] = useState<string>('OFFLINE');
   const [initialized, setInitialized] = useState(false);
 
-  // RTU configuration
+  // RTU configuration - only station_name and ip_address are user inputs
+  // vendor_id, device_id, and slot_count use backend defaults
   const [rtuConfig, setRtuConfig] = useState({
     station_name: '',
     ip_address: '',
-    vendor_id: 0x0493,
-    device_id: 0x0001,
   });
 
   // Discovered sensors
@@ -200,10 +197,7 @@ export default function WizardPage() {
         body: JSON.stringify({
           station_name: rtuConfig.station_name,
           ip_address: rtuConfig.ip_address,
-          // Convert to hex strings as required by API
-          vendor_id: `0x${rtuConfig.vendor_id.toString(16).padStart(4, '0')}`,
-          device_id: `0x${rtuConfig.device_id.toString(16).padStart(4, '0')}`,
-          // slot_count defaults to 8 on backend, updated from RTU after connection
+          // vendor_id, device_id, slot_count use backend defaults
         }),
       });
 
@@ -514,27 +508,6 @@ export default function WizardPage() {
                     placeholder="e.g., 192.168.1.100"
                     className="w-full px-4 py-2 bg-hmi-panel border border-hmi-border rounded text-hmi-text"
                   />
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm text-hmi-muted mb-1">Vendor ID</label>
-                    <input
-                      type="text"
-                      value={`0x${rtuConfig.vendor_id.toString(16).padStart(4, '0')}`}
-                      onChange={(e) => setRtuConfig({ ...rtuConfig, vendor_id: parseInt(e.target.value, 16) || 0 })}
-                      className="w-full px-4 py-2 bg-hmi-panel border border-hmi-border rounded text-hmi-text font-mono"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm text-hmi-muted mb-1">Device ID</label>
-                    <input
-                      type="text"
-                      value={`0x${rtuConfig.device_id.toString(16).padStart(4, '0')}`}
-                      onChange={(e) => setRtuConfig({ ...rtuConfig, device_id: parseInt(e.target.value, 16) || 0 })}
-                      className="w-full px-4 py-2 bg-hmi-panel border border-hmi-border rounded text-hmi-text font-mono"
-                    />
-                  </div>
                 </div>
               </div>
 
@@ -932,8 +905,6 @@ export default function WizardPage() {
                     setRtuConfig({
                       station_name: '',
                       ip_address: '',
-                      vendor_id: 0x0493,
-                      device_id: 0x0001,
                     });
                     setDiscoveredSensors([]);
                     setSelectedSensors(new Set());
