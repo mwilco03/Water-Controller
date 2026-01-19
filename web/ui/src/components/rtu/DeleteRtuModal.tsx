@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 
 interface DeletionImpact {
   slots: number;
@@ -42,6 +42,27 @@ export default function DeleteRtuModal({
   const [confirmName, setConfirmName] = useState('');
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const modalRef = useRef<HTMLDivElement>(null);
+
+  // Handle escape key to close modal
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !deleting) {
+        onClose();
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    document.body.style.overflow = 'hidden';
+    modalRef.current?.focus();
+
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+      document.body.style.overflow = '';
+    };
+  }, [isOpen, deleting, onClose]);
 
   const fetchImpact = useCallback(async () => {
     setLoadingImpact(true);
@@ -168,10 +189,25 @@ export default function DeleteRtuModal({
     impact.historian_tags > 0
   );
 
+  // Handle backdrop click
+  const handleBackdropClick = (event: React.MouseEvent) => {
+    if (event.target === event.currentTarget && !deleting) {
+      onClose();
+    }
+  };
+
   return (
-    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+    <div
+      className="fixed inset-0 bg-black/70 flex items-center justify-center z-modal p-4"
+      onClick={handleBackdropClick}
+    >
       <div
-        className="bg-gray-900 rounded-lg w-full max-w-lg border border-gray-700 shadow-xl"
+        ref={modalRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="delete-rtu-modal-title"
+        tabIndex={-1}
+        className="bg-gray-900 rounded-lg w-full max-w-lg border border-gray-700 shadow-xl outline-none"
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}
@@ -180,7 +216,7 @@ export default function DeleteRtuModal({
             <div className="w-10 h-10 rounded-full bg-red-600/20 flex items-center justify-center">
               <span className="text-red-400 text-xl font-bold">!!</span>
             </div>
-            <h2 className="text-lg font-semibold text-white">
+            <h2 id="delete-rtu-modal-title" className="text-lg font-semibold text-white">
               Delete RTU: <span className="text-red-400">{stationName}</span>
             </h2>
           </div>

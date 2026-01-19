@@ -258,15 +258,18 @@ function AppShell({ children }: { children: React.ReactNode }) {
       {/* Keyboard Shortcuts Dialog */}
       {showShortcutsHelp && (
         <div
-          className="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+          className="fixed inset-0 bg-black/50 flex items-center justify-center z-modal"
           onClick={() => setShowShortcutsHelp(false)}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="shortcuts-dialog-title"
         >
           <div
             className="bg-hmi-panel rounded-lg p-4 max-w-sm w-full mx-4 border border-hmi-border shadow-lg"
             onClick={e => e.stopPropagation()}
           >
             <div className="flex items-center justify-between mb-3">
-              <h3 className="font-semibold text-hmi-text">Keyboard Shortcuts</h3>
+              <h3 id="shortcuts-dialog-title" className="font-semibold text-hmi-text">Keyboard Shortcuts</h3>
               <button
                 onClick={() => setShowShortcutsHelp(false)}
                 className="p-1 hover:bg-hmi-bg rounded text-hmi-muted"

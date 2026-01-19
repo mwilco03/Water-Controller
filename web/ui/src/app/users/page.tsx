@@ -1,9 +1,10 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { authLogger } from '@/lib/logger';
 import { extractArrayData } from '@/lib/api';
 import { ConfirmModal } from '@/components/hmi';
+import { useModalBehavior } from '@/hooks/useModalBehavior';
 
 interface User {
   id: number;
@@ -49,6 +50,23 @@ export default function UsersPage() {
   const [passwordForm, setPasswordForm] = useState({
     newPassword: '',
     confirmPassword: '',
+  });
+
+  // Modal behavior hooks
+  const addModalBehavior = useModalBehavior({
+    isOpen: showAddModal,
+    onClose: () => setShowAddModal(false),
+  });
+  const editModalBehavior = useModalBehavior({
+    isOpen: showEditModal !== null,
+    onClose: () => setShowEditModal(null),
+  });
+  const passwordModalBehavior = useModalBehavior({
+    isOpen: showPasswordModal !== null,
+    onClose: () => {
+      setShowPasswordModal(null);
+      setPasswordForm({ newPassword: '', confirmPassword: '' });
+    },
   });
 
   useEffect(() => {
@@ -452,9 +470,20 @@ export default function UsersPage() {
 
       {/* Add User Modal */}
       {showAddModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-hmi-panel p-6 rounded-lg w-full max-w-md">
-            <h2 className="text-xl font-semibold text-hmi-text mb-4">Add New User</h2>
+        <div
+          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-modal"
+          onClick={addModalBehavior.handleBackdropClick}
+        >
+          <div
+            ref={addModalBehavior.modalRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="add-user-modal-title"
+            tabIndex={-1}
+            className="bg-hmi-panel p-6 rounded-lg w-full max-w-md outline-none"
+            onClick={e => e.stopPropagation()}
+          >
+            <h2 id="add-user-modal-title" className="text-xl font-semibold text-hmi-text mb-4">Add New User</h2>
 
             <div className="space-y-4">
               <div>
@@ -538,9 +567,20 @@ export default function UsersPage() {
 
       {/* Edit User Modal */}
       {showEditModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-hmi-panel p-6 rounded-lg w-full max-w-md">
-            <h2 className="text-xl font-semibold text-hmi-text mb-4">Edit User: {showEditModal.username}</h2>
+        <div
+          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-modal"
+          onClick={editModalBehavior.handleBackdropClick}
+        >
+          <div
+            ref={editModalBehavior.modalRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="edit-user-modal-title"
+            tabIndex={-1}
+            className="bg-hmi-panel p-6 rounded-lg w-full max-w-md outline-none"
+            onClick={e => e.stopPropagation()}
+          >
+            <h2 id="edit-user-modal-title" className="text-xl font-semibold text-hmi-text mb-4">Edit User: {showEditModal.username}</h2>
 
             <div className="space-y-4">
               <div>
@@ -605,9 +645,20 @@ export default function UsersPage() {
 
       {/* Change Password Modal */}
       {showPasswordModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-hmi-panel p-6 rounded-lg w-full max-w-md">
-            <h2 className="text-xl font-semibold text-hmi-text mb-4">
+        <div
+          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-modal"
+          onClick={passwordModalBehavior.handleBackdropClick}
+        >
+          <div
+            ref={passwordModalBehavior.modalRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="password-modal-title"
+            tabIndex={-1}
+            className="bg-hmi-panel p-6 rounded-lg w-full max-w-md outline-none"
+            onClick={e => e.stopPropagation()}
+          >
+            <h2 id="password-modal-title" className="text-xl font-semibold text-hmi-text mb-4">
               Change Password: {showPasswordModal.username}
             </h2>
 

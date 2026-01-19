@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import type { RTUControl } from '@/lib/api';
 import { commandControl } from '@/lib/api';
 import { controlLogger } from '@/lib/logger';
@@ -29,6 +29,28 @@ function ConfirmationModal({
   command: string;
   value?: number;
 }) {
+  const modalRef = useRef<HTMLDivElement>(null);
+
+  // Handle escape key and body scroll lock
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        onCancel();
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    document.body.style.overflow = 'hidden';
+    modalRef.current?.focus();
+
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+      document.body.style.overflow = '';
+    };
+  }, [isOpen, onCancel]);
+
   if (!isOpen) return null;
 
   const getCommandDescription = () => {
@@ -50,14 +72,32 @@ function ConfirmationModal({
     }
   };
 
+  // Handle backdrop click
+  const handleBackdropClick = (event: React.MouseEvent) => {
+    if (event.target === event.currentTarget) {
+      onCancel();
+    }
+  };
+
   return (
-    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50">
-      <div className="bg-gray-800 rounded-lg p-6 max-w-md w-full mx-4 border border-gray-600">
+    <div
+      className="fixed inset-0 bg-black/70 flex items-center justify-center z-modal"
+      onClick={handleBackdropClick}
+    >
+      <div
+        ref={modalRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="control-confirm-modal-title"
+        tabIndex={-1}
+        className="bg-gray-800 rounded-lg p-6 max-w-md w-full mx-4 border border-gray-600 outline-none"
+        onClick={e => e.stopPropagation()}
+      >
         <div className="flex items-center gap-3 mb-4">
           <div className="w-10 h-10 rounded-full bg-yellow-600/20 flex items-center justify-center">
             <span className="text-yellow-500 text-xl font-bold">!</span>
           </div>
-          <h3 className="text-lg font-semibold text-white">Confirm Control Action</h3>
+          <h3 id="control-confirm-modal-title" className="text-lg font-semibold text-white">Confirm Control Action</h3>
         </div>
 
         <p className="text-gray-300 mb-6">

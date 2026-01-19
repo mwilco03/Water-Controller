@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { getRegisteredShortcuts, formatShortcut, useKeyboardShortcuts, KeyboardShortcut } from '@/hooks/useKeyboardShortcuts';
 
 interface Props {
@@ -10,11 +10,20 @@ interface Props {
 
 export default function KeyboardShortcutsHelp({ isOpen, onClose }: Props) {
   const [shortcuts, setShortcuts] = useState<KeyboardShortcut[]>([]);
+  const modalRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (isOpen) {
       setShortcuts(getRegisteredShortcuts());
+      document.body.style.overflow = 'hidden';
+      modalRef.current?.focus();
     }
+
+    return () => {
+      if (isOpen) {
+        document.body.style.overflow = '';
+      }
+    };
   }, [isOpen]);
 
   // Close on Escape
@@ -32,6 +41,13 @@ export default function KeyboardShortcutsHelp({ isOpen, onClose }: Props) {
 
   if (!isOpen) return null;
 
+  // Handle backdrop click
+  const handleBackdropClick = (event: React.MouseEvent) => {
+    if (event.target === event.currentTarget) {
+      onClose();
+    }
+  };
+
   // Group shortcuts by scope
   const groupedShortcuts = shortcuts.reduce((acc, shortcut) => {
     const scope = shortcut.scope || 'Global';
@@ -43,15 +59,26 @@ export default function KeyboardShortcutsHelp({ isOpen, onClose }: Props) {
   }, {} as Record<string, KeyboardShortcut[]>);
 
   return (
-    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50">
-      <div className="bg-gray-800 rounded-lg p-6 max-w-2xl w-full mx-4 max-h-[80vh] overflow-y-auto border border-gray-600">
+    <div
+      className="fixed inset-0 bg-black/70 flex items-center justify-center z-modal"
+      onClick={handleBackdropClick}
+    >
+      <div
+        ref={modalRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="keyboard-shortcuts-modal-title"
+        tabIndex={-1}
+        className="bg-gray-800 rounded-lg p-6 max-w-2xl w-full mx-4 max-h-[80vh] overflow-y-auto border border-gray-600 outline-none"
+        onClick={e => e.stopPropagation()}
+      >
         {/* Header */}
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-full bg-blue-600/20 flex items-center justify-center">
               <span className="text-lg font-mono font-bold text-blue-400">[KB]</span>
             </div>
-            <h2 className="text-xl font-semibold text-white">Keyboard Shortcuts</h2>
+            <h2 id="keyboard-shortcuts-modal-title" className="text-xl font-semibold text-white">Keyboard Shortcuts</h2>
           </div>
           <button
             onClick={onClose}

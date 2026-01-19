@@ -33,6 +33,26 @@ export default function AuthenticationModal({
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const usernameRef = useRef<HTMLInputElement>(null);
+  const modalRef = useRef<HTMLDivElement>(null);
+
+  // Handle escape key and body scroll lock
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !loading) {
+        onClose();
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    document.body.style.overflow = 'hidden';
+
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+      document.body.style.overflow = '';
+    };
+  }, [isOpen, loading, onClose]);
 
   // Focus username input when modal opens
   useEffect(() => {
@@ -72,8 +92,9 @@ export default function AuthenticationModal({
     }
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Escape') {
+  // Handle backdrop click
+  const handleBackdropClick = (event: React.MouseEvent) => {
+    if (event.target === event.currentTarget && !loading) {
       onClose();
     }
   };
@@ -82,20 +103,26 @@ export default function AuthenticationModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center"
-      onKeyDown={handleKeyDown}
+      className="fixed inset-0 z-modal flex items-center justify-center"
+      onClick={handleBackdropClick}
     >
       {/* Overlay */}
       <div
         className="absolute inset-0 bg-black/50"
-        onClick={onClose}
+        aria-hidden="true"
       />
 
       {/* Modal */}
-      <div className="relative bg-hmi-panel rounded-lg shadow-xl border border-hmi-border w-full max-w-md mx-4">
+      <div
+        ref={modalRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="auth-modal-title"
+        className="relative bg-hmi-panel rounded-lg shadow-xl border border-hmi-border w-full max-w-md mx-4 outline-none"
+      >
         {/* Header */}
         <div className="px-6 py-4 border-b border-hmi-border">
-          <h2 className="text-lg font-semibold text-hmi-text">
+          <h2 id="auth-modal-title" className="text-lg font-semibold text-hmi-text">
             Authentication Required
           </h2>
         </div>

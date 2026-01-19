@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 
 interface RtuFormData {
   station_name: string;
@@ -84,6 +84,27 @@ export default function AddRtuModal({
   const [serverError, setServerError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [touched, setTouched] = useState<Set<keyof RtuFormData>>(new Set());
+  const modalRef = useRef<HTMLDivElement>(null);
+
+  // Handle escape key to close modal
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !loading) {
+        onClose();
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    document.body.style.overflow = 'hidden';
+    modalRef.current?.focus();
+
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+      document.body.style.overflow = '';
+    };
+  }, [isOpen, loading, onClose]);
 
   // Reset form when modal opens/closes or prefill data changes
   useEffect(() => {
@@ -264,10 +285,25 @@ export default function AddRtuModal({
 
   const hasErrors = fieldErrors.length > 0 || serverError !== null;
 
+  // Handle backdrop click
+  const handleBackdropClick = (event: React.MouseEvent) => {
+    if (event.target === event.currentTarget && !loading) {
+      onClose();
+    }
+  };
+
   return (
-    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+    <div
+      className="fixed inset-0 bg-black/70 flex items-center justify-center z-modal p-4"
+      onClick={handleBackdropClick}
+    >
       <div
-        className="bg-gray-900 rounded-lg w-full max-w-md border border-gray-700 shadow-xl"
+        ref={modalRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="add-rtu-modal-title"
+        tabIndex={-1}
+        className="bg-gray-900 rounded-lg w-full max-w-md border border-gray-700 shadow-xl outline-none"
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}
@@ -276,7 +312,7 @@ export default function AddRtuModal({
             <div className="w-10 h-10 rounded-full bg-blue-600/20 flex items-center justify-center">
               <span className="text-blue-400 text-xl font-bold">+</span>
             </div>
-            <h2 className="text-lg font-semibold text-white">Add New RTU</h2>
+            <h2 id="add-rtu-modal-title" className="text-lg font-semibold text-white">Add New RTU</h2>
           </div>
           <button
             onClick={handleClose}

@@ -361,13 +361,19 @@ export default function BulkOperationsPanel({ rtus, onRefresh }: Props) {
 
       {/* Confirmation Modal */}
       {showConfirm && (
-        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50">
-          <div className="bg-gray-800 rounded-lg p-6 max-w-md w-full mx-4 border border-gray-600">
+        <div
+          className="fixed inset-0 bg-black/70 flex items-center justify-center z-modal"
+          onClick={(e) => e.target === e.currentTarget && setShowConfirm(null)}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="bulk-confirm-modal-title"
+        >
+          <div className="bg-gray-800 rounded-lg p-6 max-w-md w-full mx-4 border border-gray-600" onClick={e => e.stopPropagation()}>
             <div className="flex items-center gap-3 mb-4">
               <div className="w-10 h-10 rounded-full bg-yellow-600/20 flex items-center justify-center text-yellow-400">
                 {operationConfig[showConfirm].icon}
               </div>
-              <h3 className="text-lg font-semibold text-white">
+              <h3 id="bulk-confirm-modal-title" className="text-lg font-semibold text-white">
                 Confirm {operationConfig[showConfirm].label}
               </h3>
             </div>

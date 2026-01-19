@@ -69,14 +69,35 @@ function ShelveDialog({
 
   if (!isOpen || !alarm) return null;
 
+  // Handle escape key
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Escape') {
+      onClose();
+    }
+  };
+
+  // Handle backdrop click
+  const handleBackdropClick = (e: React.MouseEvent) => {
+    if (e.target === e.currentTarget) {
+      onClose();
+    }
+  };
+
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-hmi-panel rounded-lg p-6 max-w-md w-full mx-4 border border-hmi-border shadow-lg">
+    <div
+      className="fixed inset-0 bg-black/50 flex items-center justify-center z-modal"
+      onClick={handleBackdropClick}
+      onKeyDown={handleKeyDown}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="shelve-dialog-title"
+    >
+      <div className="bg-hmi-panel rounded-lg p-6 max-w-md w-full mx-4 border border-hmi-border shadow-lg" onClick={e => e.stopPropagation()}>
         <div className="flex items-center gap-3 mb-4">
           <div className="w-10 h-10 rounded-full bg-status-info/10 flex items-center justify-center">
             <span className="text-status-info text-xl">&#128339;</span>
           </div>
-          <h3 className="text-lg font-semibold text-hmi-text">Shelve Alarm</h3>
+          <h3 id="shelve-dialog-title" className="text-lg font-semibold text-hmi-text">Shelve Alarm</h3>
         </div>
 
         <p className="text-hmi-muted mb-4">
