@@ -19,7 +19,7 @@ from ...core.errors import build_success_response
 from ...models.alarm import AlarmRule
 from ...models.base import get_db
 from ...models.pid import PidLoop
-from ...models.rtu import RTU, Control, Sensor, Slot
+from ...models.rtu import RTU, Control, Sensor
 
 router = APIRouter()
 
@@ -58,15 +58,12 @@ async def create_backup(
     }
 
     # Use eager loading to fetch all related data in minimal queries
-    # This reduces N+1 queries from 5N+1 to just 3 queries
     rtus = db.query(RTU).options(
-        joinedload(RTU.slots),
         joinedload(RTU.sensors),
         joinedload(RTU.controls),
     ).all()
 
     # Fetch alarm rules and PID loops separately (not defined as relationships)
-    # These use 2 queries instead of 2N queries
     all_alarms = db.query(AlarmRule).all()
     alarms_by_rtu = {}
     for alarm in all_alarms:
@@ -83,26 +80,18 @@ async def create_backup(
             "ip_address": rtu.ip_address,
             "vendor_id": rtu.vendor_id,
             "device_id": rtu.device_id,
-            "slot_count": rtu.slot_count,
-            "slots": [],
+            "slot_count": rtu.slot_count or 0,
             "sensors": [],
             "controls": [],
             "alarms": [],
             "pid_loops": [],
         }
 
-        # Export slots (already loaded via joinedload)
-        for slot in rtu.slots:
-            rtu_data["slots"].append({
-                "slot_number": slot.slot_number,
-                "module_id": slot.module_id,
-                "module_type": slot.module_type,
-            })
-
-        # Export sensors (already loaded via joinedload)
+        # Export sensors (slot_number is metadata on sensor, not a separate table)
         for sensor in rtu.sensors:
             rtu_data["sensors"].append({
                 "tag": sensor.tag,
+                "slot_number": sensor.slot_number,
                 "channel": sensor.channel,
                 "sensor_type": sensor.sensor_type,
                 "unit": sensor.unit,
@@ -112,10 +101,11 @@ async def create_backup(
                 "eng_max": sensor.eng_max,
             })
 
-        # Export controls (already loaded via joinedload)
+        # Export controls (slot_number is metadata on control, not a separate table)
         for control in rtu.controls:
             rtu_data["controls"].append({
                 "tag": control.tag,
+                "slot_number": control.slot_number,
                 "channel": control.channel,
                 "control_type": control.control_type,
                 "equipment_type": control.equipment_type,
@@ -243,35 +233,17 @@ async def restore_backup(
             ip_address=rtu_data["ip_address"],
             vendor_id=rtu_data["vendor_id"],
             device_id=rtu_data["device_id"],
-            slot_count=rtu_data["slot_count"],
+            slot_count=rtu_data.get("slot_count"),
         )
         db.add(rtu)
         db.flush()
         restored["rtus"] += 1
 
-        # Create slots
-        for slot_data in rtu_data.get("slots", []):
-            slot = Slot(
-                rtu_id=rtu.id,
-                slot_number=slot_data["slot_number"],
-                module_id=slot_data.get("module_id"),
-                module_type=slot_data.get("module_type"),
-            )
-            db.add(slot)
-
-        db.flush()
-
-        # Create sensors
+        # Create sensors (slot_number is metadata, not FK)
         for sensor_data in rtu_data.get("sensors", []):
-            # Find slot
-            slot = db.query(Slot).filter(
-                Slot.rtu_id == rtu.id,
-                Slot.slot_number == 1  # Default to slot 1
-            ).first()
-
             sensor = Sensor(
                 rtu_id=rtu.id,
-                slot_id=slot.id if slot else None,
+                slot_number=sensor_data.get("slot_number"),
                 tag=sensor_data["tag"],
                 channel=sensor_data["channel"],
                 sensor_type=sensor_data["sensor_type"],
@@ -284,16 +256,11 @@ async def restore_backup(
             db.add(sensor)
             restored["sensors"] += 1
 
-        # Create controls
+        # Create controls (slot_number is metadata, not FK)
         for control_data in rtu_data.get("controls", []):
-            slot = db.query(Slot).filter(
-                Slot.rtu_id == rtu.id,
-                Slot.slot_number == 1
-            ).first()
-
             control = Control(
                 rtu_id=rtu.id,
-                slot_id=slot.id if slot else None,
+                slot_number=control_data.get("slot_number"),
                 tag=control_data["tag"],
                 channel=control_data["channel"],
                 control_type=control_data["control_type"],

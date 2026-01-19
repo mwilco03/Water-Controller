@@ -107,19 +107,6 @@ class RtuBusyError(ScadaException):
         )
 
 
-class SlotNotFoundError(ScadaException):
-    """Slot index does not exist on RTU."""
-
-    def __init__(self, rtu_name: str, slot: int, max_slot: int):
-        super().__init__(
-            code="SLOT_NOT_FOUND",
-            message=f"Slot {slot} not found on RTU '{rtu_name}'",
-            details={"rtu_name": rtu_name, "slot": slot, "max_slot": max_slot},
-            recoverable=True,
-            suggested_action=f"Use slot number between 1 and {max_slot}"
-        )
-
-
 class ControlNotFoundError(ScadaException):
     """Control/actuator does not exist."""
 

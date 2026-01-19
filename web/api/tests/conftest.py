@@ -31,7 +31,7 @@ os.environ["WTC_STARTUP_MODE"] = "development"  # Don't exit on startup failures
 
 from app.main import app
 from app.models.base import Base, get_db
-from app.models.rtu import RTU, RtuState, Sensor, Slot, SlotStatus
+from app.models.rtu import RTU, RtuState, Sensor
 
 # Create test database engine
 SQLALCHEMY_DATABASE_URL = "sqlite:///:memory:"
@@ -91,17 +91,6 @@ def sample_rtu(db_session: Session) -> RTU:
         state_since=datetime.now(UTC),
     )
     db_session.add(rtu)
-    db_session.flush()
-
-    # Create slots
-    for i in range(1, 9):
-        slot = Slot(
-            rtu_id=rtu.id,
-            slot_number=i,
-            status=SlotStatus.EMPTY,
-        )
-        db_session.add(slot)
-
     db_session.commit()
     db_session.refresh(rtu)
     return rtu
@@ -120,18 +109,6 @@ def running_rtu(db_session: Session) -> RTU:
         state_since=datetime.now(UTC),
     )
     db_session.add(rtu)
-    db_session.flush()
-
-    # Create slots with one configured
-    for i in range(1, 9):
-        slot = Slot(
-            rtu_id=rtu.id,
-            slot_number=i,
-            module_type="AI-8" if i == 1 else None,
-            status=SlotStatus.OK if i == 1 else SlotStatus.EMPTY,
-        )
-        db_session.add(slot)
-
     db_session.commit()
     db_session.refresh(rtu)
     return rtu
@@ -140,15 +117,9 @@ def running_rtu(db_session: Session) -> RTU:
 @pytest.fixture
 def sample_sensor(db_session: Session, running_rtu: RTU) -> Sensor:
     """Create a sample sensor for testing."""
-    slot = db_session.query(Slot).filter(
-        Slot.rtu_id == running_rtu.id,
-        Slot.slot_number == 1
-    ).first()
-    assert slot is not None, "Slot 1 should exist for running_rtu"
-
     sensor = Sensor(
         rtu_id=running_rtu.id,
-        slot_id=slot.id,
+        slot_number=1,  # PROFINET frame position metadata
         tag="TK-101-LVL",
         channel=0,
         sensor_type="level",

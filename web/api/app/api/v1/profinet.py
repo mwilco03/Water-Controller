@@ -15,16 +15,14 @@ from ...core.rtu_utils import get_rtu_or_404
 from ...models.base import get_db
 from ...services.profinet_client import get_profinet_client
 from ...models.historian import ProfinetDiagnostic
-from ...models.rtu import RtuState, Slot, SlotStatus
+from ...models.rtu import RtuState
 from ...schemas.common import DataQuality
 from ...schemas.profinet import (
     CycleTimeStats,
     IoStatus,
     PacketStats,
     ProfinetDiagnosticListMeta,
-    ProfinetSlot,
     ProfinetStatus,
-    ProfinetSubslot,
 )
 from ...schemas.profinet import (
     ProfinetDiagnostic as ProfinetDiagnosticSchema,
@@ -106,44 +104,15 @@ async def get_profinet_slots(
 ) -> dict[str, Any]:
     """
     Get PROFINET slot-level diagnostics.
+
+    Note: Slots are PROFINET frame positions, not database entities.
+    In a real implementation, this would query live PROFINET data.
     """
     rtu = get_rtu_or_404(db, name)
 
-    slots = db.query(Slot).filter(Slot.rtu_id == rtu.id).order_by(Slot.slot_number).all()
-
-    result = []
-    for slot in slots:
-        # Build subslot info based on module type
-        subslots = []
-        if slot.module_type and slot.module_type.startswith("AI"):
-            subslots.append(ProfinetSubslot(
-                subslot=1,
-                io_type="input",
-                bytes=8,
-                status="OK" if slot.status == SlotStatus.OK else "UNKNOWN",
-                diag_info=None,
-            ).model_dump())
-        elif slot.module_type and slot.module_type.startswith("AO"):
-            subslots.append(ProfinetSubslot(
-                subslot=1,
-                io_type="output",
-                bytes=8,
-                status="OK" if slot.status == SlotStatus.OK else "UNKNOWN",
-                diag_info=None,
-            ).model_dump())
-
-        slot_info = ProfinetSlot(
-            slot=slot.slot_number,
-            module_id=slot.module_id or "0x0000",
-            module_ident=slot.module_id,  # Use module_id as ident when available
-            subslots=subslots,
-            status=slot.status or SlotStatus.EMPTY,
-            pulled=slot.status == SlotStatus.PULLED,
-            wrong_module=slot.status == SlotStatus.WRONG_MODULE,
-        )
-        result.append(slot_info.model_dump())
-
-    return build_success_response(result)
+    # TODO: Query live PROFINET slot data from RTU
+    # Slots are frame positions reported by RTU, not stored in database
+    return build_success_response([])
 
 
 @router.get("/diagnostics")

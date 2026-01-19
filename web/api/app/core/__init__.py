@@ -15,7 +15,6 @@ from .exceptions import (
     RtuNotConnectedError,
     RtuNotFoundError,
     ScadaException,
-    SlotNotFoundError,
     ValidationError,
 )
 
@@ -31,6 +30,5 @@ __all__ = [
     "RtuNotConnectedError",
     "RtuNotFoundError",
     "ScadaException",
-    "SlotNotFoundError",
     "ValidationError",
 ]
