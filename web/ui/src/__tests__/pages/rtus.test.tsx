@@ -75,7 +75,7 @@ jest.mock('@/components/rtu', () => ({
       <div data-testid="delete-rtu-modal">
         <span>Delete {stationName}?</span>
         <button onClick={onClose}>Cancel</button>
-        <button onClick={() => onSuccess({ deleted: { alarm_rules: 1, pid_loops: 0, historian_tags: 2 } })}>
+        <button onClick={() => onSuccess({ deleted: { sensors: 0, controls: 0, alarms: 1, pid_loops: 0, historian_samples: 2 } })}>
           Delete
         </button>
       </div>
