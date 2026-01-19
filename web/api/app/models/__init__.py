@@ -4,6 +4,9 @@ Copyright (C) 2024
 SPDX-License-Identifier: GPL-3.0-or-later
 
 SQLAlchemy models for the Water Controller database.
+
+Architecture Decision (2026-01): Slots are NOT database entities.
+See CLAUDE.md "Slots Architecture Decision" for rationale.
 """
 
 from .alarm import AlarmEvent, AlarmRule, ShelvedAlarm
@@ -18,10 +21,10 @@ from .config import (
     ModbusServerConfig,
 )
 from .discovery import DCPDiscoveryCache
-from .historian import HistorianSample, HistorianTag, ProfinetDiagnostic, SlotConfig
+from .historian import HistorianSample, HistorianTag, ProfinetDiagnostic
 from .pid import PidLoop, PidMode
-# Note: Legacy models (RtuDevice, RtuSensor, RtuControl) removed - use RTU, Sensor, Control
-from .rtu import RTU, Control, Sensor, Slot
+# Note: Slot model removed - slots are PROFINET frame positions, not database entities
+from .rtu import RTU, Control, Sensor
 from .template import ConfigTemplate
 from .user import AuditLog, User, UserSession
 
@@ -31,11 +34,10 @@ __all__ = [
     "SessionLocal",
     "engine",
     "get_db",
-    # RTU
+    # RTU (no Slot - see architecture decision)
     "RTU",
     "Control",
     "Sensor",
-    "Slot",
     # Alarms
     "AlarmEvent",
     "AlarmRule",
@@ -58,7 +60,6 @@ __all__ = [
     "HistorianSample",
     "HistorianTag",
     "ProfinetDiagnostic",
-    "SlotConfig",
     # PID
     "PidLoop",
     "PidMode",

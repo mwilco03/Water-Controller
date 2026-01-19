@@ -156,5 +156,3 @@ export default function LiveTimestamp({
     </span>
   );
 }
-
-export { LiveTimestamp };

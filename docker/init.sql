@@ -12,27 +12,16 @@ CREATE TABLE IF NOT EXISTS rtu_devices (
     ip_address INET NOT NULL,
     vendor_id INTEGER NOT NULL,
     device_id INTEGER NOT NULL,
-    slot_count INTEGER NOT NULL DEFAULT 16,
+    slot_count INTEGER DEFAULT NULL,  -- Reported by RTU, NULL until connected
     connection_state VARCHAR(32) NOT NULL DEFAULT 'OFFLINE',
     last_seen TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Slot Configuration table
-CREATE TABLE IF NOT EXISTS slot_configs (
-    id SERIAL PRIMARY KEY,
-    rtu_id INTEGER REFERENCES rtu_devices(id) ON DELETE CASCADE,
-    slot_number INTEGER NOT NULL,
-    slot_type VARCHAR(16) NOT NULL CHECK (slot_type IN ('sensor', 'actuator')),
-    name VARCHAR(64),
-    unit VARCHAR(16),
-    scale_min REAL,
-    scale_max REAL,
-    deadband REAL DEFAULT 0.0,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE(rtu_id, slot_number)
-);
+-- NOTE: No slot_configs table. Slots are PROFINET frame positions, not database entities.
+-- Sensors/controls store slot_number as optional metadata (nullable integer).
+-- See CLAUDE.md "Slots Architecture Decision" for rationale.
 
 -- Historian Tags table
 CREATE TABLE IF NOT EXISTS historian_tags (

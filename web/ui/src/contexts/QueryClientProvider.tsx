@@ -92,10 +92,6 @@ export function QueryClientProvider({ children }: Props) {
   return (
     <TanStackQueryClientProvider client={queryClient}>
       {children}
-      {/* Uncomment to enable React Query DevTools in development */}
-      {/* {process.env.NODE_ENV === 'development' && (
-        <ReactQueryDevtools initialIsOpen={false} />
-      )} */}
     </TanStackQueryClientProvider>
   );
 }

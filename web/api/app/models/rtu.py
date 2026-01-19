@@ -3,7 +3,11 @@ Water Treatment Controller - RTU Models
 Copyright (C) 2024
 SPDX-License-Identifier: GPL-3.0-or-later
 
-SQLAlchemy models for RTU, Slot, Sensor, and Control entities.
+SQLAlchemy models for RTU, Sensor, and Control entities.
+
+Architecture Decision (2026-01): Slots are NOT database entities.
+Slots are PROFINET frame positions. The slot_number field on sensors/controls
+is optional metadata, not a foreign key. See CLAUDE.md for full rationale.
 """
 
 from datetime import UTC, datetime
@@ -18,7 +22,6 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
-    UniqueConstraint,
 )
 from sqlalchemy.orm import relationship
 
@@ -102,16 +105,6 @@ class RtuState:
         return current_state == cls.RUNNING
 
 
-class SlotStatus:
-    """Slot status constants."""
-
-    OK = "OK"
-    EMPTY = "EMPTY"
-    FAULT = "FAULT"
-    PULLED = "PULLED"
-    WRONG_MODULE = "WRONG_MODULE"
-
-
 class ControlType:
     """Control type constants."""
 
@@ -129,7 +122,7 @@ class RTU(Base):
     ip_address = Column(String(15), unique=True, nullable=False)
     vendor_id = Column(String(6), nullable=False)  # e.g., "0x002A"
     device_id = Column(String(6), nullable=False)  # e.g., "0x0405"
-    slot_count = Column(Integer, nullable=False, default=8)
+    slot_count = Column(Integer, nullable=True)  # Reported by RTU, NULL until connected
 
     # State tracking
     state = Column(String(20), nullable=False, default=RtuState.OFFLINE)
@@ -149,8 +142,7 @@ class RTU(Base):
         onupdate=lambda: datetime.now(UTC)
     )
 
-    # Relationships
-    slots = relationship("Slot", back_populates="rtu", cascade="all, delete-orphan")
+    # Relationships (direct to sensors/controls, no slot intermediary)
     sensors = relationship("Sensor", back_populates="rtu", cascade="all, delete-orphan")
     controls = relationship("Control", back_populates="rtu", cascade="all, delete-orphan")
 
@@ -198,39 +190,6 @@ class RTU(Base):
             )
 
 
-class Slot(Base):
-    """RTU slot configuration."""
-
-    __tablename__ = "slots"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    rtu_id = Column(Integer, ForeignKey("rtus.id", ondelete="CASCADE"), nullable=False)
-    slot_number = Column(Integer, nullable=False)
-
-    # Module information
-    module_id = Column(String(6), nullable=True)  # e.g., "0x0032"
-    module_type = Column(String(32), nullable=True)  # e.g., "AI-8"
-    status = Column(String(20), default=SlotStatus.EMPTY)
-
-    # Timestamps
-    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
-    updated_at = Column(
-        DateTime(timezone=True),
-        default=lambda: datetime.now(UTC),
-        onupdate=lambda: datetime.now(UTC)
-    )
-
-    # Relationships
-    rtu = relationship("RTU", back_populates="slots")
-    sensors = relationship("Sensor", back_populates="slot", cascade="all, delete-orphan")
-    controls = relationship("Control", back_populates="slot", cascade="all, delete-orphan")
-
-    __table_args__ = (
-        UniqueConstraint("rtu_id", "slot_number", name="uix_rtu_slot"),
-        Index("ix_slots_rtu_id", "rtu_id"),
-    )
-
-
 class Sensor(Base):
     """Sensor configuration."""
 
@@ -238,7 +197,10 @@ class Sensor(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     rtu_id = Column(Integer, ForeignKey("rtus.id", ondelete="CASCADE"), nullable=False)
-    slot_id = Column(Integer, ForeignKey("slots.id", ondelete="CASCADE"), nullable=False)
+
+    # slot_number is PROFINET frame position metadata, NOT a foreign key
+    # Can be NULL if sensor doesn't map to a specific PROFINET slot
+    slot_number = Column(Integer, nullable=True)
 
     tag = Column(String(32), unique=True, nullable=False, index=True)
     channel = Column(Integer, nullable=False)
@@ -261,12 +223,10 @@ class Sensor(Base):
 
     # Relationships
     rtu = relationship("RTU", back_populates="sensors")
-    slot = relationship("Slot", back_populates="sensors")
 
     # Indexes for foreign key lookups
     __table_args__ = (
         Index("ix_sensors_rtu_id", "rtu_id"),
-        Index("ix_sensors_slot_id", "slot_id"),
     )
 
 
@@ -277,7 +237,10 @@ class Control(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     rtu_id = Column(Integer, ForeignKey("rtus.id", ondelete="CASCADE"), nullable=False)
-    slot_id = Column(Integer, ForeignKey("slots.id", ondelete="CASCADE"), nullable=False)
+
+    # slot_number is PROFINET frame position metadata, NOT a foreign key
+    # Can be NULL if control doesn't map to a specific PROFINET slot
+    slot_number = Column(Integer, nullable=True)
 
     tag = Column(String(32), unique=True, nullable=False, index=True)
     channel = Column(Integer, nullable=False)
@@ -299,10 +262,8 @@ class Control(Base):
 
     # Relationships
     rtu = relationship("RTU", back_populates="controls")
-    slot = relationship("Slot", back_populates="controls")
 
     # Indexes for foreign key lookups
     __table_args__ = (
         Index("ix_controls_rtu_id", "rtu_id"),
-        Index("ix_controls_slot_id", "slot_id"),
     )

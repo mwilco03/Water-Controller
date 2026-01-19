@@ -73,8 +73,9 @@ export default function DeleteRtuModal({
       const res = await fetch(`/api/v1/rtus/${encodeURIComponent(stationName)}/deletion-impact`);
 
       if (res.ok) {
-        const data = await res.json();
-        setImpact(data);
+        const response = await res.json();
+        // Unwrap response envelope - backend returns { data: impact }
+        setImpact(response.data || response);
       } else if (res.status === 404) {
         // RTU not found - might have been deleted already
         setImpact({
@@ -146,8 +147,9 @@ export default function DeleteRtuModal({
       });
 
       if (res.ok) {
-        const result = await res.json();
-        onSuccess(result);
+        const response = await res.json();
+        // Unwrap response envelope - backend returns { data: { deleted: ... } }
+        onSuccess(response.data || response);
         return;
       }
 

@@ -21,23 +21,19 @@ from ...core.exceptions import (
 )
 from ...core.rtu_utils import get_rtu_or_404
 from ...models.base import get_db
-from ...models.rtu import RTU, RtuState, Slot, SlotStatus
+from ...models.rtu import RTU, RtuState
 from ...services.profinet_client import get_profinet_client
 from ...schemas.rtu import (
     ConnectRequest,
     ConnectResponse,
     DeletionImpact,
     DisconnectResponse,
-    DiscoveredSlot,
     DiscoverResponse,
     DiscoverSummary,
     RtuCreate,
     RtuDetailResponse,
     RtuResponse,
-    RtuSlotsReceivedRequest,
-    RtuSlotsReceivedResponse,
     RtuStats,
-    SlotSummary,
     TestResponse,
     TestResult,
 )
@@ -406,89 +402,13 @@ async def test_connection(
     return build_success_response(response_data.model_dump())
 
 
-# ==================== RTU SLOT RECEIVED HANDLER ====================
-
-
-@router.post("/{name}/slots/received")
-async def receive_rtu_slots(
-    name: str,
-    request: RtuSlotsReceivedRequest,
-    db: Session = Depends(get_db)
-) -> dict[str, Any]:
-    """
-    Receive and store RTU-reported slot configuration.
-
-    Called by the controller when an RTU reports its actual module configuration.
-    This handles RTU-dictated slots (as opposed to controller-owned initial slot_count).
-
-    The handler:
-    1. Iterates through received slots
-    2. Updates existing slots with module info
-    3. Creates new slots if RTU reports more than initially configured
-    4. Optionally adjusts the RTU's slot_count to match
-    """
-    rtu = get_rtu_or_404(db, name)
-
-    slots_updated = 0
-    slots_added = 0
-    max_slot_num = 0
-
-    for received in request.slots:
-        max_slot_num = max(max_slot_num, received.slot)
-
-        # Find existing slot
-        slot = db.query(Slot).filter(
-            Slot.rtu_id == rtu.id,
-            Slot.slot_number == received.slot
-        ).first()
-
-        if slot:
-            # Update existing slot
-            slot.module_id = received.module_id
-            slot.module_type = received.module_type
-            if received.status == "EMPTY":
-                slot.status = SlotStatus.EMPTY
-            elif received.status == "FAULT":
-                slot.status = SlotStatus.FAULT
-            else:
-                slot.status = SlotStatus.OK
-            slots_updated += 1
-        else:
-            # Create new slot (RTU reported more slots than initially configured)
-            new_slot = Slot(
-                rtu_id=rtu.id,
-                slot_number=received.slot,
-                module_id=received.module_id,
-                module_type=received.module_type,
-                status=SlotStatus.OK if received.status != "EMPTY" else SlotStatus.EMPTY,
-            )
-            db.add(new_slot)
-            slots_added += 1
-
-    # Update RTU slot_count if requested and RTU reports more slots
-    if request.update_slot_count and max_slot_num > rtu.slot_count:
-        rtu.slot_count = max_slot_num
-
-    db.commit()
-
-    response_data = RtuSlotsReceivedResponse(
-        station_name=name,
-        slots_updated=slots_updated,
-        slots_added=slots_added,
-        message=f"Received {len(request.slots)} slots from RTU"
-    )
-
-    return build_success_response(response_data.model_dump())
-
-
-# Include nested routers for slots, sensors, controls, profinet, pid
+# Include nested routers for sensors, controls, profinet, pid
+# Note: slots router removed - slots are PROFINET frame positions, not database entities
 from .controls import router as controls_router
 from .pid import router as pid_router
 from .profinet import router as profinet_router
 from .sensors import router as sensors_router
-from .slots import router as slots_router
 
-router.include_router(slots_router, prefix="/{name}/slots")
 router.include_router(sensors_router, prefix="/{name}/sensors")
 router.include_router(controls_router, prefix="/{name}/controls")
 router.include_router(profinet_router, prefix="/{name}/profinet")

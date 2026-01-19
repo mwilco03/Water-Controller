@@ -167,6 +167,9 @@ export interface RTUInventory {
   last_refresh: string | null;
 }
 
+// Note: Slot types removed - slots are PROFINET frame positions, not database entities
+// See CLAUDE.md "Slots Architecture Decision" for rationale
+
 export interface DiscoveredDevice {
   id: number;
   mac_address: string;
@@ -238,6 +241,8 @@ export async function getSensors(stationName: string): Promise<SensorData[]> {
   // Handle both { data: [...] } and { sensors: [...] } formats
   return response.data || response.sensors || [];
 }
+
+// Note: getSlots function removed - slots are PROFINET frame positions, not database entities
 
 export async function commandControl(
   stationName: string,
@@ -507,11 +512,12 @@ export interface PingScanResponse {
 }
 
 export async function pingScanSubnet(subnet: string, timeoutMs = 500): Promise<PingScanResponse> {
-  const data = await apiFetch<PingScanResponse>('/api/v1/discover/ping-scan', {
+  const response = await apiFetch<{ data?: PingScanResponse } | PingScanResponse>('/api/v1/discover/ping-scan', {
     method: 'POST',
     body: JSON.stringify({ subnet, timeout_ms: timeoutMs }),
   });
-  return data;
+  // Handle both { data: {...} } and direct object formats
+  return (response as { data?: PingScanResponse }).data || (response as PingScanResponse);
 }
 
 // ============== Response Data Extraction Utilities ==============

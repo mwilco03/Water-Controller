@@ -251,5 +251,3 @@ export function useConfirmDialog() {
 
   return { isOpen, dialogProps, confirm };
 }
-
-export { ConfirmDialog };

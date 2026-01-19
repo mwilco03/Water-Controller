@@ -271,7 +271,7 @@ def get_db_context() -> Generator[Session, None, None]:
         db.close()
 
 
-# Backward compatibility alias (deprecated - use get_db_context)
+# Short alias for persistence layer (all persistence modules use this)
 get_db = get_db_context
 
 
