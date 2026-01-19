@@ -1203,6 +1203,9 @@ do_docker_install() {
     }
 
     # Start containers (docker_dir already verified above during build step)
+    # Note: POSIX shared memory for controller-API IPC is created automatically
+    # by the controller process. Both containers use ipc: host to share the
+    # host's IPC namespace where /dev/shm/wtc_shared_memory is created.
     log_step "Starting containers..."
     (
         cd "$docker_dir" || { echo "ERROR: Cannot access $docker_dir" >&2; exit 1; }

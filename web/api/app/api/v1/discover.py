@@ -2,24 +2,30 @@
 Water Treatment Controller - Network Discovery Endpoints
 Copyright (C) 2024
 SPDX-License-Identifier: GPL-3.0-or-later
+
+Real network discovery using PROFINET DCP and ICMP ping.
+Requires host network mode and CAP_NET_RAW for full functionality.
 """
 
 import asyncio
-import subprocess
+import logging
+import os
 import time
 from datetime import datetime, timezone
 from typing import Any
 
 import ipaddress
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 
 from ...core.errors import build_success_response
 from ...models.base import get_db
 from ...models.rtu import RTU
-from ...services.profinet_client import get_profinet_client
+from ...services.dcp_discovery import discover_profinet_devices
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -76,19 +82,24 @@ async def discover_rtus(
     db: Session = Depends(get_db)
 ) -> dict[str, Any]:
     """
-    Scan network for PROFINET devices.
+    Scan network for PROFINET devices using DCP multicast.
 
-    Uses PROFINET DCP (Discovery and Configuration Protocol).
-    When the C controller is running, performs real network discovery.
-    Otherwise, returns configured RTUs for testing.
+    Performs real PROFINET DCP (Discovery and Configuration Protocol)
+    discovery on the physical network. Requires:
+    - Host network mode (network_mode: host in docker-compose)
+    - CAP_NET_RAW capability
+
+    Returns discovered devices with their IP addresses, station names,
+    and vendor information. Also indicates if devices are already
+    registered in the system.
     """
     start_time = time.time()
-    timeout_ms = (request.timeout_seconds * 1000) if request else 10000
+    timeout_sec = request.timeout_seconds if request else 10
 
     # Get list of already configured RTUs for matching
     existing_rtus = db.query(RTU).all()
     configured_stations = {rtu.station_name.lower(): rtu for rtu in existing_rtus}
-    configured_macs = {getattr(rtu, 'mac_address', '').lower() for rtu in existing_rtus if hasattr(rtu, 'mac_address')}
+    configured_ips = {rtu.ip_address: rtu for rtu in existing_rtus}
 
     devices = []
     now = datetime.now(timezone.utc).isoformat()
@@ -96,30 +107,43 @@ async def discover_rtus(
     def mac_to_id(mac: str) -> int:
         """Convert MAC address to a stable integer ID."""
         clean = mac.replace(":", "").replace("-", "").lower()
-        # Use last 6 hex digits as ID (fits in 32-bit int)
         return int(clean[-6:], 16) if clean else 0
 
-    # Try real DCP discovery via controller
-    profinet = get_profinet_client()
-    if profinet.is_controller_running():
-        discovered = profinet.dcp_discover(timeout_ms)
+    # Get network interface from environment
+    interface = os.environ.get("WTC_INTERFACE", "eth0")
+
+    # Perform real DCP discovery
+    logger.info(f"Starting DCP discovery on {interface} (timeout: {timeout_sec}s)")
+
+    try:
+        discovered = await discover_profinet_devices(
+            interface=interface,
+            timeout_sec=float(timeout_sec)
+        )
+        logger.info(f"DCP discovery found {len(discovered)} devices")
 
         for dev in discovered:
-            device_name = dev.get("device_name", "").lower()
+            device_name = (dev.get("device_name") or "").lower()
             mac = dev.get("mac_address", "00:00:00:00:00:00")
+            ip = dev.get("ip_address")
 
-            # Check if already configured
-            added_to_registry = device_name in configured_stations or mac.lower() in configured_macs
+            # Check if already configured (by station name or IP)
+            added_to_registry = False
             rtu_name = None
-            if device_name in configured_stations:
+
+            if device_name and device_name in configured_stations:
+                added_to_registry = True
                 rtu_name = configured_stations[device_name].station_name
+            elif ip and ip in configured_ips:
+                added_to_registry = True
+                rtu_name = configured_ips[ip].station_name
 
             devices.append(DiscoveredDevice(
                 id=mac_to_id(mac),
                 mac_address=mac,
-                ip_address=dev.get("ip_address") or None,
-                device_name=dev.get("device_name") or None,
-                vendor_name=dev.get("vendor_name") or None,
+                ip_address=ip,
+                device_name=dev.get("device_name"),
+                vendor_name=dev.get("vendor_name"),
                 device_type=dev.get("device_type") or "PROFINET Device",
                 vendor_id=dev.get("profinet_vendor_id"),
                 device_id=dev.get("profinet_device_id"),
@@ -127,30 +151,27 @@ async def discover_rtus(
                 added_to_registry=added_to_registry,
                 rtu_name=rtu_name,
             ))
-    else:
-        # Controller not running - return configured RTUs for HMI testing
-        for idx, rtu in enumerate(existing_rtus):
-            # Parse hex vendor/device IDs if stored as strings
-            vendor_id = rtu.vendor_id
-            device_id = rtu.device_id
-            if isinstance(vendor_id, str):
-                vendor_id = int(vendor_id, 16) if vendor_id.startswith("0x") else int(vendor_id)
-            if isinstance(device_id, str):
-                device_id = int(device_id, 16) if device_id.startswith("0x") else int(device_id)
 
-            devices.append(DiscoveredDevice(
-                id=idx + 1,
-                mac_address="00:00:00:00:00:00",
-                ip_address=rtu.ip_address,
-                device_name=rtu.station_name,
-                vendor_name="Simulation Mode",
-                device_type="Water Treatment RTU",
-                vendor_id=vendor_id,
-                device_id=device_id,
-                discovered_at=now,
-                added_to_registry=True,
-                rtu_name=rtu.station_name,
-            ))
+    except PermissionError:
+        logger.error("DCP discovery failed: CAP_NET_RAW capability required")
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "DISCOVERY_PERMISSION_DENIED",
+                "message": "DCP discovery requires CAP_NET_RAW capability",
+                "suggested_action": "Ensure container has cap_add: [NET_RAW] in docker-compose.yml"
+            }
+        )
+    except OSError as e:
+        logger.error(f"DCP discovery failed: {e}")
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "DISCOVERY_NETWORK_ERROR",
+                "message": f"Network error during DCP discovery: {e}",
+                "suggested_action": f"Verify interface {interface} exists and container has network_mode: host"
+            }
+        )
 
     duration = time.time() - start_time
 
@@ -282,7 +303,12 @@ async def ping_scan_subnet(request: PingScanRequest) -> dict[str, Any]:
     Perform a ping scan of a subnet.
 
     Pings all hosts in the specified /24 (or smaller) subnet and returns
-    which IPs respond. Useful for debugging when PROFINET discovery fails.
+    which IPs respond. Requires host network mode to reach physical network.
+
+    Returns reachable hosts with response times. Useful for:
+    - Verifying network connectivity before DCP discovery
+    - Finding devices that don't respond to PROFINET DCP
+    - Debugging network issues
     """
     start_time = time.time()
     network = ipaddress.ip_network(request.subnet, strict=False)
@@ -290,6 +316,8 @@ async def ping_scan_subnet(request: PingScanRequest) -> dict[str, Any]:
     # Get all host IPs (excluding network and broadcast for /24+)
     hosts = list(network.hosts())
     total_hosts = len(hosts)
+
+    logger.info(f"Starting ping scan of {request.subnet} ({total_hosts} hosts)")
 
     # Ping all hosts concurrently with semaphore to limit parallelism
     semaphore = asyncio.Semaphore(request.max_concurrent)
@@ -307,6 +335,15 @@ async def ping_scan_subnet(request: PingScanRequest) -> dict[str, Any]:
 
     reachable = [r for r in results if r.reachable]
     duration = time.time() - start_time
+
+    logger.info(f"Ping scan complete: {len(reachable)}/{total_hosts} hosts reachable in {duration:.2f}s")
+
+    # Warn if no hosts reachable - likely network isolation issue
+    if len(reachable) == 0:
+        logger.warning(
+            f"No hosts reachable in {request.subnet}. "
+            "Check that container has network_mode: host in docker-compose.yml"
+        )
 
     response = PingScanResponse(
         subnet=request.subnet,

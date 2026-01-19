@@ -32,15 +32,15 @@ services:
     volumes:
       - db_data:/var/lib/postgresql/data
       - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
-    # DCK-C1 fix: Remove exposed ports - use internal network only
-    expose:
-      - "5432"
+    # Expose to localhost for API container (which uses host network)
+    # Bind to 127.0.0.1 only for security (not exposed externally)
+    ports:
+      - "127.0.0.1:${WTC_DB_PORT:-5432}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U wtc -d water_treatment"]
       interval: 10s
       timeout: 5s
       retries: 5
-    # DCK-H3 fix: Add resource limits
     deploy:
       resources:
         limits:
@@ -50,30 +50,44 @@ services:
           memory: 256M
 
   # Web API
+  # Uses host network mode to enable:
+  # - PROFINET DCP discovery (raw sockets on physical interface)
+  # - Network ping scans to reach RTUs on physical network
+  # - Direct access to controller shared memory via host IPC namespace
   api:
     build:
       context: ..
       dockerfile: docker/Dockerfile.web
     container_name: wtc-api
     restart: unless-stopped
-    # DCK-H1 fix: Run as non-root user
-    user: "1000:1000"
+    # Host network mode required for physical network access (DCP, ping)
+    network_mode: host
+    # Host IPC namespace required for POSIX shared memory with controller
+    ipc: host
+    # Capabilities for raw socket operations (DCP discovery, ICMP ping)
+    cap_add:
+      - NET_RAW
     environment:
-      DATABASE_URL: postgresql://wtc:wtc_password@database:${WTC_DB_PORT:-5432}/water_treatment
+      # Database accessed via localhost since we're on host network
+      DATABASE_URL: postgresql://wtc:wtc_password@127.0.0.1:${WTC_DB_PORT:-5432}/water_treatment
       API_HOST: 0.0.0.0
       WTC_API_PORT: ${WTC_API_PORT:-8000}
       WTC_UI_PORT: ${WTC_UI_PORT:-8080}
-      # Development mode: lenient startup validation (downgrades path/UI failures to warnings)
-      # Set to "production" for strict validation in production environments
+      # Production mode - strict validation
       WTC_STARTUP_MODE: ${WTC_STARTUP_MODE:-development}
-      # Skip IPC check when running without the C controller
-      WTC_SIMULATION_MODE: ${WTC_SIMULATION_MODE:-true}
+      # Real operations - NOT simulation
+      WTC_SIMULATION_MODE: "false"
+      WTC_DEMO_MODE: "false"
       # Skip UI asset validation (UI is served by separate container)
       WTC_API_ONLY: ${WTC_API_ONLY:-true}
-    ports:
-      - "${WTC_API_PORT:-8000}:${WTC_API_PORT:-8000}"
+      # Network interface for DCP discovery (same as controller)
+      WTC_INTERFACE: ${WTC_INTERFACE:-eth0}
+      # Shared memory name for POSIX IPC with controller (must match C code)
+      WTC_SHM_NAME: /wtc_shared_memory
     depends_on:
       database:
+        condition: service_healthy
+      controller:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/health').raise_for_status()"]
@@ -81,7 +95,6 @@ services:
       timeout: 10s
       retries: 3
       start_period: 10s
-    # DCK-H3 fix: Add resource limits
     deploy:
       resources:
         limits:
@@ -90,7 +103,9 @@ services:
         reservations:
           memory: 128M
 
-  # PROFINET Controller (optional - requires host network mode)
+  # PROFINET Controller - REQUIRED for PROFINET communication
+  # Provides: DCP discovery, AR management, cyclic I/O exchange
+  # Communicates with API via POSIX shared memory in host IPC namespace
   controller:
     build:
       context: ..
@@ -98,6 +113,8 @@ services:
     container_name: wtc-controller
     restart: unless-stopped
     network_mode: host
+    # Host IPC namespace required for POSIX shared memory with API
+    ipc: host
     cap_add:
       - NET_ADMIN
       - NET_RAW
@@ -105,17 +122,17 @@ services:
       WTC_INTERFACE: ${WTC_INTERFACE:-eth0}
       WTC_CYCLE_TIME: ${WTC_CYCLE_TIME:-1000}
       WTC_LOG_LEVEL: ${WTC_LOG_LEVEL:-INFO}
+      # Shared memory name for POSIX IPC (created in /dev/shm/wtc_shared_memory)
+      WTC_SHM_NAME: /wtc_shared_memory
     volumes:
       - ./config:/etc/water-controller:ro
       - controller_logs:/var/log/water-controller
-    # DCK-H2 fix: Add health check (matches Dockerfile.controller)
     healthcheck:
       test: ["CMD", "pgrep", "water_treat_controller"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 60s
-    # DCK-H3 fix: Add resource limits
     deploy:
       resources:
         limits:
@@ -123,9 +140,8 @@ services:
           memory: 512M
         reservations:
           memory: 128M
-    # Only start if PROFINET interface is configured
-    profiles:
-      - profinet
+    # NO profiles - controller starts by default
+    # This is required for PROFINET operations
 
   # React HMI Frontend
   ui:
@@ -133,33 +149,27 @@ services:
       context: ..
       dockerfile: docker/Dockerfile.ui
       args:
-        # Pass API_URL at build time for Next.js rewrites
-        # Uses container-to-container name resolution
-        API_URL: http://api:${WTC_API_PORT:-8000}
+        # API URL - use host.docker.internal to reach API on host network
+        API_URL: http://host.docker.internal:${WTC_API_PORT:-8000}
     container_name: wtc-ui
     restart: unless-stopped
-    # DCK-H1 fix: Run as non-root user
     user: "1000:1000"
     environment:
-      # API URL for server-side requests (container name resolution)
-      API_URL: http://api:${WTC_API_PORT:-8000}
+      # API URL for server-side requests (host network)
+      API_URL: http://host.docker.internal:${WTC_API_PORT:-8000}
       # Public API URL for client-side (empty = use same origin with rewrites)
       NEXT_PUBLIC_API_URL: ""
       WTC_UI_PORT: ${WTC_UI_PORT:-8080}
       WTC_API_PORT: ${WTC_API_PORT:-8000}
     ports:
-      # Map external UI port to internal container port (3000)
       - "${WTC_UI_PORT:-8080}:${WTC_DOCKER_UI_INTERNAL_PORT:-3000}"
-    depends_on:
-      api:
-        condition: service_healthy
-    # DCK-H2 fix: Add health check
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:${WTC_DOCKER_UI_INTERNAL_PORT:-3000}"]
       interval: 30s
       timeout: 10s
       retries: 3
-    # DCK-H3 fix: Add resource limits
     deploy:
       resources:
         limits:

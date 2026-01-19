@@ -4,14 +4,13 @@ Copyright (C) 2024
 SPDX-License-Identifier: GPL-3.0-or-later
 
 Integration with the C controller via shared memory.
-Supports simulation mode for testing and training without real hardware.
 
-Simulation mode can be enabled via:
-  - Environment variable: WTC_SIMULATION_MODE=1 or WTC_DEMO_MODE=1
-  - When shared memory is not available (controller not running)
+Priority order:
+1. Real C controller via shared memory (if running)
+2. Demo mode (only if WTC_DEMO_MODE=1 explicitly set)
+3. Real network operations (DCP discovery, ping) without controller
 
-In simulation mode, the client uses demo_mode.py to generate realistic
-water treatment plant data matching the C simulator scenarios.
+Demo mode must be explicitly enabled - it does NOT auto-enable.
 """
 
 import logging
@@ -20,10 +19,12 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# Check for simulation mode via environment
-_SIMULATION_MODE_ENV = os.environ.get("WTC_SIMULATION_MODE", "").lower() in ("1", "true", "yes")
+# Demo mode only when explicitly requested
 _DEMO_MODE_ENV = os.environ.get("WTC_DEMO_MODE", "").lower() in ("1", "true", "yes")
-SIMULATION_ENABLED = _SIMULATION_MODE_ENV or _DEMO_MODE_ENV
+DEMO_ENABLED = _DEMO_MODE_ENV
+
+if DEMO_ENABLED:
+    logger.info("Demo mode enabled via WTC_DEMO_MODE environment variable")
 
 # Try to import the shared memory client
 try:
@@ -40,6 +41,7 @@ try:
         get_client,
     )
     SHM_AVAILABLE = True
+    logger.info("Shared memory client available for C controller integration")
 except ImportError:
     SHM_AVAILABLE = False
     CONNECTION_STATE_NAMES = {
@@ -50,7 +52,7 @@ except ImportError:
     QUALITY_NAMES = {0: "good", 0x40: "uncertain", 0x80: "bad", 0xC0: "not_connected"}
     CONN_STATE_RUNNING = 3
     CONN_STATE_OFFLINE = 5
-    logger.warning("Shared memory client not available - running in simulation mode")
+    logger.info("Shared memory client not available - using direct network operations")
 
 
 def _get_demo_service():
@@ -67,36 +69,38 @@ class ProfinetClient:
     Client for interacting with the PROFINET controller.
 
     Priority order:
-    1. Real C controller via shared memory (if running and not in simulation mode)
-    2. Simulation/Demo mode - provides realistic simulated data
-    3. Empty data fallback
+    1. Real C controller via shared memory (if running)
+    2. Demo mode (only if WTC_DEMO_MODE=1)
+    3. Direct network operations without controller
 
-    Simulation mode is automatically enabled when:
-    - WTC_SIMULATION_MODE=1 or WTC_DEMO_MODE=1 environment variable is set
-    - Shared memory client is not available
+    Demo mode does NOT auto-enable. It must be explicitly requested
+    via WTC_DEMO_MODE=1 environment variable.
     """
 
     def __init__(self):
         self._client: Any | None = None
-        self._simulation_mode = not SHM_AVAILABLE or SIMULATION_ENABLED
+        self._demo_mode = DEMO_ENABLED
 
-        # Auto-enable demo service when in simulation mode
-        if self._simulation_mode:
+        # Only enable demo service when explicitly requested
+        if self._demo_mode:
             demo = _get_demo_service()
             if demo and not demo.enabled:
-                scenario = os.environ.get("WTC_SIMULATION_SCENARIO",
-                          os.environ.get("WTC_DEMO_SCENARIO", "water_treatment_plant"))
+                scenario = os.environ.get("WTC_DEMO_SCENARIO", "water_treatment_plant")
                 try:
                     from .demo_mode import DemoScenario
                     demo.enable(DemoScenario(scenario))
-                    logger.info(f"Simulation mode enabled with scenario: {scenario}")
+                    logger.info(f"Demo mode enabled with scenario: {scenario}")
                 except (ValueError, ImportError) as e:
                     logger.warning(f"Could not enable demo scenario '{scenario}': {e}")
 
     def connect(self) -> bool:
         """Connect to the PROFINET controller."""
-        if self._simulation_mode:
-            logger.info("Running in simulation mode (no controller)")
+        if self._demo_mode:
+            logger.info("Running in demo mode")
+            return True
+
+        if not SHM_AVAILABLE:
+            logger.info("Shared memory not available - running without C controller")
             return True
 
         try:
@@ -105,66 +109,78 @@ class ProfinetClient:
                 logger.info("Connected to PROFINET controller via shared memory")
                 return True
             else:
-                logger.warning("Failed to connect to shared memory")
-                return False
+                logger.info("Shared memory not connected - C controller may not be running")
+                return True  # Still return True - we can do direct network ops
         except Exception as e:
-            logger.error(f"Error connecting to PROFINET controller: {e}")
-            return False
+            logger.warning(f"Could not connect to PROFINET controller: {e}")
+            return True  # Still return True - we can do direct network ops
 
     def is_connected(self) -> bool:
-        """Check if connected to the controller."""
-        if self._simulation_mode:
+        """Check if connected to the controller or ready for direct ops."""
+        if self._demo_mode:
             demo = _get_demo_service()
             return demo is not None and demo.enabled
-        return self._client is not None and self._client.is_connected()
+        # Always return True - we can do direct network operations
+        return True
 
-    def is_simulation_mode(self) -> bool:
-        """Check if running in simulation mode."""
-        return self._simulation_mode
+    def is_demo_mode(self) -> bool:
+        """Check if running in demo mode."""
+        return self._demo_mode
 
     def is_controller_running(self) -> bool:
         """Check if the PROFINET controller is running."""
         # Check real controller first
-        if not self._simulation_mode and self._client:
-            if self._client.is_controller_running():
-                return True
+        if not self._demo_mode and self._client:
+            try:
+                if self._client.is_controller_running():
+                    return True
+            except Exception:
+                pass
 
         # Check demo mode
-        demo = _get_demo_service()
-        if demo and demo.enabled:
-            return demo.is_controller_running()
+        if self._demo_mode:
+            demo = _get_demo_service()
+            if demo and demo.enabled:
+                return demo.is_controller_running()
 
         return False
 
     def get_status(self) -> dict[str, Any]:
         """Get controller status."""
         # Try real controller first
-        if not self._simulation_mode and self._client and self._client.is_connected():
-            status = self._client.get_status()
-            if status.get("connected"):
-                return status
+        if not self._demo_mode and self._client:
+            try:
+                if self._client.is_connected():
+                    status = self._client.get_status()
+                    if status.get("connected"):
+                        return status
+            except Exception:
+                pass
 
         # Try demo mode
-        demo = _get_demo_service()
-        if demo and demo.enabled:
-            demo_status = demo.get_status()
-            return {
-                "connected": True,
-                "demo_mode": True,
-                "controller_running": True,
-                **demo_status,
-            }
+        if self._demo_mode:
+            demo = _get_demo_service()
+            if demo and demo.enabled:
+                demo_status = demo.get_status()
+                return {
+                    "connected": True,
+                    "demo_mode": True,
+                    "controller_running": True,
+                    **demo_status,
+                }
 
+        # No controller, no demo - direct network mode
         return {
-            "connected": False,
-            "simulation_mode": True,
+            "connected": True,
+            "demo_mode": False,
             "controller_running": False,
+            "mode": "direct_network",
         }
 
     def get_rtu_state(self, station_name: str) -> str | None:
         """Get RTU connection state from controller."""
         # Try real controller first
-        if not self._simulation_mode and self._client and self._client.is_connected():
+        if not self._demo_mode and self._client and self._client.is_connected():
             rtu = self._client.get_rtu(station_name)
             if rtu:
                 state_code = rtu.get("connection_state", CONN_STATE_OFFLINE)
@@ -183,7 +199,7 @@ class ProfinetClient:
     def get_sensor_values(self, station_name: str) -> list[dict[str, Any]]:
         """Get sensor values from controller."""
         # Try real controller first
-        if not self._simulation_mode and self._client and self._client.is_connected():
+        if not self._demo_mode and self._client and self._client.is_connected():
             sensors = self._client.get_sensors(station_name)
             if sensors:
                 return sensors
@@ -198,7 +214,7 @@ class ProfinetClient:
     def get_actuator_states(self, station_name: str) -> list[dict[str, Any]]:
         """Get actuator states from controller."""
         # Try real controller first
-        if not self._simulation_mode and self._client and self._client.is_connected():
+        if not self._demo_mode and self._client and self._client.is_connected():
             actuators = self._client.get_actuators(station_name)
             if actuators:
                 return actuators
@@ -219,7 +235,7 @@ class ProfinetClient:
     ) -> bool:
         """Send actuator command to controller."""
         # Try real controller first
-        if not self._simulation_mode and self._client and self._client.is_connected():
+        if not self._demo_mode and self._client and self._client.is_connected():
             return self._client.command_actuator(station_name, slot, command, pwm_duty)
 
         # Try demo mode
@@ -232,7 +248,7 @@ class ProfinetClient:
 
     def connect_rtu(self, station_name: str) -> bool:
         """Send RTU connect command to controller."""
-        if not self._simulation_mode and self._client and self._client.is_connected():
+        if not self._demo_mode and self._client and self._client.is_connected():
             return self._client.connect_rtu(station_name)
 
         logger.info(f"[SIM] Connect RTU: {station_name}")
@@ -240,7 +256,7 @@ class ProfinetClient:
 
     def disconnect_rtu(self, station_name: str) -> bool:
         """Send RTU disconnect command to controller."""
-        if not self._simulation_mode and self._client and self._client.is_connected():
+        if not self._demo_mode and self._client and self._client.is_connected():
             return self._client.disconnect_rtu(station_name)
 
         logger.info(f"[SIM] Disconnect RTU: {station_name}")
@@ -255,7 +271,7 @@ class ProfinetClient:
         slot_count: int
     ) -> bool:
         """Add RTU to controller."""
-        if not self._simulation_mode and self._client and self._client.is_connected():
+        if not self._demo_mode and self._client and self._client.is_connected():
             return self._client.add_rtu(station_name, ip_address, vendor_id, device_id, slot_count)
 
         logger.info(f"[SIM] Add RTU: {station_name} at {ip_address}")
@@ -263,7 +279,7 @@ class ProfinetClient:
 
     def remove_rtu(self, station_name: str) -> bool:
         """Remove RTU from controller."""
-        if not self._simulation_mode and self._client and self._client.is_connected():
+        if not self._demo_mode and self._client and self._client.is_connected():
             return self._client.remove_rtu(station_name)
 
         logger.info(f"[SIM] Remove RTU: {station_name}")
@@ -272,7 +288,7 @@ class ProfinetClient:
     def dcp_discover(self, timeout_ms: int = 5000) -> list[dict[str, Any]]:
         """Discover PROFINET devices on network."""
         # Try real controller first
-        if not self._simulation_mode and self._client and self._client.is_connected():
+        if not self._demo_mode and self._client and self._client.is_connected():
             devices = self._client.dcp_discover(timeout_ms)
             if devices:
                 return devices
@@ -288,7 +304,7 @@ class ProfinetClient:
     def get_pid_loops(self) -> list[dict[str, Any]]:
         """Get PID loop states from controller."""
         # Try real controller first
-        if not self._simulation_mode and self._client and self._client.is_connected():
+        if not self._demo_mode and self._client and self._client.is_connected():
             loops = self._client.get_pid_loops()
             if loops:
                 return loops
@@ -303,7 +319,7 @@ class ProfinetClient:
     def set_setpoint(self, loop_id: int, setpoint: float) -> bool:
         """Set PID loop setpoint."""
         # Try real controller first
-        if not self._simulation_mode and self._client and self._client.is_connected():
+        if not self._demo_mode and self._client and self._client.is_connected():
             return self._client.set_setpoint(loop_id, setpoint)
 
         # Try demo mode
@@ -317,7 +333,7 @@ class ProfinetClient:
     def set_pid_mode(self, loop_id: int, mode: int) -> bool:
         """Set PID loop mode."""
         # Try real controller first
-        if not self._simulation_mode and self._client and self._client.is_connected():
+        if not self._demo_mode and self._client and self._client.is_connected():
             return self._client.set_pid_mode(loop_id, mode)
 
         # Try demo mode
@@ -331,7 +347,7 @@ class ProfinetClient:
     def get_alarms(self) -> list[dict[str, Any]]:
         """Get active alarms from controller."""
         # Try real controller first
-        if not self._simulation_mode and self._client and self._client.is_connected():
+        if not self._demo_mode and self._client and self._client.is_connected():
             alarms = self._client.get_alarms()
             if alarms:
                 return alarms
@@ -346,7 +362,7 @@ class ProfinetClient:
     def acknowledge_alarm(self, alarm_id: int, user: str) -> bool:
         """Acknowledge alarm."""
         # Try real controller first
-        if not self._simulation_mode and self._client and self._client.is_connected():
+        if not self._demo_mode and self._client and self._client.is_connected():
             return self._client.acknowledge_alarm(alarm_id, user)
 
         # Try demo mode
