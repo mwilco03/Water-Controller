@@ -7,9 +7,9 @@
 # =============================================================================
 # Stage 1: Build Water Controller
 # =============================================================================
+# --- builder stage ---
 FROM debian:bookworm-slim AS builder
 
-# Install build dependencies
 RUN apt-get update && apt-get install -y \
     build-essential \
     cmake \
@@ -18,7 +18,6 @@ RUN apt-get update && apt-get install -y \
     libjson-c-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy source
 WORKDIR /app
 COPY CMakeLists.txt .
 COPY cmake/ cmake/
@@ -26,17 +25,33 @@ COPY src/ src/
 COPY shared/ shared/
 COPY tests/ tests/
 
-# Build controller (release mode, no tests)
 RUN mkdir build && cd build && \
     cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=OFF .. && \
-    make -j$(nproc) && \
-    echo "=== BUILD VERIFICATION ===" && \
-    ls -la water_treat_controller
+    make -j$(nproc)
 
+# Collect runtime deps
 RUN mkdir /tmp/libs && \
     ldd /app/build/water_treat_controller \
       | awk '/=> \// { print $3 }' \
-      | xargs -I '{}' cp --parents '{}' /tmp/libs
+      | xargs -I '{}' cp --parents '{}' /tmp/libs && \
+    cp --parents /lib64/ld-linux-x86-64.so.2 /tmp/libs || true
+
+
+# --- runtime stage ---
+FROM debian:bookworm-slim
+
+RUN apt-get update && apt-get install -y \
+    procps \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /app/build/water_treat_controller /usr/local/bin/
+COPY --from=builder /tmp/libs/ /
+RUN ldconfig
+
+RUN mkdir -p /etc/water-controller /var/log/water-controller
+RUN groupadd -r wtc && useradd -r -g wtc wtc
+RUN chown -R wtc:wtc /var/log/water-controller
+
 
 # =============================================================================
 # Stage 2: Runtime image (minimal)
