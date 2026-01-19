@@ -133,18 +133,6 @@ async def get_rtu(
     """
     rtu = get_rtu_or_404(db, name)
 
-    # Get slots
-    slots = db.query(Slot).filter(Slot.rtu_id == rtu.id).order_by(Slot.slot_number).all()
-    slot_summaries = [
-        SlotSummary(
-            slot=s.slot_number,
-            module_id=s.module_id,
-            module_type=s.module_type,
-            status=s.status or SlotStatus.EMPTY,
-        ).model_dump()
-        for s in slots
-    ]
-
     stats = build_rtu_stats(db, rtu)
 
     response_data = RtuDetailResponse(
@@ -153,13 +141,13 @@ async def get_rtu(
         ip_address=rtu.ip_address,
         vendor_id=rtu.vendor_id,
         device_id=rtu.device_id,
-        slot_count=rtu.slot_count,
+        slot_count=rtu.slot_count or 0,
         state=rtu.state,
         state_since=rtu.state_since,
         last_error=rtu.last_error,
         created_at=rtu.created_at,
         updated_at=rtu.updated_at,
-        slots=slot_summaries,
+        slots=[],  # Slots are PROFINET frame positions, not database entities
         stats=stats,
     )
 
@@ -286,36 +274,27 @@ async def discover_modules(
     Discover modules in RTU slots via PROFINET.
 
     RTU must be RUNNING.
+
+    Note: Slots are PROFINET frame positions, not database entities.
+    In a real implementation, this would query PROFINET for module info.
+    Currently returns empty discovery as placeholder.
     """
     rtu = get_rtu_or_404(db, name)
 
     if rtu.state != RtuState.RUNNING:
         raise RtuNotConnectedError(name, rtu.state)
 
-    # In a real implementation, this would query PROFINET for module info
-    # For now, return the current slot configuration
-
-    slots = db.query(Slot).filter(Slot.rtu_id == rtu.id).order_by(Slot.slot_number).all()
-
-    discovered = []
-    populated = 0
-    for slot in slots:
-        discovered.append(DiscoveredSlot(
-            slot=slot.slot_number,
-            module_id=slot.module_id or "0x0000",
-            module_type=slot.module_type,
-            subslots=[],
-        ))
-        if slot.module_type:
-            populated += 1
+    # TODO: Query PROFINET for actual module discovery
+    # Slots are frame positions reported by RTU, not stored in database
+    slot_count = rtu.slot_count or 0
 
     response_data = DiscoverResponse(
         station_name=name,
-        discovered_slots=discovered,
+        discovered_slots=[],  # Would be populated by actual PROFINET query
         summary=DiscoverSummary(
-            total_slots=rtu.slot_count,
-            populated_slots=populated,
-            empty_slots=rtu.slot_count - populated,
+            total_slots=slot_count,
+            populated_slots=0,
+            empty_slots=slot_count,
         )
     )
 
