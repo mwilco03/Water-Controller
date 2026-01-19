@@ -108,6 +108,45 @@ When implementing features:
 - `web/api/app/models/__init__.py` - No Slot export
 - `docker/init.sql` - No slot_configs table
 
+## API Response Envelope Pattern
+
+**All API responses use a standard envelope**: `{ data: <payload> }`
+
+**Do**:
+- Return payload directly in `data`: `build_success_response(my_dict)`
+- Keep payloads flat when possible
+- Frontend unwraps with: `response.data || response`
+
+**Do NOT**:
+- Double-wrap responses: `build_success_response(SomeSchema(field=x, nested_data=y).model_dump())`
+- Create nested structures like `{ data: { name: x, results: {...} } }`
+- Require frontend to dig into `response.data.nested_field`
+
+**Example - CORRECT**:
+```python
+# Backend
+counts = {"sensors": 5, "controls": 3}
+return build_success_response({"rtu_name": name, **counts})
+# Returns: { data: { rtu_name: "x", sensors: 5, controls: 3 } }
+
+# Frontend
+const response = await res.json();
+const data = response.data || response;  // { rtu_name: "x", sensors: 5, controls: 3 }
+```
+
+**Example - WRONG**:
+```python
+# Backend - DON'T DO THIS
+return build_success_response(MySchema(name=name, results=counts).model_dump())
+# Returns: { data: { name: "x", results: { sensors: 5, controls: 3 } } }
+# Frontend has to dig: response.data.results
+```
+
+**Frontend helpers** (in `lib/api.ts`):
+- `extractArrayData<T>(response)` - unwraps array payloads
+- `extractObjectData<T>(response, fallback)` - unwraps object payloads
+- `extractErrorMessage(detail, fallback)` - extracts error messages
+
 ## References
 
 - Architecture: `/docs/architecture/SYSTEM_DESIGN.md`
