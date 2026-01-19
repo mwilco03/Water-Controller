@@ -87,24 +87,9 @@ class RtuService:
             state_since=datetime.now(UTC),
         )
         self.db.add(rtu)
-        self.db.flush()  # Get the ID
-
-        # Initialize slots
-        self._initialize_slots(rtu)
-
         self.db.commit()
         self.db.refresh(rtu)
         return rtu
-
-    def _initialize_slots(self, rtu: RTU) -> None:
-        """Initialize empty slots for an RTU."""
-        for i in range(1, rtu.slot_count + 1):
-            slot = Slot(
-                rtu_id=rtu.id,
-                slot_number=i,
-                status=SlotStatus.EMPTY,
-            )
-            self.db.add(slot)
 
     def delete(self, name: str) -> dict:
         """
