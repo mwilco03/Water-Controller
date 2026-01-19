@@ -4,19 +4,15 @@ Copyright (C) 2024
 SPDX-License-Identifier: GPL-3.0-or-later
 
 Pydantic models for RTU configuration templates.
+
+Architecture Decision (2026-01): Slots are NOT database entities.
+SlotTemplate class removed - slots are PROFINET frame positions.
+See CLAUDE.md "Slots Architecture Decision" for rationale.
 """
 
 from datetime import datetime
 
 from pydantic import BaseModel, Field
-
-
-class SlotTemplate(BaseModel):
-    """Slot configuration template."""
-
-    slot_number: int = Field(ge=0, le=31, description="Slot number")
-    module_type: str | None = Field(None, description="Module type (analog_input, digital_output, etc.)")
-    module_id: str | None = Field(None, description="Module identifier")
 
 
 class SensorTemplate(BaseModel):
@@ -78,8 +74,7 @@ class TemplateCreate(BaseModel):
     category: str = Field("general", description="Template category")
     vendor_id: int | None = Field(None, description="Target vendor ID")
     device_id: int | None = Field(None, description="Target device ID")
-    slot_count: int = Field(16, ge=1, le=32, description="Number of slots")
-    slots: list[SlotTemplate] = Field(default_factory=list, description="Slot configs")
+    slot_count: int = Field(16, ge=1, le=32, description="Number of PROFINET slots (metadata)")
     sensors: list[SensorTemplate] = Field(default_factory=list, description="Sensor configs")
     controls: list[ControlTemplate] = Field(default_factory=list, description="Control configs")
     alarms: list[AlarmTemplate] = Field(default_factory=list, description="Alarm rules")
@@ -95,8 +90,7 @@ class TemplateResponse(BaseModel):
     category: str = Field(description="Template category")
     vendor_id: int | str | None = Field(None, description="Target vendor ID")
     device_id: int | str | None = Field(None, description="Target device ID")
-    slot_count: int = Field(description="Number of slots")
-    slots: list[SlotTemplate] = Field(description="Slot configs")
+    slot_count: int = Field(description="Number of PROFINET slots (metadata)")
     sensors: list[SensorTemplate] = Field(description="Sensor configs")
     controls: list[ControlTemplate] = Field(description="Control configs")
     alarms: list[AlarmTemplate] = Field(description="Alarm rules")

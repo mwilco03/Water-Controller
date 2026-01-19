@@ -469,7 +469,6 @@ async def create_template_from_rtu(
         vendor_id=template.vendor_id,
         device_id=template.device_id,
         slot_count=template.slot_count,
-        slots=[],  # Slots are PROFINET frame positions, not stored
         sensors=sensors,
         controls=controls,
         alarms=alarms,

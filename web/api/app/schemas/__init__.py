@@ -53,13 +53,6 @@ from .sensor import (
     SensorListResponse,
     SensorValue,
 )
-from .slot import (
-    SlotConfig,
-    SlotConfigUpdate,
-    SlotListResponse,
-    SlotResponse,
-    SlotStatus,
-)
 from .trends import (
     TrendAggregate,
     TrendData,
@@ -117,12 +110,6 @@ __all__ = [
     "SensorConfig",
     "SensorListResponse",
     "SensorValue",
-    "SlotConfig",
-    "SlotConfigUpdate",
-    "SlotListResponse",
-    "SlotResponse",
-    # Slot
-    "SlotStatus",
     "SuccessResponse",
     "TestResponse",
     "TrendAggregate",
