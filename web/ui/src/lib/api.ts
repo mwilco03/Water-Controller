@@ -167,6 +167,28 @@ export interface RTUInventory {
   last_refresh: string | null;
 }
 
+export interface SlotSensorSummary {
+  id: number;
+  tag: string;
+  type: string;
+}
+
+export interface SlotControlSummary {
+  id: number;
+  tag: string;
+  type: string;
+}
+
+export interface SlotConfig {
+  slot: number;
+  module_id: string | null;
+  module_type: string | null;
+  status: 'OK' | 'EMPTY' | 'FAULT' | 'PULLED' | 'WRONG_MODULE';
+  configured: boolean;
+  sensors: SlotSensorSummary[];
+  controls: SlotControlSummary[];
+}
+
 export interface DiscoveredDevice {
   id: number;
   mac_address: string;
@@ -237,6 +259,14 @@ export async function getSensors(stationName: string): Promise<SensorData[]> {
   );
   // Handle both { data: [...] } and { sensors: [...] } formats
   return response.data || response.sensors || [];
+}
+
+export async function getSlots(stationName: string): Promise<SlotConfig[]> {
+  const response = await apiFetch<{ data?: SlotConfig[] } | SlotConfig[]>(
+    `/api/v1/rtus/${encodeURIComponent(stationName)}/slots`
+  );
+  // Handle both { data: [...] } and direct array formats
+  return (response as { data?: SlotConfig[] }).data || (response as SlotConfig[]);
 }
 
 export async function commandControl(
@@ -507,11 +537,12 @@ export interface PingScanResponse {
 }
 
 export async function pingScanSubnet(subnet: string, timeoutMs = 500): Promise<PingScanResponse> {
-  const data = await apiFetch<PingScanResponse>('/api/v1/discover/ping-scan', {
+  const response = await apiFetch<{ data?: PingScanResponse } | PingScanResponse>('/api/v1/discover/ping-scan', {
     method: 'POST',
     body: JSON.stringify({ subnet, timeout_ms: timeoutMs }),
   });
-  return data;
+  // Handle both { data: {...} } and direct object formats
+  return (response as { data?: PingScanResponse }).data || (response as PingScanResponse);
 }
 
 // ============== Response Data Extraction Utilities ==============

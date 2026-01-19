@@ -149,7 +149,7 @@ export default function RTUsPage() {
     fetchRtus();
   }, [toast, fetchRtus]);
 
-  const handleDeleteSuccess = useCallback((result: { deleted: { alarm_rules: number; pid_loops: number; historian_tags: number } }) => {
+  const handleDeleteSuccess = useCallback((result: { deleted: { alarms: number; pid_loops: number; historian_samples: number; sensors: number; controls: number } }) => {
     const deleted = result.deleted;
     const stationName = showDeleteModal;
     setShowDeleteModal(null);
@@ -158,7 +158,7 @@ export default function RTUsPage() {
     }
     toast.success(
       'RTU deleted',
-      `Cleaned up: ${deleted.alarm_rules} alarm rules, ${deleted.pid_loops} PID loops, ${deleted.historian_tags} historian tags`
+      `Cleaned up: ${deleted.sensors} sensors, ${deleted.controls} controls, ${deleted.alarms} alarms`
     );
     fetchRtus();
   }, [showDeleteModal, selectedRtu, toast, fetchRtus]);

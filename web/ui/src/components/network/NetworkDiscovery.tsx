@@ -435,26 +435,16 @@ export default function NetworkDiscovery({ onDeviceSelect, onAddDevice }: Props)
                 )}
               </div>
 
-              <div className="flex gap-2 pt-4 border-t border-gray-700">
-                {!selectedDevice.configured && selectedDevice.profinet_role === 'device' && (
+              {!selectedDevice.configured && selectedDevice.profinet_role === 'device' && (
+                <div className="flex gap-2 pt-4 border-t border-gray-700">
                   <button
                     onClick={() => handleAddDevice(selectedDevice)}
                     className="flex-1 px-4 py-2 bg-green-600 hover:bg-green-500 rounded text-white font-medium transition-colors"
                   >
                     Add as RTU
                   </button>
-                )}
-                <button
-                  className="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded text-white transition-colors"
-                >
-                  Configure IP
-                </button>
-                <button
-                  className="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded text-white transition-colors"
-                >
-                  Set Name
-                </button>
-              </div>
+                </div>
+              )}
             </div>
           ) : (
             <div className="text-center py-6 text-gray-400">
