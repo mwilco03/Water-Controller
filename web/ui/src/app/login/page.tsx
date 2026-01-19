@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { extractErrorMessage } from '@/lib/api';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -48,7 +49,7 @@ export default function LoginPage() {
         router.push('/');
       } else {
         const data = await res.json();
-        setError(data.detail || 'Login failed');
+        setError(extractErrorMessage(data.detail, 'Login failed'));
       }
     } catch (err) {
       setError('Connection error. Please try again.');

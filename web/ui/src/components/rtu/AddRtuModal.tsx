@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useCallback, useEffect, useRef } from 'react';
+import { extractErrorMessage } from '@/lib/api';
 
 interface RtuFormData {
   station_name: string;
@@ -201,41 +202,21 @@ export default function AddRtuModal({
       // Handle Pydantic validation errors (422) and general bad requests (400)
       if (res.status === 400 || res.status === 422) {
         const data = await res.json();
-        if (data.detail) {
-          if (Array.isArray(data.detail)) {
-            const messages = data.detail
-              .map((err: { msg?: string }) => err.msg || 'Invalid value')
-              .join('; ');
-            setServerError(messages || 'Validation failed');
-          } else if (typeof data.detail === 'string') {
-            if (data.detail.includes('name') || data.detail.includes('station')) {
-              setFieldErrors([{ field: 'station_name', message: data.detail }]);
-            } else if (data.detail.includes('IP') || data.detail.includes('address')) {
-              setFieldErrors([{ field: 'ip_address', message: data.detail }]);
-            } else {
-              setServerError(data.detail);
-            }
-          } else if (typeof data.detail === 'object' && data.detail.msg) {
-            setServerError(data.detail.msg);
-          } else {
-            setServerError('Validation error. Please check your input.');
-          }
+        const errorMsg = extractErrorMessage(data.detail, 'Validation error. Please check your input.');
+        // Try to map to specific field
+        if (errorMsg.includes('name') || errorMsg.includes('station')) {
+          setFieldErrors([{ field: 'station_name', message: errorMsg }]);
+        } else if (errorMsg.includes('IP') || errorMsg.includes('address')) {
+          setFieldErrors([{ field: 'ip_address', message: errorMsg }]);
         } else {
-          setServerError('Invalid request. Please check your input.');
+          setServerError(errorMsg);
         }
         return;
       }
 
       if (res.status === 409) {
         const data = await res.json();
-        let detailMessage = 'An RTU with this name or IP already exists';
-        if (typeof data.detail === 'string') {
-          detailMessage = data.detail;
-        } else if (Array.isArray(data.detail) && data.detail.length > 0) {
-          detailMessage = data.detail[0]?.msg || detailMessage;
-        } else if (data.detail && typeof data.detail === 'object' && data.detail.msg) {
-          detailMessage = data.detail.msg;
-        }
+        const detailMessage = extractErrorMessage(data.detail, 'An RTU with this name or IP already exists');
 
         if (detailMessage.includes('IP')) {
           setFieldErrors([{ field: 'ip_address', message: 'An RTU with this IP address already exists' }]);

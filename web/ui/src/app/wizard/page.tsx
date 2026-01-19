@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { RtuStateBadge } from '@/components/rtu';
 import { useHMIToast } from '@/components/hmi';
+import { extractErrorMessage } from '@/lib/api';
 
 interface DiscoveredSensor {
   bus_type: string;
@@ -205,25 +206,7 @@ export default function WizardPage() {
         nextStep();
       } else {
         const data = await res.json();
-        // Handle Pydantic validation errors (can be array of objects or string)
-        if (data.detail) {
-          if (Array.isArray(data.detail)) {
-            // Pydantic v2 returns array of {type, loc, msg, input, ctx} objects
-            const messages = data.detail
-              .map((err: { msg?: string }) => err.msg || 'Invalid value')
-              .join('; ');
-            setError(messages || 'Validation failed');
-          } else if (typeof data.detail === 'string') {
-            setError(data.detail);
-          } else if (typeof data.detail === 'object' && data.detail.msg) {
-            // Single Pydantic error object
-            setError(data.detail.msg);
-          } else {
-            setError('Failed to add RTU. Please check your input.');
-          }
-        } else {
-          setError('Failed to add RTU');
-        }
+        setError(extractErrorMessage(data.detail, 'Failed to add RTU'));
       }
     } catch (err) {
       setError('Failed to connect to server');

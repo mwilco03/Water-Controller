@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { extractErrorMessage } from '@/lib/api';
 
 interface DeletionImpact {
   slots: number;
@@ -161,7 +162,7 @@ export default function DeleteRtuModal({
       }
 
       const data = await res.json().catch(() => ({}));
-      setDeleteError(data.detail || 'Deletion failed. Some resources may remain. Contact admin.');
+      setDeleteError(extractErrorMessage(data.detail, 'Deletion failed. Some resources may remain. Contact admin.'));
     } catch (err) {
       setDeleteError('Unable to reach server. Check connection and try again.');
     } finally {
