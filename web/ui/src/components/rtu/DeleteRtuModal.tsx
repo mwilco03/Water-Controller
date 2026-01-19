@@ -4,23 +4,21 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { extractErrorMessage } from '@/lib/api';
 
 interface DeletionImpact {
-  slots: number;
   sensors: number;
   controls: number;
   alarms: number;
   pid_loops: number;
-  samples: number;
-  historian_tags: number;
-  modbus_mappings: number;
+  historian_samples: number;
+  estimated_data_size_mb: number;
 }
 
 interface DeletionResult {
   deleted: {
-    alarm_rules: number;
-    pid_loops: number;
-    historian_tags: number;
-    modbus_mappings: number;
+    sensors: number;
+    controls: number;
     alarms: number;
+    pid_loops: number;
+    historian_samples: number;
   };
 }
 
@@ -184,12 +182,11 @@ export default function DeleteRtuModal({
   const canDelete = nameMatches && !deleting && !loadingImpact;
 
   const hasImpact = impact && (
-    impact.slots > 0 ||
     impact.sensors > 0 ||
     impact.controls > 0 ||
     impact.alarms > 0 ||
     impact.pid_loops > 0 ||
-    impact.historian_tags > 0
+    impact.historian_samples > 0
   );
 
   // Handle backdrop click
@@ -268,12 +265,6 @@ export default function DeleteRtuModal({
           ) : hasImpact ? (
             <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
               <div className="grid grid-cols-2 gap-3 text-sm">
-                {impact.slots > 0 && (
-                  <div className="flex items-center gap-2">
-                    <span className="text-gray-400">Slots:</span>
-                    <span className="text-white font-medium">{impact.slots}</span>
-                  </div>
-                )}
                 {impact.sensors > 0 && (
                   <div className="flex items-center gap-2">
                     <span className="text-gray-400">Sensors:</span>
@@ -298,22 +289,16 @@ export default function DeleteRtuModal({
                     <span className="text-white font-medium">{impact.pid_loops}</span>
                   </div>
                 )}
-                {impact.historian_tags > 0 && (
+                {impact.historian_samples > 0 && (
                   <div className="flex items-center gap-2">
-                    <span className="text-gray-400">Historian Tags:</span>
-                    <span className="text-white font-medium">{impact.historian_tags}</span>
+                    <span className="text-gray-400">Historian Samples:</span>
+                    <span className="text-white font-medium">{impact.historian_samples.toLocaleString()}</span>
                   </div>
                 )}
-                {impact.samples > 0 && (
+                {impact.estimated_data_size_mb > 0 && (
                   <div className="flex items-center gap-2">
-                    <span className="text-gray-400">Data Samples:</span>
-                    <span className="text-white font-medium">{impact.samples.toLocaleString()}</span>
-                  </div>
-                )}
-                {impact.modbus_mappings > 0 && (
-                  <div className="flex items-center gap-2">
-                    <span className="text-gray-400">Modbus Mappings:</span>
-                    <span className="text-white font-medium">{impact.modbus_mappings}</span>
+                    <span className="text-gray-400">Data Size:</span>
+                    <span className="text-white font-medium">{impact.estimated_data_size_mb} MB</span>
                   </div>
                 )}
               </div>
