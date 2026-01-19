@@ -19,7 +19,7 @@ from ..core.exceptions import (
 )
 from ..models.alarm import AlarmEvent, AlarmRule
 from ..models.historian import HistorianSample
-from ..models.rtu import RTU, Control, RtuState, Sensor, Slot, SlotStatus
+from ..models.rtu import RTU, Control, RtuState, Sensor
 from ..schemas.rtu import RtuCreate, RtuStats
 
 
@@ -130,7 +130,6 @@ class RtuService:
 
     def _count_resources(self, rtu: RTU) -> dict:
         """Count resources associated with an RTU."""
-        slot_count = self.db.query(Slot).filter(Slot.rtu_id == rtu.id).count()
         sensor_count = self.db.query(Sensor).filter(Sensor.rtu_id == rtu.id).count()
         control_count = self.db.query(Control).filter(Control.rtu_id == rtu.id).count()
         alarm_count = self.db.query(AlarmRule).filter(AlarmRule.rtu_id == rtu.id).count()
@@ -139,7 +138,6 @@ class RtuService:
         ).count()
 
         return {
-            "slots": slot_count,
             "sensors": sensor_count,
             "controls": control_count,
             "alarms": alarm_count,
@@ -164,11 +162,6 @@ class RtuService:
 
     def get_stats(self, rtu: RTU) -> RtuStats:
         """Build statistics for an RTU."""
-        configured_slots = self.db.query(Slot).filter(
-            Slot.rtu_id == rtu.id,
-            Slot.module_type.isnot(None)
-        ).count()
-
         sensor_count = self.db.query(Sensor).filter(Sensor.rtu_id == rtu.id).count()
         control_count = self.db.query(Control).filter(Control.rtu_id == rtu.id).count()
 
@@ -179,8 +172,8 @@ class RtuService:
         ).count()
 
         return RtuStats(
-            slot_count=rtu.slot_count,
-            configured_slots=configured_slots,
+            slot_count=rtu.slot_count or 0,
+            configured_slots=0,  # Slots are PROFINET frame metadata, not database entities
             sensor_count=sensor_count,
             control_count=control_count,
             alarm_count=alarm_count,
