@@ -33,9 +33,8 @@ RUN mkdir build && cd build && \
 RUN mkdir /tmp/libs && \
     ldd /app/build/water_treat_controller \
       | awk '/=> \// { print $3 }' \
-      | xargs -I '{}' cp --parents '{}' /tmp/libs && \
-    cp --parents /lib64/ld-linux-x86-64.so.2 /tmp/libs || true
-
+      | sort -u \
+      | tar -chf /tmp/libs/libs.tar -T -
 
 # --- runtime stage ---
 FROM debian:bookworm-slim
@@ -67,12 +66,12 @@ RUN apt-get update && apt-get install -y \
 
 # Copy controller binary
 COPY --from=builder /app/build/water_treat_controller /usr/local/bin/
-
 # Copy required shared libraries
-COPY --from=builder /tmp/libs/ /
-
 # Rebuild dynamic linker cache
+COPY --from=builder /tmp/libs/libs.tar /tmp/libs.tar
+RUN tar -xf /tmp/libs.tar -C / && rm /tmp/libs.tar
 RUN ldconfig
+
 
 # Create config and log directories
 RUN mkdir -p /etc/water-controller /var/log/water-controller
