@@ -5,6 +5,7 @@ SPDX-License-Identifier: GPL-3.0-or-later
 """
 
 import time
+from datetime import datetime, timezone
 from typing import Any
 
 import ipaddress
@@ -19,6 +20,10 @@ from ...models.rtu import RTU
 from ...services.profinet_client import get_profinet_client
 
 router = APIRouter()
+
+# Simple in-memory cache for discovered devices
+_discovery_cache: list[dict] = []
+_cache_timestamp: str | None = None
 
 
 class DiscoveryRequest(BaseModel):
@@ -43,15 +48,17 @@ class DiscoveryRequest(BaseModel):
 class DiscoveredDevice(BaseModel):
     """Device discovered on the network."""
 
-    ip_address: str
+    id: int  # Derived from MAC address hash
     mac_address: str
-    name_of_station: str
-    vendor: str
-    vendor_id: str
-    device_type: str
-    device_id: str
-    already_configured: bool
-    rtu_name: str | None = None
+    ip_address: str | None
+    device_name: str | None  # PROFINET station name
+    vendor_name: str | None
+    device_type: str | None
+    vendor_id: int | None  # PROFINET vendor ID as integer
+    device_id: int | None  # PROFINET device ID as integer
+    discovered_at: str  # ISO timestamp
+    added_to_registry: bool  # True if already configured in DB
+    rtu_name: str | None = None  # Name in registry if configured
 
 
 class DiscoveryResponse(BaseModel):
@@ -82,6 +89,13 @@ async def discover_rtus(
     configured_macs = {getattr(rtu, 'mac_address', '').lower() for rtu in existing_rtus if hasattr(rtu, 'mac_address')}
 
     devices = []
+    now = datetime.now(timezone.utc).isoformat()
+
+    def mac_to_id(mac: str) -> int:
+        """Convert MAC address to a stable integer ID."""
+        clean = mac.replace(":", "").replace("-", "").lower()
+        # Use last 6 hex digits as ID (fits in 32-bit int)
+        return int(clean[-6:], 16) if clean else 0
 
     # Try real DCP discovery via controller
     profinet = get_profinet_client()
@@ -90,37 +104,49 @@ async def discover_rtus(
 
         for dev in discovered:
             device_name = dev.get("device_name", "").lower()
-            mac = dev.get("mac_address", "").lower()
+            mac = dev.get("mac_address", "00:00:00:00:00:00")
 
             # Check if already configured
-            already_configured = device_name in configured_stations or mac in configured_macs
+            added_to_registry = device_name in configured_stations or mac.lower() in configured_macs
             rtu_name = None
             if device_name in configured_stations:
                 rtu_name = configured_stations[device_name].station_name
 
             devices.append(DiscoveredDevice(
-                ip_address=dev.get("ip_address") or "0.0.0.0",
-                mac_address=dev.get("mac_address", "00:00:00:00:00:00"),
-                name_of_station=dev.get("device_name", "unknown"),
-                vendor=dev.get("vendor_name", "Unknown"),
-                vendor_id=hex(dev.get("profinet_vendor_id", 0)),
-                device_type=dev.get("device_type", "PROFINET Device"),
-                device_id=hex(dev.get("profinet_device_id", 0)),
-                already_configured=already_configured,
+                id=mac_to_id(mac),
+                mac_address=mac,
+                ip_address=dev.get("ip_address") or None,
+                device_name=dev.get("device_name") or None,
+                vendor_name=dev.get("vendor_name") or None,
+                device_type=dev.get("device_type") or "PROFINET Device",
+                vendor_id=dev.get("profinet_vendor_id"),
+                device_id=dev.get("profinet_device_id"),
+                discovered_at=now,
+                added_to_registry=added_to_registry,
                 rtu_name=rtu_name,
             ))
     else:
         # Controller not running - return configured RTUs for HMI testing
-        for rtu in existing_rtus:
+        for idx, rtu in enumerate(existing_rtus):
+            # Parse hex vendor/device IDs if stored as strings
+            vendor_id = rtu.vendor_id
+            device_id = rtu.device_id
+            if isinstance(vendor_id, str):
+                vendor_id = int(vendor_id, 16) if vendor_id.startswith("0x") else int(vendor_id)
+            if isinstance(device_id, str):
+                device_id = int(device_id, 16) if device_id.startswith("0x") else int(device_id)
+
             devices.append(DiscoveredDevice(
-                ip_address=rtu.ip_address,
+                id=idx + 1,
                 mac_address="00:00:00:00:00:00",
-                name_of_station=rtu.station_name,
-                vendor="Unknown (simulation mode)",
-                vendor_id=rtu.vendor_id,
+                ip_address=rtu.ip_address,
+                device_name=rtu.station_name,
+                vendor_name="Simulation Mode",
                 device_type="Water Treatment RTU",
-                device_id=rtu.device_id,
-                already_configured=True,
+                vendor_id=vendor_id,
+                device_id=device_id,
+                discovered_at=now,
+                added_to_registry=True,
                 rtu_name=rtu.station_name,
             ))
 
@@ -131,4 +157,33 @@ async def discover_rtus(
         scan_duration_seconds=round(duration, 2),
     )
 
+    # Cache the results
+    global _discovery_cache, _cache_timestamp
+    _discovery_cache = [d.model_dump() for d in devices]
+    _cache_timestamp = now
+
     return build_success_response(response.model_dump())
+
+
+@router.get("/cached")
+async def get_cached_discovery() -> dict[str, Any]:
+    """
+    Get previously discovered devices from cache.
+
+    Returns the last scan results without performing a new network scan.
+    """
+    return build_success_response({
+        "devices": _discovery_cache,
+        "cached_at": _cache_timestamp,
+    })
+
+
+@router.delete("/cache")
+async def clear_discovery_cache() -> dict[str, Any]:
+    """
+    Clear the discovery cache.
+    """
+    global _discovery_cache, _cache_timestamp
+    _discovery_cache = []
+    _cache_timestamp = None
+    return build_success_response({"message": "Discovery cache cleared"})
