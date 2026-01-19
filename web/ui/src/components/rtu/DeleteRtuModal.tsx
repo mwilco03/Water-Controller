@@ -72,45 +72,40 @@ export default function DeleteRtuModal({
 
       if (res.ok) {
         const response = await res.json();
-        // Unwrap response envelope - backend returns { data: impact }
-        setImpact(response.data || response);
+        // Unwrap response envelope - backend returns { data: { rtu: string, impact: {...} } }
+        const data = response.data || response;
+        setImpact(data.impact || data);
       } else if (res.status === 404) {
         // RTU not found - might have been deleted already
         setImpact({
-          slots: 0,
           sensors: 0,
           controls: 0,
           alarms: 0,
           pid_loops: 0,
-          samples: 0,
-          historian_tags: 0,
-          modbus_mappings: 0,
+          historian_samples: 0,
+          estimated_data_size_mb: 0,
         });
       } else {
         setImpactError('Failed to load deletion impact. Proceed with caution.');
         // Set default impact so user can still proceed
         setImpact({
-          slots: 0,
           sensors: 0,
           controls: 0,
           alarms: 0,
           pid_loops: 0,
-          samples: 0,
-          historian_tags: 0,
-          modbus_mappings: 0,
+          historian_samples: 0,
+          estimated_data_size_mb: 0,
         });
       }
     } catch (err) {
       setImpactError('Unable to reach server. Proceed with caution.');
       setImpact({
-        slots: 0,
         sensors: 0,
         controls: 0,
         alarms: 0,
         pid_loops: 0,
-        samples: 0,
-        historian_tags: 0,
-        modbus_mappings: 0,
+        historian_samples: 0,
+        estimated_data_size_mb: 0,
       });
     } finally {
       setLoadingImpact(false);
