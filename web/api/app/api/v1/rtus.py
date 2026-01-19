@@ -185,17 +185,19 @@ async def get_deletion_impact(
 ) -> dict[str, Any]:
     """
     Preview what will be deleted (for confirmation UI).
+
+    Returns flat structure: { data: { rtu_name, sensors, controls, ... } }
     """
     # Delegate to service layer (single source of truth for resource counting)
     service = get_rtu_service(db)
     impact = service.get_deletion_impact(name)
 
-    response_data = DeletionImpact(
-        rtu=name,
-        impact=impact,
-    )
-
-    return build_success_response(response_data.model_dump())
+    # Return flat structure - include rtu_name in the impact dict
+    # This avoids nested { data: { rtu: x, impact: {...} } } structure
+    return build_success_response({
+        "rtu_name": name,
+        **impact,
+    })
 
 
 # ==================== Connection Management ====================

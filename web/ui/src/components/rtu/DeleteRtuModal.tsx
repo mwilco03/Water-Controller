@@ -72,9 +72,8 @@ export default function DeleteRtuModal({
 
       if (res.ok) {
         const response = await res.json();
-        // Unwrap response envelope - backend returns { data: { rtu: string, impact: {...} } }
-        const data = response.data || response;
-        setImpact(data.impact || data);
+        // Unwrap response envelope - backend returns flat { data: { rtu_name, sensors, controls, ... } }
+        setImpact(response.data || response);
       } else if (res.status === 404) {
         // RTU not found - might have been deleted already
         setImpact({
