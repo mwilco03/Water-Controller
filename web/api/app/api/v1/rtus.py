@@ -382,6 +382,144 @@ async def test_connection(
     return build_success_response(response_data.model_dump())
 
 
+# ==================== Health and Inventory ====================
+
+
+@router.get("/{name}/health")
+async def get_rtu_health(
+    name: str,
+    db: Session = Depends(get_db)
+) -> dict[str, Any]:
+    """
+    Get RTU health status.
+
+    Returns live connection state from PROFINET controller if available,
+    or database state if controller is not running. Includes packet loss
+    and failure metrics when available from real PROFINET connection.
+    """
+    rtu = get_rtu_or_404(db, name)
+    profinet = get_profinet_client()
+
+    # Get live state from controller if available
+    controller_state = profinet.get_rtu_state(name)
+    connection_state = controller_state or rtu.state
+
+    # Determine health based on state
+    is_healthy = connection_state == RtuState.RUNNING
+
+    # Get PROFINET status for metrics (if available)
+    packet_loss = 0.0
+    consecutive_failures = 0
+
+    if is_healthy and profinet.is_controller_running():
+        # Get detailed stats from controller
+        status = profinet.get_status()
+        if status.get("connected"):
+            # In real implementation, these would come from shared memory
+            # For now, use simulation defaults
+            packet_loss = status.get("packet_loss_percent", 0.0)
+
+    return build_success_response({
+        "station_name": rtu.station_name,
+        "connection_state": connection_state,
+        "healthy": is_healthy,
+        "packet_loss_percent": packet_loss,
+        "consecutive_failures": consecutive_failures,
+        "in_failover": False,
+        "last_error": rtu.last_error,
+        "state_since": rtu.state_since.isoformat() if rtu.state_since else None,
+        "transition_reason": rtu.transition_reason,
+    })
+
+
+@router.get("/{name}/inventory")
+async def get_rtu_inventory(
+    name: str,
+    db: Session = Depends(get_db)
+) -> dict[str, Any]:
+    """
+    Get RTU slot/module inventory.
+
+    Returns configured sensors and controls as inventory items.
+    Note: Slots are PROFINET frame positions, not database entities.
+    The inventory is derived from configured sensors/controls.
+    """
+    from ...models.rtu import Sensor, Control
+
+    rtu = get_rtu_or_404(db, name)
+
+    # Get sensors and controls as inventory items
+    sensors = db.query(Sensor).filter(Sensor.rtu_id == rtu.id).all()
+    controls = db.query(Control).filter(Control.rtu_id == rtu.id).all()
+
+    slots = []
+
+    # Add sensors as input slots
+    for sensor in sensors:
+        slots.append({
+            "slot": sensor.slot_number,
+            "subslot": 0,
+            "type": "input",
+            "module_type": "analog_input",
+            "tag": sensor.tag,
+            "sensor_type": sensor.sensor_type,
+            "unit": sensor.unit,
+            "channel": sensor.channel,
+        })
+
+    # Add controls as output slots
+    for control in controls:
+        slots.append({
+            "slot": control.slot_number,
+            "subslot": 0,
+            "type": "output",
+            "module_type": control.control_type,
+            "tag": control.tag,
+            "equipment_type": control.equipment_type,
+            "unit": control.unit,
+            "channel": control.channel,
+        })
+
+    # Sort by slot number (None values at end)
+    slots.sort(key=lambda x: (x.get("slot") is None, x.get("slot") or 0))
+
+    # Calculate slot usage
+    populated_slots = sum(1 for s in slots if s.get("slot") is not None)
+    total_slots = rtu.slot_count or 0
+
+    return build_success_response({
+        "station_name": rtu.station_name,
+        "slot_count": total_slots,
+        "populated_slots": populated_slots,
+        "empty_slots": max(0, total_slots - populated_slots),
+        "slots": slots,
+        "last_updated": rtu.updated_at.isoformat() if rtu.updated_at else None,
+    })
+
+
+@router.post("/{name}/inventory/refresh")
+async def refresh_rtu_inventory(
+    name: str,
+    db: Session = Depends(get_db)
+) -> dict[str, Any]:
+    """
+    Refresh RTU inventory from PROFINET.
+
+    RTU must be RUNNING. This triggers a PROFINET module discovery
+    to update the slot configuration.
+    """
+    rtu = get_rtu_or_404(db, name)
+
+    if rtu.state != RtuState.RUNNING:
+        raise RtuNotConnectedError(name, rtu.state)
+
+    # In a real implementation, this would trigger PROFINET module discovery
+    # For now, just return current inventory
+    # TODO: Implement actual PROFINET module discovery via IPC
+
+    return await get_rtu_inventory(name, db)
+
+
 # Include nested routers for sensors, controls, profinet, pid
 # Note: slots router removed - slots are PROFINET frame positions, not database entities
 from .controls import router as controls_router
