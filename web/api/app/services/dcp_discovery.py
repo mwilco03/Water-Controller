@@ -222,7 +222,7 @@ def parse_dcp_response(data: bytes) -> DCPDevice | None:
 
 
 def discover_profinet_devices_sync(
-    interface: str = "eth0",
+    interface: str | None = None,
     timeout_sec: float = 5.0
 ) -> list[DCPDevice]:
     """
@@ -230,7 +230,14 @@ def discover_profinet_devices_sync(
 
     Sends DCP Identify All multicast and collects responses.
     Requires CAP_NET_RAW capability.
+
+    Args:
+        interface: Network interface. Auto-detected if None.
+        timeout_sec: Discovery timeout in seconds.
     """
+    if interface is None:
+        from ..core.network import get_profinet_interface
+        interface = get_profinet_interface()
     devices: list[DCPDevice] = []
     seen_macs: set[str] = set()
 

@@ -15,8 +15,37 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# Default values
-PROFINET_INTERFACE="${1:-eth0}"
+# Auto-detect network interface
+detect_interface() {
+    # Find first non-loopback, non-virtual interface that is UP
+    for iface in /sys/class/net/*; do
+        name=$(basename "$iface")
+        case "$name" in
+            lo|docker*|veth*|br-*|virbr*|vnet*) continue ;;
+        esac
+        if [ -f "$iface/operstate" ] && [ "$(cat "$iface/operstate")" = "up" ]; then
+            echo "$name"
+            return 0
+        fi
+    done
+    # Fallback: first physical interface
+    for iface in /sys/class/net/*; do
+        name=$(basename "$iface")
+        case "$name" in
+            lo|docker*|veth*|br-*|virbr*|vnet*) continue ;;
+        esac
+        echo "$name"
+        return 0
+    done
+    echo ""
+}
+
+# Default values - auto-detect interface if not specified
+PROFINET_INTERFACE="${1:-$(detect_interface)}"
+if [ -z "$PROFINET_INTERFACE" ]; then
+    echo "ERROR: No network interface found. Please specify one."
+    exit 1
+fi
 PROFINET_IP="${2:-192.168.1.1}"
 PROFINET_NETMASK="${3:-255.255.255.0}"
 PROFINET_VLAN="${4:-}"
@@ -334,7 +363,7 @@ usage() {
     echo "Usage: $0 [INTERFACE] [IP_ADDRESS] [NETMASK] [VLAN_ID]"
     echo ""
     echo "Arguments:"
-    echo "  INTERFACE    Network interface to configure (default: eth0)"
+    echo "  INTERFACE    Network interface to configure (default: auto-detect)"
     echo "  IP_ADDRESS   IP address for PROFINET (default: 192.168.1.1)"
     echo "  NETMASK      Network mask (default: 255.255.255.0)"
     echo "  VLAN_ID      Optional VLAN ID for tagged traffic"

@@ -1,6 +1,6 @@
 {
   "controller": {
-    "interface": "eth0",
+    "interface": "",
     "cycle_time_ms": 1000,
     "discovery_timeout_ms": 5000,
     "connection_timeout_ms": 10000
