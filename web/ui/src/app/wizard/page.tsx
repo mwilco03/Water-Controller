@@ -40,7 +40,6 @@ interface WizardState {
     ip_address: string;
     vendor_id: number;
     device_id: number;
-    slot_count: number;
   };
   completedSteps: WizardStep[];
   skippedSteps: WizardStep[];
@@ -91,7 +90,6 @@ export default function WizardPage() {
     ip_address: '',
     vendor_id: 0x0493,
     device_id: 0x0001,
-    slot_count: 16,
   });
 
   // Discovered sensors
@@ -199,7 +197,14 @@ export default function WizardPage() {
       const res = await fetch('/api/v1/rtus', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(rtuConfig),
+        body: JSON.stringify({
+          station_name: rtuConfig.station_name,
+          ip_address: rtuConfig.ip_address,
+          // Convert to hex strings as required by API
+          vendor_id: `0x${rtuConfig.vendor_id.toString(16).padStart(4, '0')}`,
+          device_id: `0x${rtuConfig.device_id.toString(16).padStart(4, '0')}`,
+          // slot_count defaults to 8 on backend, updated from RTU after connection
+        }),
       });
 
       if (res.ok) {
@@ -530,21 +535,6 @@ export default function WizardPage() {
                       className="w-full px-4 py-2 bg-hmi-panel border border-hmi-border rounded text-hmi-text font-mono"
                     />
                   </div>
-                </div>
-
-                <div>
-                  <label className="block text-sm text-hmi-muted mb-1">Initial Slot Count</label>
-                  <select
-                    value={rtuConfig.slot_count}
-                    onChange={(e) => setRtuConfig({ ...rtuConfig, slot_count: parseInt(e.target.value) })}
-                    className="w-full px-4 py-2 bg-hmi-panel border border-hmi-border rounded text-hmi-text"
-                  >
-                    <option value={8}>8 slots</option>
-                    <option value={16}>16 slots</option>
-                    <option value={32}>32 slots</option>
-                    <option value={64}>64 slots</option>
-                  </select>
-                  <p className="text-xs text-gray-500 mt-1">Will be updated automatically from RTU configuration</p>
                 </div>
               </div>
 
@@ -944,7 +934,6 @@ export default function WizardPage() {
                       ip_address: '',
                       vendor_id: 0x0493,
                       device_id: 0x0001,
-                      slot_count: 16,
                     });
                     setDiscoveredSensors([]);
                     setSelectedSensors(new Set());

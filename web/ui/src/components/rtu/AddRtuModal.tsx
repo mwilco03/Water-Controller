@@ -7,7 +7,6 @@ interface RtuFormData {
   ip_address: string;
   vendor_id: string;
   device_id: string;
-  slot_count: number;
 }
 
 interface FieldError {
@@ -27,7 +26,6 @@ const INITIAL_FORM_DATA: RtuFormData = {
   ip_address: '',
   vendor_id: '0x0000',
   device_id: '0x0000',
-  slot_count: 8,
 };
 
 // Validation functions
@@ -66,12 +64,6 @@ function validateHexId(value: string, fieldName: string): string | null {
   return null;
 }
 
-function validateSlotCount(value: number): string | null {
-  if (value < 1 || value > 64) {
-    return 'Slot count must be between 1 and 64';
-  }
-  return null;
-}
 
 export default function AddRtuModal({
   isOpen,
@@ -126,24 +118,22 @@ export default function AddRtuModal({
     return error?.message || null;
   };
 
-  const validateField = useCallback((field: keyof RtuFormData, value: string | number): string | null => {
+  const validateField = useCallback((field: keyof RtuFormData, value: string): string | null => {
     switch (field) {
       case 'station_name':
-        return validateStationName(value as string);
+        return validateStationName(value);
       case 'ip_address':
-        return validateIpAddress(value as string);
+        return validateIpAddress(value);
       case 'vendor_id':
-        return validateHexId(value as string, 'Vendor ID');
+        return validateHexId(value, 'Vendor ID');
       case 'device_id':
-        return validateHexId(value as string, 'Device ID');
-      case 'slot_count':
-        return validateSlotCount(value as number);
+        return validateHexId(value, 'Device ID');
       default:
         return null;
     }
   }, []);
 
-  const handleChange = useCallback((field: keyof RtuFormData, value: string | number) => {
+  const handleChange = useCallback((field: keyof RtuFormData, value: string) => {
     setFormData(prev => ({ ...prev, [field]: value }));
     setServerError(null);
 
@@ -204,9 +194,9 @@ export default function AddRtuModal({
         body: JSON.stringify({
           station_name: formData.station_name,
           ip_address: formData.ip_address,
-          vendor_id: parseInt(formData.vendor_id, 16),
-          device_id: parseInt(formData.device_id, 16),
-          slot_count: formData.slot_count,
+          vendor_id: formData.vendor_id,
+          device_id: formData.device_id,
+          // slot_count defaults to 8 on backend, updated from RTU after connection
         }),
       });
 
@@ -433,32 +423,6 @@ export default function AddRtuModal({
                 <p className="text-red-400 text-xs mt-1">{getFieldError('device_id')}</p>
               )}
             </div>
-          </div>
-
-          {/* Slot Count */}
-          <div>
-            <label className="block text-sm font-medium text-gray-300 mb-1">
-              Slot Count <span className="text-red-400">*</span>
-            </label>
-            <select
-              value={formData.slot_count}
-              onChange={e => handleChange('slot_count', parseInt(e.target.value))}
-              onBlur={() => handleBlur('slot_count')}
-              disabled={loading}
-              className={`w-full px-3 py-2 bg-gray-800 border rounded text-white focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 ${
-                getFieldError('slot_count') ? 'border-red-500' : 'border-gray-700'
-              }`}
-            >
-              {[1, 2, 4, 8, 16, 32, 64].map(count => (
-                <option key={count} value={count}>
-                  {count} {count === 1 ? 'slot' : 'slots'}
-                </option>
-              ))}
-            </select>
-            {getFieldError('slot_count') && (
-              <p className="text-red-400 text-xs mt-1">{getFieldError('slot_count')}</p>
-            )}
-            <p className="text-gray-500 text-xs mt-1">Number of I/O slots (default: 8)</p>
           </div>
         </div>
 
