@@ -33,6 +33,11 @@ RUN mkdir build && cd build && \
     echo "=== BUILD VERIFICATION ===" && \
     ls -la water_treat_controller
 
+RUN mkdir /tmp/libs && \
+    ldd /app/build/water_treat_controller \
+      | awk '/=> \// { print $3 }' \
+      | xargs -I '{}' cp --parents '{}' /tmp/libs
+
 # =============================================================================
 # Stage 2: Runtime image (minimal)
 # =============================================================================
@@ -47,6 +52,12 @@ RUN apt-get update && apt-get install -y \
 
 # Copy controller binary
 COPY --from=builder /app/build/water_treat_controller /usr/local/bin/
+
+# Copy required shared libraries
+COPY --from=builder /tmp/libs/ /
+
+# Rebuild dynamic linker cache
+RUN ldconfig
 
 # Create config and log directories
 RUN mkdir -p /etc/water-controller /var/log/water-controller
