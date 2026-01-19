@@ -15,7 +15,7 @@ split into focused modules for maintainability:
   modbus.py    - Modbus server config, devices, mappings
   sessions.py  - User session management
   users.py     - User management, authentication
-  historian.py - Historian tags, slot configurations
+  historian.py - Historian tags
   config.py    - Log forwarding, AD config, backups, import/export
   discovery.py - DCP discovery cache
   audit.py     - Audit log, command log
@@ -75,15 +75,10 @@ from .discovery import (
 )
 from .historian import (
     delete_historian_tag,
-    delete_slot_config,
-    get_all_slot_configs,
     get_historian_tag,
     get_historian_tag_by_name,
     get_historian_tags,
-    get_slot_config,
-    get_slot_configs_by_rtu,
     upsert_historian_tag,
-    upsert_slot_config,
 )
 from .modbus import (
     create_modbus_downstream_device,

@@ -4,13 +4,18 @@ Copyright (C) 2024
 SPDX-License-Identifier: GPL-3.0-or-later
 
 Common utility functions for RTU operations used across multiple endpoints.
+
+Architecture Decision (2026-01): Slots are NOT database entities.
+See CLAUDE.md "Slots Architecture Decision" for rationale.
+The get_slot_or_404 function was removed - slots are PROFINET frame
+positions, not database records.
 """
 
 from sqlalchemy.orm import Session
 
-from ..models.rtu import RTU, RtuState, Slot
+from ..models.rtu import RTU, RtuState
 from ..schemas.common import DataQuality
-from .exceptions import RtuNotFoundError, SlotNotFoundError
+from .exceptions import RtuNotFoundError
 
 
 def get_rtu_or_404(db: Session, name: str) -> RTU:
@@ -31,30 +36,6 @@ def get_rtu_or_404(db: Session, name: str) -> RTU:
     if not rtu:
         raise RtuNotFoundError(name)
     return rtu
-
-
-def get_slot_or_404(db: Session, rtu: RTU, slot_number: int) -> Slot:
-    """
-    Get slot by number or raise 404.
-
-    Args:
-        db: Database session
-        rtu: RTU instance
-        slot_number: Slot number to look up
-
-    Returns:
-        Slot instance
-
-    Raises:
-        SlotNotFoundError: If no slot with that number exists
-    """
-    slot = db.query(Slot).filter(
-        Slot.rtu_id == rtu.id,
-        Slot.slot_number == slot_number
-    ).first()
-    if not slot:
-        raise SlotNotFoundError(rtu.station_name, slot_number, rtu.slot_count)
-    return slot
 
 
 def get_data_quality(rtu_state: str) -> DataQuality:

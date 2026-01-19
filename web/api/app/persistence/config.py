@@ -154,7 +154,7 @@ def import_configuration(config: dict[str, Any], user: str = "system") -> dict[s
     """
     # Import these here to avoid circular imports
     from .alarms import create_alarm_rule, get_alarm_rule, update_alarm_rule
-    from .historian import upsert_historian_tag, upsert_slot_config
+    from .historian import upsert_historian_tag
     from .modbus import create_modbus_downstream_device, create_modbus_register_mapping, update_modbus_server_config
     from .pid import create_pid_loop, get_pid_loop, update_pid_loop
     from .rtu import create_rtu_device, get_rtu_device, update_rtu_device
@@ -162,7 +162,6 @@ def import_configuration(config: dict[str, Any], user: str = "system") -> dict[s
 
     imported = {
         "rtus": 0,
-        "slot_configs": 0,
         "alarm_rules": 0,
         "pid_loops": 0,
         "historian_tags": 0,
@@ -189,18 +188,7 @@ def import_configuration(config: dict[str, Any], user: str = "system") -> dict[s
                     "Manually add RTU or fix import file and retry."
                 )
 
-    # Import slot configs
-    if "slot_configs" in config:
-        for slot_data in config["slot_configs"]:
-            try:
-                upsert_slot_config(slot_data)
-                imported["slot_configs"] += 1
-            except Exception as e:
-                logger.warning(
-                    f"Slot config import failed: {e}. "
-                    "Slot configuration not restored. "
-                    "Manually configure slot or fix import file."
-                )
+    # Note: slot_configs import removed - slots are PROFINET frame positions, not database entities
 
     # Import alarm rules
     if "alarm_rules" in config:
@@ -348,7 +336,7 @@ def export_configuration() -> dict[str, Any]:
     """
     # Import these here to avoid circular imports
     from .alarms import get_alarm_rules
-    from .historian import get_all_slot_configs, get_historian_tags
+    from .historian import get_historian_tags
     from .modbus import get_modbus_downstream_devices, get_modbus_register_mappings, get_modbus_server_config
     from .pid import get_pid_loops
     from .rtu import get_rtu_devices
@@ -367,7 +355,6 @@ def export_configuration() -> dict[str, Any]:
         "version": "1.0",
         "exported_at": datetime.now().isoformat(),
         "rtus": get_rtu_devices(),
-        "slot_configs": get_all_slot_configs(),
         "alarm_rules": get_alarm_rules(),
         "pid_loops": get_pid_loops(),
         "historian_tags": get_historian_tags(),
