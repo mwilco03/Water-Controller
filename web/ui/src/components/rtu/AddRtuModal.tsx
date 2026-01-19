@@ -256,13 +256,22 @@ export default function AddRtuModal({
 
       if (res.status === 409) {
         const data = await res.json();
-        const detail = data.detail || 'An RTU with this name or IP already exists';
-        if (detail.includes('IP')) {
+        // Handle different detail formats (string, object, or array)
+        let detailMessage = 'An RTU with this name or IP already exists';
+        if (typeof data.detail === 'string') {
+          detailMessage = data.detail;
+        } else if (Array.isArray(data.detail) && data.detail.length > 0) {
+          detailMessage = data.detail[0]?.msg || detailMessage;
+        } else if (data.detail && typeof data.detail === 'object' && data.detail.msg) {
+          detailMessage = data.detail.msg;
+        }
+
+        if (detailMessage.includes('IP')) {
           setFieldErrors([{ field: 'ip_address', message: 'An RTU with this IP address already exists' }]);
-        } else if (detail.includes('name')) {
+        } else if (detailMessage.includes('name')) {
           setFieldErrors([{ field: 'station_name', message: 'An RTU with this name already exists' }]);
         } else {
-          setServerError(detail);
+          setServerError(detailMessage);
         }
         return;
       }

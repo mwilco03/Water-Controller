@@ -206,7 +206,25 @@ export default function WizardPage() {
         nextStep();
       } else {
         const data = await res.json();
-        setError(data.detail || 'Failed to add RTU');
+        // Handle Pydantic validation errors (can be array of objects or string)
+        if (data.detail) {
+          if (Array.isArray(data.detail)) {
+            // Pydantic v2 returns array of {type, loc, msg, input, ctx} objects
+            const messages = data.detail
+              .map((err: { msg?: string }) => err.msg || 'Invalid value')
+              .join('; ');
+            setError(messages || 'Validation failed');
+          } else if (typeof data.detail === 'string') {
+            setError(data.detail);
+          } else if (typeof data.detail === 'object' && data.detail.msg) {
+            // Single Pydantic error object
+            setError(data.detail.msg);
+          } else {
+            setError('Failed to add RTU. Please check your input.');
+          }
+        } else {
+          setError('Failed to add RTU');
+        }
       }
     } catch (err) {
       setError('Failed to connect to server');
