@@ -451,7 +451,7 @@ static void register_rtus_with_registry(simulator_t *sim) {
 
         if (res == WTC_OK) {
             /* Set connection state */
-            rtu_registry_set_state(sim->registry, rtu->config.station_name, rtu->config.state);
+            rtu_registry_set_device_state(sim->registry, rtu->config.station_name, rtu->config.state);
             LOG_INFO("[SIM] Registered RTU: %s (%s)",
                      rtu->config.station_name, rtu->config.ip_address);
         }
