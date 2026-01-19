@@ -178,6 +178,7 @@ export interface DiscoveredDevice {
   device_id: number | null;
   discovered_at: string;
   added_to_registry: boolean;
+  rtu_name: string | null;
 }
 
 // Generic fetch wrapper with error handling and automatic auth
@@ -485,6 +486,32 @@ export async function getCachedDiscovery(): Promise<DiscoveredDevice[]> {
 
 export async function clearDiscoveryCache(): Promise<void> {
   await apiFetch('/api/v1/discover/cache', { method: 'DELETE' });
+}
+
+// ============== Ping Scan ==============
+
+export interface PingResult {
+  ip_address: string;
+  reachable: boolean;
+  response_time_ms: number | null;
+  hostname: string | null;
+}
+
+export interface PingScanResponse {
+  subnet: string;
+  total_hosts: number;
+  reachable_count: number;
+  unreachable_count: number;
+  scan_duration_seconds: number;
+  results: PingResult[];
+}
+
+export async function pingScanSubnet(subnet: string, timeoutMs = 500): Promise<PingScanResponse> {
+  const data = await apiFetch<PingScanResponse>('/api/v1/discover/ping-scan', {
+    method: 'POST',
+    body: JSON.stringify({ subnet, timeout_ms: timeoutMs }),
+  });
+  return data;
 }
 
 // ============== Response Data Extraction Utilities ==============
