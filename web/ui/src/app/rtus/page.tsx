@@ -142,10 +142,10 @@ export default function RTUsPage() {
     }
   };
 
-  const handleAddSuccess = useCallback((rtu: { station_name: string }) => {
+  const handleAddSuccess = useCallback((rtu: { ip_address: string }) => {
     setShowAddModal(false);
     setAddPrefill(undefined);
-    toast.success('RTU added successfully', `${rtu.station_name} has been registered`);
+    toast.success('RTU added successfully', `RTU at ${rtu.ip_address} has been registered`);
     fetchRtus();
   }, [toast, fetchRtus]);
 

@@ -58,20 +58,27 @@ class RtuService:
 
         Validates uniqueness of station_name and ip_address,
         creates the RTU record, and initializes empty slots.
-        """
-        # Check for duplicate station_name
-        existing = self.db.query(RTU).filter(RTU.station_name == request.station_name).first()
-        if existing:
-            raise RtuAlreadyExistsError("station_name", request.station_name)
 
-        # Check for duplicate IP
+        If station_name is not provided, auto-generates from IP address.
+        """
+        # Check for duplicate IP first
         existing_ip = self.db.query(RTU).filter(RTU.ip_address == request.ip_address).first()
         if existing_ip:
             raise RtuAlreadyExistsError("ip_address", request.ip_address)
 
+        # Auto-generate station_name from IP if not provided
+        station_name = request.station_name
+        if not station_name:
+            station_name = f"rtu-{request.ip_address.replace('.', '-')}"
+
+        # Check for duplicate station_name
+        existing = self.db.query(RTU).filter(RTU.station_name == station_name).first()
+        if existing:
+            raise RtuAlreadyExistsError("station_name", station_name)
+
         # Create RTU
         rtu = RTU(
-            station_name=request.station_name,
+            station_name=station_name,
             ip_address=request.ip_address,
             vendor_id=request.vendor_id,
             device_id=request.device_id,
