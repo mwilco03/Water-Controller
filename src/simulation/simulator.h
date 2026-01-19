@@ -55,7 +55,7 @@ typedef struct {
 typedef struct {
     int slot;
     char tag[32];
-    actuator_command_t command;
+    actuator_cmd_t command;
     uint8_t pwm_duty;
     bool forced;
 } sim_actuator_state_t;
@@ -182,7 +182,7 @@ wtc_result_t simulator_get_sensor(simulator_t *simulator,
 wtc_result_t simulator_command_actuator(simulator_t *simulator,
                                          const char *station_name,
                                          int slot,
-                                         actuator_command_t command,
+                                         actuator_cmd_t command,
                                          uint8_t pwm_duty);
 
 /*

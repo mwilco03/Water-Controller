@@ -114,7 +114,7 @@ static void setup_water_treatment_scenario(simulator_t *sim) {
     strncpy(intake->config.ip_address, "192.168.1.10", 15);
     intake->config.vendor_id = 0x0493;
     intake->config.device_id = 0x0001;
-    intake->config.state = PROFINET_STATE_RUN;
+    intake->config.state = PROFINET_STATE_RUNNING;
     intake->config.slot_count = 16;
 
     /* Intake sensors */
@@ -152,7 +152,7 @@ static void setup_water_treatment_scenario(simulator_t *sim) {
     strncpy(clarifier->config.ip_address, "192.168.1.11", 15);
     clarifier->config.vendor_id = 0x0493;
     clarifier->config.device_id = 0x0001;
-    clarifier->config.state = PROFINET_STATE_RUN;
+    clarifier->config.state = PROFINET_STATE_RUNNING;
     clarifier->config.slot_count = 16;
 
     clarifier->config.sensor_count = 3;
@@ -184,7 +184,7 @@ static void setup_water_treatment_scenario(simulator_t *sim) {
     strncpy(filter->config.ip_address, "192.168.1.12", 15);
     filter->config.vendor_id = 0x0493;
     filter->config.device_id = 0x0001;
-    filter->config.state = PROFINET_STATE_RUN;
+    filter->config.state = PROFINET_STATE_RUNNING;
     filter->config.slot_count = 16;
 
     filter->config.sensor_count = 3;
@@ -215,7 +215,7 @@ static void setup_water_treatment_scenario(simulator_t *sim) {
     strncpy(disinfect->config.ip_address, "192.168.1.13", 15);
     disinfect->config.vendor_id = 0x0493;
     disinfect->config.device_id = 0x0001;
-    disinfect->config.state = PROFINET_STATE_RUN;
+    disinfect->config.state = PROFINET_STATE_RUNNING;
     disinfect->config.slot_count = 16;
 
     disinfect->config.sensor_count = 3;
@@ -247,7 +247,7 @@ static void setup_water_treatment_scenario(simulator_t *sim) {
     strncpy(distrib->config.ip_address, "192.168.1.14", 15);
     distrib->config.vendor_id = 0x0493;
     distrib->config.device_id = 0x0001;
-    distrib->config.state = PROFINET_STATE_RUN;
+    distrib->config.state = PROFINET_STATE_RUNNING;
     distrib->config.slot_count = 16;
 
     distrib->config.sensor_count = 3;
@@ -285,7 +285,7 @@ static void setup_normal_scenario(simulator_t *sim) {
     strncpy(rtu->config.ip_address, "192.168.1.100", 15);
     rtu->config.vendor_id = 0x0493;
     rtu->config.device_id = 0x0001;
-    rtu->config.state = PROFINET_STATE_RUN;
+    rtu->config.state = PROFINET_STATE_RUNNING;
     rtu->config.slot_count = 16;
 
     rtu->config.sensor_count = 4;
@@ -374,7 +374,7 @@ static void setup_startup_scenario(simulator_t *sim) {
 
     /* Set RTU to connecting state */
     if (sim->rtu_count > 0) {
-        sim->rtus[0].config.state = PROFINET_STATE_CONNECT_REQ;
+        sim->rtus[0].config.state = PROFINET_STATE_CONNECTING;
     }
 
     LOG_INFO("[SIM] Loaded startup scenario");
@@ -422,18 +422,21 @@ static void register_rtus_with_registry(simulator_t *sim) {
         int slot_idx = 0;
 
         for (int j = 0; j < rtu->config.sensor_count; j++) {
-            slots[slot_idx].slot_number = rtu->sensors[j].slot;
-            slots[slot_idx].type = SLOT_TYPE_INPUT;
-            slots[slot_idx].data_length = 5; /* 5-byte sensor format */
-            strncpy(slots[slot_idx].description, rtu->sensors[j].tag, 63);
+            memset(&slots[slot_idx], 0, sizeof(slot_config_t));
+            slots[slot_idx].slot = rtu->sensors[j].slot;
+            slots[slot_idx].type = SLOT_TYPE_SENSOR;
+            strncpy(slots[slot_idx].name, rtu->sensors[j].tag, WTC_MAX_NAME - 1);
+            strncpy(slots[slot_idx].unit, rtu->sensors[j].unit, WTC_MAX_UNIT - 1);
+            slots[slot_idx].enabled = true;
             slot_idx++;
         }
 
         for (int j = 0; j < rtu->config.actuator_count; j++) {
-            slots[slot_idx].slot_number = rtu->actuators[j].slot;
-            slots[slot_idx].type = SLOT_TYPE_OUTPUT;
-            slots[slot_idx].data_length = 2;
-            strncpy(slots[slot_idx].description, rtu->actuators[j].tag, 63);
+            memset(&slots[slot_idx], 0, sizeof(slot_config_t));
+            slots[slot_idx].slot = rtu->actuators[j].slot;
+            slots[slot_idx].type = SLOT_TYPE_ACTUATOR;
+            strncpy(slots[slot_idx].name, rtu->actuators[j].tag, WTC_MAX_NAME - 1);
+            slots[slot_idx].enabled = true;
             slot_idx++;
         }
 
@@ -456,10 +459,10 @@ static void register_rtus_with_registry(simulator_t *sim) {
 }
 
 wtc_result_t simulator_init(simulator_t **simulator, const simulator_config_t *config) {
-    if (!simulator) return WTC_ERR_INVALID;
+    if (!simulator) return WTC_ERROR_INVALID_PARAM;
 
     simulator_t *sim = calloc(1, sizeof(simulator_t));
-    if (!sim) return WTC_ERR_NOMEM;
+    if (!sim) return WTC_ERROR_NO_MEMORY;
 
     /* Copy configuration */
     if (config) {
@@ -496,7 +499,7 @@ void simulator_cleanup(simulator_t *simulator) {
 }
 
 wtc_result_t simulator_start(simulator_t *simulator) {
-    if (!simulator) return WTC_ERR_INVALID;
+    if (!simulator) return WTC_ERROR_INVALID_PARAM;
 
     pthread_mutex_lock(&simulator->lock);
     simulator->running = true;
@@ -508,7 +511,7 @@ wtc_result_t simulator_start(simulator_t *simulator) {
         sim_rtu_t *rtu = &simulator->rtus[i];
         for (int j = 0; j < rtu->config.sensor_count; j++) {
             rtu->sensor_values[j] = rtu->sensors[j].base_value;
-            rtu->sensor_quality[j] = DATA_QUALITY_GOOD;
+            rtu->sensor_quality[j] = QUALITY_GOOD;
         }
     }
 
@@ -522,7 +525,7 @@ wtc_result_t simulator_start(simulator_t *simulator) {
 }
 
 wtc_result_t simulator_stop(simulator_t *simulator) {
-    if (!simulator) return WTC_ERR_INVALID;
+    if (!simulator) return WTC_ERROR_INVALID_PARAM;
 
     pthread_mutex_lock(&simulator->lock);
     simulator->running = false;
@@ -533,7 +536,7 @@ wtc_result_t simulator_stop(simulator_t *simulator) {
 }
 
 wtc_result_t simulator_process(simulator_t *simulator) {
-    if (!simulator || !simulator->running) return WTC_ERR_INVALID;
+    if (!simulator || !simulator->running) return WTC_ERROR_INVALID_PARAM;
 
     pthread_mutex_lock(&simulator->lock);
 
@@ -546,9 +549,9 @@ wtc_result_t simulator_process(simulator_t *simulator) {
         sim_rtu_t *rtu = &simulator->rtus[i];
 
         /* Skip offline RTUs */
-        if (rtu->config.state != PROFINET_STATE_RUN) {
+        if (rtu->config.state != PROFINET_STATE_RUNNING) {
             for (int j = 0; j < rtu->config.sensor_count; j++) {
-                rtu->sensor_quality[j] = DATA_QUALITY_NOT_CONNECTED;
+                rtu->sensor_quality[j] = QUALITY_NOT_CONNECTED;
             }
             continue;
         }
@@ -556,7 +559,7 @@ wtc_result_t simulator_process(simulator_t *simulator) {
         /* Check for injected faults */
         if (rtu->fault_injected) {
             for (int j = 0; j < rtu->config.sensor_count; j++) {
-                rtu->sensor_quality[j] = DATA_QUALITY_BAD;
+                rtu->sensor_quality[j] = QUALITY_BAD;
             }
             continue;
         }
@@ -564,7 +567,7 @@ wtc_result_t simulator_process(simulator_t *simulator) {
         /* Update sensor values */
         for (int j = 0; j < rtu->config.sensor_count; j++) {
             rtu->sensor_values[j] = calculate_sensor_value(&rtu->sensors[j], elapsed_sec);
-            rtu->sensor_quality[j] = DATA_QUALITY_GOOD;
+            rtu->sensor_quality[j] = QUALITY_GOOD;
         }
 
         rtu->config.total_cycles++;
@@ -572,18 +575,13 @@ wtc_result_t simulator_process(simulator_t *simulator) {
         /* Update registry with new values */
         if (simulator->registry) {
             for (int j = 0; j < rtu->config.sensor_count; j++) {
-                sensor_reading_t reading = {
-                    .value = rtu->sensor_values[j],
-                    .status = IOPS_GOOD,
-                    .quality = rtu->sensor_quality[j],
-                    .timestamp_ms = now_ms,
-                    .stale = false,
-                };
                 rtu_registry_update_sensor(
                     simulator->registry,
                     rtu->config.station_name,
                     rtu->sensors[j].slot,
-                    &reading
+                    rtu->sensor_values[j],
+                    IOPS_GOOD,
+                    rtu->sensor_quality[j]
                 );
             }
         }
@@ -596,7 +594,7 @@ wtc_result_t simulator_process(simulator_t *simulator) {
 }
 
 wtc_result_t simulator_set_registry(simulator_t *simulator, rtu_registry_t *registry) {
-    if (!simulator) return WTC_ERR_INVALID;
+    if (!simulator) return WTC_ERROR_INVALID_PARAM;
 
     pthread_mutex_lock(&simulator->lock);
     simulator->registry = registry;
@@ -615,11 +613,11 @@ wtc_result_t simulator_get_sensor(simulator_t *simulator,
                                    int slot,
                                    float *value,
                                    data_quality_t *quality) {
-    if (!simulator || !station_name || !value) return WTC_ERR_INVALID;
+    if (!simulator || !station_name || !value) return WTC_ERROR_INVALID_PARAM;
 
     pthread_mutex_lock(&simulator->lock);
 
-    wtc_result_t result = WTC_ERR_NOT_FOUND;
+    wtc_result_t result = WTC_ERROR_NOT_FOUND;
 
     for (int i = 0; i < simulator->rtu_count; i++) {
         sim_rtu_t *rtu = &simulator->rtus[i];
@@ -643,13 +641,13 @@ wtc_result_t simulator_get_sensor(simulator_t *simulator,
 wtc_result_t simulator_command_actuator(simulator_t *simulator,
                                          const char *station_name,
                                          int slot,
-                                         actuator_command_t command,
+                                         actuator_cmd_t command,
                                          uint8_t pwm_duty) {
-    if (!simulator || !station_name) return WTC_ERR_INVALID;
+    if (!simulator || !station_name) return WTC_ERROR_INVALID_PARAM;
 
     pthread_mutex_lock(&simulator->lock);
 
-    wtc_result_t result = WTC_ERR_NOT_FOUND;
+    wtc_result_t result = WTC_ERROR_NOT_FOUND;
 
     for (int i = 0; i < simulator->rtu_count; i++) {
         sim_rtu_t *rtu = &simulator->rtus[i];
@@ -673,7 +671,7 @@ wtc_result_t simulator_command_actuator(simulator_t *simulator,
 }
 
 wtc_result_t simulator_get_stats(simulator_t *simulator, simulator_stats_t *stats) {
-    if (!simulator || !stats) return WTC_ERR_INVALID;
+    if (!simulator || !stats) return WTC_ERROR_INVALID_PARAM;
 
     pthread_mutex_lock(&simulator->lock);
 
@@ -697,7 +695,7 @@ wtc_result_t simulator_get_stats(simulator_t *simulator, simulator_stats_t *stat
 }
 
 wtc_result_t simulator_set_scenario(simulator_t *simulator, sim_scenario_t scenario) {
-    if (!simulator) return WTC_ERR_INVALID;
+    if (!simulator) return WTC_ERROR_INVALID_PARAM;
 
     bool was_running = simulator->running;
     if (was_running) {
@@ -716,11 +714,11 @@ wtc_result_t simulator_set_scenario(simulator_t *simulator, sim_scenario_t scena
 wtc_result_t simulator_inject_fault(simulator_t *simulator,
                                      const char *station_name,
                                      int fault_type) {
-    if (!simulator || !station_name) return WTC_ERR_INVALID;
+    if (!simulator || !station_name) return WTC_ERROR_INVALID_PARAM;
 
     pthread_mutex_lock(&simulator->lock);
 
-    wtc_result_t result = WTC_ERR_NOT_FOUND;
+    wtc_result_t result = WTC_ERROR_NOT_FOUND;
 
     for (int i = 0; i < simulator->rtu_count; i++) {
         if (strcmp(simulator->rtus[i].config.station_name, station_name) == 0) {
@@ -738,11 +736,11 @@ wtc_result_t simulator_inject_fault(simulator_t *simulator,
 
 wtc_result_t simulator_clear_fault(simulator_t *simulator,
                                     const char *station_name) {
-    if (!simulator || !station_name) return WTC_ERR_INVALID;
+    if (!simulator || !station_name) return WTC_ERROR_INVALID_PARAM;
 
     pthread_mutex_lock(&simulator->lock);
 
-    wtc_result_t result = WTC_ERR_NOT_FOUND;
+    wtc_result_t result = WTC_ERROR_NOT_FOUND;
 
     for (int i = 0; i < simulator->rtu_count; i++) {
         if (strcmp(simulator->rtus[i].config.station_name, station_name) == 0) {
@@ -762,7 +760,7 @@ wtc_result_t simulator_list_rtus(simulator_t *simulator,
                                   sim_rtu_config_t **rtus,
                                   int *count,
                                   int max_count) {
-    if (!simulator || !rtus || !count) return WTC_ERR_INVALID;
+    if (!simulator || !rtus || !count) return WTC_ERROR_INVALID_PARAM;
 
     pthread_mutex_lock(&simulator->lock);
 
@@ -772,7 +770,7 @@ wtc_result_t simulator_list_rtus(simulator_t *simulator,
     *rtus = calloc(n, sizeof(sim_rtu_config_t));
     if (!*rtus) {
         pthread_mutex_unlock(&simulator->lock);
-        return WTC_ERR_NOMEM;
+        return WTC_ERROR_NO_MEMORY;
     }
 
     for (int i = 0; i < n; i++) {
