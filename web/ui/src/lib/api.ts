@@ -178,6 +178,7 @@ export interface DiscoveredDevice {
   device_id: number | null;
   discovered_at: string;
   added_to_registry: boolean;
+  rtu_name: string | null;
 }
 
 // Generic fetch wrapper with error handling and automatic auth
@@ -487,6 +488,32 @@ export async function clearDiscoveryCache(): Promise<void> {
   await apiFetch('/api/v1/discover/cache', { method: 'DELETE' });
 }
 
+// ============== Ping Scan ==============
+
+export interface PingResult {
+  ip_address: string;
+  reachable: boolean;
+  response_time_ms: number | null;
+  hostname: string | null;
+}
+
+export interface PingScanResponse {
+  subnet: string;
+  total_hosts: number;
+  reachable_count: number;
+  unreachable_count: number;
+  scan_duration_seconds: number;
+  results: PingResult[];
+}
+
+export async function pingScanSubnet(subnet: string, timeoutMs = 500): Promise<PingScanResponse> {
+  const data = await apiFetch<PingScanResponse>('/api/v1/discover/ping-scan', {
+    method: 'POST',
+    body: JSON.stringify({ subnet, timeout_ms: timeoutMs }),
+  });
+  return data;
+}
+
 // ============== Response Data Extraction Utilities ==============
 // These utilities safely handle API responses that may be wrapped in { data: ... }
 // or returned as raw arrays/objects, preventing "x.map is not a function" errors.
@@ -558,5 +585,56 @@ export function extractObjectData<T extends object>(response: unknown, fallback:
     return response as T;
   }
 
+  return fallback;
+}
+
+/**
+ * Safely extracts an error message from API error responses.
+ * Handles Pydantic v2 validation errors (array of {type, loc, msg, input, ctx} objects),
+ * single error objects, and plain string messages.
+ *
+ * IMPORTANT: Always use this function to extract error messages before rendering.
+ * Never render `data.detail` directly in JSX - it may be an object which causes
+ * React error #31 "Objects are not valid as a React child".
+ *
+ * @param detail - The detail field from the error response (can be string, object, or array)
+ * @param fallback - Fallback message if extraction fails (default: 'An error occurred')
+ * @returns A string error message safe to render in JSX
+ *
+ * @example
+ * const res = await fetch('/api/v1/rtus', { method: 'POST', body: ... });
+ * if (!res.ok) {
+ *   const data = await res.json();
+ *   setError(extractErrorMessage(data.detail, 'Failed to create RTU'));
+ * }
+ */
+export function extractErrorMessage(detail: unknown, fallback = 'An error occurred'): string {
+  // Handle null/undefined
+  if (detail == null) {
+    return fallback;
+  }
+
+  // If it's already a string, return it
+  if (typeof detail === 'string') {
+    return detail;
+  }
+
+  // If it's an array (Pydantic v2 validation errors)
+  if (Array.isArray(detail)) {
+    const messages = detail
+      .map((err: { msg?: string; message?: string }) => err.msg || err.message || 'Invalid value')
+      .filter(Boolean);
+    return messages.length > 0 ? messages.join('; ') : fallback;
+  }
+
+  // If it's an object with a msg or message property
+  if (typeof detail === 'object') {
+    const obj = detail as { msg?: string; message?: string; detail?: string };
+    if (obj.msg) return obj.msg;
+    if (obj.message) return obj.message;
+    if (obj.detail && typeof obj.detail === 'string') return obj.detail;
+  }
+
+  // Fallback - don't try to render the object
   return fallback;
 }

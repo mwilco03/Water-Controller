@@ -1,8 +1,8 @@
 'use client';
 
 import { useState, useCallback } from 'react';
-import { discoverRTUs, getCachedDiscovery, clearDiscoveryCache } from '@/lib/api';
-import type { DiscoveredDevice } from '@/lib/api';
+import { discoverRTUs, getCachedDiscovery, clearDiscoveryCache, pingScanSubnet } from '@/lib/api';
+import type { DiscoveredDevice, PingResult, PingScanResponse } from '@/lib/api';
 
 interface Props {
   onDeviceSelect?: (device: DiscoveredDevice) => void;
@@ -14,6 +14,14 @@ export default function DiscoveryPanel({ onDeviceSelect }: Props) {
   const [lastScan, setLastScan] = useState<Date | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [scanTimeout, setScanTimeout] = useState(5000);
+
+  // Ping scan state
+  const [pingSubnet, setPingSubnet] = useState('192.168.1.0/24');
+  const [pingScanning, setPingScanning] = useState(false);
+  const [pingResults, setPingResults] = useState<PingScanResponse | null>(null);
+  const [pingError, setPingError] = useState<string | null>(null);
+  const [showPingResults, setShowPingResults] = useState(false);
+  const [showOnlyReachable, setShowOnlyReachable] = useState(true);
 
   const handleScan = useCallback(async () => {
     if (scanning) return;
@@ -51,11 +59,28 @@ export default function DiscoveryPanel({ onDeviceSelect }: Props) {
     }
   }, []);
 
+  const handlePingScan = useCallback(async () => {
+    if (pingScanning) return;
+    setPingScanning(true);
+    setPingError(null);
+
+    try {
+      const results = await pingScanSubnet(pingSubnet, 500);
+      setPingResults(results);
+      setShowPingResults(true);
+    } catch (err) {
+      setPingError(err instanceof Error ? err.message : 'Ping scan failed');
+    } finally {
+      setPingScanning(false);
+    }
+  }, [pingScanning, pingSubnet]);
+
   const formatMac = (mac: string) => {
     if (mac.includes(':')) return mac.toUpperCase();
-    // Format as XX:XX:XX:XX:XX:XX
     return mac.match(/.{2}/g)?.join(':').toUpperCase() || mac;
   };
+
+  const filteredPingResults = pingResults?.results.filter(r => !showOnlyReachable || r.reachable) || [];
 
   return (
     <div className="space-y-4">
@@ -72,64 +97,125 @@ export default function DiscoveryPanel({ onDeviceSelect }: Props) {
         </div>
       </div>
 
-      {/* Controls */}
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="flex items-center gap-2">
-          <label className="text-sm text-gray-400">Timeout:</label>
-          <select
-            value={scanTimeout}
-            onChange={(e) => setScanTimeout(Number(e.target.value))}
-            className="px-2 py-1 bg-gray-800 border border-gray-700 rounded text-white text-sm"
+      {/* PROFINET Discovery Controls */}
+      <div className="p-4 bg-gray-800/50 border border-gray-700 rounded-lg">
+        <h4 className="text-sm font-medium text-gray-300 mb-3">PROFINET DCP Discovery</h4>
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-2">
+            <label className="text-sm text-gray-400">Timeout:</label>
+            <select
+              value={scanTimeout}
+              onChange={(e) => setScanTimeout(Number(e.target.value))}
+              className="px-2 py-1 bg-gray-800 border border-gray-700 rounded text-white text-sm"
+              disabled={scanning}
+            >
+              <option value={3000}>3 seconds</option>
+              <option value={5000}>5 seconds</option>
+              <option value={10000}>10 seconds</option>
+              <option value={15000}>15 seconds</option>
+            </select>
+          </div>
+
+          <button
+            onClick={handleScan}
             disabled={scanning}
+            className={`
+              flex items-center gap-2 px-4 py-2 rounded-lg font-medium text-sm
+              transition-all duration-200
+              ${scanning
+                ? 'bg-blue-700 text-blue-300 cursor-wait'
+                : 'bg-blue-600 hover:bg-blue-500 text-white hover:shadow-lg hover:shadow-blue-600/25'
+              }
+            `}
           >
-            <option value={3000}>3 seconds</option>
-            <option value={5000}>5 seconds</option>
-            <option value={10000}>10 seconds</option>
-            <option value={15000}>15 seconds</option>
-          </select>
+            {scanning ? (
+              <span className="inline-block w-4 h-4 border-2 border-blue-300/30 border-t-blue-300 rounded-full animate-spin" />
+            ) : (
+              <span className="font-bold">[*]</span>
+            )}
+            {scanning ? 'Scanning...' : 'DCP Scan'}
+          </button>
+
+          <button
+            onClick={handleLoadCached}
+            disabled={scanning}
+            className="px-3 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm text-white transition-colors"
+          >
+            Load Cached
+          </button>
+
+          <button
+            onClick={handleClearCache}
+            disabled={scanning}
+            className="px-3 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm text-white transition-colors"
+          >
+            Clear Cache
+          </button>
         </div>
-
-        <button
-          onClick={handleScan}
-          disabled={scanning}
-          className={`
-            flex items-center gap-2 px-4 py-2 rounded-lg font-medium text-sm
-            transition-all duration-200
-            ${scanning
-              ? 'bg-blue-700 text-blue-300 cursor-wait'
-              : 'bg-blue-600 hover:bg-blue-500 text-white hover:shadow-lg hover:shadow-blue-600/25'
-            }
-          `}
-        >
-          {scanning ? (
-            <span className="inline-block w-4 h-4 border-2 border-blue-300/30 border-t-blue-300 rounded-full animate-spin" />
-          ) : (
-            <span className="font-bold">[*]</span>
-          )}
-          {scanning ? 'Scanning...' : 'Scan Network'}
-        </button>
-
-        <button
-          onClick={handleLoadCached}
-          disabled={scanning}
-          className="px-3 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm text-white transition-colors"
-        >
-          Load Cached
-        </button>
-
-        <button
-          onClick={handleClearCache}
-          disabled={scanning}
-          className="px-3 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm text-white transition-colors"
-        >
-          Clear Cache
-        </button>
       </div>
 
-      {/* Error */}
+      {/* Ping Scan Controls */}
+      <div className="p-4 bg-gray-800/50 border border-gray-700 rounded-lg">
+        <h4 className="text-sm font-medium text-gray-300 mb-3">Ping Scan (Debug)</h4>
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-2">
+            <label className="text-sm text-gray-400">Subnet:</label>
+            <input
+              type="text"
+              value={pingSubnet}
+              onChange={(e) => setPingSubnet(e.target.value)}
+              placeholder="192.168.1.0/24"
+              className="px-3 py-1 bg-gray-800 border border-gray-700 rounded text-white text-sm font-mono w-40"
+              disabled={pingScanning}
+            />
+          </div>
+
+          <button
+            onClick={handlePingScan}
+            disabled={pingScanning}
+            className={`
+              flex items-center gap-2 px-4 py-2 rounded-lg font-medium text-sm
+              transition-all duration-200
+              ${pingScanning
+                ? 'bg-green-700 text-green-300 cursor-wait'
+                : 'bg-green-600 hover:bg-green-500 text-white hover:shadow-lg hover:shadow-green-600/25'
+              }
+            `}
+          >
+            {pingScanning ? (
+              <span className="inline-block w-4 h-4 border-2 border-green-300/30 border-t-green-300 rounded-full animate-spin" />
+            ) : (
+              <span className="font-bold">[~]</span>
+            )}
+            {pingScanning ? 'Scanning 254 hosts...' : 'Ping Scan'}
+          </button>
+
+          {pingResults && (
+            <button
+              onClick={() => setShowPingResults(!showPingResults)}
+              className="px-3 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm text-white transition-colors"
+            >
+              {showPingResults ? 'Hide Results' : 'Show Results'}
+            </button>
+          )}
+        </div>
+
+        {pingResults && (
+          <div className="mt-2 text-sm text-gray-400">
+            Found {pingResults.reachable_count} reachable / {pingResults.total_hosts} total in {pingResults.scan_duration_seconds}s
+          </div>
+        )}
+      </div>
+
+      {/* Error displays */}
       {error && (
         <div className="p-3 bg-red-900/50 border border-red-700 rounded-lg text-red-200 text-sm">
-          {error}
+          PROFINET Error: {error}
+        </div>
+      )}
+      {pingError && (
+        <div className="p-3 bg-red-900/50 border border-red-700 rounded-lg text-red-200 text-sm">
+          Ping Error: {pingError}
         </div>
       )}
 
@@ -147,12 +233,101 @@ export default function DiscoveryPanel({ onDeviceSelect }: Props) {
         </div>
       )}
 
-      {/* Device list */}
+      {/* Ping scan results table */}
+      {showPingResults && pingResults && (
+        <div className="border border-gray-700 rounded-lg overflow-hidden">
+          <div className="bg-gray-800 px-4 py-2 flex items-center justify-between">
+            <h4 className="text-sm font-medium text-gray-300">
+              Ping Scan Results: {pingResults.subnet}
+            </h4>
+            <label className="flex items-center gap-2 text-sm text-gray-400">
+              <input
+                type="checkbox"
+                checked={showOnlyReachable}
+                onChange={(e) => setShowOnlyReachable(e.target.checked)}
+                className="rounded"
+              />
+              Show only reachable
+            </label>
+          </div>
+          <div className="max-h-64 overflow-y-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="bg-gray-800/50 text-left text-xs text-gray-400 sticky top-0">
+                  <th className="px-4 py-2">Status</th>
+                  <th className="px-4 py-2">IP Address</th>
+                  <th className="px-4 py-2">Response Time</th>
+                  <th className="px-4 py-2">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-700/50">
+                {filteredPingResults.map((result) => (
+                  <tr
+                    key={result.ip_address}
+                    className={result.reachable ? 'bg-green-900/10' : 'bg-gray-800/30'}
+                  >
+                    <td className="px-4 py-2">
+                      {result.reachable ? (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-green-900/50 text-green-300 rounded text-xs">
+                          [OK]
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-gray-700 text-gray-400 rounded text-xs">
+                          [--]
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-4 py-2 font-mono text-sm text-gray-300">
+                      {result.ip_address}
+                    </td>
+                    <td className="px-4 py-2 text-sm text-gray-400">
+                      {result.reachable && result.response_time_ms !== null
+                        ? `${result.response_time_ms}ms`
+                        : '-'}
+                    </td>
+                    <td className="px-4 py-2">
+                      {result.reachable && (
+                        <button
+                          onClick={() => {
+                            // Create a mock device for selection
+                            const mockDevice: DiscoveredDevice = {
+                              id: 0,
+                              mac_address: '00:00:00:00:00:00',
+                              ip_address: result.ip_address,
+                              device_name: null,
+                              vendor_name: 'Unknown (from ping)',
+                              device_type: 'Unknown',
+                              vendor_id: null,
+                              device_id: null,
+                              discovered_at: new Date().toISOString(),
+                              added_to_registry: false,
+                              rtu_name: null,
+                            };
+                            onDeviceSelect?.(mockDevice);
+                          }}
+                          className="px-2 py-1 bg-blue-600 hover:bg-blue-500 rounded text-xs text-white font-medium transition-colors"
+                        >
+                          Use IP
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* PROFINET Device list */}
       {!scanning && devices.length > 0 && (
         <div className="border border-gray-700 rounded-lg overflow-hidden">
+          <div className="bg-gray-800 px-4 py-2">
+            <h4 className="text-sm font-medium text-gray-300">PROFINET Devices Found</h4>
+          </div>
           <table className="w-full">
             <thead>
-              <tr className="bg-gray-800 text-left text-sm text-gray-400">
+              <tr className="bg-gray-800/50 text-left text-sm text-gray-400">
                 <th className="px-4 py-3">Device</th>
                 <th className="px-4 py-3">MAC Address</th>
                 <th className="px-4 py-3">IP Address</th>
@@ -232,12 +407,12 @@ export default function DiscoveryPanel({ onDeviceSelect }: Props) {
       )}
 
       {/* Empty state */}
-      {!scanning && devices.length === 0 && (
+      {!scanning && devices.length === 0 && !showPingResults && (
         <div className="text-center py-6 text-gray-400">
           <div className="text-3xl mb-3 opacity-50">[?]</div>
           <p className="text-base font-medium text-gray-300">No devices found</p>
           <p className="text-sm mt-1">
-            Click &quot;Scan Network&quot; to discover PROFINET devices
+            Click &quot;DCP Scan&quot; for PROFINET discovery or &quot;Ping Scan&quot; to find active IPs
           </p>
         </div>
       )}
@@ -245,10 +420,10 @@ export default function DiscoveryPanel({ onDeviceSelect }: Props) {
       {/* Help text */}
       <div className="text-xs text-gray-500 space-y-1">
         <p>
-          <strong>Note:</strong> Network discovery uses DCP (Discovery and Configuration Protocol) to find PROFINET devices on the local network.
+          <strong>DCP Scan:</strong> Uses PROFINET Discovery and Configuration Protocol to find devices.
         </p>
         <p>
-          Ensure the controller is on the same network segment as the RTU devices. Devices behind routers or VLANs may not be discoverable.
+          <strong>Ping Scan:</strong> Pings all 254 hosts in the /24 subnet to find active IPs. Use this if DCP discovery fails.
         </p>
       </div>
     </div>

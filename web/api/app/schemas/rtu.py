@@ -32,26 +32,16 @@ HEX_ID_PATTERN = re.compile(r"^0x[0-9A-Fa-f]{4}$")
 class RtuCreate(BaseModel):
     """Request model for creating a new RTU."""
 
-    station_name: str = Field(
-        ...,
+    ip_address: str = Field(..., description="IPv4 address of the RTU")
+    station_name: str | None = Field(
+        None,
         min_length=3,
         max_length=32,
-        description="Unique station name (lowercase, starts with letter)"
+        description="Optional station name (auto-generated from IP if not provided)"
     )
-    ip_address: str = Field(..., description="IPv4 address of the RTU")
-    vendor_id: str = Field(..., description="PROFINET vendor ID (hex string, e.g., '0x002A')")
-    device_id: str = Field(..., description="PROFINET device ID (hex string, e.g., '0x0405')")
+    vendor_id: str = Field("0x0000", description="PROFINET vendor ID (hex string, e.g., '0x002A')")
+    device_id: str = Field("0x0000", description="PROFINET device ID (hex string, e.g., '0x0405')")
     slot_count: int = Field(8, ge=1, le=64, description="Number of I/O slots")
-
-    @field_validator("station_name")
-    @classmethod
-    def validate_station_name(cls, v: str) -> str:
-        if not STATION_NAME_PATTERN.match(v):
-            raise ValueError(
-                "station_name must be 3-32 characters, start with a letter, "
-                "and contain only lowercase letters, numbers, and hyphens"
-            )
-        return v
 
     @field_validator("ip_address")
     @classmethod
@@ -66,6 +56,18 @@ class RtuCreate(BaseModel):
                     raise ValueError("Invalid IPv4 address")
             except ValueError as err:
                 raise ValueError("Invalid IPv4 address") from err
+        return v
+
+    @field_validator("station_name")
+    @classmethod
+    def validate_station_name(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        if not STATION_NAME_PATTERN.match(v):
+            raise ValueError(
+                "station_name must be 3-32 characters, start with a letter, "
+                "and contain only lowercase letters, numbers, and hyphens"
+            )
         return v
 
     @field_validator("vendor_id", "device_id")
