@@ -2,40 +2,10 @@
 # Copyright (C) 2024
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Multi-stage build with layer caching for p-net library
+# Two-stage build: build environment -> minimal runtime
 
 # =============================================================================
-# Stage 1: Build p-net library (cached layer)
-# =============================================================================
-FROM debian:bookworm-slim AS pnet-builder
-
-# Install p-net build dependencies
-RUN apt-get update && apt-get install -y \
-    build-essential \
-    cmake \
-    git \
-    && rm -rf /var/lib/apt/lists/*
-
-# Pin p-net to specific commit for reproducibility
-# v0.2.0 tag - last version with root-level CMakeLists.txt
-ARG PNET_COMMIT=3e650720850e1f31f8a419c8aa135a2e81b44ddb
-
-# Clone and build p-net (this layer is cached if PNET_COMMIT doesn't change)
-WORKDIR /deps
-RUN git clone https://github.com/rtlabs-com/p-net.git pnet-src && \
-    cd pnet-src && \
-    git checkout --detach ${PNET_COMMIT} && \
-    git submodule update --init --recursive
-
-WORKDIR /deps/pnet-build
-RUN cmake /deps/pnet-src \
-        -DCMAKE_INSTALL_PREFIX=/usr/local \
-        -DCMAKE_BUILD_TYPE=Release && \
-    make -j$(nproc) && \
-    make install
-
-# =============================================================================
-# Stage 2: Build Water Controller
+# Stage 1: Build Water Controller
 # =============================================================================
 FROM debian:bookworm-slim AS builder
 
@@ -48,25 +18,23 @@ RUN apt-get update && apt-get install -y \
     libjson-c-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy p-net from previous stage
-COPY --from=pnet-builder /usr/local/include/pnet /usr/local/include/pnet
-COPY --from=pnet-builder /usr/local/lib/libpnet* /usr/local/lib/
-
-# Update library cache
-RUN ldconfig
-
 # Copy source
 WORKDIR /app
 COPY CMakeLists.txt .
+COPY cmake/ cmake/
 COPY src/ src/
+COPY shared/ shared/
+COPY tests/ tests/
 
-# Build controller
+# Build controller (release mode, no tests)
 RUN mkdir build && cd build && \
     cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=OFF .. && \
-    make -j$(nproc)
+    make -j$(nproc) && \
+    echo "=== BUILD VERIFICATION ===" && \
+    ls -la water_treat_controller
 
 # =============================================================================
-# Stage 3: Runtime image (minimal)
+# Stage 2: Runtime image (minimal)
 # =============================================================================
 FROM debian:bookworm-slim
 
@@ -77,14 +45,8 @@ RUN apt-get update && apt-get install -y \
     procps \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy p-net shared library
-COPY --from=pnet-builder /usr/local/lib/libpnet* /usr/local/lib/
-
 # Copy controller binary
 COPY --from=builder /app/build/water_treat_controller /usr/local/bin/
-
-# Update library cache
-RUN ldconfig
 
 # Create config and log directories
 RUN mkdir -p /etc/water-controller /var/log/water-controller
