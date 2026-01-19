@@ -37,7 +37,6 @@ from .profinet import (
 from .rtu import (
     ConnectRequest,
     ConnectResponse,
-    DeletionImpact,
     DisconnectResponse,
     DiscoverResponse,
     RtuCreate,
@@ -89,7 +88,6 @@ __all__ = [
     "CycleTimeStats",
     # Common
     "DataQuality",
-    "DeletionImpact",
     "DisconnectResponse",
     "DiscoverResponse",
     "ErrorResponse",
