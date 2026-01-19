@@ -27,11 +27,13 @@ COPY shared/ shared/
 COPY tests/ tests/
 
 # Build controller (release mode, no tests)
+# Build as STATIC libraries to avoid shared library issues in runtime
 RUN mkdir build && cd build && \
-    cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=OFF .. && \
+    cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=OFF -DBUILD_SHARED_LIBS=OFF .. && \
     make -j$(nproc) && \
     echo "=== BUILD VERIFICATION ===" && \
-    ls -la water_treat_controller
+    ls -la water_treat_controller && \
+    ldd water_treat_controller || true
 
 # =============================================================================
 # Stage 2: Runtime image (minimal)
@@ -45,7 +47,7 @@ RUN apt-get update && apt-get install -y \
     procps \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy controller binary
+# Copy controller binary (statically linked to internal libs)
 COPY --from=builder /app/build/water_treat_controller /usr/local/bin/
 
 # Create config and log directories
