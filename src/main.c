@@ -806,8 +806,7 @@ static bool detect_network_interface(char *interface, size_t size) {
                 /* Remove newline */
                 state[strcspn(state, "\n")] = 0;
                 if (strcmp(state, "up") == 0) {
-                    strncpy(interface, name, size - 1);
-                    interface[size - 1] = '\0';
+                    snprintf(interface, size, "%s", name);
                     found = true;
                     fclose(fp);
                     break;
@@ -829,8 +828,7 @@ static bool detect_network_interface(char *interface, size_t size) {
             if (strncmp(name, "br-", 3) == 0) continue;
             if (strncmp(name, "virbr", 5) == 0) continue;
 
-            strncpy(interface, name, size - 1);
-            interface[size - 1] = '\0';
+            snprintf(interface, size, "%s", name);
             found = true;
             break;
         }

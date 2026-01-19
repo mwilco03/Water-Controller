@@ -207,7 +207,7 @@ static void execute_failover(failover_manager_t *mgr, backup_mapping_t *mapping)
 
     mapping->active = true;
     mgr->status.last_failover_ms = time_get_ms();
-    strncpy(mgr->status.last_failed_station, mapping->primary, WTC_MAX_STATION_NAME - 1);
+    snprintf(mgr->status.last_failed_station, WTC_MAX_STATION_NAME, "%s", mapping->primary);
 
     /* Update health entry */
     rtu_health_t *h = get_health_entry(mgr, mapping->primary);
