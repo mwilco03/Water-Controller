@@ -351,8 +351,8 @@ export default function SettingsPage() {
   const fetchModbusConfig = async () => {
     try {
       const [serverRes, devicesRes] = await Promise.all([
-        fetch('/api/v1/modbus/server'),
-        fetch('/api/v1/modbus/downstream'),
+        fetch('/api/v1/modbus/server/config'),
+        fetch('/api/v1/modbus/devices'),
       ]);
 
       if (serverRes.ok) {
@@ -373,7 +373,7 @@ export default function SettingsPage() {
 
     setLoading(true);
     try {
-      const res = await fetch('/api/v1/modbus/server', {
+      const res = await fetch('/api/v1/modbus/server/config', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(modbusConfig),

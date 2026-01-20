@@ -25,6 +25,7 @@ from ...core.errors import build_success_response
 from ...models.alarm import AlarmEvent, AlarmState
 from ...models.base import get_db
 from ...models.historian import HistorianSample
+from ...models.audit import CommandAudit
 from ...models.rtu import RTU, RtuState
 
 router = APIRouter()
@@ -527,4 +528,188 @@ async def get_version() -> dict[str, Any]:
         "version": CONTROLLER_VERSION,
         "api_version": "v1",
         "started_at": SERVER_START_TIME.isoformat(),
+    })
+
+
+# ============== System Configuration ==============
+
+
+@router.get("/config")
+async def get_system_config(
+    db: Session = Depends(get_db)
+) -> dict[str, Any]:
+    """
+    Export system configuration.
+
+    Returns current system configuration including:
+    - RTU configurations
+    - Alarm settings
+    - System parameters
+
+    Used for backup and configuration transfer between systems.
+    """
+    from ...models.alarm import AlarmConfig
+
+    # Gather RTU configurations
+    rtus = db.query(RTU).all()
+    rtu_configs = []
+    for rtu in rtus:
+        rtu_configs.append({
+            "station_name": rtu.station_name,
+            "ip_address": rtu.ip_address,
+            "description": rtu.description,
+            "slot_count": rtu.slot_count,
+            "enabled": rtu.enabled,
+        })
+
+    # Gather alarm configurations
+    alarm_configs = db.query(AlarmConfig).all()
+    alarm_settings = []
+    for alarm in alarm_configs:
+        alarm_settings.append({
+            "tag": alarm.tag,
+            "description": alarm.description,
+            "priority": alarm.priority,
+            "setpoint": alarm.setpoint,
+            "deadband": alarm.deadband,
+            "delay_seconds": alarm.delay_seconds,
+            "enabled": alarm.enabled,
+        })
+
+    config = {
+        "version": CONTROLLER_VERSION,
+        "exported_at": datetime.now(UTC).isoformat(),
+        "rtus": rtu_configs,
+        "alarms": alarm_settings,
+        "system": {
+            "historian_retention_days": 90,
+            "alarm_retention_days": 365,
+            "audit_retention_days": 730,
+        },
+    }
+
+    return build_success_response(config)
+
+
+class ConfigImport(BaseModel):
+    """Configuration import request."""
+    rtus: list[dict] | None = None
+    alarms: list[dict] | None = None
+    system: dict | None = None
+
+
+@router.post("/config")
+async def import_system_config(
+    config: ConfigImport,
+    db: Session = Depends(get_db)
+) -> dict[str, Any]:
+    """
+    Import system configuration.
+
+    Merges or replaces configuration based on provided data.
+    RTUs and alarms are matched by their unique identifiers.
+
+    Note: This is a partial import - only specified sections are updated.
+    """
+    imported = {"rtus": 0, "alarms": 0}
+
+    # Import RTU configurations
+    if config.rtus:
+        for rtu_data in config.rtus:
+            station_name = rtu_data.get("station_name")
+            if not station_name:
+                continue
+
+            existing = db.query(RTU).filter(RTU.station_name == station_name).first()
+            if existing:
+                # Update existing
+                for key, value in rtu_data.items():
+                    if hasattr(existing, key) and key != "station_name":
+                        setattr(existing, key, value)
+            else:
+                # Create new
+                new_rtu = RTU(**rtu_data)
+                db.add(new_rtu)
+
+            imported["rtus"] += 1
+
+    # Import alarm configurations
+    if config.alarms:
+        from ...models.alarm import AlarmConfig
+
+        for alarm_data in config.alarms:
+            tag = alarm_data.get("tag")
+            if not tag:
+                continue
+
+            existing = db.query(AlarmConfig).filter(AlarmConfig.tag == tag).first()
+            if existing:
+                for key, value in alarm_data.items():
+                    if hasattr(existing, key) and key != "tag":
+                        setattr(existing, key, value)
+            else:
+                new_alarm = AlarmConfig(**alarm_data)
+                db.add(new_alarm)
+
+            imported["alarms"] += 1
+
+    db.commit()
+    logger.info(f"Configuration imported: {imported}")
+
+    return build_success_response({
+        "success": True,
+        "imported": imported,
+    })
+
+
+# ============== Audit Trail ==============
+
+
+@router.get("/audit")
+async def get_audit_trail(
+    limit: int = Query(50, ge=1, le=500, description="Max records to return"),
+    rtu_name: str | None = Query(None, description="Filter by RTU name"),
+    user: str | None = Query(None, description="Filter by username"),
+    hours: int = Query(24, ge=1, le=720, description="Hours of history"),
+    db: Session = Depends(get_db)
+) -> dict[str, Any]:
+    """
+    Get command audit trail.
+
+    Returns history of operator control commands with results.
+    Required for ISA-62443 compliance (audit trail for control actions).
+    """
+    from datetime import timedelta
+
+    cutoff = datetime.now(UTC) - timedelta(hours=hours)
+
+    query = db.query(CommandAudit).filter(CommandAudit.timestamp >= cutoff)
+
+    if rtu_name:
+        query = query.filter(CommandAudit.rtu_name == rtu_name)
+    if user:
+        query = query.filter(CommandAudit.user == user)
+
+    query = query.order_by(CommandAudit.timestamp.desc()).limit(limit)
+    records = query.all()
+
+    audit_entries = []
+    for record in records:
+        audit_entries.append({
+            "id": record.id,
+            "timestamp": record.timestamp.isoformat() if record.timestamp else None,
+            "rtu_name": record.rtu_name,
+            "control_tag": record.control_tag,
+            "command": record.command,
+            "value": record.value,
+            "result": record.result,
+            "rejection_reason": record.rejection_reason,
+            "user": record.user,
+            "source_ip": record.source_ip,
+        })
+
+    return build_success_response({
+        "entries": audit_entries,
+        "count": len(audit_entries),
+        "hours": hours,
     })
