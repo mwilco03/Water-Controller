@@ -5,68 +5,47 @@
  *
  * Handles PROFINET acyclic synchronization of user credentials
  * from Controller to RTUs for local TUI authentication.
+ *
+ * Wire protocol definitions are in shared/include/user_sync_protocol.h
+ * to ensure Controller and RTU use identical formats.
  */
 
 #ifndef WTC_USER_SYNC_H
 #define WTC_USER_SYNC_H
 
 #include "types.h"
+#include "user_sync_protocol.h"  /* Shared protocol definitions */
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-/* User sync protocol version */
-#define USER_SYNC_VERSION       1
+/* ============== Controller-Specific Definitions ============== */
 
-/* PROFINET record index for user sync (vendor-specific range) */
-#define USER_SYNC_RECORD_INDEX  0xF840
+/*
+ * Note: Wire protocol constants (USER_SYNC_PROTOCOL_VERSION, USER_SYNC_RECORD_INDEX,
+ * USER_SYNC_MAX_USERS, USER_SYNC_HASH_LEN, USER_SYNC_SALT) are defined in
+ * user_sync_protocol.h for cross-system compatibility.
+ *
+ * Legacy aliases for backward compatibility:
+ */
+#define USER_SYNC_VERSION       USER_SYNC_PROTOCOL_VERSION
 
-/* Maximum users in a single sync payload */
-#define USER_SYNC_MAX_USERS     32
-
-/* Password hash length (DJB2 produces 32-bit, we store hex + salt info) */
-#define USER_SYNC_HASH_LEN      64
-
-/* Salt for password hashing (matches RTU) */
-#define USER_SYNC_SALT          "NaCl4Life"
-
-/* User sync status codes */
+/* Controller-specific status codes (extend shared result codes) */
 typedef enum {
-    USER_SYNC_OK = 0,
-    USER_SYNC_ERROR_INVALID_PARAM = -1,
-    USER_SYNC_ERROR_NO_MEMORY = -2,
-    USER_SYNC_ERROR_SERIALIZE = -3,
-    USER_SYNC_ERROR_CHECKSUM = -4,
-    USER_SYNC_ERROR_VERSION = -5,
-    USER_SYNC_ERROR_SEND = -6,
-    USER_SYNC_ERROR_TIMEOUT = -7,
-    USER_SYNC_ERROR_RTU_NOT_CONNECTED = -8,
-} user_sync_result_t;
+    /* Import shared result codes */
+    WTC_USER_SYNC_OK                    = USER_SYNC_OK,
+    WTC_USER_SYNC_ERROR_INVALID_PARAM   = USER_SYNC_ERR_INVALID_PARAM,
+    WTC_USER_SYNC_ERROR_CHECKSUM        = USER_SYNC_ERR_CHECKSUM,
+    WTC_USER_SYNC_ERROR_VERSION         = USER_SYNC_ERR_VERSION_MISMATCH,
 
-/* User record for sync (fixed-size for serialization) */
-typedef struct __attribute__((packed)) {
-    char username[32];          /* Username (null-terminated) */
-    char password_hash[64];     /* DJB2 hash with salt (hex string) */
-    uint8_t role;               /* user_role_t value */
-    uint8_t flags;              /* Bit 0: active, Bit 1: synced_from_controller */
-    uint8_t reserved[2];        /* Padding for alignment */
-} user_sync_record_t;
-
-/* User sync header (sent before user records) */
-typedef struct __attribute__((packed)) {
-    uint8_t version;            /* Protocol version (USER_SYNC_VERSION) */
-    uint8_t user_count;         /* Number of user records following */
-    uint16_t checksum;          /* CRC16-CCITT of payload (after header) */
-    uint32_t timestamp;         /* Unix timestamp of sync */
-    uint32_t nonce;             /* Random nonce for replay protection */
-} user_sync_header_t;
-
-/* Complete sync payload structure */
-typedef struct __attribute__((packed)) {
-    user_sync_header_t header;
-    user_sync_record_t users[USER_SYNC_MAX_USERS];
-} user_sync_payload_t;
+    /* Controller-specific codes */
+    WTC_USER_SYNC_ERROR_NO_MEMORY       = -20,
+    WTC_USER_SYNC_ERROR_SERIALIZE       = -21,
+    WTC_USER_SYNC_ERROR_SEND            = -22,
+    WTC_USER_SYNC_ERROR_TIMEOUT         = -23,
+    WTC_USER_SYNC_ERROR_RTU_NOT_CONNECTED = -24,
+} wtc_user_sync_result_t;
 
 /* User sync manager handle */
 typedef struct user_sync_manager user_sync_manager_t;
@@ -82,17 +61,26 @@ typedef struct {
 
 /* Sync result callback */
 typedef void (*user_sync_callback_t)(const char *station_name,
-                                      user_sync_result_t result,
+                                      int result,
                                       void *ctx);
+
+/* Sync statistics */
+typedef struct {
+    uint32_t total_syncs;
+    uint32_t successful_syncs;
+    uint32_t failed_syncs;
+    uint64_t last_sync_time_ms;
+    char last_sync_rtu[WTC_MAX_STATION_NAME];
+} user_sync_stats_t;
 
 /* ============== Hash Functions ============== */
 
 /**
  * Hash password using DJB2 algorithm with salt.
- * Matches the RTU implementation for compatibility.
+ * Uses shared user_sync_djb2() and user_sync_hash_with_salt() internally.
  *
  * @param password      Plain text password
- * @param hash_out      Output buffer for hex hash string (min 64 bytes)
+ * @param hash_out      Output buffer for hex hash string (min USER_SYNC_HASH_LEN bytes)
  * @param hash_out_size Size of output buffer
  * @return 0 on success, -1 on error
  */
@@ -102,6 +90,7 @@ int user_sync_hash_password(const char *password,
 
 /**
  * Verify password against stored hash.
+ * Uses constant-time comparison to prevent timing attacks.
  *
  * @param password      Plain text password to verify
  * @param stored_hash   Stored hash to compare against
@@ -114,6 +103,7 @@ bool user_sync_verify_password(const char *password,
 
 /**
  * Calculate CRC16-CCITT checksum.
+ * Wrapper around shared user_sync_crc16_ccitt().
  *
  * @param data  Data buffer
  * @param len   Data length
@@ -124,14 +114,14 @@ uint16_t user_sync_crc16(const uint8_t *data, size_t len);
 /**
  * Serialize users into sync payload.
  *
- * @param users         Array of user records
- * @param user_count    Number of users
+ * @param users         Array of user records (from types.h user_t)
+ * @param user_count    Number of users (capped at USER_SYNC_MAX_USERS)
  * @param payload       Output payload buffer
- * @return USER_SYNC_OK on success, error code otherwise
+ * @return 0 on success, negative error code otherwise
  */
-user_sync_result_t user_sync_serialize(const user_t *users,
-                                        int user_count,
-                                        user_sync_payload_t *payload);
+int user_sync_serialize(const user_t *users,
+                        int user_count,
+                        user_sync_payload_t *payload);
 
 /**
  * Deserialize sync payload into user records.
@@ -141,12 +131,12 @@ user_sync_result_t user_sync_serialize(const user_t *users,
  * @param users         Output user array
  * @param max_users     Maximum users to deserialize
  * @param user_count    Output: actual number of users
- * @return USER_SYNC_OK on success, error code otherwise
+ * @return 0 on success, negative error code otherwise
  */
-user_sync_result_t user_sync_deserialize(const user_sync_payload_t *payload,
-                                          user_t *users,
-                                          int max_users,
-                                          int *user_count);
+int user_sync_deserialize(const user_sync_payload_t *payload,
+                          user_t *users,
+                          int max_users,
+                          int *user_count);
 
 /* ============== Sync Manager ============== */
 
@@ -173,6 +163,13 @@ wtc_result_t user_sync_set_profinet(user_sync_manager_t *manager,
                                      struct profinet_controller *profinet);
 
 /**
+ * Set RTU registry for listing devices.
+ */
+struct rtu_registry;
+wtc_result_t user_sync_set_registry(user_sync_manager_t *manager,
+                                     struct rtu_registry *registry);
+
+/**
  * Set callback for sync results.
  */
 void user_sync_set_callback(user_sync_manager_t *manager,
@@ -186,12 +183,12 @@ void user_sync_set_callback(user_sync_manager_t *manager,
  * @param station_name  RTU station name
  * @param users         Array of users to sync
  * @param user_count    Number of users
- * @return USER_SYNC_OK on success
+ * @return 0 on success, negative error code otherwise
  */
-user_sync_result_t user_sync_to_rtu(user_sync_manager_t *manager,
-                                     const char *station_name,
-                                     const user_t *users,
-                                     int user_count);
+int user_sync_to_rtu(user_sync_manager_t *manager,
+                     const char *station_name,
+                     const user_t *users,
+                     int user_count);
 
 /**
  * Sync users to all connected RTUs.
@@ -232,14 +229,6 @@ void user_sync_on_user_change(user_sync_manager_t *manager,
 /**
  * Get sync statistics.
  */
-typedef struct {
-    uint32_t total_syncs;
-    uint32_t successful_syncs;
-    uint32_t failed_syncs;
-    uint64_t last_sync_time_ms;
-    char last_sync_rtu[WTC_MAX_STATION_NAME];
-} user_sync_stats_t;
-
 wtc_result_t user_sync_get_stats(user_sync_manager_t *manager,
                                   user_sync_stats_t *stats);
 

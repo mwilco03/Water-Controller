@@ -596,8 +596,8 @@ static wtc_result_t handle_user_sync_command(ipc_server_t *server, shm_command_t
     }
 
     uint32_t user_count = cmd->user_sync_cmd.user_count;
-    if (user_count > USER_SYNC_MAX_USERS) {
-        user_count = USER_SYNC_MAX_USERS;
+    if (user_count > IPC_USER_SYNC_MAX_USERS) {
+        user_count = IPC_USER_SYNC_MAX_USERS;
     }
 
     LOG_INFO(LOG_TAG, "User sync command: %d users to %s",
@@ -605,7 +605,7 @@ static wtc_result_t handle_user_sync_command(ipc_server_t *server, shm_command_t
              cmd->user_sync_cmd.station_name[0] ? cmd->user_sync_cmd.station_name : "all RTUs");
 
     /* Convert IPC user data to user_t array for sync module */
-    user_t users[USER_SYNC_MAX_USERS];
+    user_t users[IPC_USER_SYNC_MAX_USERS];
     for (uint32_t i = 0; i < user_count; i++) {
         memset(&users[i], 0, sizeof(user_t));
         users[i].user_id = i + 1;

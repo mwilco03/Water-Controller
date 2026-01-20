@@ -38,22 +38,31 @@ struct user_sync_manager {
     user_sync_stats_t stats;
 };
 
-/* ============== DJB2 Hash Implementation ============== */
+/* ============== Constant-Time Comparison ============== */
 
 /**
- * DJB2 hash algorithm by Dan Bernstein.
- * This implementation matches the RTU for compatibility.
+ * Constant-time string comparison for password hashes.
+ * Always compares the full length of both strings.
  */
-static uint32_t djb2_hash(const char *str) {
-    uint32_t hash = 5381;
-    int c;
+static bool secure_strcmp(const char *a, const char *b) {
+    size_t len_a = strlen(a);
+    size_t len_b = strlen(b);
+    size_t max_len = (len_a > len_b) ? len_a : len_b;
 
-    while ((c = *str++)) {
-        hash = ((hash << 5) + hash) + c; /* hash * 33 + c */
+    /* Length difference already indicates mismatch, but we continue
+     * comparing to maintain constant time */
+    volatile uint8_t result = (len_a != len_b) ? 1 : 0;
+
+    for (size_t i = 0; i < max_len; i++) {
+        uint8_t ca = (i < len_a) ? (uint8_t)a[i] : 0;
+        uint8_t cb = (i < len_b) ? (uint8_t)b[i] : 0;
+        result |= ca ^ cb;
     }
 
-    return hash;
+    return result == 0;
 }
+
+/* ============== Hash Functions ============== */
 
 int user_sync_hash_password(const char *password,
                             char *hash_out,
@@ -62,17 +71,13 @@ int user_sync_hash_password(const char *password,
         return -1;
     }
 
-    /* Concatenate salt and password */
-    char salted[256];
-    snprintf(salted, sizeof(salted), "%s%s", USER_SYNC_SALT, password);
+    /* Use shared hash function */
+    uint32_t salt_hash, pass_hash;
+    user_sync_hash_with_salt(password, &salt_hash, &pass_hash);
 
-    /* Compute DJB2 hash */
-    uint32_t hash = djb2_hash(salted);
-
-    /* Format as hex string with salt prefix for verification */
-    /* Format: "DJB2:<salt_hash>:<password_hash>" */
-    uint32_t salt_hash = djb2_hash(USER_SYNC_SALT);
-    snprintf(hash_out, hash_out_size, "DJB2:%08X:%08X", salt_hash, hash);
+    /* Format as hex string: "DJB2:<salt_hash>:<password_hash>" */
+    snprintf(hash_out, hash_out_size, "DJB2:%08X:%08X",
+             (unsigned int)salt_hash, (unsigned int)pass_hash);
 
     return 0;
 }
@@ -88,23 +93,24 @@ bool user_sync_verify_password(const char *password,
         return false;
     }
 
-    return strcmp(computed_hash, stored_hash) == 0;
+    /* Use constant-time comparison to prevent timing attacks */
+    return secure_strcmp(computed_hash, stored_hash);
 }
 
-/* ============== CRC16-CCITT Implementation ============== */
+/* ============== CRC16-CCITT ============== */
 
-/* Use centralized CRC16-CCITT implementation from utils/crc.h */
 uint16_t user_sync_crc16(const uint8_t *data, size_t len) {
-    return crc16_ccitt(data, len);
+    /* Use shared CRC implementation for consistency */
+    return user_sync_crc16_ccitt(data, len);
 }
 
 /* ============== Serialization ============== */
 
-user_sync_result_t user_sync_serialize(const user_t *users,
-                                        int user_count,
-                                        user_sync_payload_t *payload) {
+int user_sync_serialize(const user_t *users,
+                        int user_count,
+                        user_sync_payload_t *payload) {
     if (!users || !payload || user_count < 0) {
-        return USER_SYNC_ERROR_INVALID_PARAM;
+        return WTC_USER_SYNC_ERROR_INVALID_PARAM;
     }
 
     if (user_count > USER_SYNC_MAX_USERS) {
@@ -116,7 +122,7 @@ user_sync_result_t user_sync_serialize(const user_t *users,
     memset(payload, 0, sizeof(user_sync_payload_t));
 
     /* Fill header */
-    payload->header.version = USER_SYNC_VERSION;
+    payload->header.version = USER_SYNC_PROTOCOL_VERSION;
     payload->header.user_count = (uint8_t)user_count;
     payload->header.timestamp = (uint32_t)(time_get_ms() / 1000);
     payload->header.nonce = (uint32_t)time_get_ms(); /* Simple nonce */
@@ -126,13 +132,14 @@ user_sync_result_t user_sync_serialize(const user_t *users,
         user_sync_record_t *record = &payload->users[i];
 
         /* Copy username (truncate if needed) */
-        strncpy(record->username, users[i].username, sizeof(record->username) - 1);
-        record->username[sizeof(record->username) - 1] = '\0';
+        strncpy(record->username, users[i].username,
+                USER_SYNC_USERNAME_LEN - 1);
+        record->username[USER_SYNC_USERNAME_LEN - 1] = '\0';
 
         /* Copy password hash */
         strncpy(record->password_hash, users[i].password_hash,
-                sizeof(record->password_hash) - 1);
-        record->password_hash[sizeof(record->password_hash) - 1] = '\0';
+                USER_SYNC_HASH_LEN - 1);
+        record->password_hash[USER_SYNC_HASH_LEN - 1] = '\0';
 
         /* Set role */
         record->role = (uint8_t)users[i].role;
@@ -140,53 +147,56 @@ user_sync_result_t user_sync_serialize(const user_t *users,
         /* Set flags */
         record->flags = 0;
         if (users[i].active) {
-            record->flags |= 0x01; /* Bit 0: active */
+            record->flags |= USER_FLAG_ACTIVE;
         }
-        record->flags |= 0x02; /* Bit 1: synced_from_controller (always set) */
+        record->flags |= USER_FLAG_SYNCED; /* Mark as synced from controller */
     }
 
     /* Calculate checksum over user records */
     payload->header.checksum = user_sync_crc16(
         (const uint8_t *)payload->users,
-        user_count * sizeof(user_sync_record_t)
+        (size_t)user_count * sizeof(user_sync_record_t)
     );
 
     LOG_DEBUG(LOG_TAG, "Serialized %d users, checksum=0x%04X",
               user_count, payload->header.checksum);
 
-    return USER_SYNC_OK;
+    return 0;
 }
 
-user_sync_result_t user_sync_deserialize(const user_sync_payload_t *payload,
-                                          user_t *users,
-                                          int max_users,
-                                          int *user_count) {
+int user_sync_deserialize(const user_sync_payload_t *payload,
+                          user_t *users,
+                          int max_users,
+                          int *user_count) {
     if (!payload || !users || !user_count || max_users <= 0) {
-        return USER_SYNC_ERROR_INVALID_PARAM;
+        return WTC_USER_SYNC_ERROR_INVALID_PARAM;
     }
 
     /* Check version */
-    if (payload->header.version != USER_SYNC_VERSION) {
+    if (payload->header.version != USER_SYNC_PROTOCOL_VERSION) {
         LOG_ERROR(LOG_TAG, "Version mismatch: expected %d, got %d",
-                  USER_SYNC_VERSION, payload->header.version);
-        return USER_SYNC_ERROR_VERSION;
+                  USER_SYNC_PROTOCOL_VERSION, payload->header.version);
+        return WTC_USER_SYNC_ERROR_VERSION;
     }
 
     int count = payload->header.user_count;
     if (count > max_users) {
         count = max_users;
     }
+    if (count > USER_SYNC_MAX_USERS) {
+        count = USER_SYNC_MAX_USERS;
+    }
 
     /* Verify checksum */
     uint16_t computed_crc = user_sync_crc16(
         (const uint8_t *)payload->users,
-        payload->header.user_count * sizeof(user_sync_record_t)
+        (size_t)payload->header.user_count * sizeof(user_sync_record_t)
     );
 
     if (computed_crc != payload->header.checksum) {
         LOG_ERROR(LOG_TAG, "Checksum mismatch: expected 0x%04X, got 0x%04X",
                   payload->header.checksum, computed_crc);
-        return USER_SYNC_ERROR_CHECKSUM;
+        return WTC_USER_SYNC_ERROR_CHECKSUM;
     }
 
     /* Extract user records */
@@ -199,7 +209,7 @@ user_sync_result_t user_sync_deserialize(const user_sync_payload_t *payload,
         strncpy(users[i].password_hash, record->password_hash, 255);
         users[i].password_hash[255] = '\0';
         users[i].role = (user_role_t)record->role;
-        users[i].active = (record->flags & 0x01) != 0;
+        users[i].active = (record->flags & USER_FLAG_ACTIVE) != 0;
         users[i].created_at_ms = 0;
         users[i].last_login_ms = 0;
     }
@@ -207,7 +217,7 @@ user_sync_result_t user_sync_deserialize(const user_sync_payload_t *payload,
     *user_count = count;
     LOG_DEBUG(LOG_TAG, "Deserialized %d users", count);
 
-    return USER_SYNC_OK;
+    return 0;
 }
 
 /* ============== Sync Manager ============== */
@@ -251,6 +261,15 @@ wtc_result_t user_sync_set_profinet(user_sync_manager_t *manager,
     return WTC_OK;
 }
 
+wtc_result_t user_sync_set_registry(user_sync_manager_t *manager,
+                                     struct rtu_registry *registry) {
+    if (!manager) {
+        return WTC_ERROR_INVALID_PARAM;
+    }
+    manager->registry = registry;
+    return WTC_OK;
+}
+
 void user_sync_set_callback(user_sync_manager_t *manager,
                             user_sync_callback_t callback,
                             void *ctx) {
@@ -260,30 +279,29 @@ void user_sync_set_callback(user_sync_manager_t *manager,
     }
 }
 
-user_sync_result_t user_sync_to_rtu(user_sync_manager_t *manager,
-                                     const char *station_name,
-                                     const user_t *users,
-                                     int user_count) {
+int user_sync_to_rtu(user_sync_manager_t *manager,
+                     const char *station_name,
+                     const user_t *users,
+                     int user_count) {
     if (!manager || !station_name || !users) {
-        return USER_SYNC_ERROR_INVALID_PARAM;
+        return WTC_USER_SYNC_ERROR_INVALID_PARAM;
     }
 
     if (!manager->profinet) {
         LOG_ERROR(LOG_TAG, "PROFINET controller not set");
-        return USER_SYNC_ERROR_SEND;
+        return WTC_USER_SYNC_ERROR_SEND;
     }
 
     /* Serialize users */
     user_sync_payload_t payload;
-    user_sync_result_t result = user_sync_serialize(users, user_count, &payload);
-    if (result != USER_SYNC_OK) {
+    int result = user_sync_serialize(users, user_count, &payload);
+    if (result != 0) {
         LOG_ERROR(LOG_TAG, "Failed to serialize users: %d", result);
         return result;
     }
 
     /* Calculate actual payload size */
-    size_t payload_size = sizeof(user_sync_header_t) +
-                          (payload.header.user_count * sizeof(user_sync_record_t));
+    size_t payload_size = user_sync_payload_size(payload.header.user_count);
 
     LOG_INFO(LOG_TAG, "Syncing %d users to RTU %s (%zu bytes)",
              user_count, station_name, payload_size);
@@ -309,16 +327,16 @@ user_sync_result_t user_sync_to_rtu(user_sync_manager_t *manager,
         strncpy(manager->stats.last_sync_rtu, station_name,
                 WTC_MAX_STATION_NAME - 1);
         LOG_INFO(LOG_TAG, "User sync to %s successful", station_name);
-        result = USER_SYNC_OK;
+        result = 0;
     } else if (send_result == WTC_ERROR_NOT_CONNECTED) {
         manager->stats.failed_syncs++;
         LOG_WARN(LOG_TAG, "RTU %s not connected", station_name);
-        result = USER_SYNC_ERROR_RTU_NOT_CONNECTED;
+        result = WTC_USER_SYNC_ERROR_RTU_NOT_CONNECTED;
     } else {
         manager->stats.failed_syncs++;
         LOG_ERROR(LOG_TAG, "Failed to send user sync to %s: %d",
                   station_name, send_result);
-        result = USER_SYNC_ERROR_SEND;
+        result = WTC_USER_SYNC_ERROR_SEND;
     }
 
     /* Invoke callback */
@@ -350,9 +368,9 @@ int user_sync_to_all_rtus(user_sync_manager_t *manager,
 
     for (int i = 0; i < device_count; i++) {
         if (devices[i].connection_state == PROFINET_STATE_RUNNING) {
-            user_sync_result_t result = user_sync_to_rtu(
+            int result = user_sync_to_rtu(
                 manager, devices[i].station_name, users, user_count);
-            if (result == USER_SYNC_OK) {
+            if (result == 0) {
                 success_count++;
             }
         }
@@ -394,15 +412,5 @@ wtc_result_t user_sync_get_stats(user_sync_manager_t *manager,
     }
 
     memcpy(stats, &manager->stats, sizeof(user_sync_stats_t));
-    return WTC_OK;
-}
-
-/* Set registry for RTU listing */
-wtc_result_t user_sync_set_registry(user_sync_manager_t *manager,
-                                     struct rtu_registry *registry) {
-    if (!manager) {
-        return WTC_ERROR_INVALID_PARAM;
-    }
-    manager->registry = registry;
     return WTC_OK;
 }
