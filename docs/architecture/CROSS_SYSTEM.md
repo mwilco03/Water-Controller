@@ -857,6 +857,206 @@ COMPLIANCE REFERENCES:
 
 ---
 
+## Part 6: Configuration Sync Protocol Test Vectors
+
+This section provides verified byte-level test vectors for config sync packets.
+Both Controller and RTU implementations MUST produce/parse these exact bytes.
+
+### 6.1 CRC16-CCITT Reference Implementation
+
+```c
+// Polynomial: 0x1021, Init: 0xFFFF
+uint16_t crc16_ccitt(const uint8_t *data, size_t len) {
+    uint16_t crc = 0xFFFF;
+    for (size_t i = 0; i < len; i++) {
+        crc ^= (uint16_t)data[i] << 8;
+        for (int j = 0; j < 8; j++) {
+            crc = (crc & 0x8000) ? (crc << 1) ^ 0x1021 : crc << 1;
+        }
+    }
+    return crc;
+}
+
+// Test vectors:
+// CRC16("") = 0xFFFF (empty)
+// CRC16([0x00]) = 0xE1F0
+// CRC16([0x01, 0x02, 0x03]) = 0x6131
+// CRC16("NaCl4Life") = 0x7C9E (note: different from DJB2)
+```
+
+### 6.2 Device Config (0xF841) - 52 bytes
+
+```c
+// Test case: rtu-tank-1 with 8 sensors, 7 actuators
+// timestamp = 0x65A1B2C3 (Unix seconds)
+
+device_config_payload_t test_device_config = {
+    .version = 0x01,
+    .flags = 0x01,              // config_changed
+    .crc16 = 0x?????,           // Calculated below
+    .config_timestamp = 0x65A1B2C3,
+    .station_name = "rtu-tank-1\0...",  // 32 bytes, null-padded
+    .sensor_count = 8,
+    .actuator_count = 7,
+    .authority_mode = 0x01,     // SUPERVISED
+    .reserved = 0x00,
+    .watchdog_ms = 3000         // 0x00000BB8
+};
+
+// Wire bytes (52 total, big-endian multi-byte values):
+// Offset 00: 01 01 XX XX                      // version, flags, crc16
+// Offset 04: 65 A1 B2 C3                      // timestamp (BE)
+// Offset 08: 72 74 75 2D 74 61 6E 6B 2D 31 00 00 00 00 00 00  // "rtu-tank-1"
+// Offset 24: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  // padding
+// Offset 40: 00 08                            // sensor_count (BE)
+// Offset 42: 00 07                            // actuator_count (BE)
+// Offset 44: 01                               // authority_mode
+// Offset 45: 00                               // reserved
+// Offset 46: 00 00 0B B8                      // watchdog_ms (BE) = 3000
+
+// CRC scope: bytes 4-51 (48 bytes, after crc16 field)
+```
+
+### 6.3 Sensor Config (0xF842) - Header + 42-byte entries
+
+```c
+// Test case: 2 sensors
+
+// Header (4 bytes):
+// Offset 00: 01              // version
+// Offset 01: 02              // count = 2
+// Offset 02: XX XX           // crc16 (over entries only)
+
+// Entry 0 (42 bytes): pH sensor in slot 1
+sensor_config_entry_t sensor0 = {
+    .slot = 1,
+    .sensor_type = 0,         // MEASUREMENT_PH
+    .name = "pH\0............",  // 16 bytes
+    .unit = "pH\0.....",         // 8 bytes
+    .scale_min = 0.0f,        // 0x00000000
+    .scale_max = 14.0f,       // 0x41600000
+    .alarm_low = 6.5f,        // 0x40D00000
+    .alarm_high = 8.5f        // 0x41080000
+};
+
+// Entry 0 wire bytes (42 bytes):
+// Offset 00: 01 00                            // slot, type
+// Offset 02: 70 48 00 00 00 00 00 00 00 00 00 00 00 00 00 00  // "pH" + padding
+// Offset 18: 70 48 00 00 00 00 00 00          // "pH" unit + padding
+// Offset 26: 00 00 00 00                      // scale_min (0.0f BE)
+// Offset 30: 41 60 00 00                      // scale_max (14.0f BE)
+// Offset 34: 40 D0 00 00                      // alarm_low (6.5f BE)
+// Offset 38: 41 08 00 00                      // alarm_high (8.5f BE)
+
+// Entry 1 (42 bytes): Temperature sensor in slot 2
+sensor_config_entry_t sensor1 = {
+    .slot = 2,
+    .sensor_type = 1,         // MEASUREMENT_TEMPERATURE
+    .name = "Temp\0...........", // 16 bytes
+    .unit = "degC\0...",        // 8 bytes
+    .scale_min = 0.0f,
+    .scale_max = 100.0f,      // 0x42C80000
+    .alarm_low = 5.0f,        // 0x40A00000
+    .alarm_high = 40.0f       // 0x42200000
+};
+
+// CRC scope: all entry bytes (84 bytes for 2 entries)
+```
+
+### 6.4 Actuator Config (0xF843) - Header + 22-byte entries
+
+```c
+// Test case: 1 actuator (pump in slot 9)
+
+// Header (4 bytes):
+// Offset 00: 01              // version
+// Offset 01: 01              // count = 1
+// Offset 02: XX XX           // crc16 (over entries only)
+
+// Entry 0 (22 bytes):
+actuator_config_entry_t actuator0 = {
+    .slot = 9,
+    .actuator_type = 2,       // ACTUATOR_PUMP
+    .name = "Pump1\0..........", // 16 bytes
+    .default_state = 0x00,    // OFF
+    .reserved = 0x00,
+    .interlock_mask = 0x0000
+};
+
+// Entry 0 wire bytes (22 bytes):
+// Offset 00: 09 02                            // slot, type
+// Offset 02: 50 75 6D 70 31 00 00 00 00 00 00 00 00 00 00 00  // "Pump1"
+// Offset 18: 00                               // default_state
+// Offset 19: 00                               // reserved
+// Offset 20: 00 00                            // interlock_mask (BE)
+```
+
+### 6.5 Enrollment (0xF845) - 80 bytes
+
+```c
+// Test case: BIND operation with token
+
+enrollment_payload_t test_enrollment = {
+    .magic = 0x454E524C,      // "ENRL" in network order
+    .version = 0x01,
+    .operation = 0x01,        // BIND
+    .crc16 = 0x????,          // Calculated below
+    .enrollment_token = "wtc-enroll-0123456789abcdef0123456789abcdef\0...",  // 64 bytes
+    .controller_id = 0x0001C0DE,
+    .reserved = 0x00000000
+};
+
+// Wire bytes (80 total):
+// Offset 00: 45 4E 52 4C                      // magic "ENRL"
+// Offset 04: 01                               // version
+// Offset 05: 01                               // operation (BIND)
+// Offset 06: XX XX                            // crc16
+// Offset 08: 77 74 63 2D 65 6E 72 6F 6C 6C 2D // "wtc-enroll-"
+//            30 31 32 33 34 35 36 37 38 39 61 62 63 64 65 66  // "0123456789abcdef"
+//            30 31 32 33 34 35 36 37 38 39 61 62 63 64 65 66  // "0123456789abcdef"
+//            00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  // null padding to 64
+//            00 00 00 00 00 00 00 00 00 00 00 00 00          // (continued)
+// Offset 72: 00 01 C0 DE                      // controller_id (BE)
+// Offset 76: 00 00 00 00                      // reserved
+
+// CRC scope: bytes 8-79 (72 bytes: token + controller_id + reserved)
+```
+
+### 6.6 Float32 Big-Endian Test Vectors
+
+```c
+// IEEE 754 Float32, network byte order (big-endian)
+
+float value     | Hex (LE memory) | Wire bytes (BE)
+----------------|-----------------|------------------
+0.0f            | 0x00000000      | 00 00 00 00
+1.0f            | 0x3F800000      | 3F 80 00 00
+-1.0f           | 0xBF800000      | BF 80 00 00
+14.0f           | 0x41600000      | 41 60 00 00
+100.0f          | 0x42C80000      | 42 C8 00 00
+6.5f            | 0x40D00000      | 40 D0 00 00
+8.5f            | 0x41080000      | 41 08 00 00
+3.14159f        | 0x40490FDB      | 40 49 0F DB
+
+// Conversion functions:
+// Controller (C): Use htonl(*(uint32_t*)&value) for sending
+// RTU (C): Use ntohl() then cast back to float for receiving
+```
+
+### 6.7 Validation Checklist
+
+Both implementations MUST verify:
+
+- [ ] CRC16-CCITT with poly=0x1021, init=0xFFFF
+- [ ] All multi-byte integers in network byte order (big-endian)
+- [ ] All floats in IEEE 754 big-endian
+- [ ] Strings null-terminated and zero-padded to field length
+- [ ] Packet sizes: 0xF841=52, 0xF842=4+42n, 0xF843=4+22n, 0xF845=80
+- [ ] Magic number 0x454E524C for enrollment packets
+- [ ] Version field = 0x01 for all packets
+
+---
+
 ## Appendix: Version Compatibility Matrix
 
 | Water-Treat Version | Water-Controller Version | Data Format | Compatible |
