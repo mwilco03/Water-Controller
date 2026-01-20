@@ -16,6 +16,7 @@ interface ApiDiscoveredDevice {
   discovered_at: string;
   added_to_registry: boolean;
   rtu_name: string | null;
+  firmware_version: string | null;
 }
 
 // UI display format
@@ -33,6 +34,7 @@ interface DiscoveredDevice {
   station_name?: string;
   last_seen: string;
   response_time_ms?: number;
+  firmware_version?: string;
 }
 
 // Map API response to UI format
@@ -50,6 +52,7 @@ function mapApiDevice(dev: ApiDiscoveredDevice): DiscoveredDevice {
     configured: dev.added_to_registry,
     station_name: dev.rtu_name || undefined,
     last_seen: dev.discovered_at,
+    firmware_version: dev.firmware_version || undefined,
   };
 }
 
