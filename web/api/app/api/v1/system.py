@@ -713,3 +713,238 @@ async def get_audit_trail(
         "count": len(audit_entries),
         "hours": hours,
     })
+
+
+# ============== Network Configuration ==============
+
+
+# In-memory storage (in production, persist to config file)
+_network_config: dict[str, Any] = {
+    "mode": "dhcp",
+    "ip_address": "",
+    "netmask": "255.255.255.0",
+    "gateway": "",
+    "dns_primary": "",
+    "dns_secondary": "",
+    "hostname": "water-controller",
+}
+
+_web_config: dict[str, Any] = {
+    "port": 3000,
+    "bind_address": "0.0.0.0",
+    "https_enabled": False,
+    "https_port": 3443,
+}
+
+
+class NetworkConfig(BaseModel):
+    """Network configuration."""
+    mode: str = "dhcp"
+    ip_address: str = ""
+    netmask: str = "255.255.255.0"
+    gateway: str = ""
+    dns_primary: str = ""
+    dns_secondary: str = ""
+    hostname: str = "water-controller"
+
+
+class WebServerConfig(BaseModel):
+    """Web server configuration."""
+    port: int = 3000
+    bind_address: str = "0.0.0.0"
+    https_enabled: bool = False
+    https_port: int = 3443
+
+
+@router.get("/network")
+async def get_network_config() -> dict[str, Any]:
+    """
+    Get network configuration.
+
+    Returns current IP, DHCP, gateway, DNS settings.
+    """
+    import socket
+    import subprocess
+
+    config = {**_network_config}
+
+    # Try to detect current network state
+    try:
+        hostname = socket.gethostname()
+        config["hostname"] = hostname
+
+        # Get current IP from socket
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.settimeout(0.1)
+        try:
+            s.connect(("8.8.8.8", 80))
+            config["ip_address"] = s.getsockname()[0]
+        except Exception:
+            pass
+        finally:
+            s.close()
+
+    except Exception as e:
+        logger.debug(f"Could not detect network config: {e}")
+
+    return build_success_response(config)
+
+
+@router.put("/network")
+async def update_network_config(
+    config: NetworkConfig
+) -> dict[str, Any]:
+    """
+    Update network configuration.
+
+    Note: Changing IP address may disconnect your current session.
+    In Docker deployments, network changes affect the container only.
+    """
+    global _network_config
+
+    # Validate IP format
+    import re
+    ip_pattern = re.compile(r"^(\d{1,3}\.){3}\d{1,3}$")
+
+    if config.mode == "static":
+        if not ip_pattern.match(config.ip_address):
+            from fastapi import HTTPException
+            raise HTTPException(status_code=400, detail="Invalid IP address format")
+        if not ip_pattern.match(config.netmask):
+            from fastapi import HTTPException
+            raise HTTPException(status_code=400, detail="Invalid netmask format")
+
+    _network_config = config.model_dump()
+    logger.info(f"Network config updated: mode={config.mode}")
+
+    # Note: Actually applying network changes would require system-level commands
+    # and is deployment-specific (Docker vs bare metal)
+
+    return build_success_response(_network_config)
+
+
+@router.get("/web")
+async def get_web_config() -> dict[str, Any]:
+    """
+    Get web server configuration.
+
+    Returns current port, bind address, and HTTPS settings.
+    """
+    return build_success_response(_web_config)
+
+
+@router.put("/web")
+async def update_web_config(
+    config: WebServerConfig
+) -> dict[str, Any]:
+    """
+    Update web server configuration.
+
+    Note: Port changes require a server restart to take effect.
+    """
+    global _web_config
+
+    if config.port < 1 or config.port > 65535:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="Port must be between 1 and 65535")
+
+    _web_config = config.model_dump()
+    logger.info(f"Web config updated: port={config.port}")
+
+    return build_success_response(_web_config)
+
+
+@router.get("/interfaces")
+async def get_network_interfaces() -> dict[str, Any]:
+    """
+    Get available network interfaces.
+
+    Returns list of interfaces with IP, MAC, and state.
+    """
+    interfaces = []
+
+    try:
+        import socket
+        import subprocess
+
+        # Use ip command to get interface info
+        result = subprocess.run(
+            ["ip", "-j", "addr"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+
+        if result.returncode == 0:
+            import json
+            data = json.loads(result.stdout)
+
+            for iface in data:
+                name = iface.get("ifname", "")
+                if name == "lo":  # Skip loopback
+                    continue
+
+                ip_addr = ""
+                netmask = ""
+                for addr_info in iface.get("addr_info", []):
+                    if addr_info.get("family") == "inet":
+                        ip_addr = addr_info.get("local", "")
+                        prefix = addr_info.get("prefixlen", 24)
+                        # Convert prefix to netmask
+                        netmask = ".".join([
+                            str((0xffffffff << (32 - prefix) >> i) & 0xff)
+                            for i in [24, 16, 8, 0]
+                        ])
+                        break
+
+                interfaces.append({
+                    "name": name,
+                    "ip_address": ip_addr,
+                    "netmask": netmask,
+                    "mac_address": iface.get("address", ""),
+                    "state": iface.get("operstate", "UNKNOWN").upper(),
+                    "speed": "",  # Would need ethtool for this
+                })
+
+    except FileNotFoundError:
+        # ip command not available, try psutil
+        try:
+            import psutil
+            addrs = psutil.net_if_addrs()
+            stats = psutil.net_if_stats()
+
+            for name, addr_list in addrs.items():
+                if name == "lo":
+                    continue
+
+                ip_addr = ""
+                netmask = ""
+                mac_addr = ""
+
+                for addr in addr_list:
+                    if addr.family == socket.AF_INET:
+                        ip_addr = addr.address
+                        netmask = addr.netmask or ""
+                    elif addr.family == psutil.AF_LINK:
+                        mac_addr = addr.address
+
+                stat = stats.get(name)
+                state = "UP" if stat and stat.isup else "DOWN"
+                speed = f"{stat.speed}Mbps" if stat and stat.speed else ""
+
+                interfaces.append({
+                    "name": name,
+                    "ip_address": ip_addr,
+                    "netmask": netmask,
+                    "mac_address": mac_addr,
+                    "state": state,
+                    "speed": speed,
+                })
+
+        except ImportError:
+            logger.warning("Neither ip command nor psutil available for interface detection")
+
+    except Exception as e:
+        logger.warning(f"Failed to get network interfaces: {e}")
+
+    return build_success_response(interfaces)

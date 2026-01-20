@@ -87,7 +87,7 @@ export default function ControlPage() {
   // Fetch alarms for banner
   const fetchAlarms = useCallback(async (signal?: AbortSignal) => {
     try {
-      const res = await fetch('/api/v1/alarms?state=active', { signal });
+      const res = await fetch('/api/v1/alarms', { signal });
       if (!isMountedRef.current) return;
       if (res.ok) {
         const data = await res.json();
