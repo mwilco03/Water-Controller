@@ -9,6 +9,7 @@ from fastapi import APIRouter
 from .alarms import router as alarms_router
 from .auth import router as auth_router
 from .backup import router as backup_router
+from .control import router as control_router
 from .demo import router as demo_router
 from .discover import router as discover_router
 from .logging import router as logging_router
@@ -38,6 +39,7 @@ api_router.include_router(backup_router, prefix="/backup", tags=["Backup/Restore
 api_router.include_router(templates_router, prefix="/templates", tags=["Configuration Templates"])
 api_router.include_router(services_router, prefix="/services", tags=["Service Management"])
 api_router.include_router(logging_router, prefix="/logging", tags=["Log Forwarding"])
+api_router.include_router(control_router, prefix="/control", tags=["Control Couplings"])
 
 # Demo mode for E2E testing and training
 api_router.include_router(demo_router, prefix="/demo", tags=["Demo Mode"])
