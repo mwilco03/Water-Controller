@@ -114,7 +114,7 @@ export function useRTU(id: number) {
 }
 
 /**
- * Mutation hook for controlling actuators.
+ * Mutation hook for controlling actuators/controls.
  *
  * Includes optimistic updates for instant UI feedback.
  *
@@ -122,9 +122,9 @@ export function useRTU(id: number) {
  *   const controlActuator = useControlActuator();
  *
  *   <button onClick={() => controlActuator.mutate({
- *     rtuId: 1,
- *     actuatorId: 5,
- *     state: true
+ *     rtuName: 'rtu-tank-1',
+ *     controlTag: 'main-pump',
+ *     command: 'ON'
  *   })}>
  *     Turn On Pump
  *   </button>
@@ -133,57 +133,31 @@ export function useControlActuator() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async (params: { rtuId: number; actuatorId: number; state: boolean }) => {
-      const response = await fetch(`/api/v1/rtus/${params.rtuId}/actuators/${params.actuatorId}`, {
+    mutationFn: async (params: { rtuName: string; controlTag: string; command: 'ON' | 'OFF' }) => {
+      // POST /rtus/{name}/controls/{tag}/command
+      const response = await fetch(`/api/v1/rtus/${encodeURIComponent(params.rtuName)}/controls/${encodeURIComponent(params.controlTag)}/command`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ state: params.state }),
+        body: JSON.stringify({ command: params.command }),
       });
 
       if (!response.ok) {
-        throw new Error(`Failed to control actuator: ${response.statusText}`);
+        const error = await response.json().catch(() => ({}));
+        throw new Error(error.detail || `Failed to control actuator: ${response.statusText}`);
       }
 
       return response.json();
     },
 
-    // Optimistic update: Update UI immediately before server responds
-    onMutate: async (params) => {
-      // Cancel any outgoing refetches (so they don't overwrite our optimistic update)
-      await queryClient.cancelQueries({ queryKey: rtuKeys.detail(params.rtuId) });
-
-      // Snapshot the previous value
-      const previousRTU = queryClient.getQueryData<RTUDetail>(rtuKeys.detail(params.rtuId));
-
-      // Optimistically update the cache
-      if (previousRTU) {
-        queryClient.setQueryData<RTUDetail>(rtuKeys.detail(params.rtuId), (old) => {
-          if (!old) return old;
-          return {
-            ...old,
-            actuators: old.actuators.map((act) =>
-              act.id === params.actuatorId ? { ...act, state: params.state } : act
-            ),
-          };
-        });
-      }
-
-      // Return context with snapshot for rollback
-      return { previousRTU };
-    },
-
-    // If mutation fails, rollback to previous state
-    onError: (err, params, context) => {
-      if (context?.previousRTU) {
-        queryClient.setQueryData(rtuKeys.detail(params.rtuId), context.previousRTU);
-      }
-      console.error('Actuator control failed:', err);
+    // If mutation fails, log error
+    onError: (err) => {
+      console.error('Control command failed:', err);
     },
 
     // Always refetch after mutation to ensure consistency
-    onSettled: (data, error, params) => {
-      queryClient.invalidateQueries({ queryKey: rtuKeys.detail(params.rtuId) });
-      queryClient.invalidateQueries({ queryKey: rtuKeys.lists() });
+    onSettled: () => {
+      // Invalidate all RTU queries to refresh state
+      queryClient.invalidateQueries({ queryKey: rtuKeys.all });
     },
   });
 }

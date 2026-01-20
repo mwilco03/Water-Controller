@@ -197,6 +197,42 @@ async def get_system_logs(
     })
 
 
+class ClientLogEntry(BaseModel):
+    """Log entry from frontend client."""
+    level: str
+    message: str
+    timestamp: str | None = None
+    source: str | None = None
+    data: dict | list | str | None = None
+
+
+# Logger for client-side logs
+client_logger = logging.getLogger("wtc.client")
+
+
+@router.post("/logs")
+async def post_client_log(entry: ClientLogEntry) -> dict[str, Any]:
+    """
+    Receive log entries from frontend clients.
+
+    Logs are forwarded to Python logging framework for centralized handling.
+    """
+    level = entry.level.upper()
+    source = entry.source or "frontend"
+    msg = f"[{source}] {entry.message}"
+
+    if level == "ERROR":
+        client_logger.error(msg, extra={"client_data": entry.data})
+    elif level == "WARN" or level == "WARNING":
+        client_logger.warning(msg, extra={"client_data": entry.data})
+    elif level == "INFO":
+        client_logger.info(msg, extra={"client_data": entry.data})
+    else:
+        client_logger.debug(msg, extra={"client_data": entry.data})
+
+    return build_success_response({"received": True})
+
+
 # ============== Health Check Hierarchy (Principle 9) ==============
 # Per HARMONIOUS_SYSTEM_DESIGN.md:
 # - /health/live: Is process running? (5s interval, for systemd/k8s liveness)

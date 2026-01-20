@@ -23,7 +23,7 @@ export default function Error({ error, reset }: ErrorProps) {
     // Log error to monitoring service in production
     if (process.env.NODE_ENV === 'production') {
       // Send to error tracking service
-      fetch('/api/v1/system/log', {
+      fetch('/api/v1/system/logs', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

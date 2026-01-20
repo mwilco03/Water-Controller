@@ -195,8 +195,8 @@ export default function SettingsPage() {
   const createBackup = async () => {
     setLoading(true);
     try {
-      // POST to /api/v1/system/ creates and immediately returns backup as ZIP
-      const res = await fetch('/api/v1/system/', {
+      // POST to /api/v1/backup creates and immediately returns backup as ZIP
+      const res = await fetch('/api/v1/backup', {
         method: 'POST',
       });
 
