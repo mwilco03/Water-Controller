@@ -276,17 +276,67 @@ async def discover_modules(
     Discover modules in RTU slots via PROFINET.
 
     RTU must be RUNNING. Queries the PROFINET controller for slot module info.
+    In demo mode, returns simulated sensor/actuator configuration.
     """
+    from ...services.demo_mode import get_demo_service
+
     rtu = get_rtu_or_404(db, name)
 
     if rtu.state != RtuState.RUNNING:
         raise RtuNotConnectedError(name, rtu.state)
 
+    # Check if demo mode is enabled
+    demo = get_demo_service()
+    if demo.is_enabled():
+        # Return simulated discovery data from demo service
+        sim_rtu = demo.get_rtu(name)
+        if sim_rtu:
+            discovered = []
+
+            # Add simulated sensors
+            for sensor in sim_rtu.sensors:
+                discovered.append({
+                    "slot_number": sensor.slot,
+                    "tag": sensor.tag,
+                    "type": "sensor",
+                    "description": f"Simulated {sensor.tag}",
+                    "data_type": "float32",
+                    "unit": sensor.unit,
+                    "scale_min": sensor.min_value,
+                    "scale_max": sensor.max_value,
+                })
+
+            # Add simulated actuators
+            for actuator in sim_rtu.actuators:
+                discovered.append({
+                    "slot_number": actuator.slot,
+                    "tag": actuator.tag,
+                    "type": "control",
+                    "description": f"Simulated {actuator.tag}",
+                    "data_type": "uint16",
+                    "unit": "",
+                })
+
+            return build_success_response({
+                "rtu_name": name,
+                "discovered": discovered,
+                "count": len(discovered),
+                "source": "simulation",
+            })
+        else:
+            return build_success_response({
+                "rtu_name": name,
+                "discovered": [],
+                "count": 0,
+                "source": "simulation",
+                "message": "RTU not found in demo simulation",
+            })
+
     # Live PROFINET module discovery not yet implemented
     # Requires controller IPC to query slot configurations from connected RTU
     raise HTTPException(
         status_code=501,
-        detail="PROFINET module discovery requires controller IPC. Feature not yet implemented."
+        detail="PROFINET module discovery requires controller IPC. Enable demo mode for simulated discovery."
     )
 
 
