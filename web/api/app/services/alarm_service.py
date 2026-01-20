@@ -53,11 +53,10 @@ class AlarmService:
         query = self.db.query(AlarmEvent).filter(AlarmEvent.state != AlarmState.CLEARED)
 
         if rtu_name:
-            rtu = self.get_rtu_by_name(rtu_name)
-            query = query.filter(AlarmEvent.rtu_id == rtu.id)
+            query = query.filter(AlarmEvent.rtu_station == rtu_name)
 
         if priority:
-            query = query.join(AlarmRule).filter(AlarmRule.priority == priority.upper())
+            query = query.join(AlarmRule).filter(AlarmRule.severity == priority.upper())
 
         if acknowledged is not None:
             if acknowledged:
@@ -110,12 +109,10 @@ class AlarmService:
         )
 
         if rtu_name:
-            rtu = self.db.query(RTU).filter(RTU.station_name == rtu_name).first()
-            if rtu:
-                query = query.filter(AlarmEvent.rtu_id == rtu.id)
+            query = query.filter(AlarmEvent.rtu_station == rtu_name)
 
         if priority:
-            query = query.join(AlarmRule).filter(AlarmRule.priority == priority.upper())
+            query = query.join(AlarmRule).filter(AlarmRule.severity == priority.upper())
 
         total = query.count()
         events = query.order_by(AlarmEvent.activated_at.desc()).limit(limit).all()
@@ -157,9 +154,7 @@ class AlarmService:
         query = self.db.query(AlarmEvent).filter(AlarmEvent.state == AlarmState.ACTIVE)
 
         if rtu_name:
-            rtu = self.db.query(RTU).filter(RTU.station_name == rtu_name).first()
-            if rtu:
-                query = query.filter(AlarmEvent.rtu_id == rtu.id)
+            query = query.filter(AlarmEvent.rtu_station == rtu_name)
 
         events = query.all()
         count = 0
@@ -173,19 +168,21 @@ class AlarmService:
 
     def event_to_dict(self, event: AlarmEvent) -> dict[str, Any]:
         """Convert alarm event to dictionary for API response."""
-        rule = event.rule
-        rtu = event.rtu
+        # Query for the associated rule if we have an alarm_rule_id
+        rule = None
+        if event.alarm_rule_id:
+            rule = self.db.query(AlarmRule).filter(AlarmRule.id == event.alarm_rule_id).first()
 
         return {
             "id": event.id,
-            "rtu": rtu.station_name if rtu else "unknown",
-            "tag": rule.tag if rule else "unknown",
-            "priority": rule.priority if rule else AlarmPriority.MEDIUM,
-            "type": rule.alarm_type if rule else "UNKNOWN",
+            "rtu": event.rtu_station,
+            "name": rule.name if rule else "unknown",
+            "severity": rule.severity if rule else "MEDIUM",
+            "condition": rule.condition if rule else "unknown",
+            "threshold": rule.threshold if rule else 0.0,
             "message": event.message or "",
             "value": event.value_at_activation,
-            "setpoint": rule.setpoint if rule else 0.0,
-            "unit": None,
+            "slot": event.slot,
             "state": event.state,
             "activated_at": event.activated_at,
             "acknowledged_at": event.acknowledged_at,

@@ -222,7 +222,7 @@ async def apply_template(
         (a.name, a.severity): a
         for a in db.query(AlarmRule).filter(AlarmRule.rtu_station == rtu.name).all()
     }
-    existing_pids = {p.name: p for p in db.query(PidLoop).filter(PidLoop.rtu_id == rtu.id).all()}
+    existing_pids = {p.name: p for p in db.query(PidLoop).filter(PidLoop.input_rtu == rtu.station_name).all()}
 
     # Apply sensors (slot_number is metadata, not a FK)
     for sensor_data in config.get("sensors", []):
@@ -284,33 +284,35 @@ async def apply_template(
             db.add(control)
         applied["controls"] += 1
 
-    # Apply alarms
+    # Apply alarms (AlarmRule uses name, condition, threshold, severity)
     for alarm_data in config.get("alarms", []):
-        existing = existing_alarms.get((alarm_data["tag"], alarm_data["alarm_type"]))
+        existing = existing_alarms.get((alarm_data["name"], alarm_data.get("severity", "MEDIUM")))
 
         if existing and not overwrite:
             continue
 
         if existing:
-            existing.priority = alarm_data.get("priority", "MEDIUM")
-            existing.setpoint = alarm_data["setpoint"]
-            existing.deadband = alarm_data.get("deadband", 0)
-            existing.message_template = alarm_data.get("message_template")
+            existing.slot = alarm_data.get("slot", 0)
+            existing.condition = alarm_data.get("condition", ">")
+            existing.threshold = alarm_data.get("threshold", 0)
+            existing.delay_ms = alarm_data.get("delay_ms", 0)
+            existing.message = alarm_data.get("message")
         else:
             alarm = AlarmRule(
-                rtu_id=rtu.id,
-                tag=alarm_data["tag"],
-                alarm_type=alarm_data["alarm_type"],
-                priority=alarm_data.get("priority", "MEDIUM"),
-                setpoint=alarm_data["setpoint"],
-                deadband=alarm_data.get("deadband", 0),
-                message_template=alarm_data.get("message_template"),
+                rtu_station=rtu.station_name,
+                name=alarm_data["name"],
+                slot=alarm_data.get("slot", 0),
+                condition=alarm_data.get("condition", ">"),
+                threshold=alarm_data.get("threshold", 0),
+                severity=alarm_data.get("severity", "MEDIUM"),
+                delay_ms=alarm_data.get("delay_ms", 0),
+                message=alarm_data.get("message"),
                 enabled=True,
             )
             db.add(alarm)
         applied["alarms"] += 1
 
-    # Apply PID loops
+    # Apply PID loops (PidLoop uses input_rtu/slot and output_rtu/slot)
     for pid_data in config.get("pid_loops", []):
         existing = existing_pids.get(pid_data["name"])
 
@@ -318,24 +320,27 @@ async def apply_template(
             continue
 
         if existing:
-            existing.pv_sensor_tag = pid_data["pv_sensor_tag"]
-            existing.cv_control_tag = pid_data["cv_control_tag"]
+            existing.input_rtu = pid_data.get("input_rtu", rtu.station_name)
+            existing.input_slot = pid_data.get("input_slot", 0)
+            existing.output_rtu = pid_data.get("output_rtu", rtu.station_name)
+            existing.output_slot = pid_data.get("output_slot", 0)
             existing.kp = pid_data.get("kp", 1.0)
             existing.ki = pid_data.get("ki", 0.0)
             existing.kd = pid_data.get("kd", 0.0)
-            existing.setpoint = pid_data["setpoint"]
+            existing.setpoint = pid_data.get("setpoint", 0)
             existing.output_min = pid_data.get("output_min", 0.0)
             existing.output_max = pid_data.get("output_max", 100.0)
         else:
             pid = PidLoop(
-                rtu_id=rtu.id,
                 name=pid_data["name"],
-                pv_sensor_tag=pid_data["pv_sensor_tag"],
-                cv_control_tag=pid_data["cv_control_tag"],
+                input_rtu=pid_data.get("input_rtu", rtu.station_name),
+                input_slot=pid_data.get("input_slot", 0),
+                output_rtu=pid_data.get("output_rtu", rtu.station_name),
+                output_slot=pid_data.get("output_slot", 0),
                 kp=pid_data.get("kp", 1.0),
                 ki=pid_data.get("ki", 0.0),
                 kd=pid_data.get("kd", 0.0),
-                setpoint=pid_data["setpoint"],
+                setpoint=pid_data.get("setpoint", 0),
                 output_min=pid_data.get("output_min", 0.0),
                 output_max=pid_data.get("output_max", 100.0),
                 mode="AUTO",
@@ -425,11 +430,13 @@ async def create_template_from_rtu(
         })
 
     pid_loops = []
-    for pid in db.query(PidLoop).filter(PidLoop.rtu_id == rtu.id).all():
+    for pid in db.query(PidLoop).filter(PidLoop.input_rtu == rtu.station_name).all():
         pid_loops.append({
             "name": pid.name,
-            "pv_sensor_tag": pid.pv_sensor_tag,
-            "cv_control_tag": pid.cv_control_tag,
+            "input_rtu": pid.input_rtu,
+            "input_slot": pid.input_slot,
+            "output_rtu": pid.output_rtu,
+            "output_slot": pid.output_slot,
             "kp": pid.kp,
             "ki": pid.ki,
             "kd": pid.kd,

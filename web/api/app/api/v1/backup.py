@@ -64,15 +64,17 @@ async def create_backup(
     ).all()
 
     # Fetch alarm rules and PID loops separately (not defined as relationships)
+    # AlarmRule uses rtu_station (string), not rtu_id (FK)
     all_alarms = db.query(AlarmRule).all()
     alarms_by_rtu = {}
     for alarm in all_alarms:
-        alarms_by_rtu.setdefault(alarm.rtu_id, []).append(alarm)
+        alarms_by_rtu.setdefault(alarm.rtu_station, []).append(alarm)
 
+    # PidLoop has input_rtu and output_rtu, group by input_rtu for export
     all_pid_loops = db.query(PidLoop).all()
     pid_loops_by_rtu = {}
     for loop in all_pid_loops:
-        pid_loops_by_rtu.setdefault(loop.rtu_id, []).append(loop)
+        pid_loops_by_rtu.setdefault(loop.input_rtu, []).append(loop)
 
     for rtu in rtus:
         rtu_data = {
@@ -113,30 +115,36 @@ async def create_backup(
                 "max_value": control.max_value,
             })
 
-        # Export alarm rules (from pre-fetched dict)
-        for alarm in alarms_by_rtu.get(rtu.id, []):
+        # Export alarm rules (from pre-fetched dict, keyed by rtu_station)
+        for alarm in alarms_by_rtu.get(rtu.station_name, []):
             rtu_data["alarms"].append({
-                "tag": alarm.tag,
-                "alarm_type": alarm.alarm_type,
-                "priority": alarm.priority,
-                "setpoint": alarm.setpoint,
-                "deadband": alarm.deadband,
-                "message_template": alarm.message_template,
+                "name": alarm.name,
+                "slot": alarm.slot,
+                "condition": alarm.condition,
+                "threshold": alarm.threshold,
+                "severity": alarm.severity,
+                "delay_ms": alarm.delay_ms,
+                "message": alarm.message,
                 "enabled": alarm.enabled,
             })
 
-        # Export PID loops (from pre-fetched dict)
-        for loop in pid_loops_by_rtu.get(rtu.id, []):
+        # Export PID loops (from pre-fetched dict, keyed by input_rtu)
+        for loop in pid_loops_by_rtu.get(rtu.station_name, []):
             rtu_data["pid_loops"].append({
                 "name": loop.name,
-                "pv_sensor_tag": loop.pv_sensor_tag,
-                "cv_control_tag": loop.cv_control_tag,
+                "input_rtu": loop.input_rtu,
+                "input_slot": loop.input_slot,
+                "output_rtu": loop.output_rtu,
+                "output_slot": loop.output_slot,
                 "kp": loop.kp,
                 "ki": loop.ki,
                 "kd": loop.kd,
                 "setpoint": loop.setpoint,
                 "output_min": loop.output_min,
                 "output_max": loop.output_max,
+                "deadband": loop.deadband,
+                "integral_limit": loop.integral_limit,
+                "derivative_filter": loop.derivative_filter,
                 "mode": loop.mode,
                 "enabled": loop.enabled,
             })
@@ -274,13 +282,14 @@ async def restore_backup(
         # Create alarm rules
         for alarm_data in rtu_data.get("alarms", []):
             alarm = AlarmRule(
-                rtu_id=rtu.id,
-                tag=alarm_data["tag"],
-                alarm_type=alarm_data["alarm_type"],
-                priority=alarm_data["priority"],
-                setpoint=alarm_data["setpoint"],
-                deadband=alarm_data.get("deadband", 0),
-                message_template=alarm_data.get("message_template"),
+                rtu_station=station_name,
+                name=alarm_data["name"],
+                slot=alarm_data["slot"],
+                condition=alarm_data["condition"],
+                threshold=alarm_data["threshold"],
+                severity=alarm_data["severity"],
+                delay_ms=alarm_data.get("delay_ms", 0),
+                message=alarm_data.get("message"),
                 enabled=alarm_data.get("enabled", True),
             )
             db.add(alarm)
@@ -289,16 +298,20 @@ async def restore_backup(
         # Create PID loops
         for loop_data in rtu_data.get("pid_loops", []):
             loop = PidLoop(
-                rtu_id=rtu.id,
                 name=loop_data["name"],
-                pv_sensor_tag=loop_data["pv_sensor_tag"],
-                cv_control_tag=loop_data["cv_control_tag"],
+                input_rtu=loop_data.get("input_rtu", station_name),
+                input_slot=loop_data["input_slot"],
+                output_rtu=loop_data.get("output_rtu", station_name),
+                output_slot=loop_data["output_slot"],
                 kp=loop_data["kp"],
                 ki=loop_data["ki"],
                 kd=loop_data["kd"],
                 setpoint=loop_data["setpoint"],
                 output_min=loop_data["output_min"],
                 output_max=loop_data["output_max"],
+                deadband=loop_data.get("deadband", 0),
+                integral_limit=loop_data.get("integral_limit", 100),
+                derivative_filter=loop_data.get("derivative_filter", 0.1),
                 mode=loop_data["mode"],
                 enabled=loop_data.get("enabled", True),
             )

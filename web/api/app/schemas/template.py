@@ -44,24 +44,27 @@ class ControlTemplate(BaseModel):
 class AlarmTemplate(BaseModel):
     """Alarm rule template."""
 
-    tag: str = Field(description="Tag to monitor")
-    alarm_type: str = Field(description="Alarm type (HIGH, LOW, RATE, etc.)")
-    priority: str = Field("MEDIUM", description="Alarm priority")
-    setpoint: float = Field(description="Alarm threshold")
-    deadband: float = Field(0.0, description="Deadband for hysteresis")
-    message_template: str = Field(description="Alarm message template")
+    name: str = Field(description="Alarm name")
+    slot: int = Field(description="Slot to monitor")
+    condition: str = Field(description="Condition operator (>, <, >=, <=, ==)")
+    threshold: float = Field(description="Alarm threshold value")
+    severity: str = Field("MEDIUM", description="Alarm severity (LOW, MEDIUM, HIGH, CRITICAL)")
+    delay_ms: int = Field(0, description="Delay before activation in milliseconds")
+    message: str | None = Field(None, description="Alarm message")
 
 
 class PidTemplate(BaseModel):
     """PID loop template."""
 
     name: str = Field(description="Loop name")
-    pv_sensor_tag: str = Field(description="Process variable sensor tag")
-    cv_control_tag: str = Field(description="Control variable tag")
+    input_rtu: str = Field(description="Input RTU station name")
+    input_slot: int = Field(description="Input slot number (PV source)")
+    output_rtu: str = Field(description="Output RTU station name")
+    output_slot: int = Field(description="Output slot number (CV target)")
     kp: float = Field(1.0, ge=0, description="Proportional gain")
     ki: float = Field(0.0, ge=0, description="Integral gain")
     kd: float = Field(0.0, ge=0, description="Derivative gain")
-    setpoint: float = Field(description="Default setpoint")
+    setpoint: float = Field(0, description="Default setpoint")
     output_min: float = Field(0.0, description="Minimum output")
     output_max: float = Field(100.0, description="Maximum output")
 
