@@ -130,7 +130,12 @@ CREATE TABLE IF NOT EXISTS users (
     sync_to_rtus BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    last_login TIMESTAMPTZ
+    last_login TIMESTAMPTZ,
+    -- Password policy fields
+    password_changed_at TIMESTAMPTZ DEFAULT NOW(),
+    password_expires_at TIMESTAMPTZ,  -- NULL means never expires
+    failed_login_attempts INTEGER NOT NULL DEFAULT 0,
+    locked_until TIMESTAMPTZ  -- NULL means not locked
 );
 
 -- User sessions table (for authentication tokens)

@@ -52,6 +52,12 @@ class User(Base):
     )
     last_login = Column(DateTime(timezone=True), nullable=True)
 
+    # Password policy
+    password_changed_at = Column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
+    password_expires_at = Column(DateTime(timezone=True), nullable=True)  # None = never expires
+    failed_login_attempts = Column(Integer, default=0)
+    locked_until = Column(DateTime(timezone=True), nullable=True)
+
 
 class UserSession(Base):
     """Active user session."""

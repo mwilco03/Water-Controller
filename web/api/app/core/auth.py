@@ -130,6 +130,55 @@ async def optional_session_for_audit(
     return session
 
 
+async def require_admin_access(
+    request: Request,
+    session: dict | None = Depends(get_current_session)
+) -> dict:
+    """
+    Dependency for admin endpoints - requires authenticated admin user.
+
+    Raises 401 Unauthorized if:
+    - No valid session token provided
+    - Session has expired
+
+    Raises 403 Forbidden if:
+    - User role is not admin
+
+    Returns the session dict with user info for audit logging.
+    """
+    if not session:
+        logger.warning(
+            "Admin access denied - no valid session",
+            extra={"path": request.url.path, "method": request.method}
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "error": "Authentication required",
+                "code": "AUTH_REQUIRED",
+                "message": "Please authenticate to access this resource"
+            },
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    role = session.get("role", "viewer")
+    if role != "admin":
+        logger.warning(
+            f"Admin access denied - insufficient role: {role}",
+            extra={"username": session.get("username"), "path": request.url.path}
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "error": "Insufficient permissions",
+                "code": "ADMIN_REQUIRED",
+                "message": "Admin role required for this action"
+            }
+        )
+
+    return session
+
+
 def log_control_action(
     session: dict,
     action: str,

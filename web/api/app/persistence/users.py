@@ -10,6 +10,13 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
+from ..core.password_policy import (
+    DEFAULT_POLICY,
+    calculate_lockout_time,
+    calculate_password_expiry,
+    is_account_locked,
+    is_password_expired,
+)
 from ..models.user import User
 from .audit import log_audit
 from .base import get_db
@@ -87,12 +94,17 @@ def create_user(user: dict[str, Any]) -> int:
     """Create a new user"""
     with get_db() as db:
         password_hash = hash_password(user['password'])
+        now = datetime.now(UTC)
         new_user = User(
             username=user['username'],
             password_hash=password_hash,
             role=user.get('role', 'viewer'),
             active=user.get('active', True),
             sync_to_rtus=user.get('sync_to_rtus', True),
+            password_changed_at=now,
+            password_expires_at=user.get('password_expires_at') or calculate_password_expiry(),
+            failed_login_attempts=0,
+            locked_until=None,
         )
         db.add(new_user)
         db.commit()
@@ -120,6 +132,11 @@ def update_user(user_id: int, user: dict[str, Any]) -> bool:
 
         if user.get('password'):
             existing.password_hash = hash_password(user['password'])
+            existing.password_changed_at = datetime.now(UTC)
+            existing.password_expires_at = user.get('password_expires_at') or calculate_password_expiry()
+            # Reset failed attempts on password change
+            existing.failed_login_attempts = 0
+            existing.locked_until = None
 
         existing.updated_at = datetime.now(UTC)
         db.commit()
@@ -141,23 +158,53 @@ def delete_user(user_id: int) -> bool:
 
 
 def authenticate_user(username: str, password: str) -> dict[str, Any] | None:
-    """Authenticate user with username and password"""
+    """
+    Authenticate user with username and password.
+
+    Returns user dict on success, None on failure.
+    Handles account lockout and failed login tracking.
+    """
     with get_db() as db:
         user = db.query(User).filter(User.username == username).first()
         if not user:
             return None
 
         if not user.active:
+            logger.warning(f"Login attempt for inactive user: {username}")
+            return None
+
+        # Check if account is locked
+        if is_account_locked(user.locked_until):
+            logger.warning(f"Login attempt for locked account: {username}")
             return None
 
         if not verify_password(password, user.password_hash):
+            # Increment failed login attempts
+            user.failed_login_attempts = (user.failed_login_attempts or 0) + 1
+
+            # Lock account if too many failed attempts
+            if user.failed_login_attempts >= DEFAULT_POLICY.max_failed_attempts:
+                user.locked_until = calculate_lockout_time()
+                logger.warning(
+                    f"Account locked due to {user.failed_login_attempts} failed attempts: {username}"
+                )
+
+            db.commit()
             return None
 
-        # Update last login
+        # Check if password is expired
+        if is_password_expired(user.password_changed_at):
+            logger.warning(f"Login attempt with expired password: {username}")
+            # Still allow login but set a flag for the frontend to prompt password change
+            # This is a soft expiry - user can still authenticate but should change password
+
+        # Successful login - reset failed attempts and update last login
+        user.failed_login_attempts = 0
+        user.locked_until = None
         user.last_login = datetime.now(UTC)
         db.commit()
 
-        return _user_to_dict(user)
+        return user.to_dict()
 
 
 def get_users_for_sync() -> list[dict[str, Any]]:
@@ -185,3 +232,47 @@ def ensure_default_admin():
             'sync_to_rtus': True
         })
         logger.info("Created default admin user (username: admin)")
+
+
+def unlock_user(user_id: int) -> bool:
+    """Unlock a user account and reset failed login attempts."""
+    with get_db() as db:
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            return False
+
+        user.failed_login_attempts = 0
+        user.locked_until = None
+        db.commit()
+        logger.info(f"User account unlocked: {user.username}")
+        return True
+
+
+def check_password_status(user_id: int) -> dict[str, Any]:
+    """
+    Check password status for a user.
+
+    Returns dict with:
+        - expired: bool - whether password has expired
+        - days_until_expiry: int | None - days until expiry (None if never expires)
+        - locked: bool - whether account is locked
+        - failed_attempts: int - number of failed login attempts
+    """
+    with get_db() as db:
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            return {"error": "User not found"}
+
+        from datetime import timedelta
+
+        days_until_expiry = None
+        if user.password_expires_at:
+            delta = user.password_expires_at - datetime.now(UTC)
+            days_until_expiry = max(0, delta.days)
+
+        return {
+            "expired": is_password_expired(user.password_changed_at),
+            "days_until_expiry": days_until_expiry,
+            "locked": is_account_locked(user.locked_until),
+            "failed_attempts": user.failed_login_attempts or 0,
+        }
