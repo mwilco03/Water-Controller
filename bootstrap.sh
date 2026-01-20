@@ -1081,13 +1081,14 @@ do_docker_install() {
     local docker_dir=""
     local repo_dir=""
     if [[ -d "./docker" ]]; then
+        # Running from within repo directory - pull latest
         docker_dir="./docker"
         repo_dir="."
-    elif [[ -d "/opt/water-controller/docker" ]]; then
-        docker_dir="/opt/water-controller/docker"
-        repo_dir="/opt/water-controller"
+        log_info "Running from repo directory, pulling latest changes..."
+        git pull origin main 2>/dev/null || log_warn "Could not pull latest (may be offline)"
     else
-        # Clone repo first to get docker files
+        # Always clone fresh to ensure we have latest code
+        # This fixes issues where /opt/water-controller has stale Dockerfiles
         local staging_dir
         staging_dir=$(create_staging_dir "docker-install")
         register_cleanup "$staging_dir"
@@ -1102,6 +1103,11 @@ do_docker_install() {
         if ! mkdir_result=$(run_privileged mkdir -p /opt/water-controller 2>&1); then
             log_error "Failed to create /opt/water-controller: $mkdir_result"
             return 1
+        fi
+        # Remove old files first to ensure clean install
+        if [[ -d "/opt/water-controller/docker" ]]; then
+            log_info "Removing old installation files..."
+            run_privileged rm -rf /opt/water-controller/docker /opt/water-controller/web /opt/water-controller/src 2>/dev/null || true
         fi
         if ! run_privileged cp -a "$staging_dir/repo/." /opt/water-controller/; then
             log_error "Failed to copy repository to /opt/water-controller"
