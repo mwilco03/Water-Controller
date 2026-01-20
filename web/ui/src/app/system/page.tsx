@@ -851,7 +851,7 @@ export default function SystemPage() {
                     try {
                       setLoading(true);
                       const [healthRes, logsRes, servicesRes] = await Promise.all([
-                        fetch('/api/v1/system/health'),
+                        fetch('/api/v1/system/health/functional'),
                         fetch('/api/v1/system/logs?limit=500'),
                         fetch('/api/v1/services'),
                       ]);

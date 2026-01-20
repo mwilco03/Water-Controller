@@ -25,6 +25,7 @@ from ...core.errors import build_success_response
 from ...models.alarm import AlarmEvent, AlarmState
 from ...models.base import get_db
 from ...models.historian import HistorianSample
+from ...models.audit import CommandAudit
 from ...models.rtu import RTU, RtuState
 
 router = APIRouter()
@@ -195,6 +196,42 @@ async def get_system_logs(
             "note": "Use external log aggregation (Loki/Promtail or Elasticsearch) for production",
         }
     })
+
+
+class ClientLogEntry(BaseModel):
+    """Log entry from frontend client."""
+    level: str
+    message: str
+    timestamp: str | None = None
+    source: str | None = None
+    data: dict | list | str | None = None
+
+
+# Logger for client-side logs
+client_logger = logging.getLogger("wtc.client")
+
+
+@router.post("/logs")
+async def post_client_log(entry: ClientLogEntry) -> dict[str, Any]:
+    """
+    Receive log entries from frontend clients.
+
+    Logs are forwarded to Python logging framework for centralized handling.
+    """
+    level = entry.level.upper()
+    source = entry.source or "frontend"
+    msg = f"[{source}] {entry.message}"
+
+    if level == "ERROR":
+        client_logger.error(msg, extra={"client_data": entry.data})
+    elif level == "WARN" or level == "WARNING":
+        client_logger.warning(msg, extra={"client_data": entry.data})
+    elif level == "INFO":
+        client_logger.info(msg, extra={"client_data": entry.data})
+    else:
+        client_logger.debug(msg, extra={"client_data": entry.data})
+
+    return build_success_response({"received": True})
 
 
 # ============== Health Check Hierarchy (Principle 9) ==============
@@ -492,3 +529,422 @@ async def get_version() -> dict[str, Any]:
         "api_version": "v1",
         "started_at": SERVER_START_TIME.isoformat(),
     })
+
+
+# ============== System Configuration ==============
+
+
+@router.get("/config")
+async def get_system_config(
+    db: Session = Depends(get_db)
+) -> dict[str, Any]:
+    """
+    Export system configuration.
+
+    Returns current system configuration including:
+    - RTU configurations
+    - Alarm settings
+    - System parameters
+
+    Used for backup and configuration transfer between systems.
+    """
+    from ...models.alarm import AlarmConfig
+
+    # Gather RTU configurations
+    rtus = db.query(RTU).all()
+    rtu_configs = []
+    for rtu in rtus:
+        rtu_configs.append({
+            "station_name": rtu.station_name,
+            "ip_address": rtu.ip_address,
+            "description": rtu.description,
+            "slot_count": rtu.slot_count,
+            "enabled": rtu.enabled,
+        })
+
+    # Gather alarm configurations
+    alarm_configs = db.query(AlarmConfig).all()
+    alarm_settings = []
+    for alarm in alarm_configs:
+        alarm_settings.append({
+            "tag": alarm.tag,
+            "description": alarm.description,
+            "priority": alarm.priority,
+            "setpoint": alarm.setpoint,
+            "deadband": alarm.deadband,
+            "delay_seconds": alarm.delay_seconds,
+            "enabled": alarm.enabled,
+        })
+
+    config = {
+        "version": CONTROLLER_VERSION,
+        "exported_at": datetime.now(UTC).isoformat(),
+        "rtus": rtu_configs,
+        "alarms": alarm_settings,
+        "system": {
+            "historian_retention_days": 90,
+            "alarm_retention_days": 365,
+            "audit_retention_days": 730,
+        },
+    }
+
+    return build_success_response(config)
+
+
+class ConfigImport(BaseModel):
+    """Configuration import request."""
+    rtus: list[dict] | None = None
+    alarms: list[dict] | None = None
+    system: dict | None = None
+
+
+@router.post("/config")
+async def import_system_config(
+    config: ConfigImport,
+    db: Session = Depends(get_db)
+) -> dict[str, Any]:
+    """
+    Import system configuration.
+
+    Merges or replaces configuration based on provided data.
+    RTUs and alarms are matched by their unique identifiers.
+
+    Note: This is a partial import - only specified sections are updated.
+    """
+    imported = {"rtus": 0, "alarms": 0}
+
+    # Import RTU configurations
+    if config.rtus:
+        for rtu_data in config.rtus:
+            station_name = rtu_data.get("station_name")
+            if not station_name:
+                continue
+
+            existing = db.query(RTU).filter(RTU.station_name == station_name).first()
+            if existing:
+                # Update existing
+                for key, value in rtu_data.items():
+                    if hasattr(existing, key) and key != "station_name":
+                        setattr(existing, key, value)
+            else:
+                # Create new
+                new_rtu = RTU(**rtu_data)
+                db.add(new_rtu)
+
+            imported["rtus"] += 1
+
+    # Import alarm configurations
+    if config.alarms:
+        from ...models.alarm import AlarmConfig
+
+        for alarm_data in config.alarms:
+            tag = alarm_data.get("tag")
+            if not tag:
+                continue
+
+            existing = db.query(AlarmConfig).filter(AlarmConfig.tag == tag).first()
+            if existing:
+                for key, value in alarm_data.items():
+                    if hasattr(existing, key) and key != "tag":
+                        setattr(existing, key, value)
+            else:
+                new_alarm = AlarmConfig(**alarm_data)
+                db.add(new_alarm)
+
+            imported["alarms"] += 1
+
+    db.commit()
+    logger.info(f"Configuration imported: {imported}")
+
+    return build_success_response({
+        "success": True,
+        "imported": imported,
+    })
+
+
+# ============== Audit Trail ==============
+
+
+@router.get("/audit")
+async def get_audit_trail(
+    limit: int = Query(50, ge=1, le=500, description="Max records to return"),
+    rtu_name: str | None = Query(None, description="Filter by RTU name"),
+    user: str | None = Query(None, description="Filter by username"),
+    hours: int = Query(24, ge=1, le=720, description="Hours of history"),
+    db: Session = Depends(get_db)
+) -> dict[str, Any]:
+    """
+    Get command audit trail.
+
+    Returns history of operator control commands with results.
+    Required for ISA-62443 compliance (audit trail for control actions).
+    """
+    from datetime import timedelta
+
+    cutoff = datetime.now(UTC) - timedelta(hours=hours)
+
+    query = db.query(CommandAudit).filter(CommandAudit.timestamp >= cutoff)
+
+    if rtu_name:
+        query = query.filter(CommandAudit.rtu_name == rtu_name)
+    if user:
+        query = query.filter(CommandAudit.user == user)
+
+    query = query.order_by(CommandAudit.timestamp.desc()).limit(limit)
+    records = query.all()
+
+    audit_entries = []
+    for record in records:
+        audit_entries.append({
+            "id": record.id,
+            "timestamp": record.timestamp.isoformat() if record.timestamp else None,
+            "rtu_name": record.rtu_name,
+            "control_tag": record.control_tag,
+            "command": record.command,
+            "value": record.value,
+            "result": record.result,
+            "rejection_reason": record.rejection_reason,
+            "user": record.user,
+            "source_ip": record.source_ip,
+        })
+
+    return build_success_response({
+        "entries": audit_entries,
+        "count": len(audit_entries),
+        "hours": hours,
+    })
+
+
+# ============== Network Configuration ==============
+
+
+# In-memory storage (in production, persist to config file)
+_network_config: dict[str, Any] = {
+    "mode": "dhcp",
+    "ip_address": "",
+    "netmask": "255.255.255.0",
+    "gateway": "",
+    "dns_primary": "",
+    "dns_secondary": "",
+    "hostname": "water-controller",
+}
+
+_web_config: dict[str, Any] = {
+    "port": 3000,
+    "bind_address": "0.0.0.0",
+    "https_enabled": False,
+    "https_port": 3443,
+}
+
+
+class NetworkConfig(BaseModel):
+    """Network configuration."""
+    mode: str = "dhcp"
+    ip_address: str = ""
+    netmask: str = "255.255.255.0"
+    gateway: str = ""
+    dns_primary: str = ""
+    dns_secondary: str = ""
+    hostname: str = "water-controller"
+
+
+class WebServerConfig(BaseModel):
+    """Web server configuration."""
+    port: int = 3000
+    bind_address: str = "0.0.0.0"
+    https_enabled: bool = False
+    https_port: int = 3443
+
+
+@router.get("/network")
+async def get_network_config() -> dict[str, Any]:
+    """
+    Get network configuration.
+
+    Returns current IP, DHCP, gateway, DNS settings.
+    """
+    import socket
+    import subprocess
+
+    config = {**_network_config}
+
+    # Try to detect current network state
+    try:
+        hostname = socket.gethostname()
+        config["hostname"] = hostname
+
+        # Get current IP from socket
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.settimeout(0.1)
+        try:
+            s.connect(("8.8.8.8", 80))
+            config["ip_address"] = s.getsockname()[0]
+        except Exception:
+            pass
+        finally:
+            s.close()
+
+    except Exception as e:
+        logger.debug(f"Could not detect network config: {e}")
+
+    return build_success_response(config)
+
+
+@router.put("/network")
+async def update_network_config(
+    config: NetworkConfig
+) -> dict[str, Any]:
+    """
+    Update network configuration.
+
+    Note: Changing IP address may disconnect your current session.
+    In Docker deployments, network changes affect the container only.
+    """
+    global _network_config
+
+    # Validate IP format
+    import re
+    ip_pattern = re.compile(r"^(\d{1,3}\.){3}\d{1,3}$")
+
+    if config.mode == "static":
+        if not ip_pattern.match(config.ip_address):
+            from fastapi import HTTPException
+            raise HTTPException(status_code=400, detail="Invalid IP address format")
+        if not ip_pattern.match(config.netmask):
+            from fastapi import HTTPException
+            raise HTTPException(status_code=400, detail="Invalid netmask format")
+
+    _network_config = config.model_dump()
+    logger.info(f"Network config updated: mode={config.mode}")
+
+    # Note: Actually applying network changes would require system-level commands
+    # and is deployment-specific (Docker vs bare metal)
+
+    return build_success_response(_network_config)
+
+
+@router.get("/web")
+async def get_web_config() -> dict[str, Any]:
+    """
+    Get web server configuration.
+
+    Returns current port, bind address, and HTTPS settings.
+    """
+    return build_success_response(_web_config)
+
+
+@router.put("/web")
+async def update_web_config(
+    config: WebServerConfig
+) -> dict[str, Any]:
+    """
+    Update web server configuration.
+
+    Note: Port changes require a server restart to take effect.
+    """
+    global _web_config
+
+    if config.port < 1 or config.port > 65535:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="Port must be between 1 and 65535")
+
+    _web_config = config.model_dump()
+    logger.info(f"Web config updated: port={config.port}")
+
+    return build_success_response(_web_config)
+
+
+@router.get("/interfaces")
+async def get_network_interfaces() -> dict[str, Any]:
+    """
+    Get available network interfaces.
+
+    Returns list of interfaces with IP, MAC, and state.
+    """
+    interfaces = []
+
+    try:
+        import socket
+        import subprocess
+
+        # Use ip command to get interface info
+        result = subprocess.run(
+            ["ip", "-j", "addr"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+
+        if result.returncode == 0:
+            import json
+            data = json.loads(result.stdout)
+
+            for iface in data:
+                name = iface.get("ifname", "")
+                if name == "lo":  # Skip loopback
+                    continue
+
+                ip_addr = ""
+                netmask = ""
+                for addr_info in iface.get("addr_info", []):
+                    if addr_info.get("family") == "inet":
+                        ip_addr = addr_info.get("local", "")
+                        prefix = addr_info.get("prefixlen", 24)
+                        # Convert prefix to netmask
+                        netmask = ".".join([
+                            str((0xffffffff << (32 - prefix) >> i) & 0xff)
+                            for i in [24, 16, 8, 0]
+                        ])
+                        break
+
+                interfaces.append({
+                    "name": name,
+                    "ip_address": ip_addr,
+                    "netmask": netmask,
+                    "mac_address": iface.get("address", ""),
+                    "state": iface.get("operstate", "UNKNOWN").upper(),
+                    "speed": "",  # Would need ethtool for this
+                })
+
+    except FileNotFoundError:
+        # ip command not available, try psutil
+        try:
+            import psutil
+            addrs = psutil.net_if_addrs()
+            stats = psutil.net_if_stats()
+
+            for name, addr_list in addrs.items():
+                if name == "lo":
+                    continue
+
+                ip_addr = ""
+                netmask = ""
+                mac_addr = ""
+
+                for addr in addr_list:
+                    if addr.family == socket.AF_INET:
+                        ip_addr = addr.address
+                        netmask = addr.netmask or ""
+                    elif addr.family == psutil.AF_LINK:
+                        mac_addr = addr.address
+
+                stat = stats.get(name)
+                state = "UP" if stat and stat.isup else "DOWN"
+                speed = f"{stat.speed}Mbps" if stat and stat.speed else ""
+
+                interfaces.append({
+                    "name": name,
+                    "ip_address": ip_addr,
+                    "netmask": netmask,
+                    "mac_address": mac_addr,
+                    "state": state,
+                    "speed": speed,
+                })
+
+        except ImportError:
+            logger.warning("Neither ip command nor psutil available for interface detection")
+
+    except Exception as e:
+        logger.warning(f"Failed to get network interfaces: {e}")
+
+    return build_success_response(interfaces)

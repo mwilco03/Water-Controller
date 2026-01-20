@@ -482,3 +482,34 @@ async def reset_all_quality() -> dict[str, Any]:
         "reset": True,
         "message": "All quality tracking data reset"
     })
+
+
+# ============== Gateway Control ==============
+
+
+@router.post("/restart")
+async def restart_modbus_gateway() -> dict[str, Any]:
+    """
+    Restart the Modbus gateway service.
+
+    This will:
+    1. Close all existing connections
+    2. Reload configuration
+    3. Restart the TCP/RTU servers
+
+    Note: Brief interruption to Modbus communications expected.
+    """
+    try:
+        service = get_modbus_service()
+        service.restart()
+        logger.info("Modbus gateway restart initiated")
+        return build_success_response({
+            "success": True,
+            "message": "Modbus gateway restarting",
+        })
+    except Exception as e:
+        logger.error(f"Failed to restart Modbus gateway: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to restart Modbus gateway: {e}"
+        )

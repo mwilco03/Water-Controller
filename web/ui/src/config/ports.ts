@@ -74,8 +74,9 @@ export function getUiPort(): number {
  *
  * Priority:
  * 1. NEXT_PUBLIC_API_URL environment variable
- * 2. Constructed from window.location.origin (client-side, same-origin)
- * 3. Constructed from localhost + API port (server-side/fallback)
+ * 2. Empty string for client-side (same-origin, Next.js rewrites handle proxy)
+ *
+ * Note: Server-side requires NEXT_PUBLIC_API_URL to be set (e.g., http://api:8000)
  */
 export function getApiUrl(): string {
   // Check for explicit API URL override
@@ -88,8 +89,10 @@ export function getApiUrl(): string {
     return ''; // Empty string = same origin (Next.js rewrites handle proxy)
   }
 
-  // Server-side fallback
-  return `http://localhost:${getApiPort()}`;
+  // Server-side without config - return empty, will fail visibly if SSR fetch attempted
+  // This is better than silently using localhost which doesn't work in containers
+  console.warn('getApiUrl: No NEXT_PUBLIC_API_URL set for server-side. SSR API fetches will fail.');
+  return '';
 }
 
 /**
@@ -98,7 +101,8 @@ export function getApiUrl(): string {
  * Priority:
  * 1. NEXT_PUBLIC_WS_URL environment variable
  * 2. Constructed from current window location (client-side)
- * 3. Constructed from localhost + API port (server-side/fallback)
+ *
+ * Note: WebSockets are client-side only. Server-side returns empty string.
  */
 export function getWebSocketUrl(): string {
   // Check for explicit WebSocket URL override
@@ -112,8 +116,9 @@ export function getWebSocketUrl(): string {
     return `${protocol}//${window.location.host}/api/v1/ws/live`;
   }
 
-  // Server-side fallback
-  return `ws://localhost:${getApiPort()}/api/v1/ws/live`;
+  // Server-side: WebSockets are client-only, return empty
+  // No fake localhost URL that would never work
+  return '';
 }
 
 /**
@@ -123,7 +128,8 @@ export function getCurrentHost(): string {
   if (typeof window !== 'undefined') {
     return window.location.host;
   }
-  return `localhost:${getUiPort()}`;
+  // Server-side: return placeholder, actual host only known client-side
+  return '[server-side]';
 }
 
 // -----------------------------------------------------------------------------

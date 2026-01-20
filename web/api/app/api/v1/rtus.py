@@ -9,9 +9,12 @@ Note: Business logic is delegated to RtuService for testability.
 Route handlers remain thin and declarative.
 """
 
+import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query
+logger = logging.getLogger(__name__)
+
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from ...core.errors import build_success_response
@@ -27,8 +30,6 @@ from ...schemas.rtu import (
     ConnectRequest,
     ConnectResponse,
     DisconnectResponse,
-    DiscoverResponse,
-    DiscoverSummary,
     RtuCreate,
     RtuDetailResponse,
     RtuResponse,
@@ -274,32 +275,73 @@ async def discover_modules(
     """
     Discover modules in RTU slots via PROFINET.
 
-    RTU must be RUNNING.
+    RTU must be RUNNING. Queries the PROFINET controller via shared memory IPC
+    for slot module information (sensors and actuators).
 
-    Note: Slots are PROFINET frame positions, not database entities.
-    In a real implementation, this would query PROFINET for module info.
-    Currently returns empty discovery as placeholder.
+    Returns 503 if controller is not connected.
     """
+    from ...services.shm_client import get_shm_client
+
     rtu = get_rtu_or_404(db, name)
 
     if rtu.state != RtuState.RUNNING:
         raise RtuNotConnectedError(name, rtu.state)
 
-    # TODO: Query PROFINET for actual module discovery
-    # Slots are frame positions reported by RTU, not stored in database
-    slot_count = rtu.slot_count or 0
-
-    response_data = DiscoverResponse(
-        station_name=name,
-        discovered_slots=[],  # Would be populated by actual PROFINET query
-        summary=DiscoverSummary(
-            total_slots=slot_count,
-            populated_slots=0,
-            empty_slots=slot_count,
+    # Get PROFINET discovery via shared memory IPC
+    shm = get_shm_client()
+    if not shm.is_connected():
+        raise HTTPException(
+            status_code=503,
+            detail="PROFINET controller not connected. Start the C controller process."
         )
-    )
 
-    return build_success_response(response_data.model_dump())
+    shm_rtu = shm.get_rtu(name)
+    if not shm_rtu:
+        raise HTTPException(
+            status_code=503,
+            detail=f"RTU '{name}' not found in controller shared memory. "
+                   "Ensure the RTU is configured and connected in the PROFINET controller."
+        )
+
+    discovered = []
+
+    # Get sensors from shared memory
+    for sensor in shm_rtu.get("sensors", []):
+        discovered.append({
+            "slot_number": sensor["slot"],
+            "tag": f"AI_{sensor['slot']:02d}",
+            "type": "sensor",
+            "description": f"Analog Input Slot {sensor['slot']}",
+            "data_type": "float32",
+            "unit": "",
+            "scale_min": 0.0,
+            "scale_max": 100.0,
+            "current_value": sensor.get("value"),
+            "status": sensor.get("status"),
+            "quality": sensor.get("quality"),
+        })
+
+    # Get actuators from shared memory
+    for actuator in shm_rtu.get("actuators", []):
+        discovered.append({
+            "slot_number": actuator["slot"],
+            "tag": f"DO_{actuator['slot']:02d}",
+            "type": "control",
+            "description": f"Digital Output Slot {actuator['slot']}",
+            "data_type": "uint16",
+            "unit": "",
+            "current_command": actuator.get("command"),
+            "forced": actuator.get("forced", False),
+        })
+
+    return build_success_response({
+        "rtu_name": name,
+        "discovered": discovered,
+        "count": len(discovered),
+        "source": "profinet",
+        "vendor_id": shm_rtu.get("vendor_id"),
+        "device_id": shm_rtu.get("device_id"),
+    })
 
 
 @router.post("/{name}/test")
@@ -332,24 +374,38 @@ async def test_connection(
 
         # Read I/O test - try to read sensor values
         read_start = time.perf_counter()
-        sensors = profinet.get_sensor_values(name)
-        read_latency = (time.perf_counter() - read_start) * 1000
-        bytes_read = len(sensors) * 8  # Approximate bytes per sensor
+        try:
+            sensors = profinet.get_sensor_values(name)
+            read_latency = (time.perf_counter() - read_start) * 1000
+            bytes_read = len(sensors) * 8  # Approximate bytes per sensor
+            read_passed = True  # IPC call succeeded
+        except Exception as e:
+            read_latency = (time.perf_counter() - read_start) * 1000
+            bytes_read = 0
+            read_passed = False
+            logger.warning(f"Read I/O test failed for {name}: {e}")
 
         tests["read_io"] = TestResult(
-            passed=len(sensors) > 0 or True,  # Pass even with no sensors configured
+            passed=read_passed,
             bytes_read=bytes_read,
             latency_ms=round(read_latency, 2)
         )
 
         # Write I/O test - try to read actuator states (non-destructive)
         write_start = time.perf_counter()
-        actuators = profinet.get_actuator_states(name)
-        write_latency = (time.perf_counter() - write_start) * 1000
-        bytes_written = len(actuators) * 4  # Approximate bytes per actuator
+        try:
+            actuators = profinet.get_actuator_states(name)
+            write_latency = (time.perf_counter() - write_start) * 1000
+            bytes_written = len(actuators) * 4  # Approximate bytes per actuator
+            write_passed = True  # IPC call succeeded
+        except Exception as e:
+            write_latency = (time.perf_counter() - write_start) * 1000
+            bytes_written = 0
+            write_passed = False
+            logger.warning(f"Write I/O test failed for {name}: {e}")
 
         tests["write_io"] = TestResult(
-            passed=True,
+            passed=write_passed,
             bytes_written=bytes_written,
             latency_ms=round(write_latency, 2)
         )
@@ -518,6 +574,147 @@ async def refresh_rtu_inventory(
     # TODO: Implement actual PROFINET module discovery via IPC
 
     return await get_rtu_inventory(name, db)
+
+
+# ==================== RTU Provisioning ====================
+
+
+@router.post("/{name}/provision")
+async def provision_rtu_sensors(
+    name: str,
+    sensors: list[dict],
+    create_historian_tags: bool = Query(True, description="Create historian tags for sensors"),
+    create_alarm_rules: bool = Query(False, description="Create default alarm rules"),
+    db: Session = Depends(get_db)
+) -> dict[str, Any]:
+    """
+    Provision sensors and controls for an RTU.
+
+    This endpoint is used by the commissioning wizard to:
+    1. Create sensor/control records from discovered PROFINET slots
+    2. Optionally create historian tags for data logging
+    3. Optionally create default alarm rules based on sensor types
+
+    Request body should be a list of sensor objects with:
+    - tag: Sensor tag name
+    - description: Human-readable description
+    - slot_number: PROFINET slot number
+    - data_type: Data type (int16, float32, etc.)
+    - unit: Engineering unit
+    - scale_min/scale_max: Scaling range (optional)
+    """
+    from ...models.sensor import Sensor
+    from ...models.control import Control
+    from ...models.historian import HistorianTag
+    from ...models.alarm import AlarmConfig
+
+    rtu = get_rtu_or_404(db, name)
+
+    provisioned = {
+        "sensors": 0,
+        "controls": 0,
+        "historian_tags": 0,
+        "alarm_rules": 0,
+    }
+
+    for sensor_data in sensors:
+        tag = sensor_data.get("tag")
+        if not tag:
+            continue
+
+        sensor_type = sensor_data.get("type", "sensor")
+        slot_number = sensor_data.get("slot_number")
+        description = sensor_data.get("description", "")
+        data_type = sensor_data.get("data_type", "float32")
+        unit = sensor_data.get("unit", "")
+
+        if sensor_type == "control" or sensor_type == "actuator":
+            # Create control record
+            existing = db.query(Control).filter(
+                Control.rtu_id == rtu.id,
+                Control.tag == tag
+            ).first()
+
+            if not existing:
+                control = Control(
+                    rtu_id=rtu.id,
+                    tag=tag,
+                    description=description,
+                    slot_number=slot_number,
+                    data_type=data_type,
+                    enabled=True,
+                )
+                db.add(control)
+                provisioned["controls"] += 1
+        else:
+            # Create sensor record
+            existing = db.query(Sensor).filter(
+                Sensor.rtu_id == rtu.id,
+                Sensor.tag == tag
+            ).first()
+
+            if not existing:
+                sensor = Sensor(
+                    rtu_id=rtu.id,
+                    tag=tag,
+                    description=description,
+                    slot_number=slot_number,
+                    data_type=data_type,
+                    unit=unit,
+                    scale_min=sensor_data.get("scale_min", 0.0),
+                    scale_max=sensor_data.get("scale_max", 100.0),
+                    enabled=True,
+                )
+                db.add(sensor)
+                provisioned["sensors"] += 1
+
+                # Create historian tag if requested
+                if create_historian_tags:
+                    ht_tag = f"{rtu.station_name}.{tag}"
+                    existing_ht = db.query(HistorianTag).filter(
+                        HistorianTag.tag == ht_tag
+                    ).first()
+
+                    if not existing_ht:
+                        historian_tag = HistorianTag(
+                            tag=ht_tag,
+                            description=description,
+                            unit=unit,
+                            enabled=True,
+                        )
+                        db.add(historian_tag)
+                        provisioned["historian_tags"] += 1
+
+                # Create alarm rule if requested
+                if create_alarm_rules and unit:
+                    alarm_tag = f"{rtu.station_name}.{tag}.HIGH"
+                    existing_alarm = db.query(AlarmConfig).filter(
+                        AlarmConfig.tag == alarm_tag
+                    ).first()
+
+                    if not existing_alarm:
+                        # Default high alarm at 90% of scale
+                        scale_max = sensor_data.get("scale_max", 100.0)
+                        alarm_config = AlarmConfig(
+                            tag=alarm_tag,
+                            description=f"High alarm for {tag}",
+                            priority="MEDIUM",
+                            setpoint=scale_max * 0.9,
+                            deadband=scale_max * 0.02,
+                            delay_seconds=5,
+                            enabled=True,
+                        )
+                        db.add(alarm_config)
+                        provisioned["alarm_rules"] += 1
+
+    db.commit()
+    logger.info(f"Provisioned RTU {name}: {provisioned}")
+
+    return build_success_response({
+        "rtu_name": name,
+        "provisioned": provisioned,
+        "success": True,
+    })
 
 
 # Include nested routers for sensors, controls, profinet, pid
