@@ -117,7 +117,7 @@ typedef struct __attribute__((packed)) {
 /*
  * Single sensor configuration entry.
  *
- * Wire format (40 bytes per entry):
+ * Wire format (42 bytes per entry):
  *   slot:u8 type:u8 name:char[16] unit:char[8]
  *   scale_min:f32 scale_max:f32 alarm_low:f32 alarm_high:f32
  */
@@ -136,7 +136,7 @@ typedef struct __attribute__((packed)) {
  * Sensor configuration packet header.
  * Followed by sensor_config_entry_t[count]
  *
- * Wire format: header (4 bytes) + entries (40 bytes each)
+ * Wire format: header (4 bytes) + entries (42 bytes each)
  */
 typedef struct __attribute__((packed)) {
     uint8_t version;                              /* Protocol version (1) */
