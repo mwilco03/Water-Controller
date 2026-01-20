@@ -104,11 +104,19 @@ Two frontend pages were disabled because they called non-existent backend endpoi
 
 ### PROFINET Slot Diagnostics (`/api/v1/rtus/{name}/profinet/slots`)
 
-**Status**: Returns 501 Not Implemented
+**Status**: Implemented via shared memory IPC
 
-**Reason**: Requires live PROFINET controller with slot diagnostic support
+**Implementation**: Reads slot data from C controller shared memory. Returns:
+- Slot number (PROFINET frame position)
+- Slot type (input/output/empty)
+- Module info (sensor value or actuator command)
+- Live diagnostic data (status, quality codes)
 
-**Implementation**: Will require C controller IPC extension for PROFINET I&M (Identification & Maintenance) data.
+**Requirements**:
+- RTU must be in RUNNING state
+- C controller must be running with shared memory
+- Returns 503 if controller not connected
+- Returns 409 if RTU not in RUNNING state
 
 ---
 
