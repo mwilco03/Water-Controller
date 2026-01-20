@@ -44,7 +44,8 @@ async def list_pid_loops(
     """
     rtu = get_rtu_or_404(db, name)
 
-    loops = db.query(PidLoop).filter(PidLoop.rtu_id == rtu.id).all()
+    # Query PID loops by input_rtu (string station name)
+    loops = db.query(PidLoop).filter(PidLoop.input_rtu == rtu.station_name).all()
 
     # Get live PV/CV from controller if available
     profinet = get_profinet_client()
@@ -53,11 +54,14 @@ async def list_pid_loops(
     result = []
     for loop in loops:
         live = live_loops.get(loop.id, {})
+        # Format process_variable and control_output as "rtu:slot" descriptors
+        pv_desc = f"{loop.input_rtu}:slot{loop.input_slot}"
+        cv_desc = f"{loop.output_rtu}:slot{loop.output_slot}"
         result.append(PidLoopResponse(
             id=loop.id,
             name=loop.name,
-            process_variable=loop.pv_sensor_tag,
-            control_output=loop.cv_control_tag,
+            process_variable=pv_desc,
+            control_output=cv_desc,
             setpoint=loop.setpoint,
             kp=loop.kp,
             ki=loop.ki,
@@ -85,34 +89,51 @@ async def create_pid_loop(
     """
     rtu = get_rtu_or_404(db, name)
 
-    # Verify sensor and control tags exist
+    # Parse process_variable and control_output as "rtu:slotN" or just slot number
+    # Format: "RTU_NAME:slot5" or just "5" (assumes current RTU)
     from ...models.rtu import Control, Sensor
 
+    def parse_slot_ref(ref: str, default_rtu: str) -> tuple[str, int]:
+        """Parse slot reference like 'RTU1:slot5' or '5' into (rtu_name, slot_num)."""
+        if ":" in ref:
+            parts = ref.split(":", 1)
+            rtu_name = parts[0]
+            slot_str = parts[1].replace("slot", "")
+        else:
+            rtu_name = default_rtu
+            slot_str = ref.replace("slot", "")
+        return rtu_name, int(slot_str)
+
+    input_rtu, input_slot = parse_slot_ref(request.process_variable, rtu.station_name)
+    output_rtu, output_slot = parse_slot_ref(request.control_output, rtu.station_name)
+
+    # Verify slot references are valid by checking sensors/controls exist
     sensor = db.query(Sensor).filter(
         Sensor.rtu_id == rtu.id,
-        Sensor.tag == request.process_variable
+        Sensor.slot_number == input_slot
     ).first()
     if not sensor:
         raise ValidationError(
-            f"Sensor tag '{request.process_variable}' not found on RTU",
+            f"No sensor at slot {input_slot} on RTU '{input_rtu}'",
             details={"field": "process_variable"}
         )
 
     control = db.query(Control).filter(
         Control.rtu_id == rtu.id,
-        Control.tag == request.control_output
+        Control.slot_number == output_slot
     ).first()
     if not control:
         raise ValidationError(
-            f"Control tag '{request.control_output}' not found on RTU",
+            f"No control at slot {output_slot} on RTU '{output_rtu}'",
             details={"field": "control_output"}
         )
 
     loop = PidLoop(
-        rtu_id=rtu.id,
         name=request.name,
-        pv_sensor_tag=request.process_variable,
-        cv_control_tag=request.control_output,
+        input_rtu=input_rtu,
+        input_slot=input_slot,
+        output_rtu=output_rtu,
+        output_slot=output_slot,
         setpoint=request.setpoint,
         kp=request.kp,
         ki=request.ki,
@@ -126,11 +147,13 @@ async def create_pid_loop(
     db.commit()
     db.refresh(loop)
 
+    pv_desc = f"{loop.input_rtu}:slot{loop.input_slot}"
+    cv_desc = f"{loop.output_rtu}:slot{loop.output_slot}"
     return build_success_response(PidLoopResponse(
         id=loop.id,
         name=loop.name,
-        process_variable=loop.pv_sensor_tag,
-        control_output=loop.cv_control_tag,
+        process_variable=pv_desc,
+        control_output=cv_desc,
         setpoint=loop.setpoint,
         kp=loop.kp,
         ki=loop.ki,
@@ -155,7 +178,7 @@ async def get_pid_loop(
 
     loop = db.query(PidLoop).filter(
         PidLoop.id == loop_id,
-        PidLoop.rtu_id == rtu.id
+        PidLoop.input_rtu == rtu.station_name
     ).first()
     if not loop:
         pid_not_found(loop_id)
@@ -165,11 +188,13 @@ async def get_pid_loop(
     live_loops = {pid_loop["loop_id"]: pid_loop for pid_loop in profinet.get_pid_loops()}
     live = live_loops.get(loop.id, {})
 
+    pv_desc = f"{loop.input_rtu}:slot{loop.input_slot}"
+    cv_desc = f"{loop.output_rtu}:slot{loop.output_slot}"
     return build_success_response(PidLoopResponse(
         id=loop.id,
         name=loop.name,
-        process_variable=loop.pv_sensor_tag,
-        control_output=loop.cv_control_tag,
+        process_variable=pv_desc,
+        control_output=cv_desc,
         setpoint=loop.setpoint,
         kp=loop.kp,
         ki=loop.ki,
@@ -198,7 +223,7 @@ async def update_pid_loop(
 
     loop = db.query(PidLoop).filter(
         PidLoop.id == loop_id,
-        PidLoop.rtu_id == rtu.id
+        PidLoop.input_rtu == rtu.station_name
     ).first()
     if not loop:
         pid_not_found(loop_id)
@@ -241,7 +266,7 @@ async def delete_pid_loop(
 
     loop = db.query(PidLoop).filter(
         PidLoop.id == loop_id,
-        PidLoop.rtu_id == rtu.id
+        PidLoop.input_rtu == rtu.station_name
     ).first()
     if not loop:
         pid_not_found(loop_id)
@@ -266,7 +291,7 @@ async def update_setpoint(
 
     loop = db.query(PidLoop).filter(
         PidLoop.id == loop_id,
-        PidLoop.rtu_id == rtu.id
+        PidLoop.input_rtu == rtu.station_name
     ).first()
     if not loop:
         pid_not_found(loop_id)
@@ -300,7 +325,7 @@ async def update_tuning(
 
     loop = db.query(PidLoop).filter(
         PidLoop.id == loop_id,
-        PidLoop.rtu_id == rtu.id
+        PidLoop.input_rtu == rtu.station_name
     ).first()
     if not loop:
         pid_not_found(loop_id)
@@ -332,7 +357,7 @@ async def update_mode(
 
     loop = db.query(PidLoop).filter(
         PidLoop.id == loop_id,
-        PidLoop.rtu_id == rtu.id
+        PidLoop.input_rtu == rtu.station_name
     ).first()
     if not loop:
         pid_not_found(loop_id)
@@ -374,7 +399,7 @@ async def start_autotune(
 
     loop = db.query(PidLoop).filter(
         PidLoop.id == loop_id,
-        PidLoop.rtu_id == rtu.id
+        PidLoop.input_rtu == rtu.station_name
     ).first()
     if not loop:
         pid_not_found(loop_id)
