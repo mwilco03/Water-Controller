@@ -50,8 +50,9 @@ wtc_result_t ipc_server_init(ipc_server_t **server) {
         return WTC_ERROR_NO_MEMORY;
     }
 
-    /* Create shared memory with restricted permissions (owner + group only) */
-    srv->shm_fd = shm_open(SHM_NAME, O_CREAT | O_RDWR, 0660);
+    /* Create shared memory with permissions allowing API container access */
+    /* 0666 allows read/write for all users (API runs as different uid in container) */
+    srv->shm_fd = shm_open(SHM_NAME, O_CREAT | O_RDWR, 0666);
     if (srv->shm_fd < 0) {
         LOG_ERROR(LOG_TAG, "Failed to create shared memory");
         free(srv);

@@ -219,8 +219,8 @@ async def apply_template(
     existing_sensors = {s.tag: s for s in db.query(Sensor).filter(Sensor.rtu_id == rtu.id).all()}
     existing_controls = {c.tag: c for c in db.query(Control).filter(Control.rtu_id == rtu.id).all()}
     existing_alarms = {
-        (a.tag, a.alarm_type): a
-        for a in db.query(AlarmRule).filter(AlarmRule.rtu_id == rtu.id).all()
+        (a.name, a.severity): a
+        for a in db.query(AlarmRule).filter(AlarmRule.rtu_station == rtu.name).all()
     }
     existing_pids = {p.name: p for p in db.query(PidLoop).filter(PidLoop.rtu_id == rtu.id).all()}
 
@@ -413,14 +413,15 @@ async def create_template_from_rtu(
         })
 
     alarms = []
-    for alarm in db.query(AlarmRule).filter(AlarmRule.rtu_id == rtu.id).all():
+    for alarm in db.query(AlarmRule).filter(AlarmRule.rtu_station == rtu.name).all():
         alarms.append({
-            "tag": alarm.tag,
-            "alarm_type": alarm.alarm_type,
-            "priority": alarm.priority,
-            "setpoint": alarm.setpoint,
-            "deadband": alarm.deadband,
-            "message_template": alarm.message_template,
+            "name": alarm.name,
+            "slot": alarm.slot,
+            "condition": alarm.condition,
+            "threshold": alarm.threshold,
+            "severity": alarm.severity,
+            "delay_ms": alarm.delay_ms,
+            "message": alarm.message,
         })
 
     pid_loops = []
