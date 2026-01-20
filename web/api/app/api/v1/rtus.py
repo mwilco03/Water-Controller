@@ -14,7 +14,7 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from ...core.errors import build_success_response
@@ -30,8 +30,6 @@ from ...schemas.rtu import (
     ConnectRequest,
     ConnectResponse,
     DisconnectResponse,
-    DiscoverResponse,
-    DiscoverSummary,
     RtuCreate,
     RtuDetailResponse,
     RtuResponse,
@@ -277,32 +275,19 @@ async def discover_modules(
     """
     Discover modules in RTU slots via PROFINET.
 
-    RTU must be RUNNING.
-
-    Note: Slots are PROFINET frame positions, not database entities.
-    In a real implementation, this would query PROFINET for module info.
-    Currently returns empty discovery as placeholder.
+    RTU must be RUNNING. Queries the PROFINET controller for slot module info.
     """
     rtu = get_rtu_or_404(db, name)
 
     if rtu.state != RtuState.RUNNING:
         raise RtuNotConnectedError(name, rtu.state)
 
-    # TODO: Query PROFINET for actual module discovery
-    # Slots are frame positions reported by RTU, not stored in database
-    slot_count = rtu.slot_count or 0
-
-    response_data = DiscoverResponse(
-        station_name=name,
-        discovered_slots=[],  # Would be populated by actual PROFINET query
-        summary=DiscoverSummary(
-            total_slots=slot_count,
-            populated_slots=0,
-            empty_slots=slot_count,
-        )
+    # Live PROFINET module discovery not yet implemented
+    # Requires controller IPC to query slot configurations from connected RTU
+    raise HTTPException(
+        status_code=501,
+        detail="PROFINET module discovery requires controller IPC. Feature not yet implemented."
     )
-
-    return build_success_response(response_data.model_dump())
 
 
 @router.post("/{name}/test")

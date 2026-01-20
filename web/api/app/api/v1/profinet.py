@@ -7,7 +7,7 @@ SPDX-License-Identifier: GPL-3.0-or-later
 from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, Path, Query
+from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from sqlalchemy.orm import Session
 
 from ...core.errors import build_success_response
@@ -106,13 +106,16 @@ async def get_profinet_slots(
     Get PROFINET slot-level diagnostics.
 
     Note: Slots are PROFINET frame positions, not database entities.
-    In a real implementation, this would query live PROFINET data.
+    Requires live PROFINET connection to RTU.
     """
     rtu = get_rtu_or_404(db, name)
 
-    # TODO: Query live PROFINET slot data from RTU
-    # Slots are frame positions reported by RTU, not stored in database
-    return build_success_response([])
+    # Live PROFINET slot query not yet implemented
+    # Slots are frame positions reported by RTU during cyclic exchange
+    raise HTTPException(
+        status_code=501,
+        detail="PROFINET slot diagnostics requires live controller connection. Feature not yet implemented."
+    )
 
 
 @router.get("/diagnostics")

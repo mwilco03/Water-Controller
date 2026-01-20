@@ -70,10 +70,6 @@ export default function NetworkDiscovery({ onDeviceSelect, onAddDevice }: Props)
     arp: false,
   });
 
-  // Justification: simulateScan is a development-only fallback that reads current state.
-  // Including it as a dependency would require converting it to useCallback, adding complexity
-  // for a dev-only code path. startScan recreates when networkRange/scanMethods change.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   const startScan = useCallback(async () => {
     setScanning(true);
     setDevices([]);
@@ -99,66 +95,27 @@ export default function NetworkDiscovery({ onDeviceSelect, onAddDevice }: Props)
           message: `Scan complete. Found ${data.devices?.length || 0} devices.`,
         });
       } else {
-        // Use mock data only in development
-        if (process.env.NODE_ENV === 'development') {
-          networkLogger.debug('Network discovery API unavailable, using mock data');
-          await simulateScan();
-        } else {
-          setScanProgress({
-            phase: 'complete',
-            progress: 100,
-            devices_found: 0,
-            message: 'Scan failed. Check network connection.',
-          });
-        }
-      }
-    } catch (err) {
-      // Use mock data only in development
-      if (process.env.NODE_ENV === 'development') {
-        networkLogger.debug('Network discovery API unavailable, using mock data');
-        await simulateScan();
-      } else {
+        const errorData = await res.json().catch(() => ({}));
+        networkLogger.error('Network discovery failed', { status: res.status, error: errorData });
         setScanProgress({
           phase: 'complete',
           progress: 100,
           devices_found: 0,
-          message: 'Scan failed. Check network connection.',
+          message: `Scan failed: ${errorData.detail || 'Check network connection.'}`,
         });
       }
+    } catch (err) {
+      networkLogger.error('Network discovery error', { error: err });
+      setScanProgress({
+        phase: 'complete',
+        progress: 100,
+        devices_found: 0,
+        message: 'Scan failed. Check network connection.',
+      });
     } finally {
       setScanning(false);
     }
   }, [networkRange, scanMethods]);
-
-  const simulateScan = async () => {
-    // Simulate DCP scan
-    setScanProgress({ phase: 'dcp_identify', progress: 20, devices_found: 0, message: 'Sending DCP Identify requests...' });
-    await new Promise(r => setTimeout(r, 800));
-
-    setScanProgress({ phase: 'dcp_identify', progress: 40, devices_found: 2, message: 'Processing DCP responses...' });
-    await new Promise(r => setTimeout(r, 600));
-
-    // Simulate LLDP scan
-    if (scanMethods.lldp) {
-      setScanProgress({ phase: 'lldp_scan', progress: 60, devices_found: 3, message: 'Scanning LLDP neighbors...' });
-      await new Promise(r => setTimeout(r, 700));
-    }
-
-    // Simulate ARP scan
-    if (scanMethods.arp) {
-      setScanProgress({ phase: 'arp_scan', progress: 80, devices_found: 4, message: 'Performing ARP scan...' });
-      await new Promise(r => setTimeout(r, 500));
-    }
-
-    const mockDevices = getMockDevices();
-    setDevices(mockDevices);
-    setScanProgress({
-      phase: 'complete',
-      progress: 100,
-      devices_found: mockDevices.length,
-      message: `Scan complete. Found ${mockDevices.length} devices.`,
-    });
-  };
 
   const handleDeviceClick = (device: DiscoveredDevice) => {
     setSelectedDevice(device);
@@ -456,100 +413,4 @@ export default function NetworkDiscovery({ onDeviceSelect, onAddDevice }: Props)
       </div>
     </div>
   );
-}
-
-// Mock discovered devices
-function getMockDevices(): DiscoveredDevice[] {
-  return [
-    {
-      mac_address: '00:0E:8C:12:34:56',
-      ip_address: '192.168.1.100',
-      device_name: 'ET200SP-Station1',
-      device_type: 'IO-Device',
-      vendor_id: 0x002A,
-      device_id: 0x0601,
-      vendor_name: 'Siemens AG',
-      profinet_role: 'device',
-      status: 'online',
-      configured: true,
-      station_name: 'RTU-001',
-      last_seen: new Date().toISOString(),
-      firmware_version: 'V2.9.3',
-      response_time_ms: 2,
-    },
-    {
-      mac_address: '00:0E:8C:12:34:57',
-      ip_address: '192.168.1.101',
-      device_name: 'ET200SP-Station2',
-      device_type: 'IO-Device',
-      vendor_id: 0x002A,
-      device_id: 0x0601,
-      vendor_name: 'Siemens AG',
-      profinet_role: 'device',
-      status: 'online',
-      configured: false,
-      last_seen: new Date().toISOString(),
-      firmware_version: 'V2.9.3',
-      response_time_ms: 3,
-    },
-    {
-      mac_address: '00:1B:1B:AA:BB:CC',
-      ip_address: '192.168.1.50',
-      device_name: 'SCALANCE X208',
-      device_type: 'Switch',
-      vendor_id: 0x002A,
-      device_id: 0x0208,
-      vendor_name: 'Siemens AG',
-      profinet_role: 'device',
-      status: 'online',
-      configured: true,
-      last_seen: new Date().toISOString(),
-      firmware_version: 'V5.4.2',
-      response_time_ms: 1,
-    },
-    {
-      mac_address: '00:0E:8C:AB:CD:EF',
-      ip_address: '192.168.1.1',
-      device_name: 'Water-Controller',
-      device_type: 'Controller',
-      vendor_id: 0x002A,
-      device_id: 0x030D,
-      vendor_name: 'Siemens AG',
-      profinet_role: 'controller',
-      status: 'online',
-      configured: true,
-      last_seen: new Date().toISOString(),
-      firmware_version: 'V4.5.0',
-      response_time_ms: 0,
-    },
-    {
-      mac_address: '00:30:DE:11:22:33',
-      ip_address: null,
-      device_name: 'New-Device',
-      device_type: 'IO-Device',
-      vendor_id: 0x00A0,
-      device_id: 0x0001,
-      vendor_name: 'Phoenix Contact',
-      profinet_role: 'device',
-      status: 'offline',
-      configured: false,
-      last_seen: new Date(Date.now() - 300000).toISOString(),
-      response_time_ms: undefined,
-    },
-    {
-      mac_address: '00:0E:8C:99:88:77',
-      ip_address: '192.168.1.102',
-      device_name: 'G120-VFD-01',
-      device_type: 'Drive',
-      vendor_id: 0x002A,
-      device_id: 0x040B,
-      vendor_name: 'Siemens AG',
-      profinet_role: 'device',
-      status: 'online',
-      configured: false,
-      last_seen: new Date().toISOString(),
-      firmware_version: 'V4.8.1',
-      response_time_ms: 4,
-    },
-  ];
 }
