@@ -275,9 +275,14 @@ async def discover_modules(
     """
     Discover modules in RTU slots via PROFINET.
 
-    RTU must be RUNNING. Queries the PROFINET controller for slot module info.
-    In demo mode, returns simulated sensor/actuator configuration.
+    RTU must be RUNNING. Queries the PROFINET controller via shared memory IPC
+    for slot module information (sensors and actuators).
+
+    Discovery sources (in priority order):
+    1. Live PROFINET via C controller shared memory
+    2. Demo mode simulation
     """
+    from ...services.shm_client import get_shm_client
     from ...services.demo_mode import get_demo_service
 
     rtu = get_rtu_or_404(db, name)
@@ -285,15 +290,58 @@ async def discover_modules(
     if rtu.state != RtuState.RUNNING:
         raise RtuNotConnectedError(name, rtu.state)
 
-    # Check if demo mode is enabled
+    # Try live PROFINET discovery via shared memory IPC
+    shm = get_shm_client()
+    if shm.is_connected():
+        shm_rtu = shm.get_rtu(name)
+        if shm_rtu:
+            discovered = []
+
+            # Get sensors from shared memory
+            for sensor in shm_rtu.get("sensors", []):
+                discovered.append({
+                    "slot_number": sensor["slot"],
+                    "tag": f"AI_{sensor['slot']:02d}",
+                    "type": "sensor",
+                    "description": f"Analog Input Slot {sensor['slot']}",
+                    "data_type": "float32",
+                    "unit": "",
+                    "scale_min": 0.0,
+                    "scale_max": 100.0,
+                    "current_value": sensor.get("value"),
+                    "status": sensor.get("status"),
+                    "quality": sensor.get("quality"),
+                })
+
+            # Get actuators from shared memory
+            for actuator in shm_rtu.get("actuators", []):
+                discovered.append({
+                    "slot_number": actuator["slot"],
+                    "tag": f"DO_{actuator['slot']:02d}",
+                    "type": "control",
+                    "description": f"Digital Output Slot {actuator['slot']}",
+                    "data_type": "uint16",
+                    "unit": "",
+                    "current_command": actuator.get("command"),
+                    "forced": actuator.get("forced", False),
+                })
+
+            return build_success_response({
+                "rtu_name": name,
+                "discovered": discovered,
+                "count": len(discovered),
+                "source": "profinet",
+                "vendor_id": shm_rtu.get("vendor_id"),
+                "device_id": shm_rtu.get("device_id"),
+            })
+
+    # Fall back to demo mode if controller not connected
     demo = get_demo_service()
     if demo.is_enabled():
-        # Return simulated discovery data from demo service
         sim_rtu = demo.get_rtu(name)
         if sim_rtu:
             discovered = []
 
-            # Add simulated sensors
             for sensor in sim_rtu.sensors:
                 discovered.append({
                     "slot_number": sensor.slot,
@@ -306,7 +354,6 @@ async def discover_modules(
                     "scale_max": sensor.max_value,
                 })
 
-            # Add simulated actuators
             for actuator in sim_rtu.actuators:
                 discovered.append({
                     "slot_number": actuator.slot,
@@ -323,20 +370,12 @@ async def discover_modules(
                 "count": len(discovered),
                 "source": "simulation",
             })
-        else:
-            return build_success_response({
-                "rtu_name": name,
-                "discovered": [],
-                "count": 0,
-                "source": "simulation",
-                "message": "RTU not found in demo simulation",
-            })
 
-    # Live PROFINET module discovery not yet implemented
-    # Requires controller IPC to query slot configurations from connected RTU
+    # No controller and no demo mode
     raise HTTPException(
-        status_code=501,
-        detail="PROFINET module discovery requires controller IPC. Enable demo mode for simulated discovery."
+        status_code=503,
+        detail="PROFINET controller not connected and demo mode not enabled. "
+               "Start the C controller process or enable demo mode."
     )
 
 
