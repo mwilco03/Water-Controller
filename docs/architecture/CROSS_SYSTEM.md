@@ -648,7 +648,159 @@ PROCEDURE: Verify PROFINET Cyclic Data Format
 
 ---
 
-## Part 5: Development Prompt Addendum
+## Part 5: User Sync Protocol (Controller → RTU)
+
+### 5.1 Overview
+
+The User Sync Protocol enables the SCADA Controller to push user credentials to RTU devices for local TUI/HMI authentication. This allows field operators to authenticate directly at RTU panels when controller connectivity is unavailable.
+
+**Data Flow:**
+```
+Controller                                RTU
+┌─────────────────┐                      ┌─────────────────┐
+│ User Database   │                      │ NV User Store   │
+│ (PostgreSQL)    │                      │ (EEPROM/Flash)  │
+└────────┬────────┘                      └────────▲────────┘
+         │                                        │
+         ▼                                        │
+┌─────────────────┐    PROFINET Acyclic    ┌─────┴─────────┐
+│ API /users/sync │ ──────────────────────►│ Record Handler│
+│ user_sync.c     │    Index: 0xF840       │ user_store.c  │
+└─────────────────┘                        └───────────────┘
+```
+
+### 5.2 Wire Protocol
+
+**PROFINET Record Index:** `0xF840` (vendor-specific range)
+
+**Payload Structure:**
+```c
+/* Header: 12 bytes */
+typedef struct __attribute__((packed)) {
+    uint8_t  version;       /* Protocol version (1) */
+    uint8_t  user_count;    /* Number of users (0-16) */
+    uint16_t checksum;      /* CRC16-CCITT of user records */
+    uint32_t timestamp;     /* Unix timestamp (seconds) */
+    uint32_t nonce;         /* Replay protection nonce */
+} user_sync_header_t;
+
+/* User Record: 100 bytes each */
+typedef struct __attribute__((packed)) {
+    char     username[32];       /* Null-terminated */
+    char     password_hash[64];  /* Format: "DJB2:%08X:%08X" */
+    uint8_t  role;               /* 0=viewer, 1=operator, 2=engineer, 3=admin */
+    uint8_t  flags;              /* Bit 0: active */
+    uint8_t  reserved[2];        /* Alignment */
+} user_sync_record_t;
+```
+
+**Maximum Payload Size:** 12 + (100 × 16) = 1612 bytes
+
+### 5.3 Password Hash Format
+
+**Algorithm:** DJB2 with salt prefix
+
+```c
+uint32_t djb2_hash(const char *str) {
+    uint32_t hash = 5381;
+    int c;
+    while ((c = *str++)) {
+        hash = ((hash << 5) + hash) + c;
+    }
+    return hash;
+}
+```
+
+**Salt:** `"NaCl4Life"` (prepended to password before hashing)
+
+**Wire Format:** `"DJB2:%08X:%08X"` where:
+- First hex: DJB2 hash of salt alone
+- Second hex: DJB2 hash of salt + password
+
+**Example:**
+```
+Password: "secret123"
+Salt hash: DJB2("NaCl4Life") = 0x7C9E6D5A
+Full hash: DJB2("NaCl4Lifesecret123") = 0x3B2A1C4D
+Wire format: "DJB2:7C9E6D5A:3B2A1C4D"
+```
+
+### 5.4 RTU Implementation Requirements
+
+**Storage Constraints:**
+- Maximum 16 users (embedded memory limit)
+- Must persist to non-volatile memory
+- Load stored users on RTU boot
+
+**Security Requirements:**
+- Use constant-time comparison for password hashes
+- Verify CRC before processing payload
+- Track nonce for replay protection (optional)
+
+**Shared Headers (in shared/include/):**
+- `user_sync_protocol.h` - Wire protocol definitions
+- Copy to Water-Treat RTU's shared include path
+
+**RTU Implementation Files (in shared/rtu/):**
+- `user_store.h` / `user_store.c` - User storage and authentication
+- `profinet_user_handler.h` / `profinet_user_handler.c` - PROFINET integration
+
+### 5.5 API Endpoints (Controller)
+
+**Get users for sync:**
+```http
+GET /api/v1/users/sync
+Authorization: Bearer <admin_token>
+
+Response:
+{
+  "data": [
+    {
+      "id": 1,
+      "username": "admin",
+      "password_hash": "DJB2:7C9E6D5A:3B2A1C4D",
+      "role": "admin",
+      "active": true
+    }
+  ]
+}
+```
+
+**Trigger sync to RTU:**
+```http
+POST /api/v1/users/sync/{station_name}
+Authorization: Bearer <admin_token>
+
+Response:
+{
+  "data": {
+    "status": "ok",
+    "synced_users": 3
+  }
+}
+```
+
+### 5.6 Cross-System Checklist
+
+When implementing or modifying user sync:
+
+**Controller Side (Water-Controller):**
+- [ ] Verify DJB2 hash matches `shared/include/user_sync_protocol.h`
+- [ ] Verify salt constant is `"NaCl4Life"`
+- [ ] Verify wire format is `"DJB2:%08X:%08X"`
+- [ ] CRC16-CCITT polynomial is `0x1021`, init `0xFFFF`
+- [ ] Payload sent to record index `0xF840`
+
+**RTU Side (Water-Treat):**
+- [ ] Copy `shared/include/user_sync_protocol.h` to RTU include path
+- [ ] Integrate `shared/rtu/user_store.c` with NV storage backend
+- [ ] Register handler for record index `0xF840`
+- [ ] Verify hash computation matches controller
+- [ ] Use constant-time comparison for password verification
+
+---
+
+## Part 6: Development Prompt Addendum
 
 Add the following to system prompts for AI-assisted development:
 
