@@ -127,7 +127,7 @@ class RtuService:
         """Count resources associated with an RTU."""
         sensor_count = self.db.query(Sensor).filter(Sensor.rtu_id == rtu.id).count()
         control_count = self.db.query(Control).filter(Control.rtu_id == rtu.id).count()
-        alarm_count = self.db.query(AlarmRule).filter(AlarmRule.rtu_id == rtu.id).count()
+        alarm_count = self.db.query(AlarmRule).filter(AlarmRule.rtu_station == rtu.name).count()
         historian_count = self.db.query(HistorianSample).join(Sensor).filter(
             Sensor.rtu_id == rtu.id
         ).count()
@@ -160,9 +160,9 @@ class RtuService:
         sensor_count = self.db.query(Sensor).filter(Sensor.rtu_id == rtu.id).count()
         control_count = self.db.query(Control).filter(Control.rtu_id == rtu.id).count()
 
-        alarm_count = self.db.query(AlarmRule).filter(AlarmRule.rtu_id == rtu.id).count()
+        alarm_count = self.db.query(AlarmRule).filter(AlarmRule.rtu_station == rtu.name).count()
         active_alarms = self.db.query(AlarmEvent).filter(
-            AlarmEvent.rtu_id == rtu.id,
+            AlarmEvent.rtu_station == rtu.name,
             AlarmEvent.state == "ACTIVE"
         ).count()
 
