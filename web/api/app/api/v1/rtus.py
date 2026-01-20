@@ -9,7 +9,10 @@ Note: Business logic is delegated to RtuService for testability.
 Route handlers remain thin and declarative.
 """
 
+import logging
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
@@ -332,24 +335,38 @@ async def test_connection(
 
         # Read I/O test - try to read sensor values
         read_start = time.perf_counter()
-        sensors = profinet.get_sensor_values(name)
-        read_latency = (time.perf_counter() - read_start) * 1000
-        bytes_read = len(sensors) * 8  # Approximate bytes per sensor
+        try:
+            sensors = profinet.get_sensor_values(name)
+            read_latency = (time.perf_counter() - read_start) * 1000
+            bytes_read = len(sensors) * 8  # Approximate bytes per sensor
+            read_passed = True  # IPC call succeeded
+        except Exception as e:
+            read_latency = (time.perf_counter() - read_start) * 1000
+            bytes_read = 0
+            read_passed = False
+            logger.warning(f"Read I/O test failed for {name}: {e}")
 
         tests["read_io"] = TestResult(
-            passed=len(sensors) > 0 or True,  # Pass even with no sensors configured
+            passed=read_passed,
             bytes_read=bytes_read,
             latency_ms=round(read_latency, 2)
         )
 
         # Write I/O test - try to read actuator states (non-destructive)
         write_start = time.perf_counter()
-        actuators = profinet.get_actuator_states(name)
-        write_latency = (time.perf_counter() - write_start) * 1000
-        bytes_written = len(actuators) * 4  # Approximate bytes per actuator
+        try:
+            actuators = profinet.get_actuator_states(name)
+            write_latency = (time.perf_counter() - write_start) * 1000
+            bytes_written = len(actuators) * 4  # Approximate bytes per actuator
+            write_passed = True  # IPC call succeeded
+        except Exception as e:
+            write_latency = (time.perf_counter() - write_start) * 1000
+            bytes_written = 0
+            write_passed = False
+            logger.warning(f"Write I/O test failed for {name}: {e}")
 
         tests["write_io"] = TestResult(
-            passed=True,
+            passed=write_passed,
             bytes_written=bytes_written,
             latency_ms=round(write_latency, 2)
         )
