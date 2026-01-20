@@ -3,6 +3,22 @@
 import { useState, useCallback, useEffect } from 'react';
 import { networkLogger } from '@/lib/logger';
 
+// Response from /api/v1/discover/rtu endpoint
+interface ApiDiscoveredDevice {
+  id: number;
+  mac_address: string;
+  ip_address: string | null;
+  device_name: string | null;
+  vendor_name: string | null;
+  device_type: string | null;
+  vendor_id: number | null;
+  device_id: number | null;
+  discovered_at: string;
+  added_to_registry: boolean;
+  rtu_name: string | null;
+}
+
+// UI display format
 interface DiscoveredDevice {
   mac_address: string;
   ip_address: string | null;
@@ -16,9 +32,25 @@ interface DiscoveredDevice {
   configured: boolean;
   station_name?: string;
   last_seen: string;
-  signal_strength?: number;
-  firmware_version?: string;
   response_time_ms?: number;
+}
+
+// Map API response to UI format
+function mapApiDevice(dev: ApiDiscoveredDevice): DiscoveredDevice {
+  return {
+    mac_address: dev.mac_address,
+    ip_address: dev.ip_address,
+    device_name: dev.device_name || dev.rtu_name || 'Unknown Device',
+    device_type: dev.device_type || 'PROFINET Device',
+    vendor_id: dev.vendor_id || 0,
+    device_id: dev.device_id || 0,
+    vendor_name: dev.vendor_name || 'Unknown',
+    profinet_role: 'device', // DCP only discovers devices
+    status: 'online', // If discovered, it responded
+    configured: dev.added_to_registry,
+    station_name: dev.rtu_name || undefined,
+    last_seen: dev.discovered_at,
+  };
 }
 
 interface ScanProgress {
@@ -73,35 +105,52 @@ export default function NetworkDiscovery({ onDeviceSelect, onAddDevice }: Props)
   const startScan = useCallback(async () => {
     setScanning(true);
     setDevices([]);
-    setScanProgress({ phase: 'dcp_identify', progress: 0, devices_found: 0, message: 'Starting DCP Identify scan...' });
+    setScanProgress({ phase: 'dcp_identify', progress: 0, devices_found: 0, message: 'Starting PROFINET DCP discovery...' });
 
     try {
-      const res = await fetch('/api/v1/network/discover', {
+      // Call the real DCP discovery endpoint
+      const res = await fetch('/api/v1/discover/rtu', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          network_range: networkRange,
-          methods: scanMethods,
+          subnet: networkRange,
+          timeout_seconds: 10,
         }),
       });
 
       if (res.ok) {
-        const data = await res.json();
-        setDevices(data.devices || []);
+        const response = await res.json();
+        // Backend wraps in { data: { devices: [...], scan_duration_seconds: ... } }
+        const data = response.data || response;
+        const apiDevices: ApiDiscoveredDevice[] = data.devices || [];
+        const mappedDevices = apiDevices.map(mapApiDevice);
+
+        setDevices(mappedDevices);
         setScanProgress({
           phase: 'complete',
           progress: 100,
-          devices_found: data.devices?.length || 0,
-          message: `Scan complete. Found ${data.devices?.length || 0} devices.`,
+          devices_found: mappedDevices.length,
+          message: `Scan complete. Found ${mappedDevices.length} devices in ${data.scan_duration_seconds || 0}s.`,
         });
       } else {
         const errorData = await res.json().catch(() => ({}));
         networkLogger.error('Network discovery failed', { status: res.status, error: errorData });
+
+        // Extract error message from various formats
+        let errorMsg = 'Check network connection and container permissions.';
+        if (errorData.detail) {
+          if (typeof errorData.detail === 'string') {
+            errorMsg = errorData.detail;
+          } else if (errorData.detail.message) {
+            errorMsg = errorData.detail.message;
+          }
+        }
+
         setScanProgress({
           phase: 'complete',
           progress: 100,
           devices_found: 0,
-          message: `Scan failed: ${errorData.detail || 'Check network connection.'}`,
+          message: `Scan failed: ${errorMsg}`,
         });
       }
     } catch (err) {
@@ -115,7 +164,7 @@ export default function NetworkDiscovery({ onDeviceSelect, onAddDevice }: Props)
     } finally {
       setScanning(false);
     }
-  }, [networkRange, scanMethods]);
+  }, [networkRange]);
 
   const handleDeviceClick = (device: DiscoveredDevice) => {
     setSelectedDevice(device);
