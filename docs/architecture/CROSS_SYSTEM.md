@@ -865,7 +865,8 @@ Both Controller and RTU implementations MUST produce/parse these exact bytes.
 ### 6.1 CRC16-CCITT Reference Implementation
 
 ```c
-// Polynomial: 0x1021, Init: 0xFFFF
+// CRC16-CCITT-FALSE: Polynomial 0x1021, Init 0xFFFF
+// No input/output reflection, no XOR-out
 uint16_t crc16_ccitt(const uint8_t *data, size_t len) {
     uint16_t crc = 0xFFFF;
     for (size_t i = 0; i < len; i++) {
@@ -873,15 +874,18 @@ uint16_t crc16_ccitt(const uint8_t *data, size_t len) {
         for (int j = 0; j < 8; j++) {
             crc = (crc & 0x8000) ? (crc << 1) ^ 0x1021 : crc << 1;
         }
+        crc &= 0xFFFF;
     }
     return crc;
 }
 
-// Test vectors:
-// CRC16("") = 0xFFFF (empty)
-// CRC16([0x00]) = 0xE1F0
-// CRC16([0x01, 0x02, 0x03]) = 0x6131
-// CRC16("NaCl4Life") = 0x7C9E (note: different from DJB2)
+// VERIFIED test vectors (run against both C and Python):
+// CRC16(empty)            = 0xFFFF
+// CRC16([0x00])           = 0xE1F0
+// CRC16([0x01,0x02,0x03]) = 0xADAD
+// CRC16("NaCl4Life")      = 0x9311
+// CRC16("test")           = 0xD219
+// CRC16("123456789")      = 0x29B1  (standard CCITT-FALSE check value)
 ```
 
 ### 6.2 Device Config (0xF841) - 52 bytes
