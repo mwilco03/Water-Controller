@@ -122,7 +122,8 @@ typedef struct {
 } shm_onewire_device_t;
 
 /* User sync constants - must be defined before use in structs */
-#define USER_SYNC_MAX_USERS     32
+/* IPC buffer can hold more users than RTU (32 vs 16) - controller truncates when sending */
+#define IPC_USER_SYNC_MAX_USERS     32
 
 /* Correlation ID for distributed tracing */
 #define WTC_CORRELATION_ID_LEN 37  /* UUID format + null terminator */
@@ -198,7 +199,7 @@ typedef struct {
                 char password_hash[64];
                 uint8_t role;        /* 0=viewer, 1=operator, 2=engineer, 3=admin */
                 uint8_t flags;       /* Bit 0: active, Bit 1: synced_from_controller */
-            } users[USER_SYNC_MAX_USERS];
+            } users[IPC_USER_SYNC_MAX_USERS];
         } user_sync_cmd;
     };
 } shm_command_t;

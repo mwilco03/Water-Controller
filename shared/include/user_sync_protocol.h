@@ -63,13 +63,23 @@ extern "C" {
  *
  * Roles are hierarchical: higher values have more permissions.
  * RTU enforces these for local TUI/HMI access.
+ *
+ * Note: When used with Water-Controller, these values MUST match
+ * user_role_t in types.h. The guard prevents redefinition.
  */
-typedef enum {
-    USER_ROLE_VIEWER   = 0,  /**< Read-only access to status/alarms */
-    USER_ROLE_OPERATOR = 1,  /**< Can acknowledge alarms, basic control */
-    USER_ROLE_ENGINEER = 2,  /**< Can modify setpoints, tuning */
-    USER_ROLE_ADMIN    = 3,  /**< Full access including user management */
-} user_sync_role_t;
+#ifndef USER_ROLE_VIEWER
+#define USER_ROLE_VIEWER    0   /**< Read-only access to status/alarms */
+#define USER_ROLE_OPERATOR  1   /**< Can acknowledge alarms, basic control */
+#define USER_ROLE_ENGINEER  2   /**< Can modify setpoints, tuning */
+#define USER_ROLE_ADMIN     3   /**< Full access including user management */
+#endif
+
+/* Typedef for RTU code that doesn't have types.h */
+#ifndef WTC_TYPES_H
+typedef uint8_t user_sync_role_t;
+#else
+typedef user_role_t user_sync_role_t;
+#endif
 
 /* ============== User Record Flags ============== */
 
