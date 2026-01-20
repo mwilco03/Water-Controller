@@ -956,6 +956,9 @@ create_systemd_service() {
         echo "WTC_GRAFANA_PORT=${WTC_GRAFANA_PORT:-3000}"
         echo "WTC_DB_PORT=${WTC_DB_PORT:-5432}"
         echo "WTC_DOCKER_UI_INTERNAL_PORT=${WTC_DOCKER_UI_INTERNAL_PORT:-3000}"
+        echo ""
+        echo "# Network interface (empty = auto-detect)"
+        echo "WTC_INTERFACE=${WTC_INTERFACE:-}"
     } | run_privileged tee "$env_file" > /dev/null
     run_privileged chmod 600 "$env_file"
 
