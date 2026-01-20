@@ -15,6 +15,7 @@ from .discover import router as discover_router
 from .logging import router as logging_router
 from .metrics import router as metrics_router
 from .modbus import router as modbus_router
+from .rtu import router as rtu_router
 from .rtus import router as rtus_router
 from .services import router as services_router
 from .system import router as system_router
@@ -33,6 +34,9 @@ api_router.include_router(users_router, prefix="/users", tags=["User Management"
 
 # Resource routes
 api_router.include_router(rtus_router, prefix="/rtus", tags=["RTU Management"])
+
+# RTU-facing API (for RTU self-registration and device binding)
+api_router.include_router(rtu_router, prefix="/rtu", tags=["RTU API"])
 api_router.include_router(alarms_router, prefix="/alarms", tags=["Alarm Management"])
 api_router.include_router(trends_router, prefix="/trends", tags=["Historian/Trends"])
 api_router.include_router(trends_optimized_router, prefix="/trends", tags=["Historian/Trends"])

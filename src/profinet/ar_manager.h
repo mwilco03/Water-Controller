@@ -16,6 +16,12 @@ extern "C" {
 /* AR manager handle */
 typedef struct ar_manager ar_manager_t;
 
+/* AR state change callback - called when AR transitions states */
+typedef void (*ar_state_change_callback_t)(const char *station_name,
+                                            ar_state_t old_state,
+                                            ar_state_t new_state,
+                                            void *ctx);
+
 /* AR configuration */
 typedef struct {
     char station_name[64];
@@ -106,6 +112,11 @@ wtc_result_t ar_manager_get_all(ar_manager_t *manager,
 
 /* Check AR health (watchdog) */
 wtc_result_t ar_manager_check_health(ar_manager_t *manager);
+
+/* Set callback for AR state changes */
+void ar_manager_set_state_callback(ar_manager_t *manager,
+                                    ar_state_change_callback_t callback,
+                                    void *ctx);
 
 #ifdef __cplusplus
 }
