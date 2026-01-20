@@ -68,9 +68,9 @@ ENV WTC_LOG_LEVEL=INFO
 # Expose OPC UA port for debugging
 EXPOSE 4840/tcp
 
-# Health check
+# Health check - use -f to match full command line (process name truncated to 15 chars)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD pgrep water_treat_controller || exit 1
+    CMD pgrep -f water_treat_controller || exit 1
 
 # Run with capabilities for raw sockets
 # docker run --cap-add=NET_ADMIN --cap-add=NET_RAW
