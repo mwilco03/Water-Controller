@@ -106,16 +106,117 @@ async def get_profinet_slots(
     Get PROFINET slot-level diagnostics.
 
     Note: Slots are PROFINET frame positions, not database entities.
-    Requires live PROFINET connection to RTU.
+    Data is read from the C controller via shared memory IPC.
+
+    Returns slot configuration with:
+    - Slot number (PROFINET frame position)
+    - Slot type (input/output/empty)
+    - Module info (sensor or actuator data)
+    - Live diagnostic data (value, status, quality)
     """
+    from ...services.shm_client import get_shm_client
+
     rtu = get_rtu_or_404(db, name)
 
-    # Live PROFINET slot query not yet implemented
-    # Slots are frame positions reported by RTU during cyclic exchange
-    raise HTTPException(
-        status_code=501,
-        detail="PROFINET slot diagnostics requires live controller connection. Feature not yet implemented."
-    )
+    if rtu.state != RtuState.RUNNING:
+        raise HTTPException(
+            status_code=409,
+            detail=f"RTU must be RUNNING for slot diagnostics. Current state: {rtu.state}"
+        )
+
+    # Get slot data from shared memory
+    shm = get_shm_client()
+    if not shm.is_connected():
+        raise HTTPException(
+            status_code=503,
+            detail="PROFINET controller not connected. Start the C controller process."
+        )
+
+    shm_rtu = shm.get_rtu(name)
+    if not shm_rtu:
+        raise HTTPException(
+            status_code=503,
+            detail=f"RTU '{name}' not found in controller shared memory."
+        )
+
+    # Build slot map from sensors and actuators
+    slot_count = shm_rtu.get("slot_count", 16)
+    slots = []
+
+    # Index sensors and actuators by slot
+    sensor_by_slot = {s["slot"]: s for s in shm_rtu.get("sensors", [])}
+    actuator_by_slot = {a["slot"]: a for a in shm_rtu.get("actuators", [])}
+
+    # PROFINET convention: slots 1-8 inputs, slots 9-15 outputs (0 is reserved)
+    for slot_num in range(1, slot_count + 1):
+        slot_data = {
+            "slot": slot_num,
+            "subslot": 0,
+            "type": "empty",
+            "module_type": None,
+            "data": None,
+            "diagnostics": {
+                "status": "unknown",
+                "quality": "unknown",
+            }
+        }
+
+        if slot_num in sensor_by_slot:
+            sensor = sensor_by_slot[slot_num]
+            # Get quality name
+            quality_map = {0: "good", 0x40: "uncertain", 0x80: "bad", 0xC0: "not_connected"}
+            status_map = {0: "good", 1: "bad", 2: "uncertain"}
+
+            slot_data["type"] = "input"
+            slot_data["module_type"] = "analog_input"
+            slot_data["data"] = {
+                "value": sensor.get("value"),
+                "timestamp_ms": sensor.get("timestamp_ms"),
+            }
+            slot_data["diagnostics"] = {
+                "status": status_map.get(sensor.get("status", 0), "unknown"),
+                "status_code": sensor.get("status", 0),
+                "quality": quality_map.get(sensor.get("quality", 0), "unknown"),
+                "quality_code": sensor.get("quality", 0),
+            }
+
+        elif slot_num in actuator_by_slot:
+            actuator = actuator_by_slot[slot_num]
+            command_map = {0: "OFF", 1: "ON", 2: "PWM"}
+
+            slot_data["type"] = "output"
+            slot_data["module_type"] = "digital_output"
+            slot_data["data"] = {
+                "command": command_map.get(actuator.get("command", 0), "UNKNOWN"),
+                "command_code": actuator.get("command", 0),
+                "pwm_duty": actuator.get("pwm_duty", 0),
+                "forced": actuator.get("forced", False),
+            }
+            slot_data["diagnostics"] = {
+                "status": "good" if not actuator.get("forced") else "forced",
+                "quality": "good",
+            }
+
+        slots.append(slot_data)
+
+    # Calculate slot utilization
+    populated = sum(1 for s in slots if s["type"] != "empty")
+    input_slots = sum(1 for s in slots if s["type"] == "input")
+    output_slots = sum(1 for s in slots if s["type"] == "output")
+
+    return build_success_response({
+        "station_name": name,
+        "slot_count": slot_count,
+        "populated_slots": populated,
+        "empty_slots": slot_count - populated,
+        "input_slots": input_slots,
+        "output_slots": output_slots,
+        "vendor_id": shm_rtu.get("vendor_id"),
+        "device_id": shm_rtu.get("device_id"),
+        "packet_loss_percent": shm_rtu.get("packet_loss_percent", 0.0),
+        "total_cycles": shm_rtu.get("total_cycles", 0),
+        "slots": slots,
+    })
 
 
 @router.get("/diagnostics")

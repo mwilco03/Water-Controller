@@ -9,7 +9,7 @@ import io
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
@@ -251,9 +251,8 @@ async def export_trends(
             }
         )
     else:
-        # PDF export would require additional library (reportlab, etc.)
-        # For now, return error
-        return build_success_response({
-            "error": "PDF export not yet implemented",
-            "format": request.format,
-        })
+        # PDF export requires additional library (reportlab, etc.)
+        raise HTTPException(
+            status_code=501,
+            detail="PDF export not implemented. Use CSV format instead."
+        )
