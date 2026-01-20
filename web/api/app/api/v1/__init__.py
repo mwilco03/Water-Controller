@@ -18,11 +18,15 @@ from .system import router as system_router
 from .templates import router as templates_router
 from .trends import router as trends_router
 from .trends_optimized import router as trends_optimized_router
+from .users import router as users_router
 
 api_router = APIRouter()
 
 # Auth routes - no prefix for /auth/login, /auth/logout, /auth/session
 api_router.include_router(auth_router, prefix="/auth", tags=["Authentication"])
+
+# User management routes - admin only
+api_router.include_router(users_router, prefix="/users", tags=["User Management"])
 
 # Resource routes
 api_router.include_router(rtus_router, prefix="/rtus", tags=["RTU Management"])
