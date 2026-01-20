@@ -134,6 +134,12 @@ class RTU(Base):
     rtu_version = Column(String(32), nullable=True)  # Reported RTU firmware version
     version_mismatch = Column(Boolean, default=False)  # True if version mismatch detected
 
+    # Registration and enrollment (for RTU self-registration protocol)
+    enrollment_token = Column(String(64), unique=True, nullable=True)  # Format: wtc-enroll-{32 hex}
+    approved = Column(Boolean, default=False)  # True after admin approval or valid token
+    serial_number = Column(String(32), nullable=True)  # Reported by RTU during registration
+    mac_address = Column(String(17), nullable=True)  # Format: 00:1A:2B:3C:4D:5E
+
     # Timestamps
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
     updated_at = Column(

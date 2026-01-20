@@ -236,3 +236,102 @@ class RtuSlotsReceivedResponse(BaseModel):
     slots_updated: int = Field(description="Number of slots updated")
     slots_added: int = Field(description="Number of new slots added")
     message: str = Field(description="Status message")
+
+
+# ==================== RTU Self-Registration ====================
+
+MAC_ADDRESS_PATTERN = re.compile(r"^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$")
+
+
+class RtuRegisterRequest(BaseModel):
+    """
+    Request model for RTU self-registration.
+
+    RTU sends this on first boot or when controller IP is configured.
+    If enrollment_token matches a pre-created RTU, auto-approved.
+    Otherwise, queued for admin approval in web UI.
+    """
+
+    station_name: str = Field(
+        ...,
+        min_length=3,
+        max_length=32,
+        description="RTU station name (PROFINET device name)"
+    )
+    serial_number: str = Field(
+        ...,
+        max_length=32,
+        description="RTU serial number"
+    )
+    vendor_id: int = Field(
+        ...,
+        ge=0,
+        le=0xFFFF,
+        description="PROFINET vendor ID (integer, e.g., 1171)"
+    )
+    device_id: int = Field(
+        ...,
+        ge=0,
+        le=0xFFFF,
+        description="PROFINET device ID (integer)"
+    )
+    mac_address: str = Field(
+        ...,
+        description="RTU MAC address (format: 00:1A:2B:3C:4D:5E)"
+    )
+    firmware_version: str = Field(
+        ...,
+        max_length=32,
+        description="RTU firmware version string"
+    )
+    capabilities: int = Field(
+        0,
+        ge=0,
+        le=0xFF,
+        description="Capability bitfield"
+    )
+    sensor_count: int = Field(
+        8,
+        ge=0,
+        le=64,
+        description="Number of sensor slots"
+    )
+    actuator_count: int = Field(
+        7,
+        ge=0,
+        le=64,
+        description="Number of actuator slots"
+    )
+    enrollment_token: str | None = Field(
+        None,
+        max_length=64,
+        description="Optional enrollment token for auto-approval"
+    )
+
+    @field_validator("station_name")
+    @classmethod
+    def validate_station_name(cls, v: str) -> str:
+        if not STATION_NAME_PATTERN.match(v):
+            raise ValueError(
+                "station_name must be 3-32 characters, start with a letter, "
+                "and contain only lowercase letters, numbers, and hyphens"
+            )
+        return v
+
+    @field_validator("mac_address")
+    @classmethod
+    def validate_mac_address(cls, v: str) -> str:
+        if not MAC_ADDRESS_PATTERN.match(v):
+            raise ValueError("MAC address must be format XX:XX:XX:XX:XX:XX")
+        return v.upper()
+
+
+class RtuRegisterResponse(BaseModel):
+    """Response for RTU self-registration."""
+
+    rtu_id: int = Field(description="Controller-assigned RTU ID")
+    enrollment_token: str | None = Field(None, description="Enrollment token for binding")
+    controller_name: str = Field(description="Controller station name")
+    approved: bool = Field(description="Whether RTU is approved for connection")
+    requires_approval: bool = Field(description="Whether admin approval is needed")
+    config_version: int = Field(0, description="Current config version (for sync)")

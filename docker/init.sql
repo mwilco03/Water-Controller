@@ -178,6 +178,17 @@ CREATE INDEX IF NOT EXISTS ix_audit_log_resource ON audit_log (resource_type, re
 
 -- Default admin user is created automatically by the API on startup via ensure_default_admin()
 
+-- RTU Registration/Enrollment columns (2026-01 protocol addition)
+-- These support RTU self-registration and device binding
+ALTER TABLE rtu_devices ADD COLUMN IF NOT EXISTS enrollment_token VARCHAR(64) UNIQUE;
+ALTER TABLE rtu_devices ADD COLUMN IF NOT EXISTS approved BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE rtu_devices ADD COLUMN IF NOT EXISTS serial_number VARCHAR(32);
+ALTER TABLE rtu_devices ADD COLUMN IF NOT EXISTS mac_address VARCHAR(17);
+ALTER TABLE rtu_devices ADD COLUMN IF NOT EXISTS firmware_version VARCHAR(32);
+
+-- Index for enrollment token lookups during registration
+CREATE INDEX IF NOT EXISTS idx_rtu_devices_enrollment_token ON rtu_devices (enrollment_token) WHERE enrollment_token IS NOT NULL;
+
 -- Insert sample RTU devices
 INSERT INTO rtu_devices (station_name, ip_address, vendor_id, device_id, slot_count, connection_state)
 VALUES

@@ -7,9 +7,15 @@ Business logic for RTU operations, extracted from route handlers.
 This service layer enables testability and reusability across endpoints.
 """
 
+import secrets
 from datetime import UTC, datetime
 
 from sqlalchemy.orm import Session
+
+
+def generate_enrollment_token() -> str:
+    """Generate cryptographically secure enrollment token."""
+    return f"wtc-enroll-{secrets.token_hex(16)}"
 
 from ..core.exceptions import (
     RtuAlreadyExistsError,
@@ -76,7 +82,9 @@ class RtuService:
         if existing:
             raise RtuAlreadyExistsError("station_name", station_name)
 
-        # Create RTU
+        # Create RTU with enrollment token for device binding
+        enrollment_token = generate_enrollment_token()
+
         rtu = RTU(
             station_name=station_name,
             ip_address=request.ip_address,
@@ -85,6 +93,8 @@ class RtuService:
             slot_count=request.slot_count,
             state=RtuState.OFFLINE,
             state_since=datetime.now(UTC),
+            enrollment_token=enrollment_token,
+            approved=True,  # RTUs created via web UI are pre-approved
         )
         self.db.add(rtu)
         self.db.commit()
