@@ -278,105 +278,70 @@ async def discover_modules(
     RTU must be RUNNING. Queries the PROFINET controller via shared memory IPC
     for slot module information (sensors and actuators).
 
-    Discovery sources (in priority order):
-    1. Live PROFINET via C controller shared memory
-    2. Demo mode simulation
+    Returns 503 if controller is not connected.
     """
     from ...services.shm_client import get_shm_client
-    from ...services.demo_mode import get_demo_service
 
     rtu = get_rtu_or_404(db, name)
 
     if rtu.state != RtuState.RUNNING:
         raise RtuNotConnectedError(name, rtu.state)
 
-    # Try live PROFINET discovery via shared memory IPC
+    # Get PROFINET discovery via shared memory IPC
     shm = get_shm_client()
-    if shm.is_connected():
-        shm_rtu = shm.get_rtu(name)
-        if shm_rtu:
-            discovered = []
+    if not shm.is_connected():
+        raise HTTPException(
+            status_code=503,
+            detail="PROFINET controller not connected. Start the C controller process."
+        )
 
-            # Get sensors from shared memory
-            for sensor in shm_rtu.get("sensors", []):
-                discovered.append({
-                    "slot_number": sensor["slot"],
-                    "tag": f"AI_{sensor['slot']:02d}",
-                    "type": "sensor",
-                    "description": f"Analog Input Slot {sensor['slot']}",
-                    "data_type": "float32",
-                    "unit": "",
-                    "scale_min": 0.0,
-                    "scale_max": 100.0,
-                    "current_value": sensor.get("value"),
-                    "status": sensor.get("status"),
-                    "quality": sensor.get("quality"),
-                })
+    shm_rtu = shm.get_rtu(name)
+    if not shm_rtu:
+        raise HTTPException(
+            status_code=503,
+            detail=f"RTU '{name}' not found in controller shared memory. "
+                   "Ensure the RTU is configured and connected in the PROFINET controller."
+        )
 
-            # Get actuators from shared memory
-            for actuator in shm_rtu.get("actuators", []):
-                discovered.append({
-                    "slot_number": actuator["slot"],
-                    "tag": f"DO_{actuator['slot']:02d}",
-                    "type": "control",
-                    "description": f"Digital Output Slot {actuator['slot']}",
-                    "data_type": "uint16",
-                    "unit": "",
-                    "current_command": actuator.get("command"),
-                    "forced": actuator.get("forced", False),
-                })
+    discovered = []
 
-            return build_success_response({
-                "rtu_name": name,
-                "discovered": discovered,
-                "count": len(discovered),
-                "source": "profinet",
-                "vendor_id": shm_rtu.get("vendor_id"),
-                "device_id": shm_rtu.get("device_id"),
-            })
+    # Get sensors from shared memory
+    for sensor in shm_rtu.get("sensors", []):
+        discovered.append({
+            "slot_number": sensor["slot"],
+            "tag": f"AI_{sensor['slot']:02d}",
+            "type": "sensor",
+            "description": f"Analog Input Slot {sensor['slot']}",
+            "data_type": "float32",
+            "unit": "",
+            "scale_min": 0.0,
+            "scale_max": 100.0,
+            "current_value": sensor.get("value"),
+            "status": sensor.get("status"),
+            "quality": sensor.get("quality"),
+        })
 
-    # Fall back to demo mode if controller not connected
-    demo = get_demo_service()
-    if demo.is_enabled():
-        sim_rtu = demo.get_rtu(name)
-        if sim_rtu:
-            discovered = []
+    # Get actuators from shared memory
+    for actuator in shm_rtu.get("actuators", []):
+        discovered.append({
+            "slot_number": actuator["slot"],
+            "tag": f"DO_{actuator['slot']:02d}",
+            "type": "control",
+            "description": f"Digital Output Slot {actuator['slot']}",
+            "data_type": "uint16",
+            "unit": "",
+            "current_command": actuator.get("command"),
+            "forced": actuator.get("forced", False),
+        })
 
-            for sensor in sim_rtu.sensors:
-                discovered.append({
-                    "slot_number": sensor.slot,
-                    "tag": sensor.tag,
-                    "type": "sensor",
-                    "description": f"Simulated {sensor.tag}",
-                    "data_type": "float32",
-                    "unit": sensor.unit,
-                    "scale_min": sensor.min_value,
-                    "scale_max": sensor.max_value,
-                })
-
-            for actuator in sim_rtu.actuators:
-                discovered.append({
-                    "slot_number": actuator.slot,
-                    "tag": actuator.tag,
-                    "type": "control",
-                    "description": f"Simulated {actuator.tag}",
-                    "data_type": "uint16",
-                    "unit": "",
-                })
-
-            return build_success_response({
-                "rtu_name": name,
-                "discovered": discovered,
-                "count": len(discovered),
-                "source": "simulation",
-            })
-
-    # No controller and no demo mode
-    raise HTTPException(
-        status_code=503,
-        detail="PROFINET controller not connected and demo mode not enabled. "
-               "Start the C controller process or enable demo mode."
-    )
+    return build_success_response({
+        "rtu_name": name,
+        "discovered": discovered,
+        "count": len(discovered),
+        "source": "profinet",
+        "vendor_id": shm_rtu.get("vendor_id"),
+        "device_id": shm_rtu.get("device_id"),
+    })
 
 
 @router.post("/{name}/test")

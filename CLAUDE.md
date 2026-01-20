@@ -46,6 +46,47 @@ IMPORTANT: Passwords are HARDCODED by design. DO NOT change `wtc_password` or ad
 - Zero warnings required (`-Wall -Wextra -Werror`)
 - Run `make validate` before committing schema changes
 
+## NO DEMO MODE FALLBACKS - NO STUB CODE
+
+**CRITICAL: This is industrial control software. Do NOT write lazy code.**
+
+**NEVER**:
+- Add demo mode fallbacks that return fake data when real systems are unavailable
+- Write stub implementations that pretend to work
+- Add "simulation" paths that bypass real functionality
+- Use placeholder returns or TODO comments in production endpoints
+- Write fake success responses when actual implementation is missing
+
+**ALWAYS**:
+- Return proper HTTP errors (503, 501, etc.) when required systems are unavailable
+- Fail explicitly with clear error messages explaining what's missing
+- Implement real functionality or error appropriately
+- Let the caller know exactly what's wrong so they can fix it
+
+**Example - WRONG**:
+```python
+# DON'T DO THIS
+if not controller.is_connected():
+    # Fall back to demo mode
+    return fake_demo_data()
+```
+
+**Example - CORRECT**:
+```python
+# DO THIS
+if not controller.is_connected():
+    raise HTTPException(
+        status_code=503,
+        detail="PROFINET controller not connected. Start the controller process."
+    )
+```
+
+**Why this matters**:
+- Demo fallbacks hide real problems from operators
+- Fake data in SCADA systems is dangerous
+- Operators need to know when systems are unavailable
+- Lazy code becomes tech debt that's never fixed
+
 ## Pre-Production Status
 
 **CRITICAL: This is PRE-PRODUCTION software. No historical migration concerns.**
