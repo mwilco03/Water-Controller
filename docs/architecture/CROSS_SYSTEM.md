@@ -720,9 +720,17 @@ uint32_t djb2_hash(const char *str) {
 **Example:**
 ```
 Password: "secret123"
-Salt hash: DJB2("NaCl4Life") = 0x7C9E6D5A
-Full hash: DJB2("NaCl4Lifesecret123") = 0x3B2A1C4D
-Wire format: "DJB2:7C9E6D5A:3B2A1C4D"
+Salt hash: DJB2("NaCl4Life") = 0x1A3C1FD7
+Full hash: DJB2("NaCl4Lifesecret123") = 0x6A245633
+Wire format: "DJB2:1A3C1FD7:6A245633"
+```
+
+**Test Vectors (verified):**
+```
+DJB2("NaCl4Life")              = 0x1A3C1FD7  (salt)
+DJB2("NaCl4Lifetest123")       = 0xF82B0BED
+DJB2("NaCl4Lifesecret123")     = 0x6A245633
+DJB2("NaCl4Lifeadmin")         = 0x2C409AA0
 ```
 
 ### 5.4 RTU Implementation Requirements
@@ -758,7 +766,7 @@ Response:
     {
       "id": 1,
       "username": "admin",
-      "password_hash": "DJB2:7C9E6D5A:3B2A1C4D",
+      "password_hash": "DJB2:1A3C1FD7:2C409AA0",
       "role": "admin",
       "active": true
     }
