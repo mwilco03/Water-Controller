@@ -177,7 +177,7 @@ void health_report_failure(health_monitor_t *monitor,
     info->last_result = result;
 
     if (error_msg) {
-        strncpy(info->last_error, error_msg, sizeof(info->last_error) - 1);
+        snprintf(info->last_error, sizeof(info->last_error), "%s", error_msg);
     }
 
     /* Update health state based on consecutive failures */
@@ -428,8 +428,8 @@ wtc_result_t health_monitor_process(health_monitor_t *monitor, uint64_t now_ms) 
             entry->info.health = new_state;
 
             if (error_msg[0]) {
-                strncpy(entry->info.last_error, error_msg,
-                        sizeof(entry->info.last_error) - 1);
+                snprintf(entry->info.last_error, sizeof(entry->info.last_error),
+                         "%s", error_msg);
             }
         }
     }

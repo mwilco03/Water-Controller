@@ -62,6 +62,29 @@ readonly PNET_TCP_PORT_END=34963
 readonly PNET_MIN_CMAKE_VERSION="3.14"
 
 # =============================================================================
+# Helper Functions
+# =============================================================================
+
+# Auto-detect network interface
+# Returns: interface name or empty string
+_pnet_detect_interface() {
+    for iface in /sys/class/net/*; do
+        local name
+        name=$(basename "$iface")
+        case "$name" in lo|docker*|veth*|br-*|virbr*|vnet*) continue ;; esac
+        if [ -f "$iface/operstate" ] && [ "$(cat "$iface/operstate")" = "up" ]; then
+            echo "$name"; return 0
+        fi
+    done
+    for iface in /sys/class/net/*; do
+        local name
+        name=$(basename "$iface")
+        case "$name" in lo|docker*|veth*|br-*|virbr*|vnet*) continue ;; esac
+        echo "$name"; return 0
+    done
+}
+
+# =============================================================================
 # Prerequisite Checks
 # =============================================================================
 
@@ -849,7 +872,7 @@ diagnose_pnet() {
 #   $3 - IP address (optional)
 # Returns: 0 on success, 1 on failure
 create_pnet_config() {
-    local interface="${1:-eth0}"
+    local interface="${1:-$(_pnet_detect_interface)}"
     local station_name="${2:-water-controller}"
     local ip_address="${3:-}"
 
@@ -992,7 +1015,7 @@ load_pnet_modules() {
 #   $1 - network interface
 # Returns: 0 on success, 1 on failure
 configure_pnet_interface() {
-    local interface="${1:-eth0}"
+    local interface="${1:-$(_pnet_detect_interface)}"
 
     log_info "Configuring interface $interface for PROFINET..."
 

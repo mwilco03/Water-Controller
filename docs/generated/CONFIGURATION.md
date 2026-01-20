@@ -2,7 +2,7 @@
   AUTO-GENERATED FILE - DO NOT EDIT MANUALLY
 
   Generated from: schemas/config/*.schema.yaml
-  Generated at: 2025-12-30 15:12:11 UTC
+  Generated at: 2026-01-19 22:23:16 UTC
   Generator: scripts/generate_docs.py
 
   To update this file, modify the source schemas and run:
@@ -401,7 +401,7 @@ Configuration for PROFINET RT Class 1 communication with RTU devices
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `cycle_time_us` | `integer` (min: 31250, max: 4000000) | `1000000` | PROFINET cycle time (minimum 31.25us, typically 1ms for RT Class 1) (Unit: mi... |
-| `interface` | `string` (max 32 chars) | `"eth0"` | Network interface for PROFINET communication (Env: `WTC_INTERFACE`, CLI: `-i,... |
+| `interface` | `string` (max 32 chars) | `""` | Network interface for PROFINET communication (auto-detect if empty) (Env: `WT... |
 | `reduction_ratio` | `integer` (min: 1, max: 512) | `1` | Reduction ratio for actual cycle time |
 | `send_clock_factor` | `integer` (min: 1, max: 128) | `32` | Send clock factor (32 = 1ms base cycle) |
 | `socket_priority` | `integer` (min: 0, max: 7) | `6` | Socket priority for QoS (0-7, 6 recommended for RT) |
@@ -545,7 +545,7 @@ Web UI configuration
 |-----------|------|---------|-------------|
 | `ui.api_url` | `string` | `""` | API URL for UI to connect to (Env: `NEXT_PUBLIC_API_URL`) |
 | `ui.dist_dir` | `string` | `""` | Static UI distribution directory (Env: `WTC_UI_DIST_DIR`) |
-| `ui.port` | `integer` (min: 1, max: 65535) | `3000` | UI server port (when running separately) (Env: `WTC_UI_PORT`) |
+| `ui.port` | `integer` (min: 1, max: 65535) | `8080` | UI server port (when running separately) (Env: `WTC_UI_PORT`) |
 
 ### websocket
 
@@ -602,7 +602,7 @@ WebSocket streaming configuration
 | `WTC_HISTORIAN_MAX_SAMPLES` | `1000000` | Maximum samples stored per tag (prevents unbounded growth) |
 | `WTC_HISTORIAN_RETENTION_DAYS` | `365` | Number of days to retain historical data |
 | `WTC_INSTALL_DIR` | `"/opt/water-controller"` | Installation directory |
-| `WTC_INTERFACE` | `"eth0"` | Network interface for PROFINET communication |
+| `WTC_INTERFACE` | `""` | Network interface for PROFINET communication (auto-detect... |
 | `WTC_LOG_DIR` | `"/var/log/water-controller"` | Directory for log files |
 | `WTC_LOG_FILE` | `""` | Log file path (empty for stderr only) |
 | `WTC_LOG_FORWARD_ENABLED` | `false` | Enable log forwarding |
@@ -635,6 +635,6 @@ WebSocket streaming configuration
 | `WTC_TIMESCALE_PORT` | `5432` | TimescaleDB server port |
 | `WTC_TIMESCALE_USER` | `"wtc"` | TimescaleDB username |
 | `WTC_UI_DIST_DIR` | `""` | Static UI distribution directory |
-| `WTC_UI_PORT` | `3000` | UI server port (when running separately) |
+| `WTC_UI_PORT` | `8080` | UI server port (when running separately) |
 | `WTC_WS_RECONNECT_ATTEMPTS` | `10` | Maximum reconnection attempts |
 | `WTC_WS_RECONNECT_MS` | `1000` | Base reconnection interval (exponential backoff) |

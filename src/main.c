@@ -45,6 +45,7 @@
 #include <signal.h>
 #include <unistd.h>
 #include <getopt.h>
+#include <dirent.h>
 
 /* Global running flag */
 static volatile bool g_running = true;
@@ -96,7 +97,7 @@ typedef struct {
 } app_config_t;
 
 static app_config_t g_config = {
-    .interface = "eth0",
+    .interface = "",  /* Empty = auto-detect */
     .config_file = "",
     .log_file = "",
     .log_level = LOG_LEVEL_INFO,
@@ -302,7 +303,7 @@ static void print_usage(const char *program) {
     printf("Version %s\n\n", WTC_VERSION_STRING);
     printf("Usage: %s [options]\n\n", program);
     printf("Options:\n");
-    printf("  -i, --interface <name>   Network interface (default: eth0)\n");
+    printf("  -i, --interface <name>   Network interface (default: auto-detect)\n");
     printf("  -c, --config <file>      Configuration file\n");
     printf("  -l, --log <file>         Log file\n");
     printf("  -v, --verbose            Increase verbosity\n");
@@ -770,10 +771,87 @@ static void cleanup_components(void) {
     }
 }
 
+/* Auto-detect network interface if not specified */
+static bool detect_network_interface(char *interface, size_t size) {
+    DIR *net_dir = opendir("/sys/class/net");
+    if (!net_dir) {
+        return false;
+    }
+
+    struct dirent *entry;
+    char state_path[256];
+    char state[32];
+    FILE *fp;
+    bool found = false;
+
+    /* First pass: find UP interfaces */
+    while ((entry = readdir(net_dir)) != NULL) {
+        const char *name = entry->d_name;
+
+        /* Skip . and .. */
+        if (name[0] == '.') continue;
+
+        /* Skip loopback and virtual interfaces */
+        if (strcmp(name, "lo") == 0) continue;
+        if (strncmp(name, "docker", 6) == 0) continue;
+        if (strncmp(name, "veth", 4) == 0) continue;
+        if (strncmp(name, "br-", 3) == 0) continue;
+        if (strncmp(name, "virbr", 5) == 0) continue;
+
+        /* Check if interface is UP */
+        snprintf(state_path, sizeof(state_path), "/sys/class/net/%s/operstate", name);
+        fp = fopen(state_path, "r");
+        if (fp) {
+            if (fgets(state, sizeof(state), fp)) {
+                /* Remove newline */
+                state[strcspn(state, "\n")] = 0;
+                if (strcmp(state, "up") == 0) {
+                    snprintf(interface, size, "%s", name);
+                    found = true;
+                    fclose(fp);
+                    break;
+                }
+            }
+            fclose(fp);
+        }
+    }
+
+    /* Second pass if no UP interface found: take first physical interface */
+    if (!found) {
+        rewinddir(net_dir);
+        while ((entry = readdir(net_dir)) != NULL) {
+            const char *name = entry->d_name;
+            if (name[0] == '.') continue;
+            if (strcmp(name, "lo") == 0) continue;
+            if (strncmp(name, "docker", 6) == 0) continue;
+            if (strncmp(name, "veth", 4) == 0) continue;
+            if (strncmp(name, "br-", 3) == 0) continue;
+            if (strncmp(name, "virbr", 5) == 0) continue;
+
+            snprintf(interface, size, "%s", name);
+            found = true;
+            break;
+        }
+    }
+
+    closedir(net_dir);
+    return found;
+}
+
 /* Main function */
 int main(int argc, char *argv[]) {
     /* Parse command line arguments */
     parse_args(argc, argv);
+
+    /* Auto-detect interface if not specified */
+    if (g_config.interface[0] == '\0') {
+        if (!detect_network_interface(g_config.interface, sizeof(g_config.interface))) {
+            fprintf(stderr, "ERROR: No network interface available and none specified.\n");
+            fprintf(stderr, "Use -i/--interface to specify one.\n");
+            return 1;
+        }
+        /* Interface will be logged below after logger init */
+    }
 
     /* Initialize logger */
     logger_config_t log_config = {

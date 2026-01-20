@@ -724,9 +724,9 @@ database:
   # user: wtc
   # password: changeme
 
-# PROFINET settings
+# PROFINET settings (empty interface = auto-detect)
 profinet:
-  interface: eth0
+  interface: ""
   station_name: water-controller
   cycle_time_ms: 1000
 

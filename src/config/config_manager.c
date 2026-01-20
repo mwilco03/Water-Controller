@@ -338,8 +338,8 @@ void config_manager_get_defaults(system_config_t *config) {
     config->log_level = LOG_LEVEL_INFO;
     strncpy(config->log_file, "/var/log/water-controller.log", sizeof(config->log_file) - 1);
 
-    /* PROFINET */
-    strncpy(config->interface_name, "eth0", sizeof(config->interface_name) - 1);
+    /* PROFINET - empty interface means auto-detect */
+    config->interface_name[0] = '\0';
     config->cycle_time_ms = 1000;
     config->vendor_id = 0x1234;
     config->device_id = 0x0001;

@@ -2,7 +2,7 @@
  * AUTO-GENERATED FILE - DO NOT EDIT MANUALLY
  *
  * Generated from: schemas/config/*.schema.yaml
- * Generated at: 2025-12-30 15:12:15 UTC
+ * Generated at: 2026-01-19 22:23:17 UTC
  * Generator: scripts/generate_c_types.py
  *
  * To update this file, modify the source schemas and run:
@@ -743,7 +743,7 @@ typedef struct {
 
 /**
  * profinet configuration
- * Network interface for PROFINET communication...
+ * Network interface for PROFINET communication (auto-detect if...
  */
 typedef struct {
     /** Authority handoff protocol settings */
@@ -754,7 +754,7 @@ typedef struct {
     uint32_t cycle_time_us;
     /** DCP discovery settings */
     profinet_discovery_config_t discovery;
-    /** Network interface for PROFINET communication */
+    /** Network interface for PROFINET communication (auto-detect if empty) */
     char interface[32];
     /** PROFINET stack limits */
     profinet_limits_config_t limits;

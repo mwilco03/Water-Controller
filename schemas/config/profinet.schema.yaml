@@ -13,10 +13,10 @@ type: object
 properties:
   interface:
     type: string
-    default: "eth0"
+    default: ""
     maxLength: 32
-    pattern: "^[a-zA-Z0-9_-]+$"
-    description: "Network interface for PROFINET communication"
+    pattern: "^$|^[a-zA-Z0-9_-]+$"
+    description: "Network interface for PROFINET communication (auto-detect if empty)"
     x-env-var: "WTC_INTERFACE"
     x-cli-arg: "-i, --interface"
 

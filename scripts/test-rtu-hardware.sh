@@ -16,11 +16,27 @@ BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
+# Auto-detect network interface
+detect_interface() {
+    for iface in /sys/class/net/*; do
+        name=$(basename "$iface")
+        case "$name" in lo|docker*|veth*|br-*|virbr*|vnet*) continue ;; esac
+        if [ -f "$iface/operstate" ] && [ "$(cat "$iface/operstate")" = "up" ]; then
+            echo "$name"; return 0
+        fi
+    done
+    for iface in /sys/class/net/*; do
+        name=$(basename "$iface")
+        case "$name" in lo|docker*|veth*|br-*|virbr*|vnet*) continue ;; esac
+        echo "$name"; return 0
+    done
+}
+
 # Configuration
 RTU_IP="${RTU_IP:-192.168.1.100}"
 RTU_STATION="${RTU_STATION:-water-treat-rtu}"
 CONTROLLER_IP="${CONTROLLER_IP:-192.168.1.1}"
-PROFINET_INTERFACE="${PROFINET_INTERFACE:-eth0}"
+PROFINET_INTERFACE="${PROFINET_INTERFACE:-$(detect_interface)}"
 # API runs on port 8000, UI on port 8080 (see config/ports.env)
 API_URL="${API_URL:-http://localhost:${WTC_API_PORT:-8000}}"
 TEST_TIMEOUT="${TEST_TIMEOUT:-10}"

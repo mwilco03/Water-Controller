@@ -593,7 +593,7 @@ log_level = INFO
 cycle_time_ms = 1000
 
 [profinet]
-interface = eth0
+interface =
 station_name = wtc-controller
 
 [modbus]
