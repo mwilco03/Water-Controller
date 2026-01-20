@@ -141,6 +141,41 @@ static wtc_result_t create_raw_socket(profinet_controller_t *ctrl) {
     return WTC_OK;
 }
 
+/* Map AR state to PROFINET connection state */
+static profinet_state_t ar_state_to_profinet_state(ar_state_t ar_state) {
+    switch (ar_state) {
+    case AR_STATE_RUN:
+        return PROFINET_STATE_RUNNING;
+    case AR_STATE_INIT:
+    case AR_STATE_CONNECT_REQ:
+    case AR_STATE_CONNECT_CNF:
+    case AR_STATE_PRMSRV:
+    case AR_STATE_READY:
+        return PROFINET_STATE_CONNECTING;
+    case AR_STATE_CLOSE:
+        return PROFINET_STATE_OFFLINE;
+    case AR_STATE_ABORT:
+        return PROFINET_STATE_ERROR;
+    default:
+        return PROFINET_STATE_OFFLINE;
+    }
+}
+
+/* AR state change callback - forwards to profinet_config_t callback */
+static void ar_state_change_callback(const char *station_name,
+                                      ar_state_t old_state,
+                                      ar_state_t new_state,
+                                      void *ctx) {
+    profinet_controller_t *ctrl = (profinet_controller_t *)ctx;
+    (void)old_state;  /* May be used for logging */
+
+    if (ctrl->config.on_device_state_changed) {
+        profinet_state_t pn_state = ar_state_to_profinet_state(new_state);
+        ctrl->config.on_device_state_changed(station_name, pn_state,
+                                              ctrl->config.callback_ctx);
+    }
+}
+
 /* DCP discovery callback */
 static void dcp_callback(const dcp_device_info_t *device, void *ctx) {
     profinet_controller_t *ctrl = (profinet_controller_t *)ctx;
@@ -395,6 +430,9 @@ wtc_result_t profinet_controller_init(profinet_controller_t **controller,
         free(ctrl);
         return res;
     }
+
+    /* Register AR state change callback for config sync and notifications */
+    ar_manager_set_state_callback(ctrl->ar_manager, ar_state_change_callback, ctrl);
 
     *controller = ctrl;
     LOG_INFO("PROFINET controller initialized");

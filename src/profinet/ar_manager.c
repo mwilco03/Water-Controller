@@ -37,7 +37,23 @@ struct ar_manager {
 
     uint16_t session_key_counter;
     pthread_mutex_t lock;
+
+    /* State change notification */
+    ar_state_change_callback_t state_callback;
+    void *state_callback_ctx;
 };
+
+/* Notify state change if callback is registered */
+static void notify_state_change(ar_manager_t *manager,
+                                 profinet_ar_t *ar,
+                                 ar_state_t old_state,
+                                 ar_state_t new_state) {
+    if (manager->state_callback && old_state != new_state) {
+        manager->state_callback(ar->device_station_name,
+                                old_state, new_state,
+                                manager->state_callback_ctx);
+    }
+}
 
 /* Generate UUID */
 static void generate_uuid(uint32_t uuid[4]) {
@@ -366,9 +382,13 @@ wtc_result_t ar_manager_process(ar_manager_t *manager) {
 
         case AR_STATE_READY:
             /* Ready for cyclic data exchange */
-            ar->state = AR_STATE_RUN;
-            ar->last_activity_ms = now_ms;
-            LOG_INFO("AR %s entered RUN state", ar->device_station_name);
+            {
+                ar_state_t old_state = ar->state;
+                ar->state = AR_STATE_RUN;
+                ar->last_activity_ms = now_ms;
+                LOG_INFO("AR %s entered RUN state", ar->device_station_name);
+                notify_state_change(manager, ar, old_state, AR_STATE_RUN);
+            }
             break;
 
         case AR_STATE_RUN:
@@ -386,8 +406,10 @@ wtc_result_t ar_manager_process(ar_manager_t *manager) {
                 LOG_INFO("AR %s attempting recovery from ABORT state",
                          ar->device_station_name);
                 /* Reset to INIT state for reconnection attempt */
+                ar_state_t old_state = ar->state;
                 ar->state = AR_STATE_INIT;
                 ar->last_activity_ms = now_ms;
+                notify_state_change(manager, ar, old_state, AR_STATE_INIT);
             }
             break;
         }
@@ -548,9 +570,20 @@ wtc_result_t ar_manager_check_health(ar_manager_t *manager) {
         /* Check watchdog timeout */
         if (now_ms - ar->last_activity_ms > ar->watchdog_ms) {
             LOG_WARN("AR %s watchdog timeout", ar->device_station_name);
+            ar_state_t old_state = ar->state;
             ar->state = AR_STATE_ABORT;
+            notify_state_change(manager, ar, old_state, AR_STATE_ABORT);
         }
     }
 
     return WTC_OK;
+}
+
+void ar_manager_set_state_callback(ar_manager_t *manager,
+                                    ar_state_change_callback_t callback,
+                                    void *ctx) {
+    if (manager) {
+        manager->state_callback = callback;
+        manager->state_callback_ctx = ctx;
+    }
 }
