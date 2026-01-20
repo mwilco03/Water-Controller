@@ -305,6 +305,156 @@ async def ping_host(ip: str, timeout_ms: int) -> PingResult:
         return PingResult(ip_address=ip, reachable=False)
 
 
+class PortScanRequest(BaseModel):
+    """Request for TCP port scan to find RTUs."""
+
+    subnet: str = Field(..., description="Subnet to scan (e.g., '192.168.1.0/24')")
+    port: int = Field(9081, ge=1, le=65535, description="TCP port to scan")
+    timeout_ms: int = Field(1000, ge=100, le=10000, description="Connection timeout per host in ms")
+    max_concurrent: int = Field(50, ge=1, le=255, description="Max concurrent connections")
+    fetch_info: bool = Field(True, description="Fetch RTU info from responding hosts")
+
+    @field_validator("subnet")
+    @classmethod
+    def validate_subnet_cidr(cls, v: str) -> str:
+        """Validate subnet is valid CIDR notation and /24 or smaller."""
+        try:
+            network = ipaddress.ip_network(v, strict=False)
+            if network.prefixlen < 24:
+                raise ValueError("Subnet must be /24 or smaller for safety")
+            return str(network)
+        except ValueError as e:
+            raise ValueError(f"Invalid CIDR notation: {v}. {e}")
+
+
+class PortScanResult(BaseModel):
+    """Result of scanning a single host."""
+
+    ip_address: str
+    port: int
+    open: bool
+    response_time_ms: float | None = None
+    rtu_info: dict | None = None  # Info fetched from RTU API
+
+
+class PortScanResponse(BaseModel):
+    """Response for port scan."""
+
+    subnet: str
+    port: int
+    total_hosts: int
+    open_count: int
+    scan_duration_seconds: float
+    results: list[PortScanResult]
+
+
+async def check_port(ip: str, port: int, timeout_ms: int, fetch_info: bool) -> PortScanResult:
+    """Check if TCP port is open and optionally fetch RTU info."""
+    timeout_sec = timeout_ms / 1000.0
+
+    try:
+        start = time.time()
+
+        # Try TCP connection
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_connection(ip, port),
+            timeout=timeout_sec
+        )
+        elapsed = (time.time() - start) * 1000
+
+        writer.close()
+        await writer.wait_closed()
+
+        result = PortScanResult(
+            ip_address=ip,
+            port=port,
+            open=True,
+            response_time_ms=round(elapsed, 2),
+        )
+
+        # Optionally fetch RTU info via HTTP
+        if fetch_info:
+            try:
+                import httpx
+                async with httpx.AsyncClient(timeout=timeout_sec) as client:
+                    # Try common RTU info endpoints
+                    for endpoint in ["/api/info", "/api/status", "/info", "/status", "/"]:
+                        try:
+                            resp = await client.get(f"http://{ip}:{port}{endpoint}")
+                            if resp.status_code == 200:
+                                try:
+                                    data = resp.json()
+                                except Exception:
+                                    data = {"raw": resp.text[:500]}
+                                result.rtu_info = {
+                                    "endpoint": endpoint,
+                                    "data": data
+                                }
+                                break
+                        except Exception:
+                            continue
+            except Exception as e:
+                logger.debug(f"Failed to fetch RTU info from {ip}:{port}: {e}")
+
+        return result
+
+    except (asyncio.TimeoutError, ConnectionRefusedError, OSError):
+        return PortScanResult(ip_address=ip, port=port, open=False)
+    except Exception:
+        return PortScanResult(ip_address=ip, port=port, open=False)
+
+
+@router.post("/port-scan")
+async def port_scan_subnet(request: PortScanRequest) -> dict[str, Any]:
+    """
+    Scan subnet for RTUs by TCP port (default: 9081).
+
+    Performs a TCP connect scan to find Water-Treat RTUs exposing their
+    HTTP API. This is an alternative to PROFINET DCP for RTUs that
+    expose a REST interface.
+
+    If fetch_info is True (default), attempts to GET RTU info from
+    responding hosts at common API endpoints.
+
+    Returns list of hosts with open port and optional RTU info.
+    """
+    start_time = time.time()
+    network = ipaddress.ip_network(request.subnet, strict=False)
+
+    hosts = list(network.hosts())
+    total_hosts = len(hosts)
+
+    logger.info(f"Starting port scan of {request.subnet}:{request.port} ({total_hosts} hosts)")
+
+    semaphore = asyncio.Semaphore(request.max_concurrent)
+
+    async def scan_with_semaphore(ip: str) -> PortScanResult:
+        async with semaphore:
+            return await check_port(ip, request.port, request.timeout_ms, request.fetch_info)
+
+    tasks = [scan_with_semaphore(str(ip)) for ip in hosts]
+    results = await asyncio.gather(*tasks)
+
+    # Filter to only open ports and sort by IP
+    open_results = [r for r in results if r.open]
+    open_results.sort(key=lambda r: ipaddress.ip_address(r.ip_address))
+
+    duration = time.time() - start_time
+
+    logger.info(f"Port scan complete: {len(open_results)}/{total_hosts} hosts have port {request.port} open")
+
+    response = PortScanResponse(
+        subnet=request.subnet,
+        port=request.port,
+        total_hosts=total_hosts,
+        open_count=len(open_results),
+        scan_duration_seconds=round(duration, 2),
+        results=open_results,  # Only return open ports
+    )
+
+    return build_success_response(response.model_dump())
+
+
 @router.post("/ping-scan")
 async def ping_scan_subnet(request: PingScanRequest) -> dict[str, Any]:
     """
