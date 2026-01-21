@@ -201,21 +201,48 @@ class DataPublisher:
             return []
 
     async def _get_rtu_states(self) -> dict[str, str]:
-        """Get RTU connection states."""
+        """Get RTU connection states and sync to database."""
         try:
             from ..services.profinet_client import get_profinet_client
             from ..persistence.rtu import get_all_rtus
+            from ..models.base import SessionLocal
+            from ..models.rtu import RTU
 
             client = get_profinet_client()
             rtus = get_all_rtus()
 
             result = {}
+            states_to_update = []
+
             for rtu in rtus:
                 station = rtu.get("station_name", "")
+                db_state = rtu.get("state", "OFFLINE")
                 if station:
-                    state = client.get_rtu_state(station)
-                    if state:
-                        result[station] = state
+                    controller_state = client.get_rtu_state(station)
+                    if controller_state:
+                        result[station] = controller_state
+                        # Track if state changed and needs DB update
+                        if controller_state != db_state:
+                            states_to_update.append((station, controller_state, db_state))
+
+            # Update database for any state changes
+            if states_to_update:
+                try:
+                    db = SessionLocal()
+                    try:
+                        for station, new_state, old_state in states_to_update:
+                            rtu_record = db.query(RTU).filter(RTU.station_name == station).first()
+                            if rtu_record and rtu_record.state != new_state:
+                                rtu_record.update_state(
+                                    new_state,
+                                    reason=f"Controller sync: {old_state} → {new_state}"
+                                )
+                                logger.info(f"RTU {station} state synced: {old_state} → {new_state}")
+                        db.commit()
+                    finally:
+                        db.close()
+                except Exception as e:
+                    logger.warning(f"Failed to sync RTU states to database: {e}")
 
             return result
         except Exception as e:

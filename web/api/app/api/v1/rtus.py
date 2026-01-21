@@ -761,6 +761,103 @@ async def provision_rtu_sensors(
     })
 
 
+# ==================== Direct RTU Probe (HTTP API) ====================
+
+
+@router.get("/{name}/probe")
+async def probe_rtu_http(
+    name: str,
+    port: int = Query(9081, ge=1, le=65535, description="RTU HTTP API port"),
+    timeout_ms: int = Query(2000, ge=100, le=10000, description="Timeout in milliseconds"),
+    db: Session = Depends(get_db)
+) -> dict[str, Any]:
+    """
+    Probe RTU directly via HTTP to check if it's reachable.
+
+    Calls the RTU's HTTP health endpoint (default port 9081) to verify
+    the device is online and responding. This bypasses PROFINET and
+    tests direct network connectivity to the RTU's web API.
+
+    Returns:
+        - reachable: True if RTU responded to HTTP request
+        - status_code: HTTP response code (if reachable)
+        - response_time_ms: Round-trip time in milliseconds
+        - rtu_info: RTU status info from response (if available)
+        - error: Error message if probe failed
+    """
+    import httpx
+    import time
+
+    rtu = get_rtu_or_404(db, name)
+    ip_address = rtu.ip_address
+
+    if not ip_address:
+        raise HTTPException(
+            status_code=400,
+            detail=f"RTU '{name}' has no IP address configured"
+        )
+
+    # Try /health endpoint first, then /info, then /
+    endpoints = ["/health", "/info", "/"]
+    timeout_sec = timeout_ms / 1000.0
+
+    result = {
+        "station_name": name,
+        "ip_address": ip_address,
+        "port": port,
+        "reachable": False,
+        "status_code": None,
+        "response_time_ms": None,
+        "endpoint_used": None,
+        "rtu_info": None,
+        "error": None,
+    }
+
+    for endpoint in endpoints:
+        url = f"http://{ip_address}:{port}{endpoint}"
+
+        try:
+            start = time.perf_counter()
+            async with httpx.AsyncClient(timeout=timeout_sec) as client:
+                response = await client.get(url)
+            elapsed = (time.perf_counter() - start) * 1000
+
+            result["reachable"] = True
+            result["status_code"] = response.status_code
+            result["response_time_ms"] = round(elapsed, 2)
+            result["endpoint_used"] = endpoint
+
+            # Try to parse response as JSON for RTU info
+            if response.status_code == 200:
+                try:
+                    result["rtu_info"] = response.json()
+                except Exception:
+                    # Not JSON, store text preview
+                    text = response.text[:500] if response.text else None
+                    result["rtu_info"] = {"raw_response": text}
+
+            logger.info(f"RTU probe {name} ({url}): {response.status_code} in {elapsed:.1f}ms")
+
+            # Update RTU state if probe succeeded and it was OFFLINE
+            if response.status_code == 200 and rtu.state == RtuState.OFFLINE:
+                # Don't auto-connect, but note that device is reachable
+                logger.info(f"RTU {name} is HTTP-reachable but PROFINET state is OFFLINE")
+
+            break  # Success, don't try other endpoints
+
+        except httpx.ConnectTimeout:
+            result["error"] = f"Connection timeout ({timeout_ms}ms)"
+        except httpx.ConnectError as e:
+            result["error"] = f"Connection refused: {e}"
+        except Exception as e:
+            result["error"] = str(e)
+
+    if not result["reachable"]:
+        logger.warning(f"RTU probe {name} ({ip_address}:{port}): {result['error']}")
+
+    return build_success_response(result)
+
+
 # Include nested routers for sensors, controls, profinet, pid
 # Note: slots router removed - slots are PROFINET frame positions, not database entities
 from .controls import router as controls_router

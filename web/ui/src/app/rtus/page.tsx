@@ -201,6 +201,40 @@ export default function RTUsPage() {
     }
   };
 
+  const [probeResult, setProbeResult] = useState<{
+    station_name: string;
+    reachable: boolean;
+    response_time_ms?: number;
+    status_code?: number;
+    rtu_info?: Record<string, unknown>;
+    error?: string;
+  } | null>(null);
+
+  const probeRtu = async (stationName: string) => {
+    setActionLoading(`probe-${stationName}`);
+    setProbeResult(null);
+    try {
+      const res = await fetch(`/api/v1/rtus/${stationName}/probe?timeout_ms=2000`);
+      if (res.ok) {
+        const data = await res.json();
+        const result = data.data || data;
+        setProbeResult(result);
+        if (result.reachable) {
+          toast.success('RTU Online', `${stationName} responded in ${result.response_time_ms?.toFixed(1) || '?'}ms`);
+        } else {
+          toast.warning('RTU Offline', result.error || 'No response from RTU');
+        }
+      } else {
+        const err = await res.json().catch(() => ({}));
+        toast.error('Probe failed', err.detail?.message || 'Unable to probe RTU');
+      }
+    } catch {
+      toast.error('Probe failed', 'Unable to reach server');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
   const getStateColor = (state: string) => {
     switch (state) {
       case 'RUNNING':
@@ -340,6 +374,16 @@ export default function RTUsPage() {
                 </div>
                 <div className="flex items-center space-x-2">
                   <RtuStateBadge state={selectedRtu.connection_state} size="md" />
+                  <button
+                    onClick={() => probeRtu(selectedRtu.station_name)}
+                    disabled={actionLoading === `probe-${selectedRtu.station_name}`}
+                    className="px-3 py-1.5 bg-status-info hover:bg-status-info/90 rounded text-sm text-white flex items-center gap-1.5 disabled:opacity-50"
+                  >
+                    {actionLoading === `probe-${selectedRtu.station_name}` && (
+                      <span className="animate-spin inline-block">&#8635;</span>
+                    )}
+                    Check Status
+                  </button>
                   {selectedRtu.connection_state === 'OFFLINE' ? (
                     <button
                       onClick={() => connectRtu(selectedRtu.station_name)}
@@ -393,6 +437,36 @@ export default function RTUsPage() {
                   </div>
                 </div>
               </div>
+
+              {/* Probe Result */}
+              {probeResult && probeResult.station_name === selectedRtu.station_name && (
+                <div className={`p-4 rounded ${probeResult.reachable ? 'bg-status-ok/10 border border-status-ok/30' : 'bg-status-alarm/10 border border-status-alarm/30'}`}>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className={`w-3 h-3 rounded-full ${probeResult.reachable ? 'bg-status-ok' : 'bg-status-alarm'}`} />
+                      <span className={probeResult.reachable ? 'text-status-ok' : 'text-status-alarm'}>
+                        {probeResult.reachable ? 'Online' : 'Offline'}
+                      </span>
+                      {probeResult.status_code && (
+                        <span className="text-hmi-muted text-sm">HTTP {probeResult.status_code}</span>
+                      )}
+                    </div>
+                    {probeResult.reachable && probeResult.response_time_ms != null && (
+                      <span className="text-hmi-muted text-sm">{probeResult.response_time_ms.toFixed(1)}ms</span>
+                    )}
+                    {!probeResult.reachable && probeResult.error && (
+                      <span className="text-status-alarm text-sm">{probeResult.error}</span>
+                    )}
+                  </div>
+                  {probeResult.reachable && probeResult.rtu_info && typeof probeResult.rtu_info === 'object' && (
+                    <div className="mt-2 pt-2 border-t border-white/10 text-xs text-hmi-muted font-mono">
+                      {Object.entries(probeResult.rtu_info).slice(0, 5).map(([k, v]) => (
+                        <div key={k}>{k}: {String(v)}</div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Health Info */}
               {rtuHealth[selectedRtu.station_name] && (
