@@ -72,6 +72,10 @@ services:
     # ICMP ping uses unprivileged SOCK_DGRAM when available
     cap_add:
       - NET_RAW
+    # Disable seccomp to allow AF_PACKET raw sockets for DCP discovery
+    # Default Docker seccomp profile blocks AF_PACKET even with CAP_NET_RAW
+    security_opt:
+      - seccomp:unconfined
     environment:
       # Database accessed via localhost since we're on host network
       DATABASE_URL: postgresql://wtc:wtc_password@127.0.0.1:${WTC_DB_PORT:-5432}/water_treatment
