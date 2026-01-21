@@ -416,8 +416,8 @@ export default function NetworkDiscovery({ onDeviceSelect, onAddDevice }: Props)
                 <div>
                   <div className="text-gray-400 text-xs mb-1">Vendor/Device ID</div>
                   <div className="text-white font-mono">
-                    0x{selectedDevice.vendor_id.toString(16).toUpperCase().padStart(4, '0')} /
-                    0x{selectedDevice.device_id.toString(16).toUpperCase().padStart(4, '0')}
+                    {selectedDevice.vendor_id != null ? `0x${selectedDevice.vendor_id.toString(16).toUpperCase().padStart(4, '0')}` : 'N/A'} /
+                    {selectedDevice.device_id != null ? `0x${selectedDevice.device_id.toString(16).toUpperCase().padStart(4, '0')}` : 'N/A'}
                   </div>
                 </div>
                 {selectedDevice.firmware_version && (

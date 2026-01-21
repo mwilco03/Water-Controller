@@ -232,11 +232,11 @@ export default function RTUDetailPage() {
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
                 <div className="bg-hmi-bg/50 p-3 rounded">
                   <div className="text-xs text-hmi-muted">Vendor ID</div>
-                  <div className="text-hmi-text font-mono">0x{rtu.vendor_id.toString(16).padStart(4, '0')}</div>
+                  <div className="text-hmi-text font-mono">{rtu.vendor_id != null ? `0x${rtu.vendor_id.toString(16).padStart(4, '0')}` : 'N/A'}</div>
                 </div>
                 <div className="bg-hmi-bg/50 p-3 rounded">
                   <div className="text-xs text-hmi-muted">Device ID</div>
-                  <div className="text-hmi-text font-mono">0x{rtu.device_id.toString(16).padStart(4, '0')}</div>
+                  <div className="text-hmi-text font-mono">{rtu.device_id != null ? `0x${rtu.device_id.toString(16).padStart(4, '0')}` : 'N/A'}</div>
                 </div>
                 <div className="bg-hmi-bg/50 p-3 rounded">
                   <div className="text-xs text-hmi-muted">State</div>
