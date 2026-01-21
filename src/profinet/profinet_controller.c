@@ -434,6 +434,11 @@ wtc_result_t profinet_controller_init(profinet_controller_t **controller,
     /* Register AR state change callback for config sync and notifications */
     ar_manager_set_state_callback(ctrl->ar_manager, ar_state_change_callback, ctrl);
 
+    /* Set controller IP for RPC communication */
+    if (config->ip_address != 0) {
+        ar_manager_set_controller_ip(ctrl->ar_manager, config->ip_address);
+    }
+
     *controller = ctrl;
     LOG_INFO("PROFINET controller initialized");
     return WTC_OK;
