@@ -3,7 +3,7 @@
 **Date:** 2026-01-21
 **From:** Controller Team
 **To:** RTU Team (Water-Treat)
-**Status:** IN PROGRESS - RTU Team Response Received (DCP/Identity)
+**Status:** COMPLETE - All Questions Resolved
 
 ---
 
@@ -166,23 +166,141 @@ Byte 1: Reserved (set to 0x00)
 
 ---
 
-## REMAINING OPEN QUESTIONS
+## RTU TEAM RESPONSE - CONNECTIVITY BEHAVIOR (2026-01-21)
 
-The following questions were NOT addressed in RTU response and remain open:
+**Source:** RTU Team code review (profinet_callbacks.c, profinet_manager.c, config_sync.c)
 
-| Q# | Question | Status |
+### Quick Reference
+
+| Q# | Question | Answer |
 |----|----------|--------|
-| Q1 | AR watchdog timeout - RTU auto-closes AR or waits for release RPC? | **OPEN** |
-| Q2 | Command to non-existent slot - ignore, NACK, or alarm? | **OPEN** |
-| Q4 | Minimum cycle time supported? | **OPEN** |
-| Q5 | Authority handoff (AUTONOMOUS/SUPERVISED) implemented? | **OPEN** |
-| Q6 | Enrollment token validation behavior? | **OPEN** |
-| Q7 | Firmware version reporting mechanism? | **OPEN** |
-| Q8 | PROFINET diagnostic alarms generated? | **OPEN** |
-| Q9 | Config sync CRC mismatch handling? | **OPEN** |
-| Q10 | Max simultaneous AR connections? | **OPEN** |
+| Q1 | AR watchdog timeout | **WAIT** - passive, expects PNET_EVENT_ABORT |
+| Q2 | Command to non-existent slot | **IGNORE** - silently skipped |
+| Q3 | DCP Set IP | **SUPPORTED** - temporary in DHCP mode |
+| Q4 | Minimum cycle time | **1ms** (PROFINET_TICK_INTERVAL_US=1000) |
+| Q5 | Authority handoff | **STORED_NOT_ENFORCED** - TBD |
+| Q6 | Enrollment token mismatch | **REJECT_PACKET** - AR continues |
+| Q7 | Firmware version | **I&M0 @ 0x8000** (standard PROFINET) |
+| Q8 | Diagnostic alarms | **MANUAL_ONLY** - API ready, none automatic |
+| Q9 | Config sync CRC mismatch | **REJECT** - CRC16-CCITT |
+| Q10 | Max simultaneous ARs | **1** (single-controller device) |
 
-**Q3 (DCP Set IP):** RESOLVED - Supported but temporary in DHCP mode.
+---
+
+### Q1. AR Watchdog Timeout - RESOLVED
+
+**Answer:** RTU **WAITS** (passive)
+
+RTU receives `PNET_EVENT_ABORT` from p-net stack when watchdog expires. Calls `set_connected(false)`. Does NOT initiate AR close - p-net handles protocol.
+
+**Controller Implication:** Expect RTU to be passive. Controller drives reconnection.
+
+**Code ref:** `profinet_callbacks.c:99-100`
+
+---
+
+### Q2. Command to Non-Existent Slot - RESOLVED
+
+**Answer:** **IGNORE** silently
+
+`find_slot()` returns NULL for unknown slots. `poll_output_slots()` skips non-plugged slots silently. No NACK sent, no alarm generated.
+
+**Controller Implication:** Controller receives no error response for invalid slots. Validate slot existence before sending commands.
+
+**Code ref:** `profinet_manager.c:85-92, 105-136`
+
+---
+
+### Q4. Minimum Cycle Time - RESOLVED
+
+**Answer:** **1ms**
+
+`PROFINET_TICK_INTERVAL_US=1000`. `pnet_handle_periodic()` called every 1ms. `min_device_interval` configurable via config (default 32 = 1ms per PROFINET spec).
+
+**Code ref:** `profinet_manager.c:24`
+
+---
+
+### Q5. Authority Handoff - RESOLVED (Partial)
+
+**Answer:** **STORED_NOT_ENFORCED**
+
+`authority_mode_t` enum exists (`AUTHORITY_AUTONOMOUS=0`, `AUTHORITY_SUPERVISED=1`). Value stored in `g_cfg.authority` and logged. **NO behavioral difference implemented** - RTU operates identically in both modes.
+
+**Action Required:** Define SUPERVISED behavior if differentiation needed.
+
+**Code ref:** `config_sync.c:43,96,106-109`
+
+---
+
+### Q6. Enrollment Token Mismatch - RESOLVED
+
+**Answer:** **REJECT_PACKET_NOT_AR**
+
+Invalid token → `validate_token()` fails → `RESULT_INVALID_PARAM` → PNIO error `0xCF/0x81`. AR continues normally. Only enrollment packet is rejected.
+
+**Controller Implication:** Connection remains active even if enrollment fails.
+
+**Code ref:** `rtu_registration.c:172-199,660-664`
+
+---
+
+### Q7. Firmware Version Reporting - RESOLVED
+
+**Answer:** **I&M0 @ index 0x8000**
+
+Standard PROFINET I&M0 at index `0x8000`. `software_revision={V,1,0,0}`. Mandatory per IEC 61158.
+
+**Controller Implication:** Use standard acyclic read of index 0x8000. No custom index needed.
+
+**Code ref:** `profinet_callbacks.c:56-76,165-168`
+
+---
+
+### Q8. PROFINET Diagnostic Alarms - RESOLVED
+
+**Answer:** **MANUAL_ONLY**
+
+`profinet_manager_send_alarm()` API available for process alarms. Currently NO automatic diagnostic alarms generated. Sensor faults set `quality=BAD` but don't trigger PROFINET alarm.
+
+**Action Required:** Define which conditions should generate alarms if needed.
+
+**Code ref:** `profinet_manager.c:934-962`
+
+---
+
+### Q9. Config Sync CRC Mismatch - RESOLVED
+
+**Answer:** **REJECT**
+
+CRC16-CCITT (poly=0x1021, init=0xFFFF). Mismatch → `RESULT_INVALID_PARAM` → PNIO status `0xCF/0x81`. Packet entirely ignored. Config not applied.
+
+**Controller Implication:** Verify CRC parameters match. Failed config sync returns error, must retry.
+
+**Code ref:** `config_sync.c:19-31,88-91`
+
+---
+
+### Q10. Max Simultaneous AR Connections - RESOLVED
+
+**Answer:** **1**
+
+Single `g_pn.arep` storage. RTU is single-controller device. Second AR attempt rejected by p-net stack (device busy).
+
+**Controller Implication:** No redundancy via dual-AR. Only one controller can connect at a time.
+
+**Code ref:** `profinet_manager.c:48`
+
+---
+
+## OPEN ACTION ITEMS
+
+| Item | Owner | Status |
+|------|-------|--------|
+| Define SUPERVISED mode behavior | Controller Team | TBD |
+| Specify which sensor faults should generate PROFINET alarms | Both Teams | TBD |
+| Verify CRC16-CCITT parameters (poly=0x1021, init=0xFFFF) | Controller Team | Verify |
+| Update station_name validation regex (no dots, hyphen only) | Controller Team | TODO |
 
 ---
 
@@ -326,6 +444,7 @@ Per IEC 61158-6-10 and PROFINET System Description:
 | 2026-01-21 | Controller Team | Initial draft with resolved items and open questions |
 | 2026-01-21 | Controller Team | Added steering decisions: S1 auto-rediscovery w/backoff, S2 auto-reconnect, S3 tabled |
 | 2026-01-21 | RTU Team | Response: DCP behavior, device identity uniqueness, station_name constraints |
+| 2026-01-21 | RTU Team | Response: All connectivity questions (Q1-Q10) resolved with code refs |
 
 ---
 
