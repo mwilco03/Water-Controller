@@ -12,9 +12,11 @@ WORKDIR /app
 
 # Install build dependencies for posix-ipc and other C extensions
 # python3-dev provides Python.h headers needed for C extension compilation
+# libcap2-bin provides setcap for granting capabilities to Python binary
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     python3-dev \
+    libcap2-bin \
     && rm -rf /var/lib/apt/lists/* \
     && gcc --version \
     && python3 -c "import sysconfig; print(sysconfig.get_config_var('INCLUDEPY'))"
@@ -24,7 +26,13 @@ COPY web/api/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Remove build dependencies to reduce image size and attack surface
+# Keep libcap2-bin as setcap is needed at runtime for capability inheritance
 RUN apt-get purge -y --auto-remove gcc python3-dev
+
+# Grant CAP_NET_RAW and CAP_NET_ADMIN to Python binary for non-root DCP discovery
+# This allows appuser to create AF_PACKET raw sockets for PROFINET DCP
+# Ref: https://raesene.github.io/blog/2017/07/23/network-tools-in-nonroot-docker-images/
+RUN setcap cap_net_raw,cap_net_admin+ep $(readlink -f $(which python3))
 
 # Copy application
 COPY web/api/ .
