@@ -678,7 +678,7 @@ async def refresh_rtu_inventory(
                 return build_success_response({
                     "status": "connecting",
                     "message": "Connection initiated - refresh again in a few seconds",
-                    "state": RtuState.CONNECTING.value
+                    "state": RtuState.CONNECTING
                 })
             else:
                 rtu.update_state(RtuState.OFFLINE, error="Controller rejected connect")
@@ -697,7 +697,7 @@ async def refresh_rtu_inventory(
         return build_success_response({
             "status": "connecting",
             "message": "Connection in progress - refresh again when RUNNING",
-            "state": RtuState.CONNECTING.value
+            "state": RtuState.CONNECTING
         })
 
     # Must be RUNNING to refresh inventory

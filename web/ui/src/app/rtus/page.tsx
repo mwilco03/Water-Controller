@@ -420,11 +420,11 @@ export default function RTUsPage() {
               <div className="grid grid-cols-2 gap-4">
                 <div className="bg-hmi-panel p-4 rounded">
                   <div className="text-sm text-hmi-muted">Vendor ID</div>
-                  <div className="text-hmi-text font-mono">{selectedRtu.vendor_id != null ? `0x${selectedRtu.vendor_id.toString(16).padStart(4, '0')}` : 'N/A'}</div>
+                  <div className="text-hmi-text font-mono">{selectedRtu.vendor_id ?? 'N/A'}</div>
                 </div>
                 <div className="bg-hmi-panel p-4 rounded">
                   <div className="text-sm text-hmi-muted">Device ID</div>
-                  <div className="text-hmi-text font-mono">{selectedRtu.device_id != null ? `0x${selectedRtu.device_id.toString(16).padStart(4, '0')}` : 'N/A'}</div>
+                  <div className="text-hmi-text font-mono">{selectedRtu.device_id ?? 'N/A'}</div>
                 </div>
                 <div className="bg-hmi-panel p-4 rounded">
                   <div className="text-sm text-hmi-muted">Slot Count</div>
