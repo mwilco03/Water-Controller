@@ -220,7 +220,7 @@ async def apply_template(
     existing_controls = {c.tag: c for c in db.query(Control).filter(Control.rtu_id == rtu.id).all()}
     existing_alarms = {
         (a.name, a.severity): a
-        for a in db.query(AlarmRule).filter(AlarmRule.rtu_station == rtu.name).all()
+        for a in db.query(AlarmRule).filter(AlarmRule.rtu_station == rtu.station_name).all()
     }
     existing_pids = {p.name: p for p in db.query(PidLoop).filter(PidLoop.input_rtu == rtu.station_name).all()}
 
@@ -418,7 +418,7 @@ async def create_template_from_rtu(
         })
 
     alarms = []
-    for alarm in db.query(AlarmRule).filter(AlarmRule.rtu_station == rtu.name).all():
+    for alarm in db.query(AlarmRule).filter(AlarmRule.rtu_station == rtu.station_name).all():
         alarms.append({
             "name": alarm.name,
             "slot": alarm.slot,
