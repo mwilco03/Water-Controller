@@ -212,9 +212,11 @@ async def connect_rtu(
     """
     Establish PROFINET connection to RTU.
 
-    RTU must be OFFLINE. Connection is asynchronous - poll GET /rtus/{name}
-    to check state transition.
+    RTU must be OFFLINE. Triggers connection via PROFINET controller.
+    Poll GET /rtus/{name} to check state transition.
     """
+    from ...services.profinet_client import ControllerNotConnectedError
+
     rtu = get_rtu_or_404(db, name)
 
     if rtu.state != RtuState.OFFLINE:
@@ -224,14 +226,34 @@ async def connect_rtu(
     rtu.update_state(RtuState.CONNECTING)
     db.commit()
 
-    # In a real implementation, this would trigger PROFINET connection
-    # via IPC to the C controller
-
-    response_data = ConnectResponse(
-        station_name=name,
-        state=RtuState.CONNECTING,
-        message="Connection initiated"
-    )
+    # Send connect command to PROFINET controller
+    profinet = get_profinet_client()
+    try:
+        success = profinet.connect_rtu(name)
+        if success:
+            # Controller accepted the connect command
+            # State will transition to RUNNING when connection established
+            response_data = ConnectResponse(
+                station_name=name,
+                state=RtuState.CONNECTING,
+                message="Connection initiated - controller notified"
+            )
+        else:
+            # Controller rejected but didn't raise - revert state
+            rtu.update_state(RtuState.OFFLINE, error="Controller rejected connect request")
+            db.commit()
+            raise HTTPException(
+                status_code=503,
+                detail="PROFINET controller rejected connect request"
+            )
+    except ControllerNotConnectedError as e:
+        # No controller available - revert state
+        rtu.update_state(RtuState.OFFLINE, error=str(e))
+        db.commit()
+        raise HTTPException(
+            status_code=503,
+            detail=str(e)
+        )
 
     return build_success_response(response_data.model_dump())
 
@@ -244,8 +266,10 @@ async def disconnect_rtu(
     """
     Gracefully close PROFINET connection.
 
-    RTU must be RUNNING or ERROR.
+    RTU must be RUNNING or ERROR. Sends disconnect command to controller.
     """
+    from ...services.profinet_client import ControllerNotConnectedError
+
     rtu = get_rtu_or_404(db, name)
 
     if rtu.state == RtuState.OFFLINE:
@@ -254,15 +278,35 @@ async def disconnect_rtu(
     if rtu.state == RtuState.CONNECTING:
         raise RtuBusyError(name, rtu.state)
 
-    # Update state to OFFLINE
-    rtu.update_state(RtuState.OFFLINE)
-    db.commit()
-
-    response_data = DisconnectResponse(
-        station_name=name,
-        state=RtuState.OFFLINE,
-        message="Disconnected successfully"
-    )
+    # Send disconnect command to PROFINET controller
+    profinet = get_profinet_client()
+    try:
+        success = profinet.disconnect_rtu(name)
+        if success:
+            # Controller accepted disconnect - update state
+            rtu.update_state(RtuState.OFFLINE)
+            db.commit()
+            response_data = DisconnectResponse(
+                station_name=name,
+                state=RtuState.OFFLINE,
+                message="Disconnected successfully"
+            )
+        else:
+            # Controller rejected but didn't raise
+            raise HTTPException(
+                status_code=503,
+                detail="PROFINET controller rejected disconnect request"
+            )
+    except ControllerNotConnectedError as e:
+        # No controller - just update DB state anyway (graceful degradation)
+        logger.warning(f"No controller connection for disconnect, updating DB state only: {e}")
+        rtu.update_state(RtuState.OFFLINE)
+        db.commit()
+        response_data = DisconnectResponse(
+            station_name=name,
+            state=RtuState.OFFLINE,
+            message="Disconnected (DB only - no controller connection)"
+        )
 
     return build_success_response(response_data.model_dump())
 

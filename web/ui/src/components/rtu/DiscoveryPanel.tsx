@@ -86,11 +86,11 @@ export default function DiscoveryPanel({ onDeviceSelect }: Props) {
     <div className="space-y-4">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <h3 className="text-lg font-semibold text-white flex items-center gap-2">
-          <span className="text-blue-400 font-bold">[*]</span>
+        <h3 className="text-lg font-semibold text-hmi-text flex items-center gap-2">
+          <span className="text-status-info font-bold">[*]</span>
           Network Discovery
         </h3>
-        <div className="flex items-center gap-2 text-sm text-gray-400">
+        <div className="flex items-center gap-2 text-sm text-hmi-muted">
           {lastScan && (
             <span>Last scan: {lastScan.toLocaleTimeString()}</span>
           )}
@@ -98,15 +98,15 @@ export default function DiscoveryPanel({ onDeviceSelect }: Props) {
       </div>
 
       {/* PROFINET Discovery Controls */}
-      <div className="p-4 bg-gray-800/50 border border-gray-700 rounded-lg">
-        <h4 className="text-sm font-medium text-gray-300 mb-3">PROFINET DCP Discovery</h4>
+      <div className="p-4 bg-hmi-bg border border-hmi-border rounded-lg">
+        <h4 className="text-sm font-medium text-hmi-text mb-3">PROFINET DCP Discovery</h4>
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-2">
-            <label className="text-sm text-gray-400">Timeout:</label>
+            <label className="text-sm text-hmi-muted">Timeout:</label>
             <select
               value={scanTimeout}
               onChange={(e) => setScanTimeout(Number(e.target.value))}
-              className="px-2 py-1 bg-gray-800 border border-gray-700 rounded text-white text-sm"
+              className="px-2 py-1 bg-hmi-panel border border-hmi-border rounded text-hmi-text text-sm"
               disabled={scanning}
             >
               <option value={3000}>3 seconds</option>
@@ -123,13 +123,13 @@ export default function DiscoveryPanel({ onDeviceSelect }: Props) {
               flex items-center gap-2 px-4 py-2 rounded-lg font-medium text-sm
               transition-all duration-200
               ${scanning
-                ? 'bg-blue-700 text-blue-300 cursor-wait'
-                : 'bg-blue-600 hover:bg-blue-500 text-white hover:shadow-lg hover:shadow-blue-600/25'
+                ? 'bg-status-info/70 text-white cursor-wait'
+                : 'bg-status-info hover:bg-status-info/90 text-white'
               }
             `}
           >
             {scanning ? (
-              <span className="inline-block w-4 h-4 border-2 border-blue-300/30 border-t-blue-300 rounded-full animate-spin" />
+              <span className="inline-block w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
             ) : (
               <span className="font-bold">[*]</span>
             )}
@@ -139,7 +139,7 @@ export default function DiscoveryPanel({ onDeviceSelect }: Props) {
           <button
             onClick={handleLoadCached}
             disabled={scanning}
-            className="px-3 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm text-white transition-colors"
+            className="px-3 py-2 bg-hmi-panel border border-hmi-border hover:bg-hmi-bg rounded-lg text-sm text-hmi-text transition-colors"
           >
             Load Cached
           </button>
@@ -147,7 +147,7 @@ export default function DiscoveryPanel({ onDeviceSelect }: Props) {
           <button
             onClick={handleClearCache}
             disabled={scanning}
-            className="px-3 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm text-white transition-colors"
+            className="px-3 py-2 bg-hmi-panel border border-hmi-border hover:bg-hmi-bg rounded-lg text-sm text-hmi-text transition-colors"
           >
             Clear Cache
           </button>
@@ -155,17 +155,17 @@ export default function DiscoveryPanel({ onDeviceSelect }: Props) {
       </div>
 
       {/* Ping Scan Controls */}
-      <div className="p-4 bg-gray-800/50 border border-gray-700 rounded-lg">
-        <h4 className="text-sm font-medium text-gray-300 mb-3">Ping Scan (Debug)</h4>
+      <div className="p-4 bg-hmi-bg border border-hmi-border rounded-lg">
+        <h4 className="text-sm font-medium text-hmi-text mb-3">Ping Scan (Debug)</h4>
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-2">
-            <label className="text-sm text-gray-400">Subnet:</label>
+            <label className="text-sm text-hmi-muted">Subnet:</label>
             <input
               type="text"
               value={pingSubnet}
               onChange={(e) => setPingSubnet(e.target.value)}
               placeholder="192.168.1.0/24"
-              className="px-3 py-1 bg-gray-800 border border-gray-700 rounded text-white text-sm font-mono w-40"
+              className="px-3 py-1 bg-hmi-panel border border-hmi-border rounded text-hmi-text text-sm font-mono w-40"
               disabled={pingScanning}
             />
           </div>
@@ -177,13 +177,13 @@ export default function DiscoveryPanel({ onDeviceSelect }: Props) {
               flex items-center gap-2 px-4 py-2 rounded-lg font-medium text-sm
               transition-all duration-200
               ${pingScanning
-                ? 'bg-green-700 text-green-300 cursor-wait'
-                : 'bg-green-600 hover:bg-green-500 text-white hover:shadow-lg hover:shadow-green-600/25'
+                ? 'bg-status-ok/70 text-white cursor-wait'
+                : 'bg-status-ok hover:bg-status-ok/90 text-white'
               }
             `}
           >
             {pingScanning ? (
-              <span className="inline-block w-4 h-4 border-2 border-green-300/30 border-t-green-300 rounded-full animate-spin" />
+              <span className="inline-block w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
             ) : (
               <span className="font-bold">[~]</span>
             )}
@@ -193,7 +193,7 @@ export default function DiscoveryPanel({ onDeviceSelect }: Props) {
           {pingResults && (
             <button
               onClick={() => setShowPingResults(!showPingResults)}
-              className="px-3 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm text-white transition-colors"
+              className="px-3 py-2 bg-hmi-panel border border-hmi-border hover:bg-hmi-bg rounded-lg text-sm text-hmi-text transition-colors"
             >
               {showPingResults ? 'Hide Results' : 'Show Results'}
             </button>
@@ -201,7 +201,7 @@ export default function DiscoveryPanel({ onDeviceSelect }: Props) {
         </div>
 
         {pingResults && (
-          <div className="mt-2 text-sm text-gray-400">
+          <div className="mt-2 text-sm text-hmi-muted">
             Found {pingResults.reachable_count} reachable / {pingResults.total_hosts} total in {pingResults.scan_duration_seconds}s
           </div>
         )}
@@ -209,43 +209,43 @@ export default function DiscoveryPanel({ onDeviceSelect }: Props) {
 
       {/* Error displays */}
       {error && (
-        <div className="p-3 bg-red-900/50 border border-red-700 rounded-lg text-red-200 text-sm">
+        <div className="p-3 bg-status-alarm-light border border-status-alarm rounded-lg text-status-alarm text-sm">
           PROFINET Error: {error}
         </div>
       )}
       {pingError && (
-        <div className="p-3 bg-red-900/50 border border-red-700 rounded-lg text-red-200 text-sm">
+        <div className="p-3 bg-status-alarm-light border border-status-alarm rounded-lg text-status-alarm text-sm">
           Ping Error: {pingError}
         </div>
       )}
 
       {/* Scanning indicator */}
       {scanning && (
-        <div className="flex items-center gap-3 p-4 bg-blue-900/30 border border-blue-700/50 rounded-lg">
+        <div className="flex items-center gap-3 p-4 bg-status-info-light border border-status-info/50 rounded-lg">
           <div className="relative">
-            <div className="w-10 h-10 border-4 border-blue-900 rounded-full" />
-            <div className="absolute inset-0 w-10 h-10 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
+            <div className="w-10 h-10 border-4 border-status-info/20 rounded-full" />
+            <div className="absolute inset-0 w-10 h-10 border-4 border-status-info border-t-transparent rounded-full animate-spin" />
           </div>
           <div>
-            <div className="text-white font-medium">Scanning PROFINET network...</div>
-            <div className="text-sm text-gray-400">Sending DCP Identify All broadcast</div>
+            <div className="text-hmi-text font-medium">Scanning PROFINET network...</div>
+            <div className="text-sm text-hmi-muted">Sending DCP Identify All broadcast</div>
           </div>
         </div>
       )}
 
       {/* Ping scan results table */}
       {showPingResults && pingResults && (
-        <div className="border border-gray-700 rounded-lg overflow-hidden">
-          <div className="bg-gray-800 px-4 py-2 flex items-center justify-between">
-            <h4 className="text-sm font-medium text-gray-300">
+        <div className="border border-hmi-border rounded-lg overflow-hidden">
+          <div className="bg-hmi-bg px-4 py-2 flex items-center justify-between">
+            <h4 className="text-sm font-medium text-hmi-text">
               Ping Scan Results: {pingResults.subnet}
             </h4>
-            <label className="flex items-center gap-2 text-sm text-gray-400">
+            <label className="flex items-center gap-2 text-sm text-hmi-muted">
               <input
                 type="checkbox"
                 checked={showOnlyReachable}
                 onChange={(e) => setShowOnlyReachable(e.target.checked)}
-                className="rounded"
+                className="rounded border-hmi-border"
               />
               Show only reachable
             </label>
@@ -253,34 +253,34 @@ export default function DiscoveryPanel({ onDeviceSelect }: Props) {
           <div className="max-h-64 overflow-y-auto">
             <table className="w-full">
               <thead>
-                <tr className="bg-gray-800/50 text-left text-xs text-gray-400 sticky top-0">
+                <tr className="bg-hmi-bg text-left text-xs text-hmi-muted sticky top-0">
                   <th className="px-4 py-2">Status</th>
                   <th className="px-4 py-2">IP Address</th>
                   <th className="px-4 py-2">Response Time</th>
                   <th className="px-4 py-2">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-700/50">
+              <tbody className="divide-y divide-hmi-border">
                 {filteredPingResults.map((result) => (
                   <tr
                     key={result.ip_address}
-                    className={result.reachable ? 'bg-green-900/10' : 'bg-gray-800/30'}
+                    className={result.reachable ? 'bg-status-ok-light' : 'bg-hmi-panel'}
                   >
                     <td className="px-4 py-2">
                       {result.reachable ? (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-green-900/50 text-green-300 rounded text-xs">
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-status-ok/10 text-status-ok rounded text-xs font-medium">
                           [OK]
                         </span>
                       ) : (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-gray-700 text-gray-400 rounded text-xs">
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-hmi-bg text-hmi-muted rounded text-xs">
                           [--]
                         </span>
                       )}
                     </td>
-                    <td className="px-4 py-2 font-mono text-sm text-gray-300">
+                    <td className="px-4 py-2 font-mono text-sm text-hmi-text">
                       {result.ip_address}
                     </td>
-                    <td className="px-4 py-2 text-sm text-gray-400">
+                    <td className="px-4 py-2 text-sm text-hmi-muted">
                       {result.reachable && result.response_time_ms !== null
                         ? `${result.response_time_ms}ms`
                         : '-'}
@@ -289,7 +289,7 @@ export default function DiscoveryPanel({ onDeviceSelect }: Props) {
                       {result.reachable && (
                         <button
                           onClick={() => {
-                            // Create a mock device for selection
+                            // Create a minimal device for selection - only IP is real
                             const mockDevice: DiscoveredDevice = {
                               id: 0,
                               mac_address: '00:00:00:00:00:00',
@@ -305,7 +305,7 @@ export default function DiscoveryPanel({ onDeviceSelect }: Props) {
                             };
                             onDeviceSelect?.(mockDevice);
                           }}
-                          className="px-2 py-1 bg-blue-600 hover:bg-blue-500 rounded text-xs text-white font-medium transition-colors"
+                          className="px-2 py-1 bg-status-info hover:bg-status-info/90 rounded text-xs text-white font-medium transition-colors"
                         >
                           Use IP
                         </button>
@@ -321,13 +321,13 @@ export default function DiscoveryPanel({ onDeviceSelect }: Props) {
 
       {/* PROFINET Device list */}
       {!scanning && devices.length > 0 && (
-        <div className="border border-gray-700 rounded-lg overflow-hidden">
-          <div className="bg-gray-800 px-4 py-2">
-            <h4 className="text-sm font-medium text-gray-300">PROFINET Devices Found</h4>
+        <div className="border border-hmi-border rounded-lg overflow-hidden">
+          <div className="bg-hmi-bg px-4 py-2">
+            <h4 className="text-sm font-medium text-hmi-text">PROFINET Devices Found</h4>
           </div>
           <table className="w-full">
             <thead>
-              <tr className="bg-gray-800/50 text-left text-sm text-gray-400">
+              <tr className="bg-hmi-bg text-left text-sm text-hmi-muted">
                 <th className="px-4 py-3">Device</th>
                 <th className="px-4 py-3">MAC Address</th>
                 <th className="px-4 py-3">IP Address</th>
@@ -336,14 +336,14 @@ export default function DiscoveryPanel({ onDeviceSelect }: Props) {
                 <th className="px-4 py-3">Actions</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-700">
+            <tbody className="divide-y divide-hmi-border">
               {devices.map((device) => (
                 <tr
                   key={device.mac_address}
                   className={`transition-colors ${
                     device.added_to_registry
-                      ? 'bg-green-900/10'
-                      : 'hover:bg-gray-800/50'
+                      ? 'bg-status-ok-light'
+                      : 'hover:bg-hmi-bg'
                   }`}
                 >
                   <td className="px-4 py-3">
@@ -351,40 +351,40 @@ export default function DiscoveryPanel({ onDeviceSelect }: Props) {
                       <div
                         className="w-2 h-2 rounded-full"
                         style={{
-                          backgroundColor: device.added_to_registry ? '#10b981' : '#3b82f6',
+                          backgroundColor: device.added_to_registry ? 'var(--status-ok)' : 'var(--status-info)',
                         }}
                       />
                       <div>
-                        <div className="text-white font-medium">
+                        <div className="text-hmi-text font-medium">
                           {device.device_name || 'Unknown Device'}
                         </div>
-                        <div className="text-xs text-gray-500">
+                        <div className="text-xs text-hmi-muted">
                           {device.device_type || 'PROFINET Device'}
                         </div>
                       </div>
                     </div>
                   </td>
-                  <td className="px-4 py-3 font-mono text-sm text-gray-300">
+                  <td className="px-4 py-3 font-mono text-sm text-hmi-text">
                     {formatMac(device.mac_address)}
                   </td>
-                  <td className="px-4 py-3 font-mono text-sm text-gray-300">
+                  <td className="px-4 py-3 font-mono text-sm text-hmi-text">
                     {device.ip_address || 'No IP'}
                   </td>
-                  <td className="px-4 py-3 text-sm text-gray-400">
+                  <td className="px-4 py-3 text-sm text-hmi-muted">
                     {device.vendor_name || 'Unknown'}
                     {device.vendor_id && (
-                      <span className="text-xs text-gray-500 ml-1">
+                      <span className="text-xs text-hmi-muted ml-1">
                         (0x{device.vendor_id.toString(16).padStart(4, '0')})
                       </span>
                     )}
                   </td>
                   <td className="px-4 py-3">
                     {device.added_to_registry ? (
-                      <span className="inline-flex items-center gap-1 px-2 py-1 bg-green-900/50 text-green-300 rounded text-xs">
+                      <span className="inline-flex items-center gap-1 px-2 py-1 bg-status-ok/10 text-status-ok rounded text-xs font-medium">
                         [OK] Added
                       </span>
                     ) : (
-                      <span className="px-2 py-1 bg-blue-900/50 text-blue-300 rounded text-xs">
+                      <span className="px-2 py-1 bg-status-info/10 text-status-info rounded text-xs font-medium">
                         New
                       </span>
                     )}
@@ -393,7 +393,7 @@ export default function DiscoveryPanel({ onDeviceSelect }: Props) {
                     {!device.added_to_registry && (
                       <button
                         onClick={() => onDeviceSelect?.(device)}
-                        className="px-3 py-1 bg-green-600 hover:bg-green-500 rounded text-xs text-white font-medium transition-colors"
+                        className="px-3 py-1 bg-status-ok hover:bg-status-ok/90 rounded text-xs text-white font-medium transition-colors"
                       >
                         Add RTU
                       </button>
@@ -408,9 +408,9 @@ export default function DiscoveryPanel({ onDeviceSelect }: Props) {
 
       {/* Empty state */}
       {!scanning && devices.length === 0 && !showPingResults && (
-        <div className="text-center py-6 text-gray-400">
+        <div className="text-center py-6 text-hmi-muted">
           <div className="text-3xl mb-3 opacity-50">[?]</div>
-          <p className="text-base font-medium text-gray-300">No devices found</p>
+          <p className="text-base font-medium text-hmi-text">No devices found</p>
           <p className="text-sm mt-1">
             Click &quot;DCP Scan&quot; for PROFINET discovery or &quot;Ping Scan&quot; to find active IPs
           </p>
@@ -418,12 +418,12 @@ export default function DiscoveryPanel({ onDeviceSelect }: Props) {
       )}
 
       {/* Help text */}
-      <div className="text-xs text-gray-500 space-y-1">
+      <div className="text-xs text-hmi-muted space-y-1">
         <p>
-          <strong>DCP Scan:</strong> Uses PROFINET Discovery and Configuration Protocol to find devices.
+          <strong className="text-hmi-text">DCP Scan:</strong> Uses PROFINET Discovery and Configuration Protocol to find devices.
         </p>
         <p>
-          <strong>Ping Scan:</strong> Pings all 254 hosts in the /24 subnet to find active IPs. Use this if DCP discovery fails.
+          <strong className="text-hmi-text">Ping Scan:</strong> Pings all 254 hosts in the /24 subnet to find active IPs. Use this if DCP discovery fails.
         </p>
       </div>
     </div>
