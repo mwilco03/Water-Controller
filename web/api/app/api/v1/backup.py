@@ -10,7 +10,7 @@ import zipfile
 from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session, joinedload
@@ -198,19 +198,20 @@ async def restore_backup(
     try:
         with zipfile.ZipFile(io.BytesIO(contents)) as zf:
             config_data = json.loads(zf.read("config.json"))
-    except Exception as e:
-        return build_success_response({
-            "success": False,
-            "error": f"Invalid backup file: {e!s}",
-        })
+    except zipfile.BadZipFile as e:
+        raise HTTPException(status_code=400, detail=f"Invalid backup file: not a valid zip archive - {e}")
+    except KeyError:
+        raise HTTPException(status_code=400, detail="Invalid backup file: missing config.json")
+    except json.JSONDecodeError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid backup file: malformed config.json - {e}")
 
     # Validate version
     version = config_data.get("version", "1.0.0")
     if not version.startswith("2."):
-        return build_success_response({
-            "success": False,
-            "error": f"Incompatible backup version: {version}",
-        })
+        raise HTTPException(
+            status_code=400,
+            detail=f"Incompatible backup version: {version}. Expected version 2.x"
+        )
 
     restored = {
         "rtus": 0,

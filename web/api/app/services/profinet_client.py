@@ -19,6 +19,11 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+
+class ControllerNotConnectedError(Exception):
+    """Raised when an operation requires controller connection but none is available."""
+    pass
+
 # Demo mode only when explicitly requested
 _DEMO_MODE_ENV = os.environ.get("WTC_DEMO_MODE", "").lower() in ("1", "true", "yes")
 DEMO_ENABLED = _DEMO_MODE_ENV
@@ -239,7 +244,11 @@ class ProfinetClient:
         command: int,
         pwm_duty: int = 0
     ) -> bool:
-        """Send actuator command to controller."""
+        """Send actuator command to controller.
+
+        Raises:
+            ControllerNotConnectedError: If no controller connection available.
+        """
         # Try real controller first
         if not self._demo_mode and self._client and self._client.is_connected():
             return self._client.command_actuator(station_name, slot, command, pwm_duty)
@@ -249,11 +258,17 @@ class ProfinetClient:
         if demo and demo.enabled:
             return demo.command_actuator(station_name, slot, command, pwm_duty)
 
-        logger.error(f"Cannot command actuator {station_name}/{slot}: no controller connection")
-        return False
+        raise ControllerNotConnectedError(
+            f"Cannot command actuator {station_name}/{slot}: no controller connection. "
+            "Start the PROFINET controller or enable demo mode (WTC_DEMO_MODE=1)."
+        )
 
     def connect_rtu(self, station_name: str) -> bool:
-        """Send RTU connect command to controller."""
+        """Send RTU connect command to controller.
+
+        Raises:
+            ControllerNotConnectedError: If no controller connection available.
+        """
         if not self._demo_mode and self._client and self._client.is_connected():
             return self._client.connect_rtu(station_name)
 
@@ -263,11 +278,17 @@ class ProfinetClient:
             logger.info(f"[DEMO] Connect RTU: {station_name}")
             return True
 
-        logger.error(f"Cannot connect RTU {station_name}: no controller connection")
-        return False
+        raise ControllerNotConnectedError(
+            f"Cannot connect RTU {station_name}: no controller connection. "
+            "Start the PROFINET controller or enable demo mode (WTC_DEMO_MODE=1)."
+        )
 
     def disconnect_rtu(self, station_name: str) -> bool:
-        """Send RTU disconnect command to controller."""
+        """Send RTU disconnect command to controller.
+
+        Raises:
+            ControllerNotConnectedError: If no controller connection available.
+        """
         if not self._demo_mode and self._client and self._client.is_connected():
             return self._client.disconnect_rtu(station_name)
 
@@ -277,8 +298,10 @@ class ProfinetClient:
             logger.info(f"[DEMO] Disconnect RTU: {station_name}")
             return True
 
-        logger.error(f"Cannot disconnect RTU {station_name}: no controller connection")
-        return False
+        raise ControllerNotConnectedError(
+            f"Cannot disconnect RTU {station_name}: no controller connection. "
+            "Start the PROFINET controller or enable demo mode (WTC_DEMO_MODE=1)."
+        )
 
     def add_rtu(
         self,
@@ -288,7 +311,11 @@ class ProfinetClient:
         device_id: int,
         slot_count: int
     ) -> bool:
-        """Add RTU to controller."""
+        """Add RTU to controller.
+
+        Raises:
+            ControllerNotConnectedError: If no controller connection available.
+        """
         if not self._demo_mode and self._client and self._client.is_connected():
             return self._client.add_rtu(station_name, ip_address, vendor_id, device_id, slot_count)
 
@@ -298,11 +325,17 @@ class ProfinetClient:
             logger.info(f"[DEMO] Add RTU: {station_name} at {ip_address}")
             return True
 
-        logger.error(f"Cannot add RTU {station_name}: no controller connection")
-        return False
+        raise ControllerNotConnectedError(
+            f"Cannot add RTU {station_name}: no controller connection. "
+            "Start the PROFINET controller or enable demo mode (WTC_DEMO_MODE=1)."
+        )
 
     def remove_rtu(self, station_name: str) -> bool:
-        """Remove RTU from controller."""
+        """Remove RTU from controller.
+
+        Raises:
+            ControllerNotConnectedError: If no controller connection available.
+        """
         if not self._demo_mode and self._client and self._client.is_connected():
             return self._client.remove_rtu(station_name)
 
@@ -312,8 +345,10 @@ class ProfinetClient:
             logger.info(f"[DEMO] Remove RTU: {station_name}")
             return True
 
-        logger.error(f"Cannot remove RTU {station_name}: no controller connection")
-        return False
+        raise ControllerNotConnectedError(
+            f"Cannot remove RTU {station_name}: no controller connection. "
+            "Start the PROFINET controller or enable demo mode (WTC_DEMO_MODE=1)."
+        )
 
     def dcp_discover(self, timeout_ms: int = 5000) -> list[dict[str, Any]]:
         """Discover PROFINET devices on network."""
@@ -361,7 +396,11 @@ class ProfinetClient:
         return []
 
     def set_setpoint(self, loop_id: int, setpoint: float) -> bool:
-        """Set PID loop setpoint."""
+        """Set PID loop setpoint.
+
+        Raises:
+            ControllerNotConnectedError: If no controller connection available.
+        """
         # Try real controller first
         if not self._demo_mode and self._client and self._client.is_connected():
             return self._client.set_setpoint(loop_id, setpoint)
@@ -371,11 +410,17 @@ class ProfinetClient:
         if demo and demo.enabled:
             return demo.set_setpoint(loop_id, setpoint)
 
-        logger.error(f"Cannot set setpoint for loop {loop_id}: no controller connection")
-        return False
+        raise ControllerNotConnectedError(
+            f"Cannot set setpoint for loop {loop_id}: no controller connection. "
+            "Start the PROFINET controller or enable demo mode (WTC_DEMO_MODE=1)."
+        )
 
     def set_pid_mode(self, loop_id: int, mode: int) -> bool:
-        """Set PID loop mode."""
+        """Set PID loop mode.
+
+        Raises:
+            ControllerNotConnectedError: If no controller connection available.
+        """
         # Try real controller first
         if not self._demo_mode and self._client and self._client.is_connected():
             return self._client.set_pid_mode(loop_id, mode)
@@ -385,8 +430,10 @@ class ProfinetClient:
         if demo and demo.enabled:
             return demo.set_pid_mode(loop_id, mode)
 
-        logger.error(f"Cannot set PID mode for loop {loop_id}: no controller connection")
-        return False
+        raise ControllerNotConnectedError(
+            f"Cannot set PID mode for loop {loop_id}: no controller connection. "
+            "Start the PROFINET controller or enable demo mode (WTC_DEMO_MODE=1)."
+        )
 
     def get_alarms(self) -> list[dict[str, Any]]:
         """Get active alarms from controller."""
@@ -404,7 +451,11 @@ class ProfinetClient:
         return []
 
     def acknowledge_alarm(self, alarm_id: int, user: str) -> bool:
-        """Acknowledge alarm."""
+        """Acknowledge alarm.
+
+        Raises:
+            ControllerNotConnectedError: If no controller connection available.
+        """
         # Try real controller first
         if not self._demo_mode and self._client and self._client.is_connected():
             return self._client.acknowledge_alarm(alarm_id, user)
@@ -414,8 +465,10 @@ class ProfinetClient:
         if demo and demo.enabled:
             return demo.acknowledge_alarm(alarm_id, user)
 
-        logger.error(f"Cannot acknowledge alarm {alarm_id}: no controller connection")
-        return False
+        raise ControllerNotConnectedError(
+            f"Cannot acknowledge alarm {alarm_id}: no controller connection. "
+            "Start the PROFINET controller or enable demo mode (WTC_DEMO_MODE=1)."
+        )
 
 
 # Global client instance

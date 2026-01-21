@@ -773,14 +773,15 @@ async def get_network_config() -> dict[str, Any]:
         hostname = socket.gethostname()
         config["hostname"] = hostname
 
-        # Get current IP from socket
+        # Get current IP from socket (best effort - may fail if no network route)
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.settimeout(0.1)
         try:
             s.connect(("8.8.8.8", 80))
             config["ip_address"] = s.getsockname()[0]
-        except Exception:
-            pass
+        except OSError as e:
+            # Network unreachable, no route, etc - leave IP blank
+            logger.debug(f"Could not detect IP address via socket: {e}")
         finally:
             s.close()
 
