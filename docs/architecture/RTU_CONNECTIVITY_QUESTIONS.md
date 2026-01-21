@@ -120,52 +120,76 @@ Byte 1: Reserved (set to 0x00)
 
 ---
 
-## QUESTIONS FOR STEERING (Controller Team Decision)
+## STEERING DECISIONS (Controller Team)
 
-Before passing to RTU team, please confirm:
-
-### S1. DCP Discovery Failure Recovery
+### S1. DCP Discovery Failure Recovery - PENDING DETAIL
 
 **Current Behavior:** If RTU not found in DCP cache, `/connect` fails silently.
 
-**Options:**
-1. **Auto-rediscovery**: Trigger DCP discovery if cache miss before failing
-2. **Fail fast**: Return error immediately, require explicit `/discover` call
-3. **Retry with backoff**: Attempt discovery up to N times with exponential backoff
+**Decision Direction:** Auto-rediscovery with backoff preferred.
 
-**Recommendation:** Option 1 (auto-rediscovery) aligns with "fail safe" principle.
+**Backoff Options to Consider:**
 
-**Your Decision:** _______________
+| Strategy | Delays | Total Time | Use Case |
+|----------|--------|------------|----------|
+| **Fast retry** | 100ms, 200ms, 400ms | ~700ms | RTU just booted, quick recovery |
+| **Standard** | 1s, 2s, 4s | ~7s | Normal network glitch |
+| **Conservative** | 2s, 4s, 8s, 16s | ~30s | Flaky network, reduces DCP storm |
+
+**Proposed Implementation:**
+```
+On /connect if DCP cache miss:
+  1. Trigger targeted DCP Identify (by station_name, not broadcast)
+  2. Wait up to 1s for response
+  3. If no response: retry with 2s, then 4s delays (3 attempts total)
+  4. If still not found: return 503 "RTU not discovered, check network"
+  5. Log each retry for diagnostics
+```
+
+**Trade-offs:**
+- Targeted DCP (by name) is less disruptive than broadcast
+- Backoff prevents DCP storm if multiple connects fail simultaneously
+- 7s total delay acceptable for commissioning, may be slow for auto-reconnect
+
+**Decision:** Auto-rediscovery with standard backoff (1s, 2s, 4s). Revisit if latency becomes issue.
 
 ---
 
-### S2. Automatic Reconnection After Error
+### S2. Automatic Reconnection After Error - DECIDED
 
-**Current Behavior:** RTU enters ERROR state on watchdog timeout. Manual reconnection required.
+**Decision:** Option 2 - Auto-reconnect with exponential backoff
 
-**Options:**
-1. **Manual only**: Operator must explicitly reconnect (current)
-2. **Auto-reconnect**: Controller attempts reconnection with backoff (3 attempts, then alert)
-3. **Configurable**: Per-RTU setting for auto-reconnect behavior
+**Implementation:**
+```
+On ERROR state (watchdog timeout, AR abort):
+  1. Wait 3s (debounce)
+  2. Attempt reconnect
+  3. If fail: wait 6s, retry
+  4. If fail: wait 12s, retry
+  5. If fail: raise ALARM, stop retrying, require manual intervention
+  6. On success: clear retry counter, resume normal operation
+```
 
-**Recommendation:** Option 3 (configurable) - some RTUs may need manual intervention.
-
-**Your Decision:** _______________
+**Rationale:**
+- Most network glitches are transient (cable bump, switch reboot)
+- 3 retries over ~21s covers typical recovery scenarios
+- Alarm ensures operator awareness if persistent failure
+- Does NOT require per-RTU configuration (simplicity)
 
 ---
 
-### S3. Slot Configuration Source
+### S3. Slot Configuration Source - TABLED
 
-**Current Behavior:** Slots are hardcoded (DAP=0, sensors=1-8, actuators=9-15).
+**Decision:** RTU-reported configuration (Option 3) is the goal, but **tabled until PROFINET comms established**.
 
-**Options:**
-1. **Static configuration**: Keep current hardcoded approach
-2. **GSDML-driven**: Read expected slots from GSDML at connection time
-3. **RTU-reported**: RTU reports slot configuration via 0xF844 status record
+**Current State:** Hardcoded slots work for initial integration testing.
 
-**Recommendation:** Option 1 for lab simplicity. Document slot layout as contract.
+**Future Work:**
+- RTU reports slot layout via 0xF844 status record after AR established
+- Controller updates internal model based on RTU report
+- Mismatch triggers warning but does not block operation
 
-**Your Decision:** _______________
+**Rationale:** Focus on getting basic PROFINET AR working first. Slot negotiation is a refinement.
 
 ---
 
@@ -177,34 +201,37 @@ These questions require RTU team input. Respond in JSON format.
 {
   "goal": "Clarify RTU-side connectivity behavior for Water-Controller integration",
   "context": [
-    "Controller uses DCP discovery to find RTUs by station_name",
+    "Controller uses DCP discovery to find RTUs by station_name (hostname)",
+    "Controller will auto-rediscovery with backoff (1s,2s,4s) on cache miss",
+    "Controller will auto-reconnect on ERROR with backoff (3s,6s,12s), then alarm",
     "PROFINET AR cycle=1ms, watchdog=3000ms",
-    "Slots: DAP=0, sensors=1-8 (5-byte), actuators=9-15 (2-byte)",
-    "Config sync via records 0xF840-0xF845 defined in CROSS_SYSTEM.md"
+    "Slot configuration tabled - using hardcoded layout for initial testing",
+    "Config sync records 0xF840-0xF845 defined in CROSS_SYSTEM.md"
   ],
   "decisions": [
-    "5-byte sensor format confirmed (Float32 BE + quality)",
-    "station_name = hostname, RTU provides via DCP",
-    "vendor_id=0x0493, device_id=0x0001 for lab"
+    "5-byte sensor format (Float32 BE + quality) - WT-SPEC-001 authoritative",
+    "station_name = hostname, RTU provides via DCP DEVICE_NAME",
+    "vendor_id=0x0493, device_id=0x0001 for lab",
+    "2-byte actuator format (command + reserved)"
   ],
   "constraints": [
     "PROFINET RT Class 1, EtherType 0x8892",
-    "Station name: lowercase, DNS-compatible, max 63 chars",
-    "Static IP required (no DHCP negotiation in current impl)"
+    "Station name: lowercase, DNS-compatible, max 63 chars per IEC 61158-6",
+    "Static IP (DCP Set for IP is optional enhancement)"
   ],
   "open_questions": [
-    "Q1: RTU behavior on AR watchdog timeout - does RTU auto-close AR or wait for explicit release?",
-    "Q2: RTU behavior when controller sends command to non-existent slot - ignore, NACK, or alarm?",
-    "Q3: Does RTU support DCP Set for IP reconfiguration, or is IP always static?",
-    "Q4: RTU minimum supported cycle time - can it go faster than 1ms?",
-    "Q5: Does RTU implement authority handoff protocol (AUTONOMOUS → SUPERVISED transitions)?",
-    "Q6: RTU behavior on enrollment token mismatch - reject AR or accept with warning?",
-    "Q7: How does RTU report firmware version to controller? (DCP? 0xF844? HTTP registration?)",
-    "Q8: Does RTU generate PROFINET diagnostic alarms? If so, which alarm types?",
-    "Q9: RTU behavior on config sync CRC mismatch - reject payload or request retransmit?",
-    "Q10: Maximum number of simultaneous controllers RTU supports (for redundancy planning)?"
+    "Q1: AR watchdog timeout behavior - RTU auto-closes AR or waits for release RPC?",
+    "Q2: Command to non-existent slot - ignore silently, return NACK, or generate alarm?",
+    "Q3: DCP Set for IP supported? (nice-to-have, not blocking)",
+    "Q4: Minimum cycle time supported? (1ms default, can RTU handle faster?)",
+    "Q5: Authority handoff (AUTONOMOUS/SUPERVISED) - implemented or future?",
+    "Q6: Enrollment token validation - reject AR on mismatch or log warning?",
+    "Q7: Firmware version reporting - via DCP DEVICE_OPTIONS or 0xF844?",
+    "Q8: PROFINET diagnostic alarms generated? Which types?",
+    "Q9: Config sync CRC mismatch - reject and return error code, or silent ignore?",
+    "Q10: Max simultaneous AR connections? (redundancy/testing scenarios)"
   ],
-  "next_action": "RTU team responds with concrete behaviors/values for each open_question"
+  "next_action": "Provide concrete behavior/value per question. Use 'TBD' if not yet implemented."
 }
 ```
 
@@ -231,6 +258,7 @@ Per IEC 61158-6-10 and PROFINET System Description:
 | Date | Author | Changes |
 |------|--------|---------|
 | 2026-01-21 | Controller Team | Initial draft with resolved items and open questions |
+| 2026-01-21 | Controller Team | Added steering decisions: S1 auto-rediscovery w/backoff, S2 auto-reconnect, S3 tabled |
 
 ---
 
