@@ -302,25 +302,15 @@ async def discover_profinet_devices(
     if interface is None:
         # Use auto-detection instead of hardcoded eth0
         from ..core.network import get_profinet_interface
-        try:
-            interface = get_profinet_interface()
-        except RuntimeError as e:
-            logger.error(f"Interface auto-detection failed: {e}")
-            return []
+        interface = get_profinet_interface()  # Let RuntimeError propagate
 
     # Run synchronous discovery in thread pool
     loop = asyncio.get_event_loop()
-    try:
-        devices = await loop.run_in_executor(
-            None,
-            discover_profinet_devices_sync,
-            interface,
-            timeout_sec
-        )
-        return [d.to_dict() for d in devices]
-    except PermissionError:
-        logger.error("DCP discovery failed: insufficient permissions")
-        return []
-    except OSError as e:
-        logger.error(f"DCP discovery failed: {e}")
-        return []
+    devices = await loop.run_in_executor(
+        None,
+        discover_profinet_devices_sync,
+        interface,
+        timeout_sec
+    )
+    return [d.to_dict() for d in devices]
+    # PermissionError and OSError propagate to caller for proper HTTP error handling
