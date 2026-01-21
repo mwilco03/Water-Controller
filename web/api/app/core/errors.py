@@ -124,17 +124,47 @@ async def scada_exception_handler(request: Request, exc: ScadaException) -> JSON
 
 
 async def generic_exception_handler(request: Request, exc: Exception) -> JSONResponse:
-    """Handle unexpected exceptions."""
+    """Handle unexpected exceptions.
+
+    Per CLAUDE.md: code must "fail explicitly with clear error messages."
+    Hiding exceptions behind generic 500s makes debugging impossible.
+    """
     import logging
+    import traceback
     logger = logging.getLogger(__name__)
 
     request_id = get_request_id(request)
+
+    # Log full traceback to server logs
     logger.error(f"Unhandled exception (request_id={request_id}): {exc}", exc_info=True)
 
-    from .exceptions import InternalError
-    internal_error = InternalError()
+    # Include actual exception info in response for debugging
+    # This is pre-production software - operators need to see what's failing
+    exc_type = type(exc).__name__
+    exc_message = str(exc) or "No message"
+
+    # Get a short traceback (last 3 frames)
+    tb_lines = traceback.format_exception(type(exc), exc, exc.__traceback__)
+    short_tb = ''.join(tb_lines[-3:]) if len(tb_lines) > 3 else ''.join(tb_lines)
 
     return JSONResponse(
         status_code=500,
-        content=build_error_response(internal_error, request_id)
+        content={
+            "error": {
+                "code": "INTERNAL_ERROR",
+                "message": f"{exc_type}: {exc_message}",
+                "recoverable": False,
+                "suggested_action": "Check the error details and fix the root cause",
+                "operator_message": f"Internal error: {exc_type}: {exc_message}",
+                "debug": {
+                    "exception_type": exc_type,
+                    "exception_message": exc_message,
+                    "traceback_hint": short_tb.strip(),
+                }
+            },
+            "meta": {
+                "timestamp": datetime.now(UTC).isoformat(),
+                "request_id": request_id,
+            }
+        }
     )
