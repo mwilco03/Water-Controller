@@ -12,9 +12,11 @@ WORKDIR /app
 
 # Install build dependencies for posix-ipc and other C extensions
 # python3-dev provides Python.h headers needed for C extension compilation
+# iputils-ping required for /discover/ping-scan endpoint
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     python3-dev \
+    iputils-ping \
     && rm -rf /var/lib/apt/lists/* \
     && gcc --version \
     && python3 -c "import sysconfig; print(sysconfig.get_config_var('INCLUDEPY'))"

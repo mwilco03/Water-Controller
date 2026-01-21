@@ -301,7 +301,27 @@ async def ping_host(ip: str, timeout_ms: int) -> PingResult:
 
     except asyncio.TimeoutError:
         return PingResult(ip_address=ip, reachable=False)
-    except Exception:
+    except FileNotFoundError:
+        # ping binary not found - this is a container config error
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "PING_NOT_AVAILABLE",
+                "message": "ping command not found in container",
+                "suggested_action": "Rebuild API container - iputils-ping should be installed"
+            }
+        )
+    except PermissionError as e:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "PING_PERMISSION_DENIED",
+                "message": f"Permission denied running ping: {e}",
+                "suggested_action": "Container may need CAP_NET_RAW capability"
+            }
+        )
+    except Exception as e:
+        logger.error(f"Ping failed for {ip}: {type(e).__name__}: {e}")
         return PingResult(ip_address=ip, reachable=False)
 
 
