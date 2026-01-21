@@ -144,7 +144,9 @@ class ProfinetClient:
         now = time.time()
         if not force and (now - self._last_reconnect_attempt) < self._reconnect_cooldown:
             logger.debug("Reconnect cooldown active, skipping")
-            return self.is_connected()
+            # Don't call is_connected() here - it would cause infinite recursion
+            # Just check the client directly
+            return self._client is not None and self._client.is_connected()
 
         self._last_reconnect_attempt = now
 
