@@ -1156,12 +1156,26 @@ class WtcShmClientWithCircuitBreaker:
 _client: WtcShmClient | None = None
 
 
-def get_client() -> WtcShmClient:
-    """Get or create shared memory client"""
+def get_client(max_retries: int = 5, retry_delay: float = 2.0) -> WtcShmClient:
+    """
+    Get or create shared memory client with retry logic.
+
+    On first call, retries connection up to max_retries times with retry_delay
+    seconds between attempts. This handles the race condition where the API
+    starts before the controller has fully initialized shared memory.
+    """
     global _client
     if _client is None:
         _client = WtcShmClient()
-        _client.connect()
+        for attempt in range(max_retries):
+            if _client.connect():
+                break
+            if attempt < max_retries - 1:
+                import time
+                logger.info(f"Shared memory not ready, retrying in {retry_delay}s (attempt {attempt + 1}/{max_retries})")
+                time.sleep(retry_delay)
+        else:
+            logger.warning("Could not connect to shared memory after retries - running in degraded mode")
     elif not _client.is_connected():
         _client.connect()
     return _client
