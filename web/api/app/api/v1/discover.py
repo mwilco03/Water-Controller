@@ -10,6 +10,8 @@ Requires host network mode and CAP_NET_RAW for full functionality.
 import asyncio
 import logging
 import os
+import socket
+import struct
 import time
 from datetime import datetime, timezone
 from typing import Any
@@ -260,78 +262,156 @@ class PingScanResponse(BaseModel):
     results: list[PingResult]
 
 
-async def ping_host(ip: str, timeout_ms: int) -> PingResult:
-    """Ping a single host and return result."""
-    timeout_sec = timeout_ms / 1000.0
+def _icmp_checksum(data: bytes) -> int:
+    """Calculate ICMP checksum."""
+    if len(data) % 2:
+        data += b'\x00'
+    s = sum(struct.unpack('!%dH' % (len(data) // 2), data))
+    s = (s >> 16) + (s & 0xffff)
+    s += s >> 16
+    return ~s & 0xffff
+
+
+def _build_icmp_packet(seq: int, identifier: int) -> bytes:
+    """Build ICMP echo request packet."""
+    icmp_type = 8  # Echo request
+    icmp_code = 0
+    checksum = 0
+    payload = b'WTC-PING' + struct.pack('!d', time.time())  # 8 bytes tag + 8 bytes timestamp
+
+    # Build header without checksum
+    header = struct.pack('!BBHHH', icmp_type, icmp_code, checksum, identifier, seq)
+    packet = header + payload
+
+    # Calculate and insert checksum
+    checksum = _icmp_checksum(packet)
+    header = struct.pack('!BBHHH', icmp_type, icmp_code, checksum, identifier, seq)
+    return header + payload
+
+
+def _parse_icmp_reply(data: bytes, expected_id: int) -> tuple[str, int, float] | None:
+    """Parse ICMP reply, return (ip, seq, rtt_ms) or None."""
+    if len(data) < 28:  # IP header (20) + ICMP header (8)
+        return None
+
+    # IP header - extract source address
+    ip_header = data[:20]
+    src_ip = '.'.join(str(b) for b in ip_header[12:16])
+
+    # ICMP header starts after IP header
+    icmp_header = data[20:28]
+    icmp_type, icmp_code, checksum, identifier, seq = struct.unpack('!BBHHH', icmp_header)
+
+    # Type 0 = Echo reply
+    if icmp_type != 0:
+        return None
+
+    # Check identifier matches our requests
+    if identifier != expected_id:
+        return None
+
+    # Extract timestamp from payload if present
+    rtt_ms = 0.0
+    if len(data) >= 36:  # Has our payload
+        payload = data[28:]
+        if payload[:8] == b'WTC-PING' and len(payload) >= 16:
+            send_time = struct.unpack('!d', payload[8:16])[0]
+            rtt_ms = (time.time() - send_time) * 1000
+
+    return (src_ip, seq, rtt_ms)
+
+
+async def icmp_ping_scan(hosts: list[str], timeout_sec: float = 2.0) -> dict[str, PingResult]:
+    """
+    Perform ICMP ping scan using raw sockets.
+
+    Much faster than spawning ping processes - can scan 254 hosts in ~2 seconds.
+    Requires CAP_NET_RAW capability.
+    """
+    results: dict[str, PingResult] = {}
+    identifier = os.getpid() & 0xFFFF
+    send_times: dict[str, float] = {}
 
     try:
-        # Use system ping command (works on Linux)
-        # -c 1: send 1 packet
-        # -W: timeout in seconds
-        proc = await asyncio.create_subprocess_exec(
-            "ping", "-c", "1", "-W", str(max(1, int(timeout_sec))), ip,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
-        )
-
-        start = time.time()
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout_sec + 1)
-        elapsed = (time.time() - start) * 1000  # Convert to ms
-
-        if proc.returncode == 0:
-            # Try to extract actual RTT from ping output
-            output = stdout.decode()
-            rtt = None
-            for line in output.split("\n"):
-                if "time=" in line:
-                    try:
-                        time_part = line.split("time=")[1].split()[0]
-                        rtt = float(time_part.replace("ms", ""))
-                    except (IndexError, ValueError):
-                        rtt = elapsed
-                    break
-
-            return PingResult(
-                ip_address=ip,
-                reachable=True,
-                response_time_ms=round(rtt or elapsed, 2),
-            )
-        else:
-            return PingResult(ip_address=ip, reachable=False)
-
-    except asyncio.TimeoutError:
-        return PingResult(ip_address=ip, reachable=False)
-    except FileNotFoundError:
-        # ping binary not found - this is a container config error
+        # Create raw ICMP socket
+        sock = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_ICMP)
+        sock.setblocking(False)
+        sock.settimeout(0.01)  # Non-blocking reads
+    except PermissionError:
         raise HTTPException(
             status_code=503,
             detail={
-                "error": "PING_NOT_AVAILABLE",
-                "message": "ping command not found in container",
-                "suggested_action": "Rebuild API container - iputils-ping should be installed"
+                "error": "ICMP_PERMISSION_DENIED",
+                "message": "Raw socket creation requires CAP_NET_RAW capability",
+                "suggested_action": "Ensure container has cap_add: [NET_RAW] in docker-compose.yml"
             }
         )
-    except PermissionError as e:
+    except OSError as e:
         raise HTTPException(
             status_code=503,
             detail={
-                "error": "PING_PERMISSION_DENIED",
-                "message": f"Permission denied running ping: {e}",
-                "suggested_action": "Container may need CAP_NET_RAW capability"
+                "error": "ICMP_SOCKET_ERROR",
+                "message": f"Failed to create ICMP socket: {e}",
+                "suggested_action": "Check network configuration and capabilities"
             }
         )
-    except Exception as e:
-        logger.error(f"Ping failed for {ip}: {type(e).__name__}: {e}")
-        return PingResult(ip_address=ip, reachable=False)
+
+    try:
+        # Send ICMP echo requests to all hosts
+        for seq, ip in enumerate(hosts):
+            packet = _build_icmp_packet(seq, identifier)
+            try:
+                sock.sendto(packet, (ip, 0))
+                send_times[ip] = time.time()
+            except OSError as e:
+                logger.debug(f"Failed to send ping to {ip}: {e}")
+                results[ip] = PingResult(ip_address=ip, reachable=False, error=str(e))
+
+        # Collect replies until timeout
+        end_time = time.time() + timeout_sec
+        received = set()
+
+        while time.time() < end_time and len(received) < len(hosts):
+            try:
+                data, addr = sock.recvfrom(1024)
+                parsed = _parse_icmp_reply(data, identifier)
+                if parsed:
+                    src_ip, seq, rtt_ms = parsed
+                    if src_ip in send_times and src_ip not in received:
+                        received.add(src_ip)
+                        # Use calculated RTT from packet, or calculate from send time
+                        if rtt_ms == 0:
+                            rtt_ms = (time.time() - send_times[src_ip]) * 1000
+                        results[src_ip] = PingResult(
+                            ip_address=src_ip,
+                            reachable=True,
+                            response_time_ms=round(rtt_ms, 2)
+                        )
+            except socket.timeout:
+                await asyncio.sleep(0.001)  # Brief yield to event loop
+            except BlockingIOError:
+                await asyncio.sleep(0.001)
+            except OSError:
+                await asyncio.sleep(0.001)
+
+        # Mark unreached hosts
+        for ip in hosts:
+            if ip not in results:
+                results[ip] = PingResult(ip_address=ip, reachable=False)
+
+    finally:
+        sock.close()
+
+    return results
 
 
 @router.post("/ping-scan")
 async def ping_scan_subnet(request: PingScanRequest) -> dict[str, Any]:
     """
-    Perform a ping scan of a subnet.
+    Perform a ping scan of a subnet using raw ICMP packets.
 
-    Pings all hosts in the specified /24 (or smaller) subnet and returns
-    which IPs respond. Requires host network mode to reach physical network.
+    Uses raw sockets for high-performance scanning - can scan 254 hosts in ~2 seconds.
+    Requires CAP_NET_RAW capability and host network mode.
 
     Returns reachable hosts with response times. Useful for:
     - Verifying network connectivity before DCP discovery
@@ -342,29 +422,23 @@ async def ping_scan_subnet(request: PingScanRequest) -> dict[str, Any]:
     network = ipaddress.ip_network(request.subnet, strict=False)
 
     # Get all host IPs (excluding network and broadcast for /24+)
-    hosts = list(network.hosts())
+    hosts = [str(ip) for ip in network.hosts()]
     total_hosts = len(hosts)
 
-    logger.info(f"Starting ping scan of {request.subnet} ({total_hosts} hosts)")
+    logger.info(f"Starting ICMP ping scan of {request.subnet} ({total_hosts} hosts)")
 
-    # Ping all hosts concurrently with semaphore to limit parallelism
-    semaphore = asyncio.Semaphore(request.max_concurrent)
+    # Use raw ICMP for fast batch scanning
+    timeout_sec = request.timeout_ms / 1000.0
+    results_dict = await icmp_ping_scan(hosts, timeout_sec)
 
-    async def ping_with_semaphore(ip: str) -> PingResult:
-        async with semaphore:
-            return await ping_host(ip, request.timeout_ms)
-
-    # Run all pings
-    tasks = [ping_with_semaphore(str(ip)) for ip in hosts]
-    results = await asyncio.gather(*tasks)
-
-    # Sort results: reachable first, then by IP
+    # Convert to sorted list
+    results = list(results_dict.values())
     results.sort(key=lambda r: (not r.reachable, ipaddress.ip_address(r.ip_address)))
 
     reachable = [r for r in results if r.reachable]
     duration = time.time() - start_time
 
-    logger.info(f"Ping scan complete: {len(reachable)}/{total_hosts} hosts reachable in {duration:.2f}s")
+    logger.info(f"ICMP scan complete: {len(reachable)}/{total_hosts} hosts reachable in {duration:.2f}s")
 
     # Warn if no hosts reachable - likely network isolation issue
     if len(reachable) == 0:
