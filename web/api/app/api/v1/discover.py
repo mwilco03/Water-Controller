@@ -609,6 +609,189 @@ async def ping_scan_subnet(request: PingScanRequest) -> dict[str, Any]:
     return build_success_response(response.model_dump())
 
 
+# ==================== Single Host Ping ====================
+
+
+class SinglePingRequest(BaseModel):
+    """Request for single host ping."""
+
+    ip_address: str = Field(..., description="IP address to ping")
+    timeout_ms: int = Field(1000, ge=100, le=10000, description="Ping timeout in milliseconds")
+    count: int = Field(3, ge=1, le=10, description="Number of ping attempts")
+
+    @field_validator("ip_address")
+    @classmethod
+    def validate_ip(cls, v: str) -> str:
+        """Validate IP address."""
+        try:
+            ipaddress.ip_address(v)
+            return v
+        except ValueError:
+            raise ValueError(f"Invalid IP address: {v}")
+
+
+class SinglePingResponse(BaseModel):
+    """Response for single host ping."""
+
+    ip_address: str
+    reachable: bool
+    packets_sent: int
+    packets_received: int
+    packet_loss_percent: float
+    min_rtt_ms: float | None = None
+    avg_rtt_ms: float | None = None
+    max_rtt_ms: float | None = None
+    error: str | None = None
+
+
+async def _icmp_ping_single(ip: str, timeout_sec: float) -> tuple[bool, float | None]:
+    """
+    Send a single ICMP echo request and wait for reply.
+
+    Returns (reachable, rtt_ms) tuple.
+    Requires CAP_NET_RAW capability.
+    """
+    identifier = os.getpid() & 0xFFFF
+    seq = int(time.time() * 1000) & 0xFFFF
+
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_ICMP)
+        sock.setblocking(False)
+        sock.settimeout(timeout_sec)
+    except PermissionError:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "ICMP_PERMISSION_DENIED",
+                "message": "Raw socket creation requires CAP_NET_RAW capability",
+                "suggested_action": "Ensure container has cap_add: [NET_RAW] in docker-compose.yml"
+            }
+        )
+
+    try:
+        # Build and send ICMP packet
+        packet = _build_icmp_packet(seq, identifier)
+        send_time = time.time()
+        sock.sendto(packet, (ip, 0))
+
+        # Wait for reply
+        end_time = time.time() + timeout_sec
+        while time.time() < end_time:
+            try:
+                remaining = end_time - time.time()
+                if remaining <= 0:
+                    break
+                sock.settimeout(remaining)
+                data, addr = sock.recvfrom(1024)
+                parsed = _parse_icmp_reply(data, identifier)
+                if parsed:
+                    src_ip, reply_seq, rtt_ms = parsed
+                    if src_ip == ip:
+                        # Use calculated RTT or compute from send time
+                        if rtt_ms == 0:
+                            rtt_ms = (time.time() - send_time) * 1000
+                        return (True, rtt_ms)
+            except socket.timeout:
+                break
+            except BlockingIOError:
+                await asyncio.sleep(0.001)
+            except OSError:
+                break
+
+        return (False, None)
+
+    finally:
+        sock.close()
+
+
+@router.post("/ping")
+async def ping_single_host(request: SinglePingRequest) -> dict[str, Any]:
+    """
+    Ping a single IP address using ICMP echo requests.
+
+    Performs multiple ping attempts (default 3) and returns statistics
+    including packet loss and round-trip times.
+
+    Requires CAP_NET_RAW capability and host network mode.
+
+    Use this endpoint to:
+    - Verify connectivity to a specific RTU before configuration
+    - Diagnose network issues with a particular device
+    - Check if a host is reachable before DCP discovery
+    """
+    logger.info(f"Pinging {request.ip_address} ({request.count} attempts, timeout {request.timeout_ms}ms)")
+
+    timeout_sec = request.timeout_ms / 1000.0
+    rtts: list[float] = []
+    packets_received = 0
+
+    for i in range(request.count):
+        try:
+            reachable, rtt_ms = await _icmp_ping_single(request.ip_address, timeout_sec)
+            if reachable and rtt_ms is not None:
+                packets_received += 1
+                rtts.append(rtt_ms)
+        except HTTPException:
+            # Re-raise permission errors
+            raise
+        except Exception as e:
+            logger.debug(f"Ping attempt {i+1} failed: {e}")
+
+        # Brief delay between attempts
+        if i < request.count - 1:
+            await asyncio.sleep(0.1)
+
+    packet_loss = ((request.count - packets_received) / request.count) * 100
+
+    response = SinglePingResponse(
+        ip_address=request.ip_address,
+        reachable=packets_received > 0,
+        packets_sent=request.count,
+        packets_received=packets_received,
+        packet_loss_percent=round(packet_loss, 1),
+        min_rtt_ms=round(min(rtts), 2) if rtts else None,
+        avg_rtt_ms=round(sum(rtts) / len(rtts), 2) if rtts else None,
+        max_rtt_ms=round(max(rtts), 2) if rtts else None,
+    )
+
+    logger.info(
+        f"Ping {request.ip_address}: {packets_received}/{request.count} received, "
+        f"{packet_loss:.1f}% loss" + (f", avg RTT {response.avg_rtt_ms}ms" if rtts else "")
+    )
+
+    return build_success_response(response.model_dump())
+
+
+@router.get("/ping/{ip_address}")
+async def ping_single_host_get(
+    ip_address: str,
+    timeout_ms: int = 1000,
+    count: int = 3,
+) -> dict[str, Any]:
+    """
+    Ping a single IP address (GET variant for convenience).
+
+    Simpler alternative to POST /ping for quick connectivity checks.
+    Same functionality as POST /ping but with query parameters.
+
+    Requires CAP_NET_RAW capability and host network mode.
+    """
+    # Validate IP address
+    try:
+        ipaddress.ip_address(ip_address)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Invalid IP address: {ip_address}")
+
+    # Validate parameters
+    if not (100 <= timeout_ms <= 10000):
+        raise HTTPException(status_code=400, detail="timeout_ms must be between 100 and 10000")
+    if not (1 <= count <= 10):
+        raise HTTPException(status_code=400, detail="count must be between 1 and 10")
+
+    request = SinglePingRequest(ip_address=ip_address, timeout_ms=timeout_ms, count=count)
+    return await ping_single_host(request)
+
+
 # ==================== HTTP Probe ====================
 
 
