@@ -68,10 +68,19 @@ services:
     network_mode: host
     # Host IPC namespace required for POSIX shared memory with controller
     ipc: host
-    # CAP_NET_RAW required for DCP discovery (raw Ethernet frames)
-    # ICMP ping uses unprivileged SOCK_DGRAM when available
+    # Capabilities for DCP discovery (raw Ethernet Layer 2 frames)
+    # Based on Siemens Edgeshark and CISA Malcolm configurations:
+    # - NET_RAW: raw socket creation (AF_PACKET)
+    # - NET_ADMIN: network interface configuration (promiscuous mode)
+    # Ref: https://github.com/siemens/edgeshark
+    # Ref: https://github.com/cisagov/Malcolm
     cap_add:
       - NET_RAW
+      - NET_ADMIN
+    # Disable seccomp to allow AF_PACKET raw sockets for DCP discovery
+    # Siemens Edgeshark uses same approach for industrial packet capture
+    security_opt:
+      - seccomp:unconfined
     environment:
       # Database accessed via localhost since we're on host network
       DATABASE_URL: postgresql://wtc:wtc_password@127.0.0.1:${WTC_DB_PORT:-5432}/water_treatment
