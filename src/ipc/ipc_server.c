@@ -16,6 +16,7 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <fcntl.h>
@@ -57,6 +58,12 @@ wtc_result_t ipc_server_init(ipc_server_t **server) {
         LOG_ERROR(LOG_TAG, "Failed to create shared memory");
         free(srv);
         return WTC_ERROR_IO;
+    }
+
+    /* Force permissions to 0666 - shm_open mode is affected by umask */
+    if (fchmod(srv->shm_fd, 0666) < 0) {
+        LOG_WARN(LOG_TAG, "Failed to set shared memory permissions: %s", strerror(errno));
+        /* Continue anyway - may work if umask allows */
     }
 
     /* Set size */
