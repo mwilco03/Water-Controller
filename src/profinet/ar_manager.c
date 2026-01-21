@@ -8,6 +8,7 @@
 #include "cyclic_exchange.h"
 #include "profinet_frame.h"
 #include "profinet_rpc.h"
+#include "gsdml_modules.h"
 #include "utils/logger.h"
 #include "utils/time_utils.h"
 
@@ -302,14 +303,27 @@ wtc_result_t ar_manager_create_ar(ar_manager_t *manager,
         return res;
     }
 
+    /* Store slot configuration for GSDML module identification */
+    new_ar->slot_count = 0;
+    for (int i = 0; i < config->slot_count && new_ar->slot_count < WTC_MAX_SLOTS; i++) {
+        ar_slot_info_t *info = &new_ar->slot_info[new_ar->slot_count];
+        info->slot = (uint16_t)config->slots[i].slot;
+        info->subslot = (uint16_t)config->slots[i].subslot;
+        info->type = config->slots[i].type;
+        info->measurement_type = config->slots[i].measurement_type;
+        info->actuator_type = config->slots[i].actuator_type;
+        new_ar->slot_count++;
+    }
+
     /* Add to manager */
     manager->ars[manager->ar_count++] = new_ar;
     *ar = new_ar;
 
     pthread_mutex_unlock(&manager->lock);
 
-    LOG_INFO("Created AR for %s (session_key=%u, inputs=%d, outputs=%d)",
-             config->station_name, new_ar->session_key, input_slots, output_slots);
+    LOG_INFO("Created AR for %s (session_key=%u, inputs=%d, outputs=%d, slots=%d)",
+             config->station_name, new_ar->session_key, input_slots, output_slots,
+             new_ar->slot_count);
 
     return WTC_OK;
 }
@@ -541,35 +555,55 @@ static void build_connect_params(ar_manager_t *manager,
         params->iocr_count++;
     }
 
-    /* Expected configuration - based on IOCR data lengths */
-    /* Slot 0 is DAP (Device Access Point), slots 1+ are I/O modules */
+    /*
+     * Expected configuration using GSDML-defined module identifiers.
+     * Module identifiers must match the Water-Treat RTU GSDML exactly.
+     */
     params->expected_count = 0;
 
-    /* Add DAP slot 0 */
+    /* Add DAP slot 0 (Device Access Point - always present) */
     params->expected_config[params->expected_count].slot = 0;
-    params->expected_config[params->expected_count].module_ident = 0x00000001;
+    params->expected_config[params->expected_count].module_ident = GSDML_MOD_DAP;
     params->expected_config[params->expected_count].subslot = 1;
-    params->expected_config[params->expected_count].submodule_ident = 0x00000001;
+    params->expected_config[params->expected_count].submodule_ident = GSDML_SUBMOD_DAP;
     params->expected_config[params->expected_count].data_length = 0;
     params->expected_config[params->expected_count].is_input = true;
     params->expected_count++;
 
-    /* Add slots for each IOCR */
-    for (int i = 0; i < ar->iocr_count; i++) {
-        if (ar->iocr[i].data_length > 0 && params->expected_count < WTC_MAX_SLOTS) {
-            uint16_t slot = (uint16_t)(i + 1);
-            params->expected_config[params->expected_count].slot = slot;
-            params->expected_config[params->expected_count].module_ident =
-                (ar->iocr[i].type == IOCR_TYPE_INPUT) ? 0x00000010 : 0x00000020;
-            params->expected_config[params->expected_count].subslot = 1;
-            params->expected_config[params->expected_count].submodule_ident =
-                (ar->iocr[i].type == IOCR_TYPE_INPUT) ? 0x00000011 : 0x00000021;
-            params->expected_config[params->expected_count].data_length =
-                ar->iocr[i].data_length;
-            params->expected_config[params->expected_count].is_input =
-                (ar->iocr[i].type == IOCR_TYPE_INPUT);
-            params->expected_count++;
+    /* Add slots from stored slot configuration with GSDML module IDs */
+    for (int i = 0; i < ar->slot_count && params->expected_count < WTC_MAX_SLOTS; i++) {
+        ar_slot_info_t *slot = &ar->slot_info[i];
+        uint32_t mod_ident, submod_ident;
+        uint16_t data_length;
+        bool is_input;
+
+        if (slot->type == SLOT_TYPE_SENSOR) {
+            /* Input module - use measurement type for GSDML ID */
+            mod_ident = gsdml_get_input_module_ident(slot->measurement_type);
+            submod_ident = gsdml_get_input_submodule_ident(slot->measurement_type);
+            data_length = GSDML_INPUT_DATA_SIZE;  /* 5 bytes: 4B float + 1B quality */
+            is_input = true;
+        } else if (slot->type == SLOT_TYPE_ACTUATOR) {
+            /* Output module - use actuator type for GSDML ID */
+            mod_ident = gsdml_get_output_module_ident(slot->actuator_type);
+            submod_ident = gsdml_get_output_submodule_ident(slot->actuator_type);
+            data_length = GSDML_OUTPUT_DATA_SIZE;  /* 4 bytes: 1B cmd + 1B duty + 2B reserved */
+            is_input = false;
+        } else {
+            continue;  /* Skip unknown slot types */
         }
+
+        params->expected_config[params->expected_count].slot = slot->slot;
+        params->expected_config[params->expected_count].module_ident = mod_ident;
+        params->expected_config[params->expected_count].subslot = slot->subslot > 0 ? slot->subslot : 1;
+        params->expected_config[params->expected_count].submodule_ident = submod_ident;
+        params->expected_config[params->expected_count].data_length = data_length;
+        params->expected_config[params->expected_count].is_input = is_input;
+        params->expected_count++;
+
+        LOG_DEBUG("Slot %d: type=%s mod=0x%08X submod=0x%08X len=%u",
+                  slot->slot, is_input ? "INPUT" : "OUTPUT",
+                  mod_ident, submod_ident, data_length);
     }
 
     params->max_alarm_data_length = 200;
