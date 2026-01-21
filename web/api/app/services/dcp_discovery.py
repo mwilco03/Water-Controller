@@ -191,8 +191,8 @@ def parse_dcp_response(data: bytes) -> DCPDevice | None:
                 name_bytes = block_data[2:]  # Skip block_info
                 try:
                     device.device_name = name_bytes.rstrip(b'\x00').decode('ascii', errors='replace')
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"Failed to decode device name: {e}")
 
         elif option == DCP_OPTION_DEVICE and suboption == DCP_SUBOPTION_DEVICE_ID:
             # Vendor ID and Device ID
@@ -205,8 +205,8 @@ def parse_dcp_response(data: bytes) -> DCPDevice | None:
             if len(block_data) >= 2:
                 try:
                     device.vendor_name = block_data[2:].rstrip(b'\x00').decode('ascii', errors='replace')
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"Failed to decode vendor name: {e}")
 
         elif option == DCP_OPTION_DEVICE and suboption == DCP_SUBOPTION_DEVICE_ROLE:
             # Device role
