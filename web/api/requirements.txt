@@ -27,6 +27,9 @@ httpx==0.28.1
 # Monitoring & System
 psutil==6.1.1
 
+# Network utilities - ICMP ping without CAP_NET_RAW
+icmplib==3.0.4
+
 # POSIX IPC for shared memory communication with C controller
 posix-ipc==1.1.1
 

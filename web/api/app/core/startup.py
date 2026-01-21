@@ -353,56 +353,101 @@ def check_required_python_modules() -> tuple:
 
 def check_net_raw_capability() -> tuple:
     """
-    Verify CAP_NET_RAW capability is available for ICMP ping and DCP discovery.
+    Verify ICMP ping and DCP discovery capabilities.
 
-    This capability is required for:
-    - PROFINET DCP discovery (raw Ethernet frames)
-    - Network ping scans (ICMP raw sockets)
+    Tests capabilities in order of preference:
+    1. Unprivileged ICMP (SOCK_DGRAM) - no CAP_NET_RAW needed
+    2. Privileged ICMP (SOCK_RAW) - requires CAP_NET_RAW
 
-    Without CAP_NET_RAW, these features will fail at runtime with cryptic
-    permission errors. Better to fail fast at startup with actionable guidance.
+    DCP discovery always requires CAP_NET_RAW for raw Ethernet frames.
+    ICMP ping can work without CAP_NET_RAW if net.ipv4.ping_group_range is set.
     """
-    import errno
+    # Test ICMP capabilities using icmplib
+    icmp_unprivileged = False
+    icmp_privileged = False
 
-    # Test 1: Try to create an ICMP raw socket (requires CAP_NET_RAW)
     try:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_ICMP)
+        from icmplib import ping as sync_ping, SocketPermissionError
+
+        # Test unprivileged mode first (preferred)
+        try:
+            sync_ping("127.0.0.1", count=0, timeout=0, privileged=False)
+            icmp_unprivileged = True
+            logger.debug("ICMP unprivileged mode (SOCK_DGRAM) available")
+        except SocketPermissionError:
+            pass
+
+        # Test privileged mode
+        try:
+            sync_ping("127.0.0.1", count=0, timeout=0, privileged=True)
+            icmp_privileged = True
+            logger.debug("ICMP privileged mode (SOCK_RAW) available")
+        except SocketPermissionError:
+            pass
+
+    except ImportError:
+        logger.warning("icmplib not available - falling back to raw socket test")
+        # Fallback to raw socket test
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_ICMP)
+            sock.close()
+            icmp_privileged = True
+        except PermissionError:
+            pass
+
+    # Test DCP capability (always requires raw Ethernet)
+    dcp_available = False
+    try:
+        # AF_PACKET with raw protocol requires CAP_NET_RAW
+        sock = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.htons(0x8892))
         sock.close()
-    except PermissionError:
+        dcp_available = True
+        logger.debug("DCP raw Ethernet socket available")
+    except (PermissionError, OSError):
+        pass
+
+    # Determine overall status
+    if icmp_unprivileged or icmp_privileged:
+        if dcp_available:
+            mode = "unprivileged" if icmp_unprivileged else "privileged"
+            return (
+                ReadinessState.READY,
+                f"ICMP ({mode}) and DCP discovery available",
+                {
+                    "icmp_unprivileged": icmp_unprivileged,
+                    "icmp_privileged": icmp_privileged,
+                    "dcp_available": dcp_available,
+                },
+                None,
+            )
+        else:
+            mode = "unprivileged" if icmp_unprivileged else "privileged"
+            return (
+                ReadinessState.DEGRADED,
+                f"ICMP ping available ({mode}), DCP discovery unavailable",
+                {
+                    "icmp_unprivileged": icmp_unprivileged,
+                    "icmp_privileged": icmp_privileged,
+                    "dcp_available": False,
+                    "affected_features": ["PROFINET DCP discovery"],
+                },
+                "Add CAP_NET_RAW capability for DCP discovery",
+            )
+    else:
         return (
             ReadinessState.FAILED,
-            "CAP_NET_RAW capability missing - cannot create raw sockets",
+            "Cannot create ICMP sockets - ping scans will fail",
             {
-                "error": "EPERM",
-                "affected_features": ["ICMP ping scan", "PROFINET DCP discovery"],
+                "icmp_unprivileged": False,
+                "icmp_privileged": False,
+                "dcp_available": dcp_available,
+                "affected_features": ["ICMP ping scan"] + ([] if dcp_available else ["PROFINET DCP discovery"]),
             },
-            "Recreate container with: docker compose up -d --force-recreate api",
+            (
+                "Either set 'net.ipv4.ping_group_range=0 65535' on host, "
+                "or add CAP_NET_RAW capability to container"
+            ),
         )
-    except OSError as e:
-        if e.errno == errno.EPERM:
-            return (
-                ReadinessState.FAILED,
-                "CAP_NET_RAW capability missing - cannot create raw sockets",
-                {
-                    "error": str(e),
-                    "affected_features": ["ICMP ping scan", "PROFINET DCP discovery"],
-                },
-                "Recreate container with: docker compose up -d --force-recreate api",
-            )
-        # Other OSError (e.g., ENETUNREACH) is not a capability issue
-        return (
-            ReadinessState.DEGRADED,
-            f"Raw socket test failed: {e}",
-            {"error": str(e)},
-            "Check network configuration",
-        )
-
-    return (
-        ReadinessState.READY,
-        "CAP_NET_RAW available - raw sockets enabled",
-        {"icmp_socket": True},
-        None,
-    )
 
 
 def validate_startup(

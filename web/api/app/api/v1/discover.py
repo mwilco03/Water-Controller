@@ -4,14 +4,16 @@ Copyright (C) 2024
 SPDX-License-Identifier: GPL-3.0-or-later
 
 Real network discovery using PROFINET DCP and ICMP ping.
-Requires host network mode and CAP_NET_RAW for full functionality.
+
+ICMP ping uses icmplib with unprivileged mode (SOCK_DGRAM) by default,
+falling back to privileged mode (SOCK_RAW + CAP_NET_RAW) if needed.
+
+DCP discovery still requires CAP_NET_RAW for raw Ethernet frames.
 """
 
 import asyncio
 import logging
-import os
 import socket
-import struct
 import time
 from datetime import datetime, timezone
 from typing import Any
@@ -21,6 +23,9 @@ import ipaddress
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
+
+# icmplib for ICMP ping - supports unprivileged mode without CAP_NET_RAW
+from icmplib import async_ping, async_multiping, SocketPermissionError
 
 from ...core.errors import build_success_response
 from ...models.base import get_db
@@ -249,6 +254,7 @@ class PingResult(BaseModel):
     reachable: bool
     response_time_ms: float | None = None
     hostname: str | None = None
+    error: str | None = None
 
 
 class PingScanResponse(BaseModel):
@@ -262,145 +268,117 @@ class PingScanResponse(BaseModel):
     results: list[PingResult]
 
 
-def _icmp_checksum(data: bytes) -> int:
-    """Calculate ICMP checksum."""
-    if len(data) % 2:
-        data += b'\x00'
-    s = sum(struct.unpack('!%dH' % (len(data) // 2), data))
-    s = (s >> 16) + (s & 0xffff)
-    s += s >> 16
-    return ~s & 0xffff
+# Cache for privileged mode detection - check once at startup
+_icmp_privileged_mode: bool | None = None
 
 
-def _build_icmp_packet(seq: int, identifier: int) -> bytes:
-    """Build ICMP echo request packet."""
-    icmp_type = 8  # Echo request
-    icmp_code = 0
-    checksum = 0
-    payload = b'WTC-PING' + struct.pack('!d', time.time())  # 8 bytes tag + 8 bytes timestamp
+def _detect_icmp_privileged_mode() -> bool:
+    """
+    Detect whether we need privileged mode for ICMP.
 
-    # Build header without checksum
-    header = struct.pack('!BBHHH', icmp_type, icmp_code, checksum, identifier, seq)
-    packet = header + payload
+    Returns True if privileged mode (CAP_NET_RAW) is required,
+    False if unprivileged mode (SOCK_DGRAM) works.
 
-    # Calculate and insert checksum
-    checksum = _icmp_checksum(packet)
-    header = struct.pack('!BBHHH', icmp_type, icmp_code, checksum, identifier, seq)
-    return header + payload
+    This is cached after first call for performance.
+    """
+    global _icmp_privileged_mode
+    if _icmp_privileged_mode is not None:
+        return _icmp_privileged_mode
 
+    # Try unprivileged mode first (preferred - no CAP_NET_RAW needed)
+    try:
+        # Test with a count=0 ping to localhost - just checks socket creation
+        from icmplib import ping as sync_ping
+        sync_ping("127.0.0.1", count=0, timeout=0, privileged=False)
+        _icmp_privileged_mode = False
+        logger.info("ICMP: Using unprivileged mode (SOCK_DGRAM) - no CAP_NET_RAW needed")
+        return False
+    except SocketPermissionError:
+        pass
 
-def _parse_icmp_reply(data: bytes, expected_id: int) -> tuple[str, int, float] | None:
-    """Parse ICMP reply, return (ip, seq, rtt_ms) or None."""
-    if len(data) < 28:  # IP header (20) + ICMP header (8)
-        return None
+    # Try privileged mode (requires CAP_NET_RAW)
+    try:
+        from icmplib import ping as sync_ping
+        sync_ping("127.0.0.1", count=0, timeout=0, privileged=True)
+        _icmp_privileged_mode = True
+        logger.info("ICMP: Using privileged mode (SOCK_RAW) - CAP_NET_RAW available")
+        return True
+    except SocketPermissionError:
+        pass
 
-    # IP header - extract source address
-    ip_header = data[:20]
-    src_ip = '.'.join(str(b) for b in ip_header[12:16])
-
-    # ICMP header starts after IP header
-    icmp_header = data[20:28]
-    icmp_type, icmp_code, checksum, identifier, seq = struct.unpack('!BBHHH', icmp_header)
-
-    # Type 0 = Echo reply
-    if icmp_type != 0:
-        return None
-
-    # Check identifier matches our requests
-    if identifier != expected_id:
-        return None
-
-    # Extract timestamp from payload if present
-    rtt_ms = 0.0
-    if len(data) >= 36:  # Has our payload
-        payload = data[28:]
-        if payload[:8] == b'WTC-PING' and len(payload) >= 16:
-            send_time = struct.unpack('!d', payload[8:16])[0]
-            rtt_ms = (time.time() - send_time) * 1000
-
-    return (src_ip, seq, rtt_ms)
+    # Neither mode works - will fail at runtime with clear error
+    logger.error(
+        "ICMP: Neither privileged nor unprivileged mode available. "
+        "Set net.ipv4.ping_group_range or add CAP_NET_RAW capability."
+    )
+    _icmp_privileged_mode = True  # Default to privileged, will fail with clear error
+    return True
 
 
 async def icmp_ping_scan(hosts: list[str], timeout_sec: float = 2.0) -> dict[str, PingResult]:
     """
-    Perform ICMP ping scan using raw sockets.
+    Perform ICMP ping scan using icmplib.
+
+    Uses unprivileged mode (SOCK_DGRAM) if available, falling back to
+    privileged mode (SOCK_RAW + CAP_NET_RAW) if needed.
 
     Much faster than spawning ping processes - can scan 254 hosts in ~2 seconds.
-    Requires CAP_NET_RAW capability.
     """
     results: dict[str, PingResult] = {}
-    identifier = os.getpid() & 0xFFFF
-    send_times: dict[str, float] = {}
+    privileged = _detect_icmp_privileged_mode()
 
     try:
-        # Create raw ICMP socket
-        sock = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_ICMP)
-        sock.setblocking(False)
-        sock.settimeout(0.01)  # Non-blocking reads
-    except PermissionError:
+        # Use icmplib's async_multiping for efficient batch scanning
+        ping_results = await async_multiping(
+            hosts,
+            count=1,
+            timeout=timeout_sec,
+            privileged=privileged,
+            concurrent_tasks=50,
+        )
+
+        for host_result in ping_results:
+            ip = host_result.address
+            if host_result.is_alive:
+                results[ip] = PingResult(
+                    ip_address=ip,
+                    reachable=True,
+                    response_time_ms=round(host_result.avg_rtt, 2) if host_result.avg_rtt else None,
+                )
+            else:
+                results[ip] = PingResult(
+                    ip_address=ip,
+                    reachable=False,
+                )
+
+    except SocketPermissionError as e:
+        logger.error(f"ICMP ping failed - insufficient permissions: {e}")
         raise HTTPException(
             status_code=503,
             detail={
                 "error": "ICMP_PERMISSION_DENIED",
-                "message": "Raw socket creation requires CAP_NET_RAW capability",
-                "suggested_action": "Ensure container has cap_add: [NET_RAW] in docker-compose.yml"
+                "message": "Cannot create ICMP socket - insufficient permissions",
+                "suggested_action": (
+                    "Either set 'net.ipv4.ping_group_range=0 65535' in container, "
+                    "or add CAP_NET_RAW capability"
+                ),
             }
         )
-    except OSError as e:
+    except Exception as e:
+        logger.error(f"ICMP ping scan failed: {e}")
         raise HTTPException(
             status_code=503,
             detail={
-                "error": "ICMP_SOCKET_ERROR",
-                "message": f"Failed to create ICMP socket: {e}",
-                "suggested_action": "Check network configuration and capabilities"
+                "error": "ICMP_SCAN_ERROR",
+                "message": f"Ping scan failed: {e}",
+                "suggested_action": "Check network configuration",
             }
         )
 
-    try:
-        # Send ICMP echo requests to all hosts
-        for seq, ip in enumerate(hosts):
-            packet = _build_icmp_packet(seq, identifier)
-            try:
-                sock.sendto(packet, (ip, 0))
-                send_times[ip] = time.time()
-            except OSError as e:
-                logger.debug(f"Failed to send ping to {ip}: {e}")
-                results[ip] = PingResult(ip_address=ip, reachable=False, error=str(e))
-
-        # Collect replies until timeout
-        end_time = time.time() + timeout_sec
-        received = set()
-
-        while time.time() < end_time and len(received) < len(hosts):
-            try:
-                data, addr = sock.recvfrom(1024)
-                parsed = _parse_icmp_reply(data, identifier)
-                if parsed:
-                    src_ip, seq, rtt_ms = parsed
-                    if src_ip in send_times and src_ip not in received:
-                        received.add(src_ip)
-                        # Use calculated RTT from packet, or calculate from send time
-                        if rtt_ms == 0:
-                            rtt_ms = (time.time() - send_times[src_ip]) * 1000
-                        results[src_ip] = PingResult(
-                            ip_address=src_ip,
-                            reachable=True,
-                            response_time_ms=round(rtt_ms, 2)
-                        )
-            except socket.timeout:
-                await asyncio.sleep(0.001)  # Brief yield to event loop
-            except BlockingIOError:
-                await asyncio.sleep(0.001)
-            except OSError:
-                await asyncio.sleep(0.001)
-
-        # Mark unreached hosts
-        for ip in hosts:
-            if ip not in results:
-                results[ip] = PingResult(ip_address=ip, reachable=False)
-
-    finally:
-        sock.close()
+    # Ensure all requested hosts have results
+    for ip in hosts:
+        if ip not in results:
+            results[ip] = PingResult(ip_address=ip, reachable=False)
 
     return results
 
@@ -607,6 +585,145 @@ async def ping_scan_subnet(request: PingScanRequest) -> dict[str, Any]:
     )
 
     return build_success_response(response.model_dump())
+
+
+# ==================== Single Host Ping ====================
+
+
+class SinglePingRequest(BaseModel):
+    """Request for single host ping."""
+
+    ip_address: str = Field(..., description="IP address to ping")
+    timeout_ms: int = Field(1000, ge=100, le=10000, description="Ping timeout in milliseconds")
+    count: int = Field(3, ge=1, le=10, description="Number of ping attempts")
+
+    @field_validator("ip_address")
+    @classmethod
+    def validate_ip(cls, v: str) -> str:
+        """Validate IP address."""
+        try:
+            ipaddress.ip_address(v)
+            return v
+        except ValueError:
+            raise ValueError(f"Invalid IP address: {v}")
+
+
+class SinglePingResponse(BaseModel):
+    """Response for single host ping."""
+
+    ip_address: str
+    reachable: bool
+    packets_sent: int
+    packets_received: int
+    packet_loss_percent: float
+    min_rtt_ms: float | None = None
+    avg_rtt_ms: float | None = None
+    max_rtt_ms: float | None = None
+    error: str | None = None
+
+
+@router.post("/ping")
+async def ping_single_host(request: SinglePingRequest) -> dict[str, Any]:
+    """
+    Ping a single IP address using ICMP echo requests.
+
+    Performs multiple ping attempts (default 3) and returns statistics
+    including packet loss and round-trip times.
+
+    Uses unprivileged ICMP (SOCK_DGRAM) if available, falling back to
+    privileged mode (SOCK_RAW + CAP_NET_RAW) if needed.
+
+    Use this endpoint to:
+    - Verify connectivity to a specific RTU before configuration
+    - Diagnose network issues with a particular device
+    - Check if a host is reachable before DCP discovery
+    """
+    logger.info(f"Pinging {request.ip_address} ({request.count} attempts, timeout {request.timeout_ms}ms)")
+
+    timeout_sec = request.timeout_ms / 1000.0
+    privileged = _detect_icmp_privileged_mode()
+
+    try:
+        # Use icmplib's async_ping for single host
+        result = await async_ping(
+            request.ip_address,
+            count=request.count,
+            timeout=timeout_sec,
+            privileged=privileged,
+        )
+
+        response = SinglePingResponse(
+            ip_address=request.ip_address,
+            reachable=result.is_alive,
+            packets_sent=result.packets_sent,
+            packets_received=result.packets_received,
+            packet_loss_percent=round(result.packet_loss * 100, 1),
+            min_rtt_ms=round(result.min_rtt, 2) if result.min_rtt else None,
+            avg_rtt_ms=round(result.avg_rtt, 2) if result.avg_rtt else None,
+            max_rtt_ms=round(result.max_rtt, 2) if result.max_rtt else None,
+        )
+
+        logger.info(
+            f"Ping {request.ip_address}: {result.packets_received}/{result.packets_sent} received, "
+            f"{result.packet_loss * 100:.1f}% loss"
+            + (f", avg RTT {result.avg_rtt:.2f}ms" if result.avg_rtt else "")
+        )
+
+        return build_success_response(response.model_dump())
+
+    except SocketPermissionError as e:
+        logger.error(f"ICMP ping failed - insufficient permissions: {e}")
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "ICMP_PERMISSION_DENIED",
+                "message": "Cannot create ICMP socket - insufficient permissions",
+                "suggested_action": (
+                    "Either set 'net.ipv4.ping_group_range=0 65535' in container, "
+                    "or add CAP_NET_RAW capability"
+                ),
+            }
+        )
+    except Exception as e:
+        logger.error(f"ICMP ping failed: {e}")
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "ICMP_PING_ERROR",
+                "message": f"Ping failed: {e}",
+                "suggested_action": "Check network configuration",
+            }
+        )
+
+
+@router.get("/ping/{ip_address}")
+async def ping_single_host_get(
+    ip_address: str,
+    timeout_ms: int = 1000,
+    count: int = 3,
+) -> dict[str, Any]:
+    """
+    Ping a single IP address (GET variant for convenience).
+
+    Simpler alternative to POST /ping for quick connectivity checks.
+    Same functionality as POST /ping but with query parameters.
+
+    Uses unprivileged ICMP if available, privileged mode otherwise.
+    """
+    # Validate IP address
+    try:
+        ipaddress.ip_address(ip_address)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Invalid IP address: {ip_address}")
+
+    # Validate parameters
+    if not (100 <= timeout_ms <= 10000):
+        raise HTTPException(status_code=400, detail="timeout_ms must be between 100 and 10000")
+    if not (1 <= count <= 10):
+        raise HTTPException(status_code=400, detail="count must be between 1 and 10")
+
+    request = SinglePingRequest(ip_address=ip_address, timeout_ms=timeout_ms, count=count)
+    return await ping_single_host(request)
 
 
 # ==================== HTTP Probe ====================
