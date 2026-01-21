@@ -855,6 +855,166 @@ async def update_web_config(
     return build_success_response(_web_config)
 
 
+# ============== Controller Diagnostics ==============
+
+
+@router.get("/diagnostics/controller")
+async def get_controller_diagnostics(
+    db: Session = Depends(get_db)
+) -> dict[str, Any]:
+    """
+    Get detailed PROFINET controller diagnostics.
+
+    Shows:
+    - Shared memory connection status
+    - Controller state (running/stopped)
+    - RTUs registered in controller vs database
+    - Command queue status
+    - IPC health
+
+    Use this to debug why PROFINET communications aren't working.
+    """
+    from ...services.profinet_client import get_profinet_client, SHM_AVAILABLE
+    from ...services.shm_client import get_shm_client
+
+    diag = {
+        "timestamp": datetime.now(UTC).isoformat(),
+        "shm_module_available": SHM_AVAILABLE,
+        "shm_connected": False,
+        "controller_running": False,
+        "demo_mode": False,
+        "rtus_in_controller": [],
+        "rtus_in_database": [],
+        "mismatches": [],
+        "last_update_ms": None,
+        "command_sequence": None,
+        "command_ack": None,
+        "ipc_health": "unknown",
+    }
+
+    # Check profinet client status
+    try:
+        profinet = get_profinet_client()
+        diag["demo_mode"] = profinet.is_demo_mode()
+        diag["shm_connected"] = profinet.is_connected()
+        diag["controller_running"] = profinet.is_controller_running()
+
+        # Get status from profinet client
+        status = profinet.get_status()
+        diag["profinet_status"] = status
+    except Exception as e:
+        diag["profinet_client_error"] = str(e)
+
+    # Get detailed shared memory info
+    try:
+        shm = get_shm_client()
+        if shm and shm.is_connected():
+            diag["shm_connected"] = True
+
+            # Get full status
+            shm_status = shm.get_status()
+            diag["last_update_ms"] = shm_status.get("last_update_ms")
+            diag["controller_running"] = shm_status.get("controller_running", False)
+            diag["total_rtus_in_shm"] = shm_status.get("total_rtus", 0)
+            diag["connected_rtus_in_shm"] = shm_status.get("connected_rtus", 0)
+
+            # Get RTUs from controller's shared memory
+            shm_rtus = shm.get_rtus()
+            for rtu in shm_rtus:
+                state_code = rtu.get("connection_state", 5)
+                from ...services.profinet_client import CONNECTION_STATE_NAMES
+                state_name = CONNECTION_STATE_NAMES.get(state_code, f"UNKNOWN({state_code})")
+                diag["rtus_in_controller"].append({
+                    "station_name": rtu.get("station_name"),
+                    "ip_address": rtu.get("ip_address"),
+                    "connection_state": state_name,
+                    "connection_state_code": state_code,
+                    "vendor_id": rtu.get("vendor_id"),
+                    "device_id": rtu.get("device_id"),
+                    "sensor_count": len(rtu.get("sensors", [])),
+                    "actuator_count": len(rtu.get("actuators", [])),
+                })
+
+            # Check command queue state
+            # Read raw command sequence and ack values
+            import struct
+            import ctypes
+            try:
+                from ....shm_client import WtcSharedMemory
+
+                # Calculate offsets for command_sequence and command_ack
+                # They are at the end of the struct after the command
+                cmd_seq_offset = ctypes.sizeof(WtcSharedMemory) - 8
+                shm.mm.seek(cmd_seq_offset)
+                seq_data = shm.mm.read(8)
+                if len(seq_data) >= 8:
+                    cmd_seq, cmd_ack = struct.unpack('II', seq_data)
+                    diag["command_sequence"] = cmd_seq
+                    diag["command_ack"] = cmd_ack
+                    diag["commands_pending"] = cmd_seq - cmd_ack if cmd_seq >= cmd_ack else 0
+            except ImportError as ie:
+                diag["command_queue_error"] = f"Could not import shm structures: {ie}"
+
+            diag["ipc_health"] = "healthy" if diag["controller_running"] else "controller_stopped"
+        else:
+            diag["ipc_health"] = "disconnected"
+            diag["shm_error"] = "Shared memory not connected - C controller may not be running"
+    except Exception as e:
+        diag["shm_error"] = str(e)
+        diag["ipc_health"] = "error"
+
+    # Get RTUs from database
+    try:
+        db_rtus = db.query(RTU).all()
+        for rtu in db_rtus:
+            diag["rtus_in_database"].append({
+                "station_name": rtu.station_name,
+                "ip_address": rtu.ip_address,
+                "state": rtu.state,
+                "vendor_id": rtu.vendor_id,
+                "device_id": rtu.device_id,
+            })
+    except Exception as e:
+        diag["database_error"] = str(e)
+
+    # Find mismatches between controller and database
+    controller_names = {r["station_name"] for r in diag["rtus_in_controller"]}
+    database_names = {r["station_name"] for r in diag["rtus_in_database"]}
+
+    in_db_not_controller = database_names - controller_names
+    in_controller_not_db = controller_names - database_names
+
+    if in_db_not_controller:
+        diag["mismatches"].append({
+            "issue": "RTUs in database but NOT in controller",
+            "rtus": list(in_db_not_controller),
+            "action": "These RTUs need to be registered with the controller via add_rtu command",
+        })
+
+    if in_controller_not_db:
+        diag["mismatches"].append({
+            "issue": "RTUs in controller but NOT in database",
+            "rtus": list(in_controller_not_db),
+            "action": "These RTUs exist in controller memory but not in database",
+        })
+
+    # Check for state mismatches
+    for db_rtu in diag["rtus_in_database"]:
+        for ctrl_rtu in diag["rtus_in_controller"]:
+            if db_rtu["station_name"] == ctrl_rtu["station_name"]:
+                db_state = db_rtu["state"]
+                ctrl_state = ctrl_rtu["connection_state"]
+                if db_state != ctrl_state:
+                    diag["mismatches"].append({
+                        "issue": "State mismatch",
+                        "rtu": db_rtu["station_name"],
+                        "database_state": db_state,
+                        "controller_state": ctrl_state,
+                    })
+
+    return build_success_response(diag)
+
+
 @router.get("/interfaces")
 async def get_network_interfaces() -> dict[str, Any]:
     """
