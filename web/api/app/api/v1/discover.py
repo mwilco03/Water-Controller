@@ -383,3 +383,217 @@ async def ping_scan_subnet(request: PingScanRequest) -> dict[str, Any]:
     )
 
     return build_success_response(response.model_dump())
+
+
+# ==================== HTTP Probe ====================
+
+
+class HttpProbeRequest(BaseModel):
+    """Request for HTTP probe."""
+
+    ip_address: str = Field(..., description="IP address to probe")
+    port: int = Field(8080, ge=1, le=65535, description="Port to connect to")
+    path: str = Field("/health", description="URL path to request")
+    timeout_ms: int = Field(3000, ge=100, le=30000, description="Request timeout in milliseconds")
+
+    @field_validator("ip_address")
+    @classmethod
+    def validate_ip(cls, v: str) -> str:
+        """Validate IP address."""
+        try:
+            ipaddress.ip_address(v)
+            return v
+        except ValueError:
+            raise ValueError(f"Invalid IP address: {v}")
+
+
+class HttpProbeResult(BaseModel):
+    """Result of HTTP probe."""
+
+    ip_address: str
+    port: int
+    path: str
+    reachable: bool
+    status_code: int | None = None
+    response_time_ms: float | None = None
+    response_body: str | None = None
+    error: str | None = None
+    is_water_treat_rtu: bool = False
+
+
+@router.post("/http-probe")
+async def http_probe_rtu(request: HttpProbeRequest) -> dict[str, Any]:
+    """
+    Probe an RTU via HTTP to check its health API.
+
+    Makes an HTTP GET request to the specified IP:port/path and returns
+    the response. Useful for verifying RTU connectivity and checking
+    if a device is a Water-Treat RTU.
+
+    Returns:
+        - status_code: HTTP response code (if reachable)
+        - response_body: Response text (truncated to 4KB)
+        - is_water_treat_rtu: True if response looks like Water-Treat RTU
+        - error: Error message if request failed
+    """
+    import httpx
+
+    url = f"http://{request.ip_address}:{request.port}{request.path}"
+    timeout_sec = request.timeout_ms / 1000.0
+
+    logger.info(f"HTTP probe: {url} (timeout: {timeout_sec}s)")
+
+    try:
+        start = time.time()
+        async with httpx.AsyncClient(timeout=timeout_sec) as client:
+            response = await client.get(url)
+        elapsed = (time.time() - start) * 1000
+
+        # Truncate response body to 4KB
+        body = response.text[:4096] if response.text else None
+
+        # Check if this looks like a Water-Treat RTU
+        is_wt_rtu = False
+        if body:
+            # Look for Water-Treat RTU signatures in response
+            lower_body = body.lower()
+            if any(sig in lower_body for sig in ["water-treat", "watertreatrtu", "wtc-rtu", "rtu_status"]):
+                is_wt_rtu = True
+
+        result = HttpProbeResult(
+            ip_address=request.ip_address,
+            port=request.port,
+            path=request.path,
+            reachable=True,
+            status_code=response.status_code,
+            response_time_ms=round(elapsed, 2),
+            response_body=body,
+            is_water_treat_rtu=is_wt_rtu,
+        )
+
+        logger.info(f"HTTP probe {url}: {response.status_code} in {elapsed:.1f}ms")
+        return build_success_response(result.model_dump())
+
+    except httpx.ConnectTimeout:
+        logger.warning(f"HTTP probe {url}: connection timeout")
+        return build_success_response(HttpProbeResult(
+            ip_address=request.ip_address,
+            port=request.port,
+            path=request.path,
+            reachable=False,
+            error=f"Connection timeout after {request.timeout_ms}ms",
+        ).model_dump())
+
+    except httpx.ConnectError as e:
+        logger.warning(f"HTTP probe {url}: connection refused - {e}")
+        return build_success_response(HttpProbeResult(
+            ip_address=request.ip_address,
+            port=request.port,
+            path=request.path,
+            reachable=False,
+            error=f"Connection refused: {e}",
+        ).model_dump())
+
+    except httpx.ReadTimeout:
+        logger.warning(f"HTTP probe {url}: read timeout")
+        return build_success_response(HttpProbeResult(
+            ip_address=request.ip_address,
+            port=request.port,
+            path=request.path,
+            reachable=False,
+            error=f"Read timeout after {request.timeout_ms}ms",
+        ).model_dump())
+
+    except Exception as e:
+        logger.error(f"HTTP probe {url} failed: {type(e).__name__}: {e}")
+        return build_success_response(HttpProbeResult(
+            ip_address=request.ip_address,
+            port=request.port,
+            path=request.path,
+            reachable=False,
+            error=f"{type(e).__name__}: {e}",
+        ).model_dump())
+
+
+class HttpProbeBatchRequest(BaseModel):
+    """Request for batch HTTP probe."""
+
+    ip_addresses: list[str] = Field(..., description="List of IP addresses to probe")
+    port: int = Field(8080, ge=1, le=65535, description="Port to connect to")
+    path: str = Field("/health", description="URL path to request")
+    timeout_ms: int = Field(2000, ge=100, le=10000, description="Request timeout per host")
+    max_concurrent: int = Field(10, ge=1, le=50, description="Max concurrent requests")
+
+
+@router.post("/http-probe-batch")
+async def http_probe_batch(request: HttpProbeBatchRequest) -> dict[str, Any]:
+    """
+    Probe multiple RTUs via HTTP in parallel.
+
+    Makes HTTP GET requests to all specified IPs and returns results.
+    Useful for scanning a subnet after ping-scan to identify Water-Treat RTUs.
+    """
+    import httpx
+
+    results: list[HttpProbeResult] = []
+    semaphore = asyncio.Semaphore(request.max_concurrent)
+    timeout_sec = request.timeout_ms / 1000.0
+
+    async def probe_one(ip: str) -> HttpProbeResult:
+        url = f"http://{ip}:{request.port}{request.path}"
+        async with semaphore:
+            try:
+                start = time.time()
+                async with httpx.AsyncClient(timeout=timeout_sec) as client:
+                    response = await client.get(url)
+                elapsed = (time.time() - start) * 1000
+
+                body = response.text[:4096] if response.text else None
+                is_wt_rtu = False
+                if body:
+                    lower_body = body.lower()
+                    if any(sig in lower_body for sig in ["water-treat", "watertreatrtu", "wtc-rtu", "rtu_status"]):
+                        is_wt_rtu = True
+
+                return HttpProbeResult(
+                    ip_address=ip,
+                    port=request.port,
+                    path=request.path,
+                    reachable=True,
+                    status_code=response.status_code,
+                    response_time_ms=round(elapsed, 2),
+                    response_body=body,
+                    is_water_treat_rtu=is_wt_rtu,
+                )
+            except Exception as e:
+                return HttpProbeResult(
+                    ip_address=ip,
+                    port=request.port,
+                    path=request.path,
+                    reachable=False,
+                    error=f"{type(e).__name__}: {e}",
+                )
+
+    start_time = time.time()
+    tasks = [probe_one(ip) for ip in request.ip_addresses]
+    results = await asyncio.gather(*tasks)
+    duration = time.time() - start_time
+
+    # Sort: reachable first, then Water-Treat RTUs first
+    results.sort(key=lambda r: (not r.reachable, not r.is_water_treat_rtu, r.ip_address))
+
+    reachable = [r for r in results if r.reachable]
+    water_treat_rtus = [r for r in results if r.is_water_treat_rtu]
+
+    logger.info(
+        f"HTTP batch probe complete: {len(reachable)}/{len(request.ip_addresses)} reachable, "
+        f"{len(water_treat_rtus)} Water-Treat RTUs in {duration:.2f}s"
+    )
+
+    return build_success_response({
+        "total_probed": len(request.ip_addresses),
+        "reachable_count": len(reachable),
+        "water_treat_rtu_count": len(water_treat_rtus),
+        "scan_duration_seconds": round(duration, 2),
+        "results": [r.model_dump() for r in results],
+    })
