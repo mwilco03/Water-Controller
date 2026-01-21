@@ -46,6 +46,10 @@ from .services.websocket_publisher import (
     publisher_lifespan_startup,
     publisher_lifespan_shutdown,
 )
+from .services.controller_heartbeat import (
+    heartbeat_lifespan_startup,
+    heartbeat_lifespan_shutdown,
+)
 from .core.ports import get_allowed_origins
 
 # Setup logging
@@ -99,6 +103,9 @@ async def lifespan(app: FastAPI):
     # Start WebSocket data publisher for real-time updates
     await publisher_lifespan_startup()
 
+    # Start controller heartbeat for automatic reconnection
+    await heartbeat_lifespan_startup()
+
     # Log final startup status
     if startup_result.is_fully_healthy:
         logger.info("STARTUP COMPLETE: All systems operational")
@@ -110,6 +117,9 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     logger.info("Shutting down Water Treatment Controller API")
+
+    # Stop controller heartbeat
+    await heartbeat_lifespan_shutdown()
 
     # Stop WebSocket data publisher
     await publisher_lifespan_shutdown()
@@ -359,11 +369,17 @@ async def health_check() -> dict[str, Any]:
         overall_healthy = False
 
     # Check PROFINET controller (shared memory IPC)
+    # Note: is_connected() performs lazy reconnect if disconnected
     try:
         profinet = get_profinet_client()
-        if profinet.is_connected():
+        was_connected = profinet._client is not None and profinet._client.is_connected() if hasattr(profinet, '_client') else False
+
+        # is_connected() attempts lazy reconnect
+        now_connected = profinet.is_connected()
+
+        if now_connected:
             controller_status = profinet.get_status()
-            if controller_status.get("simulation_mode"):
+            if controller_status.get("simulation_mode") or controller_status.get("demo_mode"):
                 subsystems["profinet_controller"] = {
                     "status": "simulation",
                     "note": "Running without hardware controller"
@@ -372,10 +388,17 @@ async def health_check() -> dict[str, Any]:
             else:
                 subsystems["profinet_controller"] = {
                     "status": "ok",
-                    "controller_running": profinet.is_controller_running()
+                    "controller_running": profinet.is_controller_running(),
+                    "reconnected": not was_connected and now_connected,
                 }
         else:
-            subsystems["profinet_controller"] = {"status": "disconnected"}
+            # Explicitly attempt reconnect on health check
+            reconnect_success = profinet.reconnect(force=False)
+            subsystems["profinet_controller"] = {
+                "status": "disconnected",
+                "reconnect_attempted": True,
+                "reconnect_success": reconnect_success,
+            }
             degraded_components.append("profinet_controller")
     except Exception as e:
         subsystems["profinet_controller"] = {"status": "error", "error": str(e)}

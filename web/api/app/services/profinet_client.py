@@ -85,6 +85,8 @@ class ProfinetClient:
     def __init__(self):
         self._client: Any | None = None
         self._demo_mode = DEMO_ENABLED
+        self._last_reconnect_attempt: float = 0
+        self._reconnect_cooldown: float = 5.0  # Minimum seconds between reconnect attempts
 
         # Only enable demo service when explicitly requested
         if self._demo_mode:
@@ -120,11 +122,76 @@ class ProfinetClient:
             logger.error(f"Could not connect to PROFINET controller: {e}")
             return False
 
+    def reconnect(self, force: bool = False) -> bool:
+        """
+        Attempt to reconnect to the PROFINET controller.
+
+        Args:
+            force: If True, ignore cooldown and reconnect immediately.
+
+        Returns:
+            True if connected after attempt, False otherwise.
+        """
+        import time
+
+        if self._demo_mode:
+            return True
+
+        if not SHM_AVAILABLE:
+            return False
+
+        # Respect cooldown unless forced
+        now = time.time()
+        if not force and (now - self._last_reconnect_attempt) < self._reconnect_cooldown:
+            logger.debug("Reconnect cooldown active, skipping")
+            return self.is_connected()
+
+        self._last_reconnect_attempt = now
+
+        # Try to get a fresh connection from shm_client
+        try:
+            self._client = get_client()
+            if self._client.is_connected():
+                logger.info("Successfully reconnected to PROFINET controller")
+                return True
+            else:
+                # shm_client.get_client() attempts reconnect internally
+                logger.debug("Reconnect attempt: shared memory still not available")
+                return False
+        except Exception as e:
+            logger.warning(f"Reconnect failed: {e}")
+            return False
+
+    def _ensure_connected(self) -> bool:
+        """
+        Lazy reconnect: ensure we're connected before operations.
+
+        Called internally before operations that need the controller.
+        Attempts reconnection if not currently connected.
+        """
+        if self._demo_mode:
+            return True
+
+        # Already connected?
+        if self._client and self._client.is_connected():
+            return True
+
+        # Try to reconnect (respects cooldown)
+        return self.reconnect()
+
     def is_connected(self) -> bool:
-        """Check if connected to the controller."""
+        """
+        Check if connected to the controller.
+
+        Note: This performs a lazy reconnect attempt if disconnected.
+        """
         if self._demo_mode:
             demo = _get_demo_service()
             return demo is not None and demo.enabled
+
+        # Try lazy reconnect if not connected
+        if not self._client or not self._client.is_connected():
+            self._ensure_connected()
 
         if self._client:
             try:
