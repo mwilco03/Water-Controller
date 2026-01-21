@@ -28,6 +28,7 @@ set -euo pipefail
 # Early parse --branch argument before module loading
 # This allows: curl ... | bash -s -- fresh --branch feature-branch
 _bootstrap_branch="${WTC_BOOTSTRAP_BRANCH:-main}"
+_prev_arg=""
 for _arg in "$@"; do
     if [[ "$_prev_arg" == "--branch" ]]; then
         _bootstrap_branch="$_arg"
