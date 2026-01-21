@@ -38,10 +38,10 @@ export function isAuthenticated(): boolean {
 export interface RTUDevice {
   station_name: string;
   ip_address: string;
-  vendor_id: number;
-  device_id: number;
+  vendor_id: string | null;  // Hex string e.g. "0x002A"
+  device_id: string | null;  // Hex string e.g. "0x0405"
   state: string;
-  slot_count: number;
+  slot_count: number | null;
   sensors: SensorData[];
   actuators: ActuatorState[];
 }

@@ -72,11 +72,14 @@ async def create_rtu(
     profinet = get_profinet_client()
     try:
         if profinet.is_connected():
+            # Parse hex strings to integers for controller
+            vendor_int = int(rtu.vendor_id, 16) if rtu.vendor_id else 0
+            device_int = int(rtu.device_id, 16) if rtu.device_id else 0
             controller_registered = profinet.add_rtu(
                 rtu.station_name,
                 rtu.ip_address,
-                rtu.vendor_id or 0,
-                rtu.device_id or 0,
+                vendor_int,
+                device_int,
                 rtu.slot_count or 8
             )
             if controller_registered:
@@ -249,12 +252,16 @@ async def connect_rtu(
     # This handles RTUs added before the auto-register fix
     try:
         if profinet.is_connected():
+            # Parse hex strings to integers for controller
+            # vendor_id/device_id are stored as "0x002A" but controller expects ints
+            vendor_int = int(rtu.vendor_id, 16) if rtu.vendor_id else 0
+            device_int = int(rtu.device_id, 16) if rtu.device_id else 0
             # Try to add RTU to controller (idempotent - OK if already exists)
             profinet.add_rtu(
                 rtu.station_name,
                 rtu.ip_address,
-                rtu.vendor_id or 0,
-                rtu.device_id or 0,
+                vendor_int,
+                device_int,
                 rtu.slot_count or 8
             )
             logger.debug(f"Ensured RTU {name} is registered with controller")
@@ -302,9 +309,10 @@ async def disconnect_rtu(
     db: Session = Depends(get_db)
 ) -> dict[str, Any]:
     """
-    Gracefully close PROFINET connection.
+    Gracefully close PROFINET connection or abort connection attempt.
 
-    RTU must be RUNNING or ERROR. Sends disconnect command to controller.
+    RTU must be RUNNING, ERROR, or CONNECTING. Sends disconnect command to controller.
+    If RTU is CONNECTING, this aborts the connection attempt.
     """
     from ...services.profinet_client import ControllerNotConnectedError
 
@@ -313,8 +321,7 @@ async def disconnect_rtu(
     if rtu.state == RtuState.OFFLINE:
         raise RtuNotConnectedError(name, rtu.state)
 
-    if rtu.state == RtuState.CONNECTING:
-        raise RtuBusyError(name, rtu.state)
+    was_connecting = rtu.state == RtuState.CONNECTING
 
     # Send disconnect command to PROFINET controller
     profinet = get_profinet_client()
@@ -322,12 +329,15 @@ async def disconnect_rtu(
         success = profinet.disconnect_rtu(name)
         if success:
             # Controller accepted disconnect - update state
-            rtu.update_state(RtuState.OFFLINE)
+            rtu.update_state(
+                RtuState.OFFLINE,
+                reason="Connection aborted by user" if was_connecting else "Disconnected by user"
+            )
             db.commit()
             response_data = DisconnectResponse(
                 station_name=name,
                 state=RtuState.OFFLINE,
-                message="Disconnected successfully"
+                message="Connection aborted" if was_connecting else "Disconnected successfully"
             )
         else:
             # Controller rejected but didn't raise
@@ -338,12 +348,15 @@ async def disconnect_rtu(
     except ControllerNotConnectedError as e:
         # No controller - just update DB state anyway (graceful degradation)
         logger.warning(f"No controller connection for disconnect, updating DB state only: {e}")
-        rtu.update_state(RtuState.OFFLINE)
+        rtu.update_state(
+            RtuState.OFFLINE,
+            reason="Connection aborted (no controller)" if was_connecting else "Disconnected (no controller)"
+        )
         db.commit()
         response_data = DisconnectResponse(
             station_name=name,
             state=RtuState.OFFLINE,
-            message="Disconnected (DB only - no controller connection)"
+            message="Connection aborted (DB only)" if was_connecting else "Disconnected (DB only - no controller)"
         )
 
     return build_success_response(response_data.model_dump())
@@ -658,11 +671,14 @@ async def refresh_rtu_inventory(
         # Ensure RTU is registered with controller
         try:
             if profinet.is_connected():
+                # Parse hex strings to integers for controller
+                vendor_int = int(rtu.vendor_id, 16) if rtu.vendor_id else 0
+                device_int = int(rtu.device_id, 16) if rtu.device_id else 0
                 profinet.add_rtu(
                     rtu.station_name,
                     rtu.ip_address,
-                    rtu.vendor_id or 0,
-                    rtu.device_id or 0,
+                    vendor_int,
+                    device_int,
                     rtu.slot_count or 8
                 )
         except Exception as e:
@@ -678,7 +694,7 @@ async def refresh_rtu_inventory(
                 return build_success_response({
                     "status": "connecting",
                     "message": "Connection initiated - refresh again in a few seconds",
-                    "state": RtuState.CONNECTING.value
+                    "state": RtuState.CONNECTING
                 })
             else:
                 rtu.update_state(RtuState.OFFLINE, error="Controller rejected connect")
@@ -697,7 +713,7 @@ async def refresh_rtu_inventory(
         return build_success_response({
             "status": "connecting",
             "message": "Connection in progress - refresh again when RUNNING",
-            "state": RtuState.CONNECTING.value
+            "state": RtuState.CONNECTING
         })
 
     # Must be RUNNING to refresh inventory

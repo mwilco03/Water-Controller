@@ -282,10 +282,10 @@ export default function RTUsPage() {
         <div className="flex gap-3">
           <button
             onClick={() => setShowDiscovery(!showDiscovery)}
-            className={`px-4 py-2 rounded text-white transition-colors ${
+            className={`px-4 py-2 rounded transition-colors ${
               showDiscovery
-                ? 'bg-status-info hover:bg-status-info/90'
-                : 'bg-hmi-panel hover:bg-hmi-panel/90'
+                ? 'bg-status-info hover:bg-status-info/90 text-white'
+                : 'bg-gray-600 hover:bg-gray-700 text-white'
             }`}
           >
             {showDiscovery ? 'Hide Discovery' : 'Scan Network'}
@@ -395,7 +395,7 @@ export default function RTUsPage() {
                       )}
                       Connect
                     </button>
-                  ) : selectedRtu.connection_state !== 'CONNECTING' && (
+                  ) : (
                     <button
                       onClick={() => disconnectRtu(selectedRtu.station_name)}
                       disabled={actionLoading === `disconnect-${selectedRtu.station_name}`}
@@ -404,7 +404,7 @@ export default function RTUsPage() {
                       {actionLoading === `disconnect-${selectedRtu.station_name}` && (
                         <span className="animate-spin inline-block">&#8635;</span>
                       )}
-                      Disconnect
+                      {selectedRtu.connection_state === 'CONNECTING' ? 'Abort' : 'Disconnect'}
                     </button>
                   )}
                   <button
@@ -420,11 +420,11 @@ export default function RTUsPage() {
               <div className="grid grid-cols-2 gap-4">
                 <div className="bg-hmi-panel p-4 rounded">
                   <div className="text-sm text-hmi-muted">Vendor ID</div>
-                  <div className="text-hmi-text font-mono">{selectedRtu.vendor_id != null ? `0x${selectedRtu.vendor_id.toString(16).padStart(4, '0')}` : 'N/A'}</div>
+                  <div className="text-hmi-text font-mono">{selectedRtu.vendor_id ?? 'N/A'}</div>
                 </div>
                 <div className="bg-hmi-panel p-4 rounded">
                   <div className="text-sm text-hmi-muted">Device ID</div>
-                  <div className="text-hmi-text font-mono">{selectedRtu.device_id != null ? `0x${selectedRtu.device_id.toString(16).padStart(4, '0')}` : 'N/A'}</div>
+                  <div className="text-hmi-text font-mono">{selectedRtu.device_id ?? 'N/A'}</div>
                 </div>
                 <div className="bg-hmi-panel p-4 rounded">
                   <div className="text-sm text-hmi-muted">Slot Count</div>

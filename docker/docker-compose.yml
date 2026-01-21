@@ -135,11 +135,13 @@ services:
       - ./config:/etc/water-controller:ro
       - controller_logs:/var/log/water-controller
     healthcheck:
-      test: ["CMD", "pgrep", "-f", "water_treat_controller"]
+      # Check BOTH that process is running AND shared memory exists
+      # This prevents API from starting before controller has initialized IPC
+      test: ["CMD-SHELL", "pgrep -f water_treat_controller && test -e /dev/shm/wtc_shared_memory"]
       interval: 10s
       timeout: 5s
-      retries: 3
-      start_period: 10s
+      retries: 5
+      start_period: 15s
     deploy:
       resources:
         limits:
