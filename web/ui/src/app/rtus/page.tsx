@@ -282,10 +282,10 @@ export default function RTUsPage() {
         <div className="flex gap-3">
           <button
             onClick={() => setShowDiscovery(!showDiscovery)}
-            className={`px-4 py-2 rounded text-white transition-colors ${
+            className={`px-4 py-2 rounded transition-colors ${
               showDiscovery
-                ? 'bg-status-info hover:bg-status-info/90'
-                : 'bg-hmi-panel hover:bg-hmi-panel/90'
+                ? 'bg-status-info hover:bg-status-info/90 text-white'
+                : 'bg-gray-600 hover:bg-gray-700 text-white'
             }`}
           >
             {showDiscovery ? 'Hide Discovery' : 'Scan Network'}
@@ -395,7 +395,7 @@ export default function RTUsPage() {
                       )}
                       Connect
                     </button>
-                  ) : selectedRtu.connection_state !== 'CONNECTING' && (
+                  ) : (
                     <button
                       onClick={() => disconnectRtu(selectedRtu.station_name)}
                       disabled={actionLoading === `disconnect-${selectedRtu.station_name}`}
@@ -404,7 +404,7 @@ export default function RTUsPage() {
                       {actionLoading === `disconnect-${selectedRtu.station_name}` && (
                         <span className="animate-spin inline-block">&#8635;</span>
                       )}
-                      Disconnect
+                      {selectedRtu.connection_state === 'CONNECTING' ? 'Abort' : 'Disconnect'}
                     </button>
                   )}
                   <button
