@@ -1,11 +1,11 @@
 'use client';
 
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { getRTU, getRTUInventory, refreshRTUInventory } from '@/lib/api';
 import type { RTUDevice, RTUInventory } from '@/lib/api';
-import { SensorList, ControlList, InventoryRefresh, RtuStateBadge, ProfinetStatus, StaleIndicator } from '@/components/rtu';
+import { SensorList, ControlList, InventoryRefresh, RtuStateBadge, ProfinetStatus, StaleIndicator, DeleteRtuModal } from '@/components/rtu';
 import { useWebSocket } from '@/hooks/useWebSocket';
 import { useCommandMode } from '@/contexts/CommandModeContext';
 import CommandModeLogin from '@/components/CommandModeLogin';
@@ -15,6 +15,7 @@ type Tab = 'overview' | 'sensors' | 'controls' | 'profinet';
 
 export default function RTUDetailPage() {
   const params = useParams();
+  const router = useRouter();
   const stationName = params.station_name as string;
   const { canCommand, mode } = useCommandMode();
 
@@ -23,6 +24,7 @@ export default function RTUDetailPage() {
   const [activeTab, setActiveTab] = useState<Tab>('overview');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   const fetchData = useCallback(async () => {
@@ -151,11 +153,17 @@ export default function RTUDetailPage() {
           </div>
         </div>
 
-        <div className="flex items-center gap-2 text-sm">
-          <span className={`flex items-center gap-1 ${connected ? 'text-status-ok' : 'text-status-warning'}`}>
+        <div className="flex items-center gap-3">
+          <span className={`flex items-center gap-1 text-sm ${connected ? 'text-status-ok' : 'text-status-warning'}`}>
             <span className={`w-2 h-2 rounded-full ${connected ? 'bg-status-ok' : 'bg-status-warning'}`} />
             {connected ? 'Live' : 'Polling'}
           </span>
+          <button
+            onClick={() => setShowDeleteModal(true)}
+            className="px-3 py-1.5 bg-status-alarm hover:bg-status-alarm/90 rounded text-sm text-white transition-colors"
+          >
+            Delete RTU
+          </button>
         </div>
       </div>
 
@@ -351,6 +359,17 @@ export default function RTUDetailPage() {
           />
         )}
       </div>
+
+      {/* Delete RTU Modal */}
+      <DeleteRtuModal
+        isOpen={showDeleteModal}
+        stationName={stationName}
+        onClose={() => setShowDeleteModal(false)}
+        onSuccess={() => {
+          setShowDeleteModal(false);
+          router.push('/rtus');
+        }}
+      />
     </div>
   );
 }
