@@ -9,6 +9,15 @@
 
 set -e
 
+# Clean up stale shared memory from previous runs
+# This ensures fresh creation with correct permissions (0666)
+SHM_NAME="${WTC_SHM_NAME:-/wtc_shared_memory}"
+SHM_PATH="/dev/shm${SHM_NAME}"
+if [ -e "$SHM_PATH" ]; then
+    echo "Cleaning up stale shared memory: $SHM_PATH"
+    rm -f "$SHM_PATH"
+fi
+
 # Auto-detect network interface if not specified
 detect_interface() {
     # Priority order:
