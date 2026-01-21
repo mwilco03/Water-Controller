@@ -6,7 +6,7 @@ SPDX-License-Identifier: GPL-3.0-or-later
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, Path
+from fastapi import APIRouter, Depends, HTTPException, Path
 from sqlalchemy.orm import Session
 
 from ...core.errors import build_success_response
@@ -24,7 +24,7 @@ from ...schemas.pid import (
     SetpointRequest,
     TuningRequest,
 )
-from ...services.profinet_client import get_profinet_client
+from ...services.profinet_client import ControllerNotConnectedError, get_profinet_client
 
 router = APIRouter()
 
@@ -302,7 +302,10 @@ async def update_setpoint(
 
     # Send to controller
     profinet = get_profinet_client()
-    profinet.set_setpoint(loop_id, request.setpoint)
+    try:
+        profinet.set_setpoint(loop_id, request.setpoint)
+    except ControllerNotConnectedError as e:
+        raise HTTPException(status_code=503, detail=str(e))
 
     return build_success_response({
         "id": loop_id,
@@ -369,7 +372,10 @@ async def update_mode(
     # Send to controller
     mode_map = {"MANUAL": 0, "AUTO": 1, "CASCADE": 2}
     profinet = get_profinet_client()
-    profinet.set_pid_mode(loop_id, mode_map.get(request.mode.value, 1))
+    try:
+        profinet.set_pid_mode(loop_id, mode_map.get(request.mode.value, 1))
+    except ControllerNotConnectedError as e:
+        raise HTTPException(status_code=503, detail=str(e))
 
     return build_success_response({
         "id": loop_id,
@@ -412,12 +418,32 @@ async def start_autotune(
             details={"field": "method", "valid_values": valid_methods}
         )
 
+    # Auto-tuning requires step test data from the PROFINET controller
+    # This is not yet implemented - return 501 Not Implemented
+    # DO NOT return fake calculated parameters - that violates industrial control safety
+    raise HTTPException(
+        status_code=501,
+        detail=(
+            f"Auto-tuning method '{request.method}' is not yet implemented. "
+            "Real PID auto-tuning requires performing a step test on the physical process "
+            "to measure process gain, time constant, and dead time. "
+            "Please configure PID parameters manually via PUT /{loop_id}/tuning."
+        )
+    )
+
+    # DISABLED: The following code used placeholder values instead of real measurements.
+    # This has been removed to comply with industrial control safety requirements.
+    # When auto-tuning is implemented, it must:
+    # 1. Trigger a step test via the C controller
+    # 2. Measure actual process response (gain, time constant, dead time)
+    # 3. Apply tuning formulas to measured values
+    #
     # Store current tuning
-    old_tuning = {"kp": loop.kp, "ki": loop.ki, "kd": loop.kd}
+    old_tuning = {"kp": loop.kp, "ki": loop.ki, "kd": loop.kd}  # noqa: F841 - kept for future use
 
     # For now, we implement a simplified Ziegler-Nichols calculation
     # In production, this would trigger an async step test on the controller
-    if request.method == "ziegler-nichols":
+    if False and request.method == "ziegler-nichols":  # DISABLED - uses fake data
         # Simplified Z-N tuning based on step response characteristics
         # These would normally be measured from a step test
         # Using placeholder calculations for demonstration

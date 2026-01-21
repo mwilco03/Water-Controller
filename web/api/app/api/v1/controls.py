@@ -11,7 +11,7 @@ Access Model:
 from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, Path
+from fastapi import APIRouter, Depends, HTTPException, Path
 from sqlalchemy.orm import Session
 
 from ...core.auth import log_control_action, require_control_access
@@ -22,7 +22,7 @@ from ...core.exceptions import (
     RtuNotConnectedError,
 )
 from ...core.rtu_utils import get_data_quality, get_rtu_or_404
-from ...services.profinet_client import get_profinet_client
+from ...services.profinet_client import ControllerNotConnectedError, get_profinet_client
 from ...models.audit import CommandAudit, CommandResult
 from ...models.base import get_db
 from ...models.rtu import RTU, Control, ControlType, RtuState
@@ -218,10 +218,13 @@ async def send_command(
     # Send command to C controller via shared memory / demo mode
     profinet = get_profinet_client()
     mode_code = 1 if command.command == "ON" else (2 if command.command == "PWM" else 0)
-    if is_discrete:
-        profinet.command_actuator(name, control.slot, mode_code)
-    else:
-        profinet.command_actuator(name, control.slot, 2, int(command.value))
+    try:
+        if is_discrete:
+            profinet.command_actuator(name, control.slot, mode_code)
+        else:
+            profinet.command_actuator(name, control.slot, 2, int(command.value))
+    except ControllerNotConnectedError as e:
+        raise HTTPException(status_code=503, detail=str(e))
 
     db.commit()
 
