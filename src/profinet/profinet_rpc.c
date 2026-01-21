@@ -264,11 +264,11 @@ wtc_result_t rpc_context_init(rpc_context_t *ctx,
         return WTC_ERROR_IO;
     }
 
-    /* Bind to local port (any available) */
+    /* Bind to local port (any available on all interfaces) */
     struct sockaddr_in local_addr;
     memset(&local_addr, 0, sizeof(local_addr));
     local_addr.sin_family = AF_INET;
-    local_addr.sin_addr.s_addr = controller_ip;
+    local_addr.sin_addr.s_addr = INADDR_ANY;  /* Listen on all interfaces */
     local_addr.sin_port = 0;  /* Let kernel assign port */
 
     if (bind(ctx->socket_fd, (struct sockaddr *)&local_addr,
@@ -518,6 +518,14 @@ wtc_result_t rpc_build_connect_request(rpc_context_t *ctx,
                         (uint16_t)exp_block_len, &save_pos);
 
     /* ============== Finalize RPC Header ============== */
+
+    /* Verify we didn't exceed buffer size */
+    if (pos > RPC_MAX_PDU_SIZE) {
+        LOG_ERROR("Connect Request PDU too large: %zu bytes (max %d)",
+                  pos, RPC_MAX_PDU_SIZE);
+        return WTC_ERROR_NO_MEMORY;
+    }
+
     uint16_t fragment_length = (uint16_t)(pos - sizeof(profinet_rpc_header_t));
 
     /* Generate new activity UUID for this request */
@@ -568,7 +576,18 @@ wtc_result_t rpc_parse_connect_response(const uint8_t *buffer,
         (void)version_high;
         (void)version_low;
 
-        size_t block_end = pos + block_length - 2;  /* -2 for version bytes */
+        /* Validate block length (must be at least 2 for version bytes) */
+        if (block_length < 2) {
+            LOG_WARN("Invalid block length %u for block type 0x%04X",
+                     block_length, block_type);
+            break;
+        }
+
+        size_t block_end = pos + block_length - 2;  /* -2 for version bytes already read */
+        if (block_end > buf_len) {
+            LOG_WARN("Block extends past buffer end");
+            break;
+        }
 
         switch (block_type) {
         case BLOCK_TYPE_AR_BLOCK_RES: {

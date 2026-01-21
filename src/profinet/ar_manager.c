@@ -145,9 +145,8 @@ static wtc_result_t send_cyclic_frame(ar_manager_t *manager, profinet_ar_t *ar) 
         frame[pos++] = IOPS_GOOD;
     }
 
-    /* Cycle counter (16-bit) */
-    static uint16_t cycle_counter = 0;
-    uint16_t net_counter = htons(cycle_counter++);
+    /* Cycle counter (16-bit, per-IOCR for correct sequencing) */
+    uint16_t net_counter = htons(ar->iocr[output_idx].cycle_counter++);
     memcpy(frame + pos, &net_counter, 2);
     pos += 2;
 
@@ -617,9 +616,15 @@ wtc_result_t ar_send_connect_request(ar_manager_t *manager,
 
     /* Set controller IP from device IP network (assume same subnet) */
     if (manager->controller_ip == 0 && ar->device_ip != 0) {
-        /* Use device's network with .1 as controller IP */
-        /* This is a heuristic - in production, controller IP should be configured */
-        manager->controller_ip = (ar->device_ip & 0xFFFFFF00) | 0x01000000;
+        /* Use device's network with .1 as controller IP (gateway heuristic)
+         * IP is stored in network byte order (big-endian):
+         *   192.168.1.100 = 0xC0A80164
+         * Mask off last octet and set to .1:
+         *   0xC0A80164 & 0xFFFFFF00 = 0xC0A80100 (192.168.1.0)
+         *   0xC0A80100 | 0x00000001 = 0xC0A80101 (192.168.1.1)
+         * This is a heuristic - in production, controller IP should be configured
+         */
+        manager->controller_ip = (ar->device_ip & 0xFFFFFF00) | 0x00000001;
         LOG_DEBUG("Auto-configured controller IP: %08X", manager->controller_ip);
     }
 

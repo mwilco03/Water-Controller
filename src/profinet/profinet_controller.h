@@ -111,6 +111,7 @@ typedef struct {
         uint32_t data_length;
         uint8_t *data_buffer;
         uint64_t last_frame_time_us;
+        uint16_t cycle_counter;     /* Per-IOCR cycle counter for RT frames */
     } iocr[PROFINET_MAX_IOCR];
     int iocr_count;
 
