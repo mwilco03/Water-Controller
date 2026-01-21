@@ -59,12 +59,32 @@ async def create_rtu(
     """
     Create a new RTU configuration.
 
-    Creates the RTU record in the database and initializes empty slots.
-    The RTU starts in OFFLINE state - use POST /connect to establish connection.
+    Creates the RTU record in the database and registers it with the
+    PROFINET controller (if running). The RTU starts in OFFLINE state -
+    use POST /connect to establish PROFINET connection.
     """
     # Delegate to service layer
     service = get_rtu_service(db)
     rtu = service.create(request)
+
+    # Register RTU with PROFINET controller (if available)
+    controller_registered = False
+    profinet = get_profinet_client()
+    try:
+        if profinet.is_connected():
+            controller_registered = profinet.add_rtu(
+                rtu.station_name,
+                rtu.ip_address,
+                rtu.vendor_id or 0,
+                rtu.device_id or 0,
+                rtu.slot_count or 8
+            )
+            if controller_registered:
+                logger.info(f"RTU {rtu.station_name} registered with PROFINET controller")
+            else:
+                logger.warning(f"Failed to register RTU {rtu.station_name} with controller")
+    except Exception as e:
+        logger.warning(f"Could not register RTU {rtu.station_name} with controller: {e}")
 
     response_data = {
         "id": rtu.id,
@@ -74,6 +94,7 @@ async def create_rtu(
         "device_id": rtu.device_id,
         "slot_count": rtu.slot_count,
         "state": rtu.state,
+        "controller_registered": controller_registered,
         "created_at": rtu.created_at.isoformat() if rtu.created_at else None,
         "updated_at": rtu.updated_at.isoformat() if rtu.updated_at else None,
     }
@@ -212,8 +233,8 @@ async def connect_rtu(
     """
     Establish PROFINET connection to RTU.
 
-    RTU must be OFFLINE. Triggers connection via PROFINET controller.
-    Poll GET /rtus/{name} to check state transition.
+    RTU must be OFFLINE. First ensures RTU is registered with the controller,
+    then triggers PROFINET connection. Poll GET /rtus/{name} to check state.
     """
     from ...services.profinet_client import ControllerNotConnectedError
 
@@ -222,12 +243,29 @@ async def connect_rtu(
     if rtu.state != RtuState.OFFLINE:
         raise RtuBusyError(name, rtu.state)
 
+    profinet = get_profinet_client()
+
+    # Ensure RTU is registered with controller before connecting
+    # This handles RTUs added before the auto-register fix
+    try:
+        if profinet.is_connected():
+            # Try to add RTU to controller (idempotent - OK if already exists)
+            profinet.add_rtu(
+                rtu.station_name,
+                rtu.ip_address,
+                rtu.vendor_id or 0,
+                rtu.device_id or 0,
+                rtu.slot_count or 8
+            )
+            logger.debug(f"Ensured RTU {name} is registered with controller")
+    except Exception as e:
+        logger.warning(f"Could not ensure RTU {name} is registered: {e}")
+
     # Update state to CONNECTING
     rtu.update_state(RtuState.CONNECTING)
     db.commit()
 
     # Send connect command to PROFINET controller
-    profinet = get_profinet_client()
     try:
         success = profinet.connect_rtu(name)
         if success:
