@@ -3,10 +3,10 @@
 # Water-Controller Bootstrap Script
 # =============================================================================
 # One-liner entry point for installation, upgrade, and removal.
-# This script dynamically loads modular components via curl - no disk writes.
+# This script dynamically loads modular components via curl.
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/mwilco03/Water-Controller/main/bootstrap.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/mwilco03/Water-Controller/main/bootstrap/bootstrap.sh | bash
 #   curl -fsSL .../bootstrap.sh | bash -s -- install
 #   curl -fsSL .../bootstrap.sh | bash -s -- upgrade
 #   curl -fsSL .../bootstrap.sh | bash -s -- remove
@@ -54,7 +54,7 @@ load_module() {
     local script_dir=""
     if [[ -n "${BASH_SOURCE[0]:-}" ]] && [[ -f "${BASH_SOURCE[0]}" ]]; then
         script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-        local local_module="${script_dir}/bootstrap/lib/${module_name}.sh"
+        local local_module="${script_dir}/lib/${module_name}.sh"
         if [[ -f "$local_module" ]]; then
             source "$local_module"
             return 0
@@ -126,13 +126,13 @@ LOGGING:
 
 QUICK START:
     # Fresh install (wipe + install from scratch)
-    curl -fsSL ${BOOTSTRAP_REPO_RAW}/main/bootstrap.sh | sudo bash -s -- fresh
+    curl -fsSL ${BOOTSTRAP_REPO_RAW}/main/bootstrap/bootstrap.sh | sudo bash -s -- fresh
 
     # Uninstall (complete removal)
-    curl -fsSL ${BOOTSTRAP_REPO_RAW}/main/bootstrap.sh | sudo bash -s -- wipe
+    curl -fsSL ${BOOTSTRAP_REPO_RAW}/main/bootstrap/bootstrap.sh | sudo bash -s -- wipe
 
     # Reinstall/Upgrade (wipe + install, preserve configs)
-    curl -fsSL ${BOOTSTRAP_REPO_RAW}/main/bootstrap.sh | sudo bash -s -- reinstall
+    curl -fsSL ${BOOTSTRAP_REPO_RAW}/main/bootstrap/bootstrap.sh | sudo bash -s -- reinstall
 
 EXAMPLES:
     # Install with Docker
