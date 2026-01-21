@@ -51,6 +51,9 @@ wtc_result_t ar_manager_init(ar_manager_t **manager,
                               int socket_fd,
                               const uint8_t *controller_mac);
 
+/* Set controller IP address (required for RPC) */
+void ar_manager_set_controller_ip(ar_manager_t *manager, uint32_t ip);
+
 /* Cleanup AR manager */
 void ar_manager_cleanup(ar_manager_t *manager);
 
