@@ -643,11 +643,64 @@ async def refresh_rtu_inventory(
     """
     Refresh RTU inventory from PROFINET.
 
-    RTU must be RUNNING. This triggers a PROFINET module discovery
-    to update the slot configuration.
+    If RTU is OFFLINE, automatically initiates connection first.
+    If RTU is CONNECTING, returns status to poll again.
+    RTU must be RUNNING for actual inventory refresh.
     """
+    from ...services.profinet_client import ControllerNotConnectedError
+
     rtu = get_rtu_or_404(db, name)
 
+    # Auto-connect if offline
+    if rtu.state == RtuState.OFFLINE:
+        profinet = get_profinet_client()
+
+        # Ensure RTU is registered with controller
+        try:
+            if profinet.is_connected():
+                profinet.add_rtu(
+                    rtu.station_name,
+                    rtu.ip_address,
+                    rtu.vendor_id or 0,
+                    rtu.device_id or 0,
+                    rtu.slot_count or 8
+                )
+        except Exception as e:
+            logger.warning(f"Could not ensure RTU {name} is registered: {e}")
+
+        # Initiate connection
+        rtu.update_state(RtuState.CONNECTING)
+        db.commit()
+
+        try:
+            success = profinet.connect_rtu(name)
+            if success:
+                return build_success_response({
+                    "status": "connecting",
+                    "message": "Connection initiated - refresh again in a few seconds",
+                    "state": RtuState.CONNECTING.value
+                })
+            else:
+                rtu.update_state(RtuState.OFFLINE, error="Controller rejected connect")
+                db.commit()
+                raise HTTPException(
+                    status_code=503,
+                    detail="PROFINET controller rejected connect request"
+                )
+        except ControllerNotConnectedError as e:
+            rtu.update_state(RtuState.OFFLINE, error=str(e))
+            db.commit()
+            raise HTTPException(status_code=503, detail=str(e))
+
+    # Still connecting - tell user to wait
+    if rtu.state == RtuState.CONNECTING:
+        return build_success_response({
+            "status": "connecting",
+            "message": "Connection in progress - refresh again when RUNNING",
+            "state": RtuState.CONNECTING.value
+        })
+
+    # Must be RUNNING to refresh inventory
     if rtu.state != RtuState.RUNNING:
         raise RtuNotConnectedError(name, rtu.state)
 
