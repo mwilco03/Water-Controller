@@ -299,8 +299,8 @@ Single `g_pn.arep` storage. RTU is single-controller device. Second AR attempt r
 |------|-------|--------|
 | Define SUPERVISED mode behavior | Controller Team | TBD |
 | Specify which sensor faults should generate PROFINET alarms | Both Teams | TBD |
-| Verify CRC16-CCITT parameters (poly=0x1021, init=0xFFFF) | Controller Team | Verify |
-| Update station_name validation regex (no dots, hyphen only) | Controller Team | TODO |
+| Verify CRC16-CCITT parameters (poly=0x1021, init=0xFFFF) | Controller Team | **DONE** - matches (`src/utils/crc.c`) |
+| Update station_name validation regex (no dots, hyphen only) | Controller Team | **DONE** - fixed in schemas, rtu.py, sanitization.py |
 
 ---
 

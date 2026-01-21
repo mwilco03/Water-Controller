@@ -25,7 +25,9 @@ class RtuState(str, Enum):
 
 
 # Validation patterns
-STATION_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9-]{2,31}$")
+# Per RTU team spec (IEC 61158-6): lowercase, digits, hyphen only. Max 63 chars.
+# NO dots (reserved for domain qualification), NO underscores.
+STATION_NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 HEX_ID_PATTERN = re.compile(r"^0x[0-9A-Fa-f]{4}$")
 
 
@@ -35,8 +37,8 @@ class RtuCreate(BaseModel):
     ip_address: str = Field(..., description="IPv4 address of the RTU")
     station_name: str | None = Field(
         None,
-        min_length=3,
-        max_length=32,
+        min_length=1,
+        max_length=63,
         description="Optional station name (auto-generated from IP if not provided)"
     )
     vendor_id: str = Field("0x0000", description="PROFINET vendor ID (hex string, e.g., '0x002A')")
@@ -65,8 +67,8 @@ class RtuCreate(BaseModel):
             return None
         if not STATION_NAME_PATTERN.match(v):
             raise ValueError(
-                "station_name must be 3-32 characters, start with a letter, "
-                "and contain only lowercase letters, numbers, and hyphens"
+                "station_name must be 1-63 characters, start with letter or digit, "
+                "and contain only lowercase letters, digits, and hyphens (no dots or underscores)"
             )
         return v
 
@@ -254,8 +256,8 @@ class RtuRegisterRequest(BaseModel):
 
     station_name: str = Field(
         ...,
-        min_length=3,
-        max_length=32,
+        min_length=1,
+        max_length=63,
         description="RTU station name (PROFINET device name)"
     )
     serial_number: str = Field(
@@ -313,8 +315,8 @@ class RtuRegisterRequest(BaseModel):
     def validate_station_name(cls, v: str) -> str:
         if not STATION_NAME_PATTERN.match(v):
             raise ValueError(
-                "station_name must be 3-32 characters, start with a letter, "
-                "and contain only lowercase letters, numbers, and hyphens"
+                "station_name must be 1-63 characters, start with letter or digit, "
+                "and contain only lowercase letters, digits, and hyphens (no dots or underscores)"
             )
         return v
 

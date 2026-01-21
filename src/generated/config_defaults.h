@@ -2,7 +2,7 @@
  * AUTO-GENERATED FILE - DO NOT EDIT MANUALLY
  *
  * Generated from: schemas/config/*.schema.yaml
- * Generated at: 2026-01-19 22:23:17 UTC
+ * Generated at: 2026-01-21 20:06:31 UTC
  * Generator: scripts/generate_c_types.py
  *
  * To update this file, modify the source schemas and run:
