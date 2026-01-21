@@ -66,7 +66,7 @@ export function useRTUStatusData(): UseRTUStatusDataReturn {
 
       // Fetch inventory for each RTU to get sensor/actuator counts
       const rtusWithInventory = await Promise.all(
-        rtuList.map(async (rtu: { station_name: string; ip_address: string; state: string; slot_count?: number; last_seen?: string; healthy?: boolean }) => {
+        rtuList.map(async (rtu) => {
           try {
             const inventory = await getRTUInventory(rtu.station_name);
             return {

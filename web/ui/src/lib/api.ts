@@ -38,12 +38,17 @@ export function isAuthenticated(): boolean {
 export interface RTUDevice {
   station_name: string;
   ip_address: string;
-  vendor_id: string | null;  // Hex string e.g. "0x002A"
-  device_id: string | null;  // Hex string e.g. "0x0405"
   state: string;
-  slot_count: number | null;
-  sensors: SensorData[];
-  actuators: ActuatorState[];
+  // Optional fields - not all endpoints return these
+  id?: number;
+  vendor_id?: string | null;  // Hex string e.g. "0x002A"
+  device_id?: string | null;  // Hex string e.g. "0x0405"
+  slot_count?: number | null;
+  state_since?: string;
+  last_seen?: string;
+  healthy?: boolean;
+  sensors?: SensorData[];
+  actuators?: ActuatorState[];
 }
 
 /* Quality codes (OPC UA compatible - 5-byte sensor format) */
