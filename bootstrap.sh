@@ -1221,7 +1221,7 @@ do_docker_install() {
         export GRAFANA_PASSWORD="$GRAFANA_PASSWORD"
         export DB_PASSWORD="$DB_PASSWORD"
 
-        docker compose up -d
+        docker compose up -d --force-recreate
     )
 
     local result=$?

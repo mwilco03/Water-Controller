@@ -351,6 +351,60 @@ def check_required_python_modules() -> tuple:
     )
 
 
+def check_net_raw_capability() -> tuple:
+    """
+    Verify CAP_NET_RAW capability is available for ICMP ping and DCP discovery.
+
+    This capability is required for:
+    - PROFINET DCP discovery (raw Ethernet frames)
+    - Network ping scans (ICMP raw sockets)
+
+    Without CAP_NET_RAW, these features will fail at runtime with cryptic
+    permission errors. Better to fail fast at startup with actionable guidance.
+    """
+    import errno
+
+    # Test 1: Try to create an ICMP raw socket (requires CAP_NET_RAW)
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_ICMP)
+        sock.close()
+    except PermissionError:
+        return (
+            ReadinessState.FAILED,
+            "CAP_NET_RAW capability missing - cannot create raw sockets",
+            {
+                "error": "EPERM",
+                "affected_features": ["ICMP ping scan", "PROFINET DCP discovery"],
+            },
+            "Recreate container with: docker compose up -d --force-recreate api",
+        )
+    except OSError as e:
+        if e.errno == errno.EPERM:
+            return (
+                ReadinessState.FAILED,
+                "CAP_NET_RAW capability missing - cannot create raw sockets",
+                {
+                    "error": str(e),
+                    "affected_features": ["ICMP ping scan", "PROFINET DCP discovery"],
+                },
+                "Recreate container with: docker compose up -d --force-recreate api",
+            )
+        # Other OSError (e.g., ENETUNREACH) is not a capability issue
+        return (
+            ReadinessState.DEGRADED,
+            f"Raw socket test failed: {e}",
+            {"error": str(e)},
+            "Check network configuration",
+        )
+
+    return (
+        ReadinessState.READY,
+        "CAP_NET_RAW available - raw sockets enabled",
+        {"icmp_socket": True},
+        None,
+    )
+
+
 def validate_startup(
     mode: StartupMode | None = None,
     skip_ui_check: bool = False,
@@ -391,6 +445,10 @@ def validate_startup(
     result.checks.append(_timed_check("python_modules", check_required_python_modules))
     result.checks.append(_timed_check("paths", check_paths))
     result.checks.append(_timed_check("database", check_database))
+
+    # === Network capability check (required for discovery) ===
+    # CAP_NET_RAW is needed for ICMP ping and DCP discovery
+    result.checks.append(_timed_check("net_raw_capability", check_net_raw_capability))
 
     # === UI check (unless skipped) ===
     if not skip_ui_check:
