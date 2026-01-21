@@ -392,7 +392,7 @@ class HttpProbeRequest(BaseModel):
     """Request for HTTP probe."""
 
     ip_address: str = Field(..., description="IP address to probe")
-    port: int = Field(8080, ge=1, le=65535, description="Port to connect to")
+    port: int = Field(8000, ge=1, le=65535, description="Port to connect to")
     path: str = Field("/health", description="URL path to request")
     timeout_ms: int = Field(3000, ge=100, le=30000, description="Request timeout in milliseconds")
 
@@ -519,7 +519,7 @@ class HttpProbeBatchRequest(BaseModel):
     """Request for batch HTTP probe."""
 
     ip_addresses: list[str] = Field(..., description="List of IP addresses to probe")
-    port: int = Field(8080, ge=1, le=65535, description="Port to connect to")
+    port: int = Field(8000, ge=1, le=65535, description="Port to connect to")
     path: str = Field("/health", description="URL path to request")
     timeout_ms: int = Field(2000, ge=100, le=10000, description="Request timeout per host")
     max_concurrent: int = Field(10, ge=1, le=50, description="Max concurrent requests")
