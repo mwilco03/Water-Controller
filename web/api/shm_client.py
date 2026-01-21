@@ -52,6 +52,10 @@ MAX_SHM_RTUS = 64
 MAX_SHM_ALARMS = 256
 MAX_SHM_SENSORS = 32
 MAX_SHM_ACTUATORS = 32
+MAX_DISCOVERY_DEVICES = 32
+MAX_I2C_DEVICES = 16
+MAX_ONEWIRE_DEVICES = 16
+MAX_NOTIFICATIONS = 32
 
 # Protocol version for compatibility checking
 PROTOCOL_VERSION_MAJOR = 1
@@ -301,6 +305,43 @@ class ShmCommand(ctypes.Structure):
     ]
 
 
+# Discovery result structures - must match C definitions
+class ShmDiscoveredDevice(ctypes.Structure):
+    _fields_ = [
+        ("station_name", c_char * 64),
+        ("ip_address", c_char * 16),
+        ("mac_address", c_char * 18),
+        ("vendor_id", c_uint16),
+        ("device_id", c_uint16),
+        ("reachable", c_bool),
+    ]
+
+
+class ShmI2cDevice(ctypes.Structure):
+    _fields_ = [
+        ("address", c_uint8),
+        ("device_type", c_uint16),
+        ("description", c_char * 64),
+    ]
+
+
+class ShmOnewireDevice(ctypes.Structure):
+    _fields_ = [
+        ("rom_code", c_uint8 * 8),
+        ("family_code", c_uint8),
+        ("description", c_char * 64),
+    ]
+
+
+class ShmNotification(ctypes.Structure):
+    _fields_ = [
+        ("event_type", c_int),
+        ("station_name", c_char * 64),
+        ("message", c_char * 256),
+        ("timestamp_ms", c_uint64),
+    ]
+
+
 class WtcSharedMemory(ctypes.Structure):
     _fields_ = [
         ("magic", c_uint32),
@@ -317,10 +358,32 @@ class WtcSharedMemory(ctypes.Structure):
         ("alarm_count", c_int),
         ("pid_loops", ShmPidLoop * 64),
         ("pid_loop_count", c_int),
+        # Command queue (API -> Controller)
         ("command", ShmCommand),
         ("command_sequence", c_uint32),
         ("command_ack", c_uint32),
-        # Note: pthread_mutex_t is platform-specific, skip in Python
+        # Command result (Controller -> API)
+        ("command_result", c_int),
+        ("command_error_msg", c_char * 256),
+        # Discovery results
+        ("discovered_devices", ShmDiscoveredDevice * MAX_DISCOVERY_DEVICES),
+        ("discovered_device_count", c_int),
+        ("discovery_in_progress", c_bool),
+        ("discovery_complete", c_bool),
+        # I2C discovery results
+        ("i2c_devices", ShmI2cDevice * MAX_I2C_DEVICES),
+        ("i2c_device_count", c_int),
+        ("i2c_discovery_complete", c_bool),
+        # 1-Wire discovery results
+        ("onewire_devices", ShmOnewireDevice * MAX_ONEWIRE_DEVICES),
+        ("onewire_device_count", c_int),
+        ("onewire_discovery_complete", c_bool),
+        # Event notification queue
+        ("notifications", ShmNotification * MAX_NOTIFICATIONS),
+        ("notification_write_idx", c_int),
+        ("notification_read_idx", c_int),
+        # pthread_mutex_t is 40 bytes on Linux x86_64
+        ("lock", c_uint8 * 40),
     ]
 
 
