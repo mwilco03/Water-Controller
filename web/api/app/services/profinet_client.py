@@ -124,7 +124,8 @@ class ProfinetClient:
         if self._client:
             try:
                 return self._client.is_connected()
-            except Exception:
+            except Exception as e:
+                logger.debug(f"is_connected check failed: {e}")
                 return False
         return False
 
@@ -139,8 +140,8 @@ class ProfinetClient:
             try:
                 if self._client.is_controller_running():
                     return True
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"is_controller_running check failed: {e}")
 
         # Check demo mode
         if self._demo_mode:
@@ -159,8 +160,8 @@ class ProfinetClient:
                     status = self._client.get_status()
                     if status.get("connected"):
                         return status
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"get_status from controller failed: {e}")
 
         # Try demo mode
         if self._demo_mode:
@@ -334,9 +335,15 @@ class ProfinetClient:
             interface = get_profinet_interface()
             devices = discover_profinet_devices_sync(interface, timeout_ms / 1000.0)
             return [d.to_dict() for d in devices]
-        except Exception as e:
-            logger.warning(f"Direct DCP discovery failed: {e}")
-            return []
+        except PermissionError as e:
+            logger.error(f"DCP discovery requires CAP_NET_RAW capability: {e}")
+            raise
+        except RuntimeError as e:
+            logger.error(f"DCP discovery interface error: {e}")
+            raise
+        except OSError as e:
+            logger.error(f"DCP discovery network error: {e}")
+            raise
 
     def get_pid_loops(self) -> list[dict[str, Any]]:
         """Get PID loop states from controller."""

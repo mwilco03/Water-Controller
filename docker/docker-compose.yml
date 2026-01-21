@@ -130,7 +130,7 @@ services:
       - ./config:/etc/water-controller:ro
       - controller_logs:/var/log/water-controller
     healthcheck:
-      test: ["CMD", "pgrep", "water_treat_controller"]
+      test: ["CMD", "pgrep", "-f", "water_treat_controller"]
       interval: 10s
       timeout: 5s
       retries: 3
