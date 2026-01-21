@@ -537,13 +537,13 @@ class WtcShmClient:
         elif cmd_type == SHM_CMD_RESET_INTERLOCK:
             struct.pack_into('i', cmd_data, data_offset, kwargs['interlock_id'])
 
-        # Write command to shared memory
-        shm_cmd_offset = ctypes.sizeof(WtcSharedMemory) - ctypes.sizeof(ShmCommand) - 8
+        # Write command to shared memory using correct field offset
+        shm_cmd_offset = WtcSharedMemory.command.offset
         self.mm.seek(shm_cmd_offset)
         self.mm.write(bytes(cmd_data))
 
-        # Update sequence
-        seq_offset = shm_cmd_offset + ctypes.sizeof(ShmCommand)
+        # Update sequence using correct field offset
+        seq_offset = WtcSharedMemory.command_sequence.offset
         struct.pack_into('I', self.mm, seq_offset, self._command_seq)
 
         return True
@@ -733,12 +733,14 @@ class WtcShmClient:
             struct.pack_into('HH', cmd_data, data_offset + 64 + 16, vendor_id, device_id)
 
         # Write to shared memory command buffer
+        # Use ctypes field offset to get correct position of command struct
         try:
-            cmd_offset = ctypes.sizeof(WtcSharedMemory) - ctypes.sizeof(ShmCommand) - 8
+            cmd_offset = WtcSharedMemory.command.offset
             self.mm.seek(cmd_offset)
             self.mm.write(bytes(cmd_data[:ctypes.sizeof(ShmCommand)]))
 
-            seq_offset = cmd_offset + ctypes.sizeof(ShmCommand)
+            # command_sequence immediately follows command in the struct
+            seq_offset = WtcSharedMemory.command_sequence.offset
             struct.pack_into('I', self.mm, seq_offset, self._command_seq)
             return True
         except Exception as e:
@@ -781,7 +783,7 @@ class WtcShmClient:
         struct.pack_into('III', cmd_data, 0, self._command_seq, SHM_CMD_DCP_DISCOVER, timeout_ms)
 
         try:
-            cmd_offset = ctypes.sizeof(WtcSharedMemory) - ctypes.sizeof(ShmCommand) - 8
+            cmd_offset = WtcSharedMemory.command.offset
             self.mm.seek(cmd_offset)
             self.mm.write(bytes(cmd_data))
             logger.info("DCP discovery command sent to controller")
@@ -892,7 +894,7 @@ class WtcShmClient:
         struct.pack_into(f'{len(unit_bytes)}sff', cmd_data, 124, unit_bytes, scale_min, scale_max)
 
         try:
-            cmd_offset = ctypes.sizeof(WtcSharedMemory) - ctypes.sizeof(ShmCommand) - 8
+            cmd_offset = WtcSharedMemory.command.offset
             self.mm.seek(cmd_offset)
             self.mm.write(bytes(cmd_data[:ctypes.sizeof(ShmCommand)]))
             return True
@@ -955,7 +957,7 @@ class WtcShmClient:
             offset += 98
 
         try:
-            cmd_offset = ctypes.sizeof(WtcSharedMemory) - ctypes.sizeof(ShmCommand) - 8
+            cmd_offset = WtcSharedMemory.command.offset
             self.mm.seek(cmd_offset)
             self.mm.write(bytes(cmd_data[:512]))  # Command struct is limited
             logger.debug(f"User sync command sent for {station_name}")
