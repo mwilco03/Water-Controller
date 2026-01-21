@@ -361,13 +361,16 @@ def check_net_raw_capability() -> tuple:
 
     Without CAP_NET_RAW, these features will fail at runtime with cryptic
     permission errors. Better to fail fast at startup with actionable guidance.
+
+    Tests both socket creation AND actual packet sending to catch cases where
+    socket creation succeeds but sending is blocked by security policies.
     """
     import errno
+    import struct
 
     # Test 1: Try to create an ICMP raw socket (requires CAP_NET_RAW)
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_ICMP)
-        sock.close()
     except PermissionError:
         return (
             ReadinessState.FAILED,
@@ -392,15 +395,80 @@ def check_net_raw_capability() -> tuple:
         # Other OSError (e.g., ENETUNREACH) is not a capability issue
         return (
             ReadinessState.DEGRADED,
-            f"Raw socket test failed: {e}",
+            f"Raw socket creation failed: {e}",
             {"error": str(e)},
             "Check network configuration",
         )
 
+    # Test 2: Try to actually send an ICMP packet to localhost
+    # This catches cases where socket creation works but sending is blocked
+    try:
+        # Build minimal ICMP echo request packet
+        icmp_type = 8  # Echo request
+        icmp_code = 0
+        checksum = 0
+        identifier = 0x1234
+        seq = 1
+        payload = b'TEST'
+
+        # Build header without checksum
+        header = struct.pack('!BBHHH', icmp_type, icmp_code, checksum, identifier, seq)
+        packet = header + payload
+
+        # Calculate checksum
+        if len(packet) % 2:
+            packet += b'\x00'
+        s = sum(struct.unpack('!%dH' % (len(packet) // 2), packet))
+        s = (s >> 16) + (s & 0xffff)
+        s += s >> 16
+        checksum = ~s & 0xffff
+
+        # Rebuild with checksum
+        header = struct.pack('!BBHHH', icmp_type, icmp_code, checksum, identifier, seq)
+        packet = header + payload
+
+        # Try to send to localhost - this tests actual send capability
+        sock.settimeout(0.1)
+        sock.sendto(packet, ('127.0.0.1', 0))
+        logger.debug("CAP_NET_RAW test: ICMP send to localhost succeeded")
+
+    except PermissionError as e:
+        sock.close()
+        return (
+            ReadinessState.FAILED,
+            "CAP_NET_RAW capability missing - cannot send raw packets",
+            {
+                "error": str(e),
+                "affected_features": ["ICMP ping scan", "PROFINET DCP discovery"],
+                "detail": "Socket creation succeeded but send was blocked",
+            },
+            "Recreate container with: docker compose up -d --force-recreate api",
+        )
+    except OSError as e:
+        sock.close()
+        if e.errno == errno.EPERM:
+            return (
+                ReadinessState.FAILED,
+                "CAP_NET_RAW capability missing - cannot send raw packets",
+                {
+                    "error": str(e),
+                    "affected_features": ["ICMP ping scan", "PROFINET DCP discovery"],
+                    "detail": "Socket creation succeeded but send was blocked",
+                },
+                "Recreate container with: docker compose up -d --force-recreate api",
+            )
+        # Non-permission errors during send are warnings, not failures
+        logger.warning(f"CAP_NET_RAW test: ICMP send failed with non-permission error: {e}")
+    finally:
+        try:
+            sock.close()
+        except Exception:
+            pass
+
     return (
         ReadinessState.READY,
         "CAP_NET_RAW available - raw sockets enabled",
-        {"icmp_socket": True},
+        {"icmp_socket": True, "icmp_send": True},
         None,
     )
 

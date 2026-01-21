@@ -249,6 +249,7 @@ class PingResult(BaseModel):
     reachable: bool
     response_time_ms: float | None = None
     hostname: str | None = None
+    error: str | None = None
 
 
 class PingScanResponse(BaseModel):
@@ -331,22 +332,24 @@ async def icmp_ping_scan(hosts: list[str], timeout_sec: float = 2.0) -> dict[str
     results: dict[str, PingResult] = {}
     identifier = os.getpid() & 0xFFFF
     send_times: dict[str, float] = {}
+    send_failures = 0
 
     try:
-        # Create raw ICMP socket
+        # Create raw ICMP socket - use blocking mode with short timeout for recv polling
         sock = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_ICMP)
-        sock.setblocking(False)
-        sock.settimeout(0.01)  # Non-blocking reads
-    except PermissionError:
+        sock.settimeout(0.01)  # 10ms timeout for non-blocking recv
+    except PermissionError as e:
+        logger.error(f"ICMP socket creation failed: PermissionError - {e}")
         raise HTTPException(
             status_code=503,
             detail={
                 "error": "ICMP_PERMISSION_DENIED",
                 "message": "Raw socket creation requires CAP_NET_RAW capability",
-                "suggested_action": "Ensure container has cap_add: [NET_RAW] in docker-compose.yml"
+                "suggested_action": "Recreate container: docker compose up -d --force-recreate api"
             }
         )
     except OSError as e:
+        logger.error(f"ICMP socket creation failed: OSError - {e}")
         raise HTTPException(
             status_code=503,
             detail={
@@ -364,14 +367,31 @@ async def icmp_ping_scan(hosts: list[str], timeout_sec: float = 2.0) -> dict[str
                 sock.sendto(packet, (ip, 0))
                 send_times[ip] = time.time()
             except OSError as e:
-                logger.debug(f"Failed to send ping to {ip}: {e}")
+                send_failures += 1
+                logger.warning(f"Failed to send ICMP to {ip}: {e}")
                 results[ip] = PingResult(ip_address=ip, reachable=False, error=str(e))
+
+        # If ALL sends failed, something is fundamentally wrong
+        if send_failures == len(hosts):
+            logger.error(
+                f"All {send_failures} ICMP sends failed - check CAP_NET_RAW capability and network config"
+            )
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "error": "ICMP_SEND_FAILED",
+                    "message": f"Failed to send ICMP packets to any host ({send_failures} failures)",
+                    "suggested_action": "Recreate container: docker compose up -d --force-recreate api"
+                }
+            )
+        elif send_failures > 0:
+            logger.warning(f"ICMP send failed for {send_failures}/{len(hosts)} hosts")
 
         # Collect replies until timeout
         end_time = time.time() + timeout_sec
         received = set()
 
-        while time.time() < end_time and len(received) < len(hosts):
+        while time.time() < end_time and len(received) < len(send_times):
             try:
                 data, addr = sock.recvfrom(1024)
                 parsed = _parse_icmp_reply(data, identifier)
@@ -391,10 +411,11 @@ async def icmp_ping_scan(hosts: list[str], timeout_sec: float = 2.0) -> dict[str
                 await asyncio.sleep(0.001)  # Brief yield to event loop
             except BlockingIOError:
                 await asyncio.sleep(0.001)
-            except OSError:
+            except OSError as e:
+                logger.debug(f"ICMP recv error: {e}")
                 await asyncio.sleep(0.001)
 
-        # Mark unreached hosts
+        # Mark unreached hosts (only those we successfully sent to)
         for ip in hosts:
             if ip not in results:
                 results[ip] = PingResult(ip_address=ip, reachable=False)
@@ -644,11 +665,11 @@ class SinglePingResponse(BaseModel):
     error: str | None = None
 
 
-async def _icmp_ping_single(ip: str, timeout_sec: float) -> tuple[bool, float | None]:
+async def _icmp_ping_single(ip: str, timeout_sec: float) -> tuple[bool, float | None, str | None]:
     """
     Send a single ICMP echo request and wait for reply.
 
-    Returns (reachable, rtt_ms) tuple.
+    Returns (reachable, rtt_ms, error) tuple.
     Requires CAP_NET_RAW capability.
     """
     identifier = os.getpid() & 0xFFFF
@@ -656,15 +677,25 @@ async def _icmp_ping_single(ip: str, timeout_sec: float) -> tuple[bool, float | 
 
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_ICMP)
-        sock.setblocking(False)
         sock.settimeout(timeout_sec)
-    except PermissionError:
+    except PermissionError as e:
+        logger.error(f"ICMP socket creation failed: {e}")
         raise HTTPException(
             status_code=503,
             detail={
                 "error": "ICMP_PERMISSION_DENIED",
                 "message": "Raw socket creation requires CAP_NET_RAW capability",
-                "suggested_action": "Ensure container has cap_add: [NET_RAW] in docker-compose.yml"
+                "suggested_action": "Recreate container: docker compose up -d --force-recreate api"
+            }
+        )
+    except OSError as e:
+        logger.error(f"ICMP socket creation failed: {e}")
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "ICMP_SOCKET_ERROR",
+                "message": f"Failed to create ICMP socket: {e}",
+                "suggested_action": "Check network configuration"
             }
         )
 
@@ -672,7 +703,11 @@ async def _icmp_ping_single(ip: str, timeout_sec: float) -> tuple[bool, float | 
         # Build and send ICMP packet
         packet = _build_icmp_packet(seq, identifier)
         send_time = time.time()
-        sock.sendto(packet, (ip, 0))
+        try:
+            sock.sendto(packet, (ip, 0))
+        except OSError as e:
+            logger.warning(f"Failed to send ICMP to {ip}: {e}")
+            return (False, None, f"Send failed: {e}")
 
         # Wait for reply
         end_time = time.time() + timeout_sec
@@ -690,15 +725,16 @@ async def _icmp_ping_single(ip: str, timeout_sec: float) -> tuple[bool, float | 
                         # Use calculated RTT or compute from send time
                         if rtt_ms == 0:
                             rtt_ms = (time.time() - send_time) * 1000
-                        return (True, rtt_ms)
+                        return (True, rtt_ms, None)
             except socket.timeout:
                 break
             except BlockingIOError:
                 await asyncio.sleep(0.001)
-            except OSError:
+            except OSError as e:
+                logger.debug(f"ICMP recv error for {ip}: {e}")
                 break
 
-        return (False, None)
+        return (False, None, None)  # Timeout - no reply received
 
     finally:
         sock.close()
@@ -724,10 +760,14 @@ async def ping_single_host(request: SinglePingRequest) -> dict[str, Any]:
     timeout_sec = request.timeout_ms / 1000.0
     rtts: list[float] = []
     packets_received = 0
+    last_error: str | None = None
 
     for i in range(request.count):
         try:
-            reachable, rtt_ms = await _icmp_ping_single(request.ip_address, timeout_sec)
+            reachable, rtt_ms, error = await _icmp_ping_single(request.ip_address, timeout_sec)
+            if error:
+                last_error = error
+                logger.warning(f"Ping attempt {i+1} to {request.ip_address}: {error}")
             if reachable and rtt_ms is not None:
                 packets_received += 1
                 rtts.append(rtt_ms)
@@ -735,7 +775,8 @@ async def ping_single_host(request: SinglePingRequest) -> dict[str, Any]:
             # Re-raise permission errors
             raise
         except Exception as e:
-            logger.debug(f"Ping attempt {i+1} failed: {e}")
+            last_error = str(e)
+            logger.warning(f"Ping attempt {i+1} failed: {e}")
 
         # Brief delay between attempts
         if i < request.count - 1:
@@ -752,6 +793,7 @@ async def ping_single_host(request: SinglePingRequest) -> dict[str, Any]:
         min_rtt_ms=round(min(rtts), 2) if rtts else None,
         avg_rtt_ms=round(sum(rtts) / len(rtts), 2) if rtts else None,
         max_rtt_ms=round(max(rtts), 2) if rtts else None,
+        error=last_error if packets_received == 0 else None,
     )
 
     logger.info(
