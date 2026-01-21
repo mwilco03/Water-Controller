@@ -3,7 +3,7 @@
 **Date:** 2026-01-21
 **From:** Controller Team
 **To:** RTU Team (Water-Treat)
-**Status:** DRAFT - Awaiting RTU Team Response
+**Status:** IN PROGRESS - RTU Team Response Received (DCP/Identity)
 
 ---
 
@@ -117,6 +117,72 @@ Byte 1: Reserved (set to 0x00)
 - CROSS_SYSTEM.md Part 6 (test vectors)
 
 **Status:** Protocol defined with test vectors.
+
+---
+
+## RTU TEAM RESPONSE (2026-01-21)
+
+**Source:** RTU Team (Water-Treat), commit `5f632ca`, `docs/CONTROLLER_INTEGRATION_NOTES.md`
+
+### R6. DCP Behavior - RESOLVED (RTU Response)
+
+**RTU Stack:** p-net v0.2.0 (DCP handled internally by stack)
+
+| DCP Service | RTU Behavior |
+|-------------|--------------|
+| **DCP_IDENTIFY** | Always responds (station_name, vendor_id=0x0493, device_id=0x0001, MAC, IP) |
+| **DCP_GET** | Always responds - any parameter readable |
+| **DCP_SET_IP** | Accepted. DHCP mode = temporary (reverts on reboot). Static mode = persisted |
+| **DCP_SET_NAME** | Accepted - station_name is mutable via DCP |
+
+**Implication for Controller:** DCP Set IP works but is not reliable for permanent assignment in DHCP environments. Use for discovery only.
+
+---
+
+### R7. Device Identity Uniqueness - RESOLVED (RTU Response)
+
+| Identifier | Unique? | Purpose |
+|------------|---------|---------|
+| **vendor_id + device_id** | NO | Product type (like model number). All Water-Treat RTUs share `0x0493:0x0001` |
+| **station_name** | YES | Must be unique per L2 broadcast domain. Primary identifier for AR |
+| **MAC address** | YES | Unique per physical device (hardware serial equivalent) |
+
+**Implication for Controller:**
+- Do NOT use vendor_id/device_id to differentiate RTUs
+- Use station_name for logical identity
+- Use MAC for physical device tracking
+
+---
+
+### R8. Station Name Constraints - RESOLVED (RTU Response)
+
+**Format:** `^[a-z0-9][a-z0-9-]{0,62}$`
+- Lowercase only (a-z, 0-9, hyphen)
+- Max 63 chars
+- **NO underscores** (DNS-compatible)
+- NO dots (reserved for domain qualification)
+
+**Controller Note:** Update validation regex - current allows dots, should be hyphen only.
+
+---
+
+## REMAINING OPEN QUESTIONS
+
+The following questions were NOT addressed in RTU response and remain open:
+
+| Q# | Question | Status |
+|----|----------|--------|
+| Q1 | AR watchdog timeout - RTU auto-closes AR or waits for release RPC? | **OPEN** |
+| Q2 | Command to non-existent slot - ignore, NACK, or alarm? | **OPEN** |
+| Q4 | Minimum cycle time supported? | **OPEN** |
+| Q5 | Authority handoff (AUTONOMOUS/SUPERVISED) implemented? | **OPEN** |
+| Q6 | Enrollment token validation behavior? | **OPEN** |
+| Q7 | Firmware version reporting mechanism? | **OPEN** |
+| Q8 | PROFINET diagnostic alarms generated? | **OPEN** |
+| Q9 | Config sync CRC mismatch handling? | **OPEN** |
+| Q10 | Max simultaneous AR connections? | **OPEN** |
+
+**Q3 (DCP Set IP):** RESOLVED - Supported but temporary in DHCP mode.
 
 ---
 
@@ -259,6 +325,7 @@ Per IEC 61158-6-10 and PROFINET System Description:
 |------|--------|---------|
 | 2026-01-21 | Controller Team | Initial draft with resolved items and open questions |
 | 2026-01-21 | Controller Team | Added steering decisions: S1 auto-rediscovery w/backoff, S2 auto-reconnect, S3 tabled |
+| 2026-01-21 | RTU Team | Response: DCP behavior, device identity uniqueness, station_name constraints |
 
 ---
 
