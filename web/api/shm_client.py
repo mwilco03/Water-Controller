@@ -238,6 +238,45 @@ class ShmResetCmd(ctypes.Structure):
     ]
 
 
+class ShmAddRtuCmd(ctypes.Structure):
+    """Add RTU command - must match C struct add_rtu_cmd"""
+    _fields_ = [
+        ("station_name", c_char * 64),
+        ("ip_address", c_char * 16),
+        ("vendor_id", c_uint16),
+        ("device_id", c_uint16),
+    ]
+
+
+class ShmRemoveRtuCmd(ctypes.Structure):
+    """Remove RTU command"""
+    _fields_ = [
+        ("station_name", c_char * 64),
+    ]
+
+
+class ShmConnectRtuCmd(ctypes.Structure):
+    """Connect RTU command"""
+    _fields_ = [
+        ("station_name", c_char * 64),
+    ]
+
+
+class ShmDisconnectRtuCmd(ctypes.Structure):
+    """Disconnect RTU command"""
+    _fields_ = [
+        ("station_name", c_char * 64),
+    ]
+
+
+class ShmDcpDiscoverCmd(ctypes.Structure):
+    """DCP discover command"""
+    _fields_ = [
+        ("network_interface", c_char * 32),
+        ("timeout_ms", c_uint32),
+    ]
+
+
 class ShmCommandUnion(ctypes.Union):
     _fields_ = [
         ("actuator_cmd", ShmActuatorCmd),
@@ -245,6 +284,11 @@ class ShmCommandUnion(ctypes.Union):
         ("mode_cmd", ShmModeCmd),
         ("ack_cmd", ShmAckCmd),
         ("reset_cmd", ShmResetCmd),
+        ("add_rtu_cmd", ShmAddRtuCmd),
+        ("remove_rtu_cmd", ShmRemoveRtuCmd),
+        ("connect_rtu_cmd", ShmConnectRtuCmd),
+        ("disconnect_rtu_cmd", ShmDisconnectRtuCmd),
+        ("dcp_discover_cmd", ShmDcpDiscoverCmd),
     ]
 
 
@@ -654,21 +698,39 @@ class WtcShmClient:
     def _send_rtu_command(self, cmd_type: int, station_name: str,
                           ip_address: str = "", vendor_id: int = 0,
                           device_id: int = 0, slot_count: int = 0) -> bool:
-        """Internal helper for RTU management commands"""
+        """Internal helper for RTU management commands.
+
+        Uses same structure layout as _send_command:
+        - sequence (4 bytes) at offset 0
+        - command_type (4 bytes) at offset 4
+        - correlation_id (37 bytes) at offset 8
+        - command data union starts at offset 45 (8 + CORRELATION_ID_LEN)
+        """
         self._command_seq += 1
 
-        cmd_data = bytearray(256)  # Fixed command buffer
-        struct.pack_into('II', cmd_data, 0, self._command_seq, cmd_type)
+        # Get correlation ID from context (if available)
+        correlation_id = get_correlation_id() or ""
 
-        # Pack station name (64 bytes)
+        cmd_data = bytearray(ctypes.sizeof(ShmCommand))
+        # Pack: sequence (4), command_type (4)
+        struct.pack_into('II', cmd_data, 0, self._command_seq, cmd_type)
+        # Pack correlation ID at offset 8
+        cid_bytes = correlation_id.encode('utf-8')[:CORRELATION_ID_LEN-1]
+        struct.pack_into(f'{len(cid_bytes)}s', cmd_data, 8, cid_bytes)
+
+        # Command data union starts after correlation_id (offset 8 + 37 = 45)
+        data_offset = 8 + CORRELATION_ID_LEN
+
+        # Pack station name (64 bytes) - all RTU commands have station_name first
         station_bytes = station_name.encode('utf-8')[:63]
-        struct.pack_into(f'{len(station_bytes)}s', cmd_data, 8, station_bytes)
+        struct.pack_into(f'{len(station_bytes)}s', cmd_data, data_offset, station_bytes)
 
         # Pack additional data for ADD_RTU
+        # add_rtu_cmd layout: station_name[64], ip_address[16], vendor_id(u16), device_id(u16)
         if cmd_type == SHM_CMD_ADD_RTU:
             ip_bytes = ip_address.encode('utf-8')[:15]
-            struct.pack_into(f'{len(ip_bytes)}s', cmd_data, 72, ip_bytes)
-            struct.pack_into('HHI', cmd_data, 88, vendor_id, device_id, slot_count)
+            struct.pack_into(f'{len(ip_bytes)}s', cmd_data, data_offset + 64, ip_bytes)
+            struct.pack_into('HH', cmd_data, data_offset + 64 + 16, vendor_id, device_id)
 
         # Write to shared memory command buffer
         try:
