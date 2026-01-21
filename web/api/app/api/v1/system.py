@@ -940,7 +940,7 @@ async def get_controller_diagnostics(
             import struct
             import ctypes
             try:
-                from ....shm_client import WtcSharedMemory
+                from shm_client import WtcSharedMemory
 
                 # Calculate offsets for command_sequence and command_ack
                 # They are at the end of the struct after the command

@@ -11,7 +11,8 @@ Usage:
     shm = get_shm_client()
 """
 
-from ....shm_client import (
+# Use absolute import - shm_client.py is at the package root (/app/)
+from shm_client import (
     WtcShmClient,
     WtcShmClientWithCircuitBreaker,
     get_client,
