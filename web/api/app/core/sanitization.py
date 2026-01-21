@@ -62,7 +62,9 @@ class InputSanitizer:
     """
 
     # Patterns for valid input
-    STATION_NAME_PATTERN = re.compile(r'^[a-zA-Z][a-zA-Z0-9_-]{0,63}$')
+    # Per RTU team spec (IEC 61158-6): lowercase, digits, hyphen only. Max 63 chars.
+    # NO dots, NO underscores, NO uppercase.
+    STATION_NAME_PATTERN = re.compile(r'^[a-z0-9][a-z0-9-]{0,62}$')
     IP_ADDRESS_PATTERN = re.compile(
         r'^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}'
         r'(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$'
@@ -168,7 +170,7 @@ class InputSanitizer:
             self._log_failure(field, "Invalid format", name)
             return ValidationResult(
                 False,
-                error="Station name must start with a letter and contain only letters, numbers, underscores, and hyphens",
+                error="Station name must be 1-63 chars, start with letter/digit, contain only lowercase letters, digits, and hyphens",
                 field=field
             )
 

@@ -78,9 +78,9 @@ properties:
       station_name:
         type: string
         default: "wtc-controller"
-        maxLength: 64
-        pattern: "^[a-z0-9][a-z0-9.-]*$"
-        description: "Controller station name (DNS compatible)"
+        maxLength: 63
+        pattern: "^[a-z0-9][a-z0-9-]{0,62}$"
+        description: "Controller station name (PROFINET IEC 61158-6: lowercase, digits, hyphen only)"
         x-env-var: "WTC_STATION_NAME"
 
       mac_address:

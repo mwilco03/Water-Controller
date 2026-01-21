@@ -2,7 +2,7 @@
 AUTO-GENERATED FILE - DO NOT EDIT MANUALLY
 
 Generated from: schemas/config/*.schema.yaml
-Generated at: 2026-01-19 22:23:17 UTC
+Generated at: 2026-01-21 20:06:31 UTC
 Generator: scripts/generate_pydantic.py
 
 To update this file, modify the source schemas and run:
@@ -543,7 +543,7 @@ class ControllerConfig(BaseModel):
     gateway: str = Field(default="", description="Default gateway (optional)")
     ip_address: str = Field(default="", description="Controller IP address (auto-detect if empty)")
     mac_address: str = Field(default="", pattern=r"^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$", description="Controller MAC address (auto-detect if empty)")
-    station_name: str = Field(default="wtc-controller", max_length=64, pattern=r"^[a-z0-9][a-z0-9.-]*$", description="Controller station name (DNS compatible)")
+    station_name: str = Field(default="wtc-controller", max_length=63, pattern=r"^[a-z0-9][a-z0-9-]{0,62}$", description="Controller station name (PROFINET IEC 61158-6: lowercase, digits, hyphen only)")
     subnet_mask: str = Field(default="255.255.255.0", description="Network subnet mask")
     vendor_id: int = Field(default=4660, ge=0, le=65535, description="PROFINET vendor ID (0x1234)")
 
