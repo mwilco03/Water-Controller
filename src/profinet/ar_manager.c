@@ -7,6 +7,8 @@
 #include "ar_manager.h"
 #include "cyclic_exchange.h"
 #include "profinet_frame.h"
+#include "profinet_rpc.h"
+#include "gsdml_modules.h"
 #include "utils/logger.h"
 #include "utils/time_utils.h"
 
@@ -30,6 +32,7 @@
 struct ar_manager {
     int socket_fd;
     uint8_t controller_mac[6];
+    uint32_t controller_ip;
     int if_index;
 
     profinet_ar_t *ars[MAX_ARS];
@@ -37,6 +40,13 @@ struct ar_manager {
 
     uint16_t session_key_counter;
     pthread_mutex_t lock;
+
+    /* RPC context for PROFINET connection establishment */
+    rpc_context_t rpc_ctx;
+    bool rpc_initialized;
+
+    /* Controller UUID (generated once at startup) */
+    uint8_t controller_uuid[16];
 
     /* State change notification */
     ar_state_change_callback_t state_callback;
@@ -135,9 +145,8 @@ static wtc_result_t send_cyclic_frame(ar_manager_t *manager, profinet_ar_t *ar) 
         frame[pos++] = IOPS_GOOD;
     }
 
-    /* Cycle counter (16-bit) */
-    static uint16_t cycle_counter = 0;
-    uint16_t net_counter = htons(cycle_counter++);
+    /* Cycle counter (16-bit, per-IOCR for correct sequencing) */
+    uint16_t net_counter = htons(ar->iocr[output_idx].cycle_counter++);
     memcpy(frame + pos, &net_counter, 2);
     pos += 2;
 
@@ -183,9 +192,29 @@ wtc_result_t ar_manager_init(ar_manager_t **manager,
         mgr->if_index = sll.sll_ifindex;
     }
 
+    /* Generate controller UUID (used in Connect Request) */
+    rpc_generate_uuid(mgr->controller_uuid);
+
     *manager = mgr;
     LOG_DEBUG("AR manager initialized");
     return WTC_OK;
+}
+
+void ar_manager_set_controller_ip(ar_manager_t *manager, uint32_t ip) {
+    if (!manager) return;
+
+    pthread_mutex_lock(&manager->lock);
+    manager->controller_ip = ip;
+
+    /* If RPC was already initialized with different IP, cleanup and reinit */
+    if (manager->rpc_initialized && manager->rpc_ctx.controller_ip != ip) {
+        LOG_INFO("Controller IP changed, reinitializing RPC context");
+        rpc_context_cleanup(&manager->rpc_ctx);
+        manager->rpc_initialized = false;
+    }
+
+    pthread_mutex_unlock(&manager->lock);
+    LOG_INFO("Controller IP set to %08X", ip);
 }
 
 void ar_manager_cleanup(ar_manager_t *manager) {
@@ -199,6 +228,12 @@ void ar_manager_cleanup(ar_manager_t *manager) {
             free_iocr_buffers(manager->ars[i]);
             free(manager->ars[i]);
         }
+    }
+
+    /* Clean up RPC context if initialized */
+    if (manager->rpc_initialized) {
+        rpc_context_cleanup(&manager->rpc_ctx);
+        manager->rpc_initialized = false;
     }
 
     pthread_mutex_unlock(&manager->lock);
@@ -267,14 +302,27 @@ wtc_result_t ar_manager_create_ar(ar_manager_t *manager,
         return res;
     }
 
+    /* Store slot configuration for GSDML module identification */
+    new_ar->slot_count = 0;
+    for (int i = 0; i < config->slot_count && new_ar->slot_count < WTC_MAX_SLOTS; i++) {
+        ar_slot_info_t *info = &new_ar->slot_info[new_ar->slot_count];
+        info->slot = (uint16_t)config->slots[i].slot;
+        info->subslot = (uint16_t)config->slots[i].subslot;
+        info->type = config->slots[i].type;
+        info->measurement_type = config->slots[i].measurement_type;
+        info->actuator_type = config->slots[i].actuator_type;
+        new_ar->slot_count++;
+    }
+
     /* Add to manager */
     manager->ars[manager->ar_count++] = new_ar;
     *ar = new_ar;
 
     pthread_mutex_unlock(&manager->lock);
 
-    LOG_INFO("Created AR for %s (session_key=%u, inputs=%d, outputs=%d)",
-             config->station_name, new_ar->session_key, input_slots, output_slots);
+    LOG_INFO("Created AR for %s (session_key=%u, inputs=%d, outputs=%d, slots=%d)",
+             config->station_name, new_ar->session_key, input_slots, output_slots,
+             new_ar->slot_count);
 
     return WTC_OK;
 }
@@ -368,27 +416,35 @@ wtc_result_t ar_manager_process(ar_manager_t *manager) {
             break;
 
         case AR_STATE_CONNECT_CNF:
-            /* Connection confirmed, move to parameter server */
+            /* Connection confirmed, move to parameter server phase */
+            LOG_DEBUG("AR %s connection confirmed, entering PRMSRV phase",
+                      ar->device_station_name);
             ar->state = AR_STATE_PRMSRV;
             ar->last_activity_ms = now_ms;
             break;
 
         case AR_STATE_PRMSRV:
-            /* Parameter server phase */
-            /* Send parameter end when done */
-            ar->state = AR_STATE_READY;
-            ar->last_activity_ms = now_ms;
+            /* Parameter server phase - send ParameterEnd RPC */
+            LOG_DEBUG("AR %s in PRMSRV, sending ParameterEnd",
+                      ar->device_station_name);
+            if (ar_send_parameter_end(manager, ar) != WTC_OK) {
+                LOG_ERROR("AR %s ParameterEnd failed, aborting",
+                          ar->device_station_name);
+                /* State already set to ABORT by ar_send_parameter_end */
+            }
+            /* ar_send_parameter_end sets state to READY on success */
             break;
 
         case AR_STATE_READY:
-            /* Ready for cyclic data exchange */
-            {
-                ar_state_t old_state = ar->state;
-                ar->state = AR_STATE_RUN;
-                ar->last_activity_ms = now_ms;
-                LOG_INFO("AR %s entered RUN state", ar->device_station_name);
-                notify_state_change(manager, ar, old_state, AR_STATE_RUN);
+            /* Ready for cyclic data exchange - send ApplicationReady RPC */
+            LOG_DEBUG("AR %s ready, sending ApplicationReady",
+                      ar->device_station_name);
+            if (ar_send_application_ready(manager, ar) != WTC_OK) {
+                LOG_ERROR("AR %s ApplicationReady failed, aborting",
+                          ar->device_station_name);
+                /* State already set to ABORT by ar_send_application_ready */
             }
+            /* ar_send_application_ready sets state to RUN on success */
             break;
 
         case AR_STATE_RUN:
@@ -418,21 +474,219 @@ wtc_result_t ar_manager_process(ar_manager_t *manager) {
     return WTC_OK;
 }
 
+/**
+ * @brief Ensure RPC context is initialized.
+ *
+ * Lazily initializes the RPC context when first needed. The controller IP
+ * must be set before calling this function.
+ *
+ * @param[in] manager   AR manager instance
+ * @return WTC_OK on success, error code on failure
+ *
+ * @note Thread safety: Must hold manager lock
+ * @note Memory: First call allocates UDP socket
+ */
+static wtc_result_t ensure_rpc_initialized(ar_manager_t *manager) {
+    if (manager->rpc_initialized) {
+        return WTC_OK;
+    }
+
+    if (manager->controller_ip == 0) {
+        LOG_ERROR("Controller IP not set, cannot initialize RPC");
+        return WTC_ERROR_NOT_INITIALIZED;
+    }
+
+    wtc_result_t res = rpc_context_init(&manager->rpc_ctx,
+                                         manager->controller_mac,
+                                         manager->controller_ip);
+    if (res != WTC_OK) {
+        LOG_ERROR("Failed to initialize RPC context");
+        return res;
+    }
+
+    manager->rpc_initialized = true;
+    LOG_INFO("RPC context initialized for controller IP %08X",
+             manager->controller_ip);
+    return WTC_OK;
+}
+
+/**
+ * @brief Build connect request parameters from AR configuration.
+ *
+ * @param[in]  manager  AR manager instance
+ * @param[in]  ar       AR to connect
+ * @param[out] params   Filled connect request parameters
+ *
+ * @note Thread safety: SAFE (read-only access to ar)
+ * @note Memory: NO_ALLOC
+ */
+static void build_connect_params(ar_manager_t *manager,
+                                  profinet_ar_t *ar,
+                                  connect_request_params_t *params) {
+    memset(params, 0, sizeof(connect_request_params_t));
+
+    /* AR configuration */
+    memcpy(params->ar_uuid, ar->ar_uuid, 16);
+    params->session_key = ar->session_key;
+    params->ar_type = ar->type;
+    params->ar_properties = AR_PROP_STATE_ACTIVE |
+                            AR_PROP_PARAMETERIZATION_TYPE |
+                            AR_PROP_STARTUP_MODE_LEGACY;
+    strncpy(params->station_name, ar->device_station_name,
+            sizeof(params->station_name) - 1);
+
+    /* Controller info */
+    memcpy(params->controller_mac, manager->controller_mac, 6);
+    memcpy(params->controller_uuid, manager->controller_uuid, 16);
+    params->controller_port = manager->rpc_ctx.controller_port;
+    params->activity_timeout = 100;  /* 100 * 100ms = 10 seconds */
+
+    /* IOCR configuration from AR */
+    params->iocr_count = 0;
+    for (int i = 0; i < ar->iocr_count && params->iocr_count < 4; i++) {
+        params->iocr[params->iocr_count].type = ar->iocr[i].type;
+        params->iocr[params->iocr_count].reference = (uint16_t)(i + 1);
+        params->iocr[params->iocr_count].frame_id = ar->iocr[i].frame_id;
+        params->iocr[params->iocr_count].data_length = ar->iocr[i].data_length;
+        params->iocr[params->iocr_count].send_clock_factor = 32;  /* 1ms cycle */
+        params->iocr[params->iocr_count].reduction_ratio = 32;    /* 32ms update */
+        params->iocr[params->iocr_count].watchdog_factor = 3;     /* 3x reduction */
+        params->iocr_count++;
+    }
+
+    /*
+     * Expected configuration using GSDML-defined module identifiers.
+     * Module identifiers must match the Water-Treat RTU GSDML exactly.
+     */
+    params->expected_count = 0;
+
+    /* Add DAP slot 0 (Device Access Point - always present) */
+    params->expected_config[params->expected_count].slot = 0;
+    params->expected_config[params->expected_count].module_ident = GSDML_MOD_DAP;
+    params->expected_config[params->expected_count].subslot = 1;
+    params->expected_config[params->expected_count].submodule_ident = GSDML_SUBMOD_DAP;
+    params->expected_config[params->expected_count].data_length = 0;
+    params->expected_config[params->expected_count].is_input = true;
+    params->expected_count++;
+
+    /* Add slots from stored slot configuration with GSDML module IDs */
+    for (int i = 0; i < ar->slot_count && params->expected_count < WTC_MAX_SLOTS; i++) {
+        ar_slot_info_t *slot = &ar->slot_info[i];
+        uint32_t mod_ident, submod_ident;
+        uint16_t data_length;
+        bool is_input;
+
+        if (slot->type == SLOT_TYPE_SENSOR) {
+            /* Input module - use measurement type for GSDML ID */
+            mod_ident = gsdml_get_input_module_ident(slot->measurement_type);
+            submod_ident = gsdml_get_input_submodule_ident(slot->measurement_type);
+            data_length = GSDML_INPUT_DATA_SIZE;  /* 5 bytes: 4B float + 1B quality */
+            is_input = true;
+        } else if (slot->type == SLOT_TYPE_ACTUATOR) {
+            /* Output module - use actuator type for GSDML ID */
+            mod_ident = gsdml_get_output_module_ident(slot->actuator_type);
+            submod_ident = gsdml_get_output_submodule_ident(slot->actuator_type);
+            data_length = GSDML_OUTPUT_DATA_SIZE;  /* 4 bytes: 1B cmd + 1B duty + 2B reserved */
+            is_input = false;
+        } else {
+            continue;  /* Skip unknown slot types */
+        }
+
+        params->expected_config[params->expected_count].slot = slot->slot;
+        params->expected_config[params->expected_count].module_ident = mod_ident;
+        params->expected_config[params->expected_count].subslot = slot->subslot > 0 ? slot->subslot : 1;
+        params->expected_config[params->expected_count].submodule_ident = submod_ident;
+        params->expected_config[params->expected_count].data_length = data_length;
+        params->expected_config[params->expected_count].is_input = is_input;
+        params->expected_count++;
+
+        LOG_DEBUG("Slot %d: type=%s mod=0x%08X submod=0x%08X len=%u",
+                  slot->slot, is_input ? "INPUT" : "OUTPUT",
+                  mod_ident, submod_ident, data_length);
+    }
+
+    params->max_alarm_data_length = 200;
+}
+
 wtc_result_t ar_send_connect_request(ar_manager_t *manager,
                                       profinet_ar_t *ar) {
     if (!manager || !ar) {
         return WTC_ERROR_INVALID_PARAM;
     }
 
-    /* In a full implementation, this would send a PROFINET RPC connect request */
-    /* For now, we simulate immediate connection */
+    /* Set controller IP from device IP network (assume same subnet) */
+    if (manager->controller_ip == 0 && ar->device_ip != 0) {
+        /* Use device's network with .1 as controller IP (gateway heuristic)
+         * IP is stored in network byte order (big-endian):
+         *   192.168.1.100 = 0xC0A80164
+         * Mask off last octet and set to .1:
+         *   0xC0A80164 & 0xFFFFFF00 = 0xC0A80100 (192.168.1.0)
+         *   0xC0A80100 | 0x00000001 = 0xC0A80101 (192.168.1.1)
+         * This is a heuristic - in production, controller IP should be configured
+         */
+        manager->controller_ip = (ar->device_ip & 0xFFFFFF00) | 0x00000001;
+        LOG_DEBUG("Auto-configured controller IP: %08X", manager->controller_ip);
+    }
+
+    /* Ensure RPC context is initialized */
+    wtc_result_t res = ensure_rpc_initialized(manager);
+    if (res != WTC_OK) {
+        LOG_ERROR("Failed to initialize RPC for connect request");
+        ar->state = AR_STATE_ABORT;
+        return res;
+    }
+
     ar->state = AR_STATE_CONNECT_REQ;
     ar->last_activity_ms = time_get_ms();
 
-    LOG_INFO("Sending connect request to %s", ar->device_station_name);
+    LOG_INFO("Sending RPC Connect Request to %s (IP: %08X)",
+             ar->device_station_name, ar->device_ip);
 
-    /* Simulate connection confirmation (in real implementation, wait for response) */
+    /* Build connect request parameters */
+    connect_request_params_t params;
+    build_connect_params(manager, ar, &params);
+
+    /* Send RPC connect and wait for response */
+    connect_response_t response;
+    res = rpc_connect(&manager->rpc_ctx, ar->device_ip, &params, &response);
+
+    if (res != WTC_OK) {
+        LOG_ERROR("RPC Connect failed for %s: error %d",
+                  ar->device_station_name, res);
+        ar->state = AR_STATE_ABORT;
+        ar->last_activity_ms = time_get_ms();
+        return res;
+    }
+
+    if (!response.success) {
+        LOG_ERROR("RPC Connect rejected by device %s: error 0x%02X",
+                  ar->device_station_name, response.error_code);
+        ar->state = AR_STATE_ABORT;
+        ar->last_activity_ms = time_get_ms();
+        return WTC_ERROR_PROTOCOL;
+    }
+
+    /* Update AR with response data */
+    memcpy(ar->device_mac, response.device_mac, 6);
+
+    /* Update frame IDs from response (device may have assigned different IDs) */
+    for (int i = 0; i < response.frame_id_count && i < ar->iocr_count; i++) {
+        if (ar->iocr[i].frame_id != response.frame_ids[i].assigned) {
+            LOG_DEBUG("Frame ID updated for IOCR %d: 0x%04X -> 0x%04X",
+                      i, ar->iocr[i].frame_id, response.frame_ids[i].assigned);
+            ar->iocr[i].frame_id = response.frame_ids[i].assigned;
+        }
+    }
+
+    if (response.has_diff) {
+        LOG_WARN("Device reported module differences, AR may have limited functionality");
+    }
+
     ar->state = AR_STATE_CONNECT_CNF;
+    ar->last_activity_ms = time_get_ms();
+
+    LOG_INFO("RPC Connect successful for %s (session_key=%u)",
+             ar->device_station_name, response.session_key);
 
     return WTC_OK;
 }
@@ -443,11 +697,29 @@ wtc_result_t ar_send_parameter_end(ar_manager_t *manager,
         return WTC_ERROR_INVALID_PARAM;
     }
 
-    /* Send parameter end RPC */
+    if (!manager->rpc_initialized) {
+        LOG_ERROR("RPC not initialized for parameter end");
+        return WTC_ERROR_NOT_INITIALIZED;
+    }
+
+    LOG_INFO("Sending RPC ParameterEnd to %s", ar->device_station_name);
+
+    wtc_result_t res = rpc_parameter_end(&manager->rpc_ctx,
+                                          ar->device_ip,
+                                          (const uint8_t *)ar->ar_uuid,
+                                          ar->session_key);
+    if (res != WTC_OK) {
+        LOG_ERROR("RPC ParameterEnd failed for %s: error %d",
+                  ar->device_station_name, res);
+        ar->state = AR_STATE_ABORT;
+        ar->last_activity_ms = time_get_ms();
+        return res;
+    }
+
     ar->state = AR_STATE_READY;
     ar->last_activity_ms = time_get_ms();
 
-    LOG_DEBUG("Sent parameter end to %s", ar->device_station_name);
+    LOG_INFO("RPC ParameterEnd successful for %s", ar->device_station_name);
     return WTC_OK;
 }
 
@@ -457,11 +729,32 @@ wtc_result_t ar_send_application_ready(ar_manager_t *manager,
         return WTC_ERROR_INVALID_PARAM;
     }
 
-    /* Send application ready RPC */
+    if (!manager->rpc_initialized) {
+        LOG_ERROR("RPC not initialized for application ready");
+        return WTC_ERROR_NOT_INITIALIZED;
+    }
+
+    LOG_INFO("Sending RPC ApplicationReady to %s", ar->device_station_name);
+
+    wtc_result_t res = rpc_application_ready(&manager->rpc_ctx,
+                                              ar->device_ip,
+                                              (const uint8_t *)ar->ar_uuid,
+                                              ar->session_key);
+    if (res != WTC_OK) {
+        LOG_ERROR("RPC ApplicationReady failed for %s: error %d",
+                  ar->device_station_name, res);
+        ar->state = AR_STATE_ABORT;
+        ar->last_activity_ms = time_get_ms();
+        return res;
+    }
+
+    ar_state_t old_state = ar->state;
     ar->state = AR_STATE_RUN;
     ar->last_activity_ms = time_get_ms();
 
-    LOG_DEBUG("Sent application ready to %s", ar->device_station_name);
+    LOG_INFO("RPC ApplicationReady successful for %s - AR now RUNNING",
+             ar->device_station_name);
+    notify_state_change(manager, ar, old_state, AR_STATE_RUN);
     return WTC_OK;
 }
 
@@ -471,11 +764,34 @@ wtc_result_t ar_send_release_request(ar_manager_t *manager,
         return WTC_ERROR_INVALID_PARAM;
     }
 
-    /* Send release request RPC */
+    ar_state_t old_state = ar->state;
     ar->state = AR_STATE_CLOSE;
     ar->last_activity_ms = time_get_ms();
 
-    LOG_INFO("Sent release request to %s", ar->device_station_name);
+    if (!manager->rpc_initialized) {
+        /* RPC not initialized - just transition to close state */
+        LOG_WARN("RPC not initialized, skipping release RPC for %s",
+                 ar->device_station_name);
+        notify_state_change(manager, ar, old_state, AR_STATE_CLOSE);
+        return WTC_OK;
+    }
+
+    LOG_INFO("Sending RPC Release to %s", ar->device_station_name);
+
+    /* Send release - don't fail if device doesn't respond */
+    wtc_result_t res = rpc_release(&manager->rpc_ctx,
+                                    ar->device_ip,
+                                    (const uint8_t *)ar->ar_uuid,
+                                    ar->session_key);
+    if (res != WTC_OK) {
+        LOG_WARN("RPC Release did not complete cleanly for %s (error %d), "
+                 "AR will be closed anyway",
+                 ar->device_station_name, res);
+    } else {
+        LOG_INFO("RPC Release successful for %s", ar->device_station_name);
+    }
+
+    notify_state_change(manager, ar, old_state, AR_STATE_CLOSE);
     return WTC_OK;
 }
 

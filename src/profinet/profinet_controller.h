@@ -82,6 +82,15 @@ typedef struct {
     void *callback_ctx;
 } profinet_config_t;
 
+/* Slot info for GSDML module identification */
+typedef struct {
+    uint16_t slot;
+    uint16_t subslot;
+    slot_type_t type;
+    measurement_type_t measurement_type;
+    actuator_type_t actuator_type;
+} ar_slot_info_t;
+
 /* AR (Application Relationship) handle */
 typedef struct {
     uint32_t ar_uuid[4];            /* AR UUID */
@@ -102,8 +111,13 @@ typedef struct {
         uint32_t data_length;
         uint8_t *data_buffer;
         uint64_t last_frame_time_us;
+        uint16_t cycle_counter;     /* Per-IOCR cycle counter for RT frames */
     } iocr[PROFINET_MAX_IOCR];
     int iocr_count;
+
+    /* Slot configuration for GSDML module identification */
+    ar_slot_info_t slot_info[WTC_MAX_SLOTS];
+    int slot_count;
 
     /* Timing */
     uint64_t last_activity_ms;
