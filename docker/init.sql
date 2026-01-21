@@ -53,15 +53,17 @@ CREATE INDEX IF NOT EXISTS idx_historian_data_tag_time ON historian_data (tag_id
 -- Alarm Rules table
 CREATE TABLE IF NOT EXISTS alarm_rules (
     id SERIAL PRIMARY KEY,
+    name VARCHAR(64) NOT NULL,
     rtu_station VARCHAR(64) NOT NULL,
     slot INTEGER NOT NULL,
-    condition VARCHAR(16) NOT NULL CHECK (condition IN ('HIGH_HIGH', 'HIGH', 'LOW', 'LOW_LOW', 'RATE_OF_CHANGE', 'DEVIATION')),
+    condition VARCHAR(16) NOT NULL,  -- Comparison: >, <, >=, <=, ==
     threshold REAL NOT NULL,
-    severity VARCHAR(16) NOT NULL CHECK (severity IN ('INFO', 'WARNING', 'CRITICAL', 'EMERGENCY')),
+    severity VARCHAR(16) NOT NULL,  -- LOW, MEDIUM, HIGH, CRITICAL
     delay_ms INTEGER NOT NULL DEFAULT 0,
-    message VARCHAR(256) NOT NULL,
+    message TEXT,
     enabled BOOLEAN NOT NULL DEFAULT TRUE,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 -- Alarm History table (hypertable)
@@ -99,8 +101,12 @@ CREATE TABLE IF NOT EXISTS pid_loops (
     setpoint REAL NOT NULL DEFAULT 0.0,
     output_min REAL NOT NULL DEFAULT 0.0,
     output_max REAL NOT NULL DEFAULT 100.0,
+    deadband REAL NOT NULL DEFAULT 0.0,
+    integral_limit REAL NOT NULL DEFAULT 100.0,
+    derivative_filter REAL NOT NULL DEFAULT 0.1,
     mode VARCHAR(16) NOT NULL DEFAULT 'AUTO' CHECK (mode IN ('AUTO', 'MANUAL', 'CASCADE')),
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 -- Interlocks table
@@ -188,6 +194,21 @@ ALTER TABLE rtu_devices ADD COLUMN IF NOT EXISTS firmware_version VARCHAR(32);
 
 -- Index for enrollment token lookups during registration
 CREATE INDEX IF NOT EXISTS idx_rtu_devices_enrollment_token ON rtu_devices (enrollment_token) WHERE enrollment_token IS NOT NULL;
+
+-- Alarm rules schema alignment (2026-01)
+-- Add name column and updated_at, remove overly restrictive CHECK constraints
+ALTER TABLE alarm_rules ADD COLUMN IF NOT EXISTS name VARCHAR(64);
+ALTER TABLE alarm_rules ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+-- Drop old CHECK constraints if they exist (condition and severity should accept any value)
+ALTER TABLE alarm_rules DROP CONSTRAINT IF EXISTS alarm_rules_condition_check;
+ALTER TABLE alarm_rules DROP CONSTRAINT IF EXISTS alarm_rules_severity_check;
+
+-- PID loops schema alignment (2026-01)
+-- Add missing tuning parameters
+ALTER TABLE pid_loops ADD COLUMN IF NOT EXISTS deadband REAL DEFAULT 0.0;
+ALTER TABLE pid_loops ADD COLUMN IF NOT EXISTS integral_limit REAL DEFAULT 100.0;
+ALTER TABLE pid_loops ADD COLUMN IF NOT EXISTS derivative_filter REAL DEFAULT 0.1;
+ALTER TABLE pid_loops ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
 
 -- Insert sample RTU devices
 INSERT INTO rtu_devices (station_name, ip_address, vendor_id, device_id, slot_count, connection_state)
