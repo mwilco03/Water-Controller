@@ -1015,6 +1015,81 @@ async def get_controller_diagnostics(
     return build_success_response(diag)
 
 
+@router.post("/diagnostics/reconnect")
+async def trigger_controller_reconnect(
+    force: bool = Query(True, description="Force reconnect, ignoring cooldown")
+) -> dict[str, Any]:
+    """
+    Manually trigger a reconnection to the PROFINET controller.
+
+    Use this when:
+    - The C controller was started after the API
+    - Connection was lost and you want to reconnect immediately
+    - Debugging connection issues
+
+    Args:
+        force: If True (default), ignore reconnect cooldown and try immediately.
+
+    Returns:
+        Connection status before and after the reconnect attempt.
+    """
+    from ...services.controller_heartbeat import get_heartbeat
+    from ...services.profinet_client import get_profinet_client
+
+    # Get current state before reconnect
+    profinet = get_profinet_client()
+    was_connected = profinet.is_connected()
+    was_controller_running = profinet.is_controller_running()
+
+    # Trigger reconnect via heartbeat service (logs and tracks attempts)
+    heartbeat = get_heartbeat()
+    result = await heartbeat.trigger_reconnect(force=force)
+
+    # Get state after reconnect
+    now_connected = profinet.is_connected()
+    now_controller_running = profinet.is_controller_running()
+
+    response = {
+        "before": {
+            "connected": was_connected,
+            "controller_running": was_controller_running,
+        },
+        "after": {
+            "connected": now_connected,
+            "controller_running": now_controller_running,
+        },
+        "reconnect_attempted": True,
+        "success": now_connected and not was_connected,
+        "heartbeat_stats": heartbeat.get_status(),
+    }
+
+    if now_connected and not was_connected:
+        logger.info("Manual reconnect successful - controller now connected")
+    elif now_connected:
+        logger.info("Manual reconnect: already connected")
+    else:
+        logger.warning("Manual reconnect failed - controller still not available")
+
+    return build_success_response(response)
+
+
+@router.get("/diagnostics/heartbeat")
+async def get_heartbeat_status() -> dict[str, Any]:
+    """
+    Get the controller heartbeat service status.
+
+    Shows:
+    - Whether heartbeat is running
+    - Current backoff interval
+    - Reconnect attempt statistics
+    - Last known controller state
+    """
+    from ...services.controller_heartbeat import get_heartbeat
+
+    heartbeat = get_heartbeat()
+    return build_success_response(heartbeat.get_status())
+
+
 @router.get("/interfaces")
 async def get_network_interfaces() -> dict[str, Any]:
     """
