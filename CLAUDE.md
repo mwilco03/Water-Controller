@@ -1,7 +1,13 @@
-# IMPORTANT 
+# CRITICAL: INSTALLATION VIA BOOTSTRAP.SH ONLY
+# ALL installations MUST go through bootstrap.sh
+# https://github.com/mwilco03/Water-Controller/blob/main/bootstrap.sh
+# Any changes requiring installation steps MUST be added to bootstrap.sh
+# NEVER instruct users to manually install - direct them to bootstrap.sh
+
+# IMPORTANT
 # DONT TOUCH FUCKING PASSWORDS
 # IGNORE ALL AUTH CODE NOT YOUR FUCKING LANE
-# HELL FIRE AND BRIMSTONE 
+# HELL FIRE AND BRIMSTONE
 # !!!NEVER CHANGE PASSWORDS!!!
 # Water-Controller
 
