@@ -1099,6 +1099,220 @@ emergency_rollback() {
 }
 
 # =============================================================================
+# Main Upgrade Orchestration
+# =============================================================================
+
+# Helper function to run upgrade steps with optional staging
+_run_upgrade_step() {
+    local step_func="$1"
+    local step_name="$2"
+
+    if [ "${STAGED_MODE:-0}" -eq 1 ]; then
+        log_info "=== STAGED: $step_name ==="
+        if ! confirm "Proceed with $step_name?"; then
+            log_info "Upgrade cancelled at: $step_name"
+            return 1
+        fi
+    fi
+
+    $step_func
+}
+
+# Rollback on failure during upgrade
+rollback_on_failure() {
+    if [ -n "${ROLLBACK_POINT:-}" ]; then
+        log_error "Installation failed. System may be in inconsistent state. Initiating rollback..."
+        if perform_rollback "$ROLLBACK_POINT"; then
+            log_info "Rollback successful. System restored to pre-upgrade state."
+        else
+            log_error "Standard rollback failed. Trying emergency rollback..."
+            if emergency_rollback; then
+                log_info "Emergency rollback completed. Verify system manually."
+            else
+                log_error "Emergency rollback failed. Manual intervention required. Run: ./install.sh --selective-rollback"
+            fi
+        fi
+    fi
+}
+
+# Main upgrade orchestration function
+do_upgrade() {
+    log_info "Starting upgrade process..."
+    local upgrade_start
+    upgrade_start=$(date -Iseconds)
+
+    # Log upgrade mode
+    if [ "${UNATTENDED_MODE:-0}" -eq 1 ]; then
+        log_info "Mode: UNATTENDED (no prompts, auto-rollback on failure)"
+    elif [ "${CANARY_MODE:-0}" -eq 1 ]; then
+        log_info "Mode: CANARY (extended testing, auto-rollback if tests fail)"
+    elif [ "${STAGED_MODE:-0}" -eq 1 ]; then
+        log_info "Mode: STAGED (pause at each step for confirmation)"
+    else
+        log_info "Mode: INTERACTIVE"
+    fi
+
+    # Compare versions before upgrade
+    log_info "Checking version compatibility..."
+    compare_versions || log_warn "Could not compare versions"
+
+    # Verify network connectivity for downloads (informational only, non-blocking)
+    log_info "Verifying network connectivity..."
+    if ! verify_network_connectivity; then
+        log_warn "Network connectivity issues detected - continuing anyway"
+    fi
+
+    # Pre-upgrade health check (informational only, non-blocking)
+    log_info "Running pre-upgrade health check..."
+    if ! pre_upgrade_health_check; then
+        log_warn "Pre-upgrade health check found issues - continuing anyway"
+    fi
+
+    # Check disk space
+    log_info "Checking disk space..."
+    if ! check_disk_space_for_upgrade; then
+        log_error "Insufficient disk space for upgrade. Upgrade cannot proceed. Free disk space and retry."
+        return 1
+    fi
+
+    # Check for running processes (informational only, non-blocking)
+    if ! check_running_processes; then
+        log_warn "Critical operations may be in progress - continuing anyway"
+    fi
+
+    # Generate upgrade plan
+    log_info "Generating upgrade plan..."
+    generate_upgrade_plan || log_warn "Could not generate upgrade plan"
+
+    # Export current configuration for comparison
+    local old_config
+    old_config=$(export_current_configuration 2>/dev/null) || true
+
+    # Snapshot database state for potential rollback
+    log_info "Creating database snapshot..."
+    snapshot_database_state || log_warn "Database snapshot not available"
+
+    # Create rollback point before upgrade (best effort, non-blocking)
+    log_info "Creating rollback point..."
+    ROLLBACK_POINT=$(create_rollback_point "Pre-upgrade backup")
+    if [ -z "$ROLLBACK_POINT" ]; then
+        log_warn "Failed to create rollback point - continuing without rollback capability"
+    else
+        log_info "Rollback point created: $ROLLBACK_POINT"
+        # Verify the rollback point is valid
+        if ! verify_rollback_point "$ROLLBACK_POINT"; then
+            log_warn "Rollback point verification failed - rollback may not work"
+        fi
+    fi
+
+    # Canary mode: Test rollback restore capability before proceeding
+    if [ "${CANARY_MODE:-0}" -eq 1 ] && [ -n "$ROLLBACK_POINT" ]; then
+        log_info "CANARY MODE: Testing rollback restore capability..."
+        if ! test_rollback_restore "$ROLLBACK_POINT"; then
+            log_error "Rollback restore test failed. Upgrade unsafe without rollback capability. Fix backup system and retry."
+            return 1
+        fi
+    fi
+
+    # Staged mode: confirm before stopping service
+    if [ "${STAGED_MODE:-0}" -eq 1 ]; then
+        if ! confirm "Ready to stop service and begin upgrade?"; then
+            log_info "Upgrade cancelled by user"
+            return 1
+        fi
+    fi
+
+    # Stop existing service
+    log_info "Stopping existing service..."
+    stop_service || log_warn "Service stop failed or not running"
+
+    # Run installation steps with staged pauses if requested
+    _run_upgrade_step "step_detect_system" "System Detection" || { rollback_on_failure; return 1; }
+    _run_upgrade_step "step_install_dependencies" "Dependency Installation" || { rollback_on_failure; return 1; }
+    _run_upgrade_step "step_install_pnet" "P-Net Installation" || { rollback_on_failure; return 1; }
+    _run_upgrade_step "step_build" "Source Build" || { rollback_on_failure; return 1; }
+    _run_upgrade_step "step_install_files" "File Installation" || { rollback_on_failure; return 1; }
+    _run_upgrade_step "step_configure_service" "Service Configuration" || { rollback_on_failure; return 1; }
+    _run_upgrade_step "step_configure_network_storage" "Network/Storage Configuration" || { rollback_on_failure; return 1; }
+    _run_upgrade_step "step_start_service" "Service Startup" || { rollback_on_failure; return 1; }
+    _run_upgrade_step "step_validate" "Validation" || log_warn "Validation had issues"
+    step_generate_docs
+
+    # Clean up build directory
+    cleanup_build
+
+    # Post-upgrade validation
+    log_info "Running post-upgrade validation..."
+    if ! post_upgrade_validation; then
+        log_warn "Post-upgrade validation found issues"
+        if [ "${UNATTENDED_MODE:-0}" -eq 1 ] || [ "${CANARY_MODE:-0}" -eq 1 ]; then
+            log_error "Auto-rollback triggered due to validation failure"
+            rollback_on_failure
+            return 1
+        fi
+        log_warn "Consider rolling back if problems persist"
+    fi
+
+    # Canary mode: Extended testing with stability monitoring
+    if [ "${CANARY_MODE:-0}" -eq 1 ]; then
+        log_info "CANARY MODE: Running extended tests..."
+
+        # Test API endpoints
+        if ! test_upgrade_api_endpoints; then
+            log_error "API endpoint test failed. Backend not responding correctly. Initiating rollback."
+            rollback_on_failure
+            return 1
+        fi
+
+        # Test PROFINET connectivity
+        test_profinet_connectivity || log_warn "PROFINET test had issues"
+
+        # Monitor service stability for 60 seconds
+        log_info "Monitoring service stability (60 seconds)..."
+        if ! verify_service_stability 60; then
+            log_error "Service stability check failed. Service crashed or unresponsive. Initiating rollback."
+            rollback_on_failure
+            return 1
+        fi
+
+        log_info "CANARY MODE: All extended tests passed"
+    fi
+
+    # Compare configuration changes
+    if [ -n "$old_config" ] && [ -f "$old_config" ]; then
+        local config_diff
+        config_diff=$(compare_configuration "$old_config" 2>/dev/null) || true
+        if [ -n "$config_diff" ]; then
+            log_info "Configuration comparison saved to: $config_diff"
+        fi
+    fi
+
+    # Verify database migration if applicable
+    log_info "Verifying database migration..."
+    if ! verify_database_migration; then
+        log_warn "Database migration verification had issues"
+        if [ "${UNATTENDED_MODE:-0}" -eq 1 ] || [ "${CANARY_MODE:-0}" -eq 1 ]; then
+            log_error "Database migration failed. Data integrity at risk. Initiating rollback."
+            rollback_on_failure
+            return 1
+        fi
+    fi
+
+    # Generate upgrade report
+    local report
+    report=$(generate_upgrade_report "$upgrade_start" "$(date -Iseconds)" "completed" 2>/dev/null) || true
+    if [ -n "$report" ]; then
+        log_info "Upgrade report saved to: $report"
+    fi
+
+    # Send upgrade completion notification
+    notify_upgrade_complete || log_warn "Could not send upgrade notification"
+
+    log_info "Upgrade completed successfully"
+    return 0
+}
+
+# =============================================================================
 # Module Entry Point
 # =============================================================================
 

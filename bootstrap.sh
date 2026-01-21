@@ -25,9 +25,23 @@ set -euo pipefail
 # Module Loading Configuration
 # =============================================================================
 
+# Early parse --branch argument before module loading
+# This allows: curl ... | bash -s -- fresh --branch feature-branch
+_bootstrap_branch="${WTC_BOOTSTRAP_BRANCH:-main}"
+_prev_arg=""
+for _arg in "$@"; do
+    if [[ "$_prev_arg" == "--branch" ]]; then
+        _bootstrap_branch="$_arg"
+        break
+    fi
+    _prev_arg="$_arg"
+done
+unset _arg _prev_arg
+
 readonly BOOTSTRAP_REPO_RAW="https://raw.githubusercontent.com/mwilco03/Water-Controller"
-readonly BOOTSTRAP_BRANCH="${WTC_BOOTSTRAP_BRANCH:-main}"
+readonly BOOTSTRAP_BRANCH="$_bootstrap_branch"
 readonly BOOTSTRAP_LIB_PATH="bootstrap/lib"
+unset _bootstrap_branch
 
 # Modules to load in order (order matters due to dependencies)
 readonly BOOTSTRAP_MODULES=(
