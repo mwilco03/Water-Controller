@@ -856,6 +856,122 @@ async def http_probe_rtu(request: HttpProbeRequest) -> dict[str, Any]:
         ).model_dump())
 
 
+class ProbeIpRequest(BaseModel):
+    """Request for probing RTU config by IP."""
+
+    ip_address: str = Field(..., description="RTU IP address")
+    port: int = Field(9081, ge=1, le=65535, description="RTU HTTP API port")
+    timeout_ms: int = Field(5000, ge=100, le=30000, description="Timeout in milliseconds")
+
+    @field_validator("ip_address")
+    @classmethod
+    def validate_ip(cls, v: str) -> str:
+        """Validate IP address."""
+        try:
+            ipaddress.ip_address(v)
+            return v
+        except ValueError:
+            raise ValueError(f"Invalid IP address: {v}")
+
+
+class ProbeIpResponse(BaseModel):
+    """Response from RTU config probe."""
+
+    ip_address: str
+    port: int
+    reachable: bool
+    station_name: str | None = None
+    vendor_id: int | None = None
+    device_id: int | None = None
+    product_name: str | None = None
+    profinet_enabled: bool | None = None
+    full_config: dict | None = None
+    error: str | None = None
+
+
+@router.post("/probe-ip")
+async def probe_rtu_config(request: ProbeIpRequest) -> dict[str, Any]:
+    """
+    Probe an RTU by IP to fetch its PROFINET configuration.
+
+    This endpoint is used during device discovery to get the RTU's actual
+    PROFINET identity (station_name, vendor_id, device_id) before adding
+    it to the system. This ensures the correct identity is used for
+    PROFINET connection.
+
+    The RTU must be running the Water-Treat firmware with HTTP API enabled
+    on the specified port (default 9081). The /config endpoint returns the
+    device's configuration including PROFINET settings.
+
+    Use this when:
+    - User clicks "Use IP" in ping scan results
+    - Verifying RTU identity before adding to system
+    - Checking if discovered IP is a Water-Treat RTU
+
+    Returns:
+        - station_name: PROFINET station name for DCP/connection
+        - vendor_id: PROFINET vendor ID (integer)
+        - device_id: PROFINET device ID (integer)
+        - product_name: Human-readable product name
+        - full_config: Complete config JSON (if needed)
+    """
+    import httpx
+
+    url = f"http://{request.ip_address}:{request.port}/config"
+    timeout_sec = request.timeout_ms / 1000.0
+
+    logger.info(f"Probing RTU config at {url}")
+
+    result = ProbeIpResponse(
+        ip_address=request.ip_address,
+        port=request.port,
+        reachable=False,
+    )
+
+    try:
+        start = time.time()
+        async with httpx.AsyncClient(timeout=timeout_sec) as client:
+            response = await client.get(url)
+        elapsed = (time.time() - start) * 1000
+
+        if response.status_code != 200:
+            result.error = f"HTTP {response.status_code}"
+            logger.warning(f"RTU probe {url}: {response.status_code}")
+            return build_success_response(result.model_dump())
+
+        config = response.json()
+        result.reachable = True
+        result.full_config = config
+
+        # Extract PROFINET config
+        pn_config = config.get("profinet", {})
+        result.station_name = pn_config.get("station_name")
+        result.vendor_id = pn_config.get("vendor_id")
+        result.device_id = pn_config.get("device_id")
+        result.product_name = pn_config.get("product_name")
+        result.profinet_enabled = pn_config.get("enabled")
+
+        logger.info(
+            f"RTU probe {url}: station={result.station_name}, "
+            f"vendor=0x{result.vendor_id or 0:04X}, device=0x{result.device_id or 0:04X} "
+            f"({elapsed:.1f}ms)"
+        )
+
+        return build_success_response(result.model_dump())
+
+    except httpx.ConnectTimeout:
+        result.error = f"Connection timeout ({request.timeout_ms}ms)"
+        logger.warning(f"RTU probe {url}: timeout")
+    except httpx.ConnectError as e:
+        result.error = f"Connection refused: {e}"
+        logger.warning(f"RTU probe {url}: connection refused")
+    except Exception as e:
+        result.error = f"{type(e).__name__}: {e}"
+        logger.error(f"RTU probe {url} failed: {e}")
+
+    return build_success_response(result.model_dump())
+
+
 class HttpProbeBatchRequest(BaseModel):
     """Request for batch HTTP probe."""
 

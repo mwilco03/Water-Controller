@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useCallback } from 'react';
-import { discoverRTUs, getCachedDiscovery, clearDiscoveryCache, pingScanSubnet } from '@/lib/api';
+import { discoverRTUs, getCachedDiscovery, clearDiscoveryCache, pingScanSubnet, probeRtuConfig } from '@/lib/api';
 import type { DiscoveredDevice, PingResult, PingScanResponse } from '@/lib/api';
 
 interface Props {
@@ -22,6 +22,10 @@ export default function DiscoveryPanel({ onDeviceSelect }: Props) {
   const [pingError, setPingError] = useState<string | null>(null);
   const [showPingResults, setShowPingResults] = useState(false);
   const [showOnlyReachable, setShowOnlyReachable] = useState(true);
+
+  // RTU config probe state (when user clicks "Use IP")
+  const [probingIp, setProbingIp] = useState<string | null>(null);
+  const [probeError, setProbeError] = useState<string | null>(null);
 
   const handleScan = useCallback(async () => {
     if (scanning) return;
@@ -74,6 +78,49 @@ export default function DiscoveryPanel({ onDeviceSelect }: Props) {
       setPingScanning(false);
     }
   }, [pingScanning, pingSubnet]);
+
+  // Handler for "Use IP" button - fetches RTU config before selecting
+  const handleUseIp = useCallback(async (ipAddress: string) => {
+    if (probingIp) return; // Already probing another IP
+    setProbingIp(ipAddress);
+    setProbeError(null);
+
+    try {
+      // Fetch RTU config from /config endpoint
+      const config = await probeRtuConfig(ipAddress, 9081, 5000);
+
+      if (!config.reachable) {
+        setProbeError(`Cannot reach ${ipAddress}: ${config.error || 'Connection failed'}`);
+        return;
+      }
+
+      if (!config.station_name) {
+        setProbeError(`RTU at ${ipAddress} did not return station_name in /config`);
+        return;
+      }
+
+      // Create device with fetched config data
+      const device: DiscoveredDevice = {
+        id: 0,
+        mac_address: '00:00:00:00:00:00', // Will be resolved via ARP/DCP at connect time
+        ip_address: ipAddress,
+        device_name: config.station_name,
+        vendor_name: config.product_name || 'Water-Treat RTU',
+        device_type: 'PROFINET Device',
+        vendor_id: config.vendor_id,
+        device_id: config.device_id,
+        discovered_at: new Date().toISOString(),
+        added_to_registry: false,
+        rtu_name: null,
+      };
+
+      onDeviceSelect?.(device);
+    } catch (err) {
+      setProbeError(err instanceof Error ? err.message : `Failed to probe ${ipAddress}`);
+    } finally {
+      setProbingIp(null);
+    }
+  }, [probingIp, onDeviceSelect]);
 
   const formatMac = (mac: string) => {
     if (mac.includes(':')) return mac.toUpperCase();
@@ -218,6 +265,17 @@ export default function DiscoveryPanel({ onDeviceSelect }: Props) {
           Ping Error: {pingError}
         </div>
       )}
+      {probeError && (
+        <div className="p-3 bg-status-alarm-light border border-status-alarm rounded-lg text-status-alarm text-sm flex justify-between items-center">
+          <span>RTU Probe Error: {probeError}</span>
+          <button
+            onClick={() => setProbeError(null)}
+            className="text-status-alarm hover:text-status-alarm/70 font-bold"
+          >
+            &times;
+          </button>
+        </div>
+      )}
 
       {/* Scanning indicator */}
       {scanning && (
@@ -288,26 +346,22 @@ export default function DiscoveryPanel({ onDeviceSelect }: Props) {
                     <td className="px-4 py-2">
                       {result.reachable && (
                         <button
-                          onClick={() => {
-                            // Create a minimal device for selection - only IP is real
-                            const mockDevice: DiscoveredDevice = {
-                              id: 0,
-                              mac_address: '00:00:00:00:00:00',
-                              ip_address: result.ip_address,
-                              device_name: null,
-                              vendor_name: 'Unknown (from ping)',
-                              device_type: 'Unknown',
-                              vendor_id: null,
-                              device_id: null,
-                              discovered_at: new Date().toISOString(),
-                              added_to_registry: false,
-                              rtu_name: null,
-                            };
-                            onDeviceSelect?.(mockDevice);
-                          }}
-                          className="px-2 py-1 bg-status-info hover:bg-status-info/90 rounded text-xs text-white font-medium transition-colors"
+                          onClick={() => handleUseIp(result.ip_address)}
+                          disabled={probingIp === result.ip_address}
+                          className={`px-2 py-1 rounded text-xs text-white font-medium transition-colors ${
+                            probingIp === result.ip_address
+                              ? 'bg-status-info/50 cursor-wait'
+                              : 'bg-status-info hover:bg-status-info/90'
+                          }`}
                         >
-                          Use IP
+                          {probingIp === result.ip_address ? (
+                            <span className="flex items-center gap-1">
+                              <span className="inline-block w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                              Fetching...
+                            </span>
+                          ) : (
+                            'Use IP'
+                          )}
                         </button>
                       )}
                     </td>
