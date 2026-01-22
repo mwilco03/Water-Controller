@@ -288,7 +288,7 @@ static void *recv_thread_func(void *arg) {
             pthread_mutex_lock(&ctrl->lock);
 
             if (frame_id >= PROFINET_FRAME_ID_DCP &&
-                frame_id <= PROFINET_FRAME_ID_DCP_IDENT) {
+                frame_id <= PROFINET_FRAME_ID_DCP_IDENT_RESP) {
                 /* DCP frame */
                 char src_mac_str[18];
                 mac_to_string(src_mac, src_mac_str, sizeof(src_mac_str));

@@ -29,6 +29,7 @@ extern "C" {
 #define PROFINET_FRAME_ID_DCP_HELLO     0xFEFC
 #define PROFINET_FRAME_ID_DCP_GETSET    0xFEFD
 #define PROFINET_FRAME_ID_DCP_IDENT     0xFEFE
+#define PROFINET_FRAME_ID_DCP_IDENT_RESP 0xFEFF  /* DCP Identify Response */
 #define PROFINET_FRAME_ID_RT_CLASS1     0x8000  /* Start of RT Class 1 */
 #define PROFINET_FRAME_ID_RT_CLASS1_END 0xBFFF  /* End of RT Class 1 */
 #define PROFINET_FRAME_ID_RT_CLASS3     0x0100  /* RT Class 3 (IRT) */

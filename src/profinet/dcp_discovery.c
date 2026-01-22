@@ -576,7 +576,7 @@ wtc_result_t dcp_process_frame(dcp_discovery_t *discovery,
     }
 
     if (frame_id < PROFINET_FRAME_ID_DCP ||
-        frame_id > PROFINET_FRAME_ID_DCP_IDENT) {
+        frame_id > PROFINET_FRAME_ID_DCP_IDENT_RESP) {
         return WTC_ERROR_PROTOCOL;
     }
 
