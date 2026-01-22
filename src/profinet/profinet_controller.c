@@ -1044,7 +1044,7 @@ static wtc_result_t send_rpc_request(
     memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
     addr.sin_port = htons(PNIO_RPC_PORT);
-    addr.sin_addr.s_addr = device_ip;
+    addr.sin_addr.s_addr = htonl(device_ip);  /* Convert host to network byte order */
 
     /* Send request */
     ssize_t sent = sendto(socket_fd, request, req_len, 0,
