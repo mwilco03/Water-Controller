@@ -670,8 +670,9 @@ class WtcShmClient:
         cid_bytes = correlation_id.encode('utf-8')[:CORRELATION_ID_LEN-1]
         struct.pack_into(f'{len(cid_bytes)}s', cmd_data, 8, cid_bytes)
 
-        # Command data starts after correlation_id (offset 8 + 37 = 45)
-        data_offset = 8 + CORRELATION_ID_LEN
+        # Command data union - use actual ctypes offset (includes alignment padding!)
+        # DO NOT use manual calculation (8 + 37 = 45) - the union is aligned to offset 48
+        data_offset = ShmCommand.cmd.offset
 
         if cmd_type == SHM_CMD_ACTUATOR:
             station = kwargs['station'].encode('utf-8')[:63]
@@ -861,7 +862,7 @@ class WtcShmClient:
         - sequence (4 bytes) at offset 0
         - command_type (4 bytes) at offset 4
         - correlation_id (37 bytes) at offset 8
-        - command data union starts at offset 45 (8 + CORRELATION_ID_LEN)
+        - command data union starts at ShmCommand.cmd.offset (includes padding!)
         """
         self._command_seq += 1
 
@@ -875,8 +876,9 @@ class WtcShmClient:
         cid_bytes = correlation_id.encode('utf-8')[:CORRELATION_ID_LEN-1]
         struct.pack_into(f'{len(cid_bytes)}s', cmd_data, 8, cid_bytes)
 
-        # Command data union starts after correlation_id (offset 8 + 37 = 45)
-        data_offset = 8 + CORRELATION_ID_LEN
+        # Command data union - use actual ctypes offset (includes alignment padding!)
+        # DO NOT use manual calculation (8 + 37 = 45) - the union is aligned to offset 48
+        data_offset = ShmCommand.cmd.offset
 
         # Pack station name (64 bytes) - all RTU commands have station_name first
         station_bytes = station_name.encode('utf-8')[:63]
