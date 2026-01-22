@@ -24,6 +24,7 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <poll.h>
+#include <net/if_arp.h>
 
 /* Internal controller structure */
 struct profinet_controller {
@@ -560,6 +561,52 @@ wtc_result_t profinet_controller_stop(profinet_controller_t *controller) {
     return WTC_OK;
 }
 
+/*
+ * Lookup MAC address via ARP for a given IP address.
+ * This is used as a fallback when DCP discovery hasn't populated the cache.
+ * Returns WTC_OK if MAC was found, WTC_ERROR_NOT_FOUND otherwise.
+ */
+static wtc_result_t arp_lookup_mac(const char *interface_name,
+                                   uint32_t ip_address,
+                                   uint8_t *mac_out) {
+    int sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock < 0) {
+        LOG_ERROR("Failed to create socket for ARP lookup: %s", strerror(errno));
+        return WTC_ERROR_IO;
+    }
+
+    struct arpreq arp_req;
+    memset(&arp_req, 0, sizeof(arp_req));
+
+    struct sockaddr_in *sin = (struct sockaddr_in *)&arp_req.arp_pa;
+    sin->sin_family = AF_INET;
+    sin->sin_addr.s_addr = htonl(ip_address);
+
+    strncpy(arp_req.arp_dev, interface_name, sizeof(arp_req.arp_dev) - 1);
+
+    if (ioctl(sock, SIOCGARP, &arp_req) < 0) {
+        LOG_DEBUG("ARP lookup failed for 0x%08X: %s (may need to ping first)",
+                  ip_address, strerror(errno));
+        close(sock);
+        return WTC_ERROR_NOT_FOUND;
+    }
+
+    close(sock);
+
+    if (!(arp_req.arp_flags & ATF_COM)) {
+        LOG_DEBUG("ARP entry incomplete for 0x%08X", ip_address);
+        return WTC_ERROR_NOT_FOUND;
+    }
+
+    memcpy(mac_out, arp_req.arp_ha.sa_data, 6);
+
+    char mac_str[18];
+    mac_to_string(mac_out, mac_str, sizeof(mac_str));
+    LOG_INFO("ARP lookup successful: IP 0x%08X -> MAC %s", ip_address, mac_str);
+
+    return WTC_OK;
+}
+
 wtc_result_t profinet_controller_process(profinet_controller_t *controller) {
     if (!controller) {
         return WTC_ERROR_INVALID_PARAM;
@@ -671,9 +718,37 @@ wtc_result_t profinet_controller_connect(profinet_controller_t *controller,
         }
     }
 
+    /*
+     * Third try: ARP lookup fallback when DCP cache is empty but we have IP
+     * This allows connecting to RTUs discovered via HTTP /config endpoint
+     * when DCP multicast isn't working (network issues, firewall, etc.)
+     */
+    dcp_device_info_t synthetic_device;
+    if (!device && target_ip != 0) {
+        LOG_WARN("Device not in DCP cache, attempting ARP lookup for IP 0x%08X", target_ip);
+
+        uint8_t mac[6];
+        if (arp_lookup_mac(controller->config.interface_name, target_ip, mac) == WTC_OK) {
+            memset(&synthetic_device, 0, sizeof(synthetic_device));
+            memcpy(synthetic_device.mac_address, mac, 6);
+            synthetic_device.ip_address = target_ip;
+            strncpy(synthetic_device.station_name, station_name,
+                    sizeof(synthetic_device.station_name) - 1);
+            /* Use default vendor/device IDs for Water-Treat RTU */
+            synthetic_device.vendor_id = 0x1234;
+            synthetic_device.device_id = 0x0001;
+            synthetic_device.ip_set = true;
+            synthetic_device.name_set = true;
+
+            device = &synthetic_device;
+            LOG_INFO("Using ARP-discovered device: station='%s', ip=0x%08X",
+                     station_name, target_ip);
+        }
+    }
+
     if (!device) {
         pthread_mutex_unlock(&controller->lock);
-        LOG_ERROR("Device not found in DCP cache: name='%s', ip='%s' (cache has %d devices)",
+        LOG_ERROR("Device not found: name='%s', ip='%s' (DCP cache has %d devices, ARP failed)",
                   station_name, device_ip_str ? device_ip_str : "none", device_count);
         return WTC_ERROR_NOT_FOUND;
     }
