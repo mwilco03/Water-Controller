@@ -81,6 +81,12 @@ typedef void (*dcp_discovery_callback_t)(const dcp_device_info_t *device, void *
 wtc_result_t dcp_discovery_init(dcp_discovery_t **discovery,
                                  const char *interface_name);
 
+/* Set external socket for DCP (use controller's shared socket)
+ * When set, DCP will use this socket instead of its own.
+ * Must be called before any DCP operations.
+ */
+void dcp_set_socket(dcp_discovery_t *discovery, int socket_fd);
+
 /* Cleanup DCP discovery */
 void dcp_discovery_cleanup(dcp_discovery_t *discovery);
 

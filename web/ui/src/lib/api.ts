@@ -525,6 +525,33 @@ export async function pingScanSubnet(subnet: string, timeoutMs = 500): Promise<P
   return (response as { data?: PingScanResponse }).data || (response as PingScanResponse);
 }
 
+// ============== RTU Config Probe ==============
+
+export interface ProbeIpResponse {
+  ip_address: string;
+  port: number;
+  reachable: boolean;
+  station_name: string | null;
+  vendor_id: number | null;
+  device_id: number | null;
+  product_name: string | null;
+  profinet_enabled: boolean | null;
+  full_config: Record<string, unknown> | null;
+  error: string | null;
+}
+
+/**
+ * Probe an RTU by IP to fetch its PROFINET configuration.
+ * Used when user clicks "Use IP" in discovery to get station_name, vendor_id, device_id.
+ */
+export async function probeRtuConfig(ipAddress: string, port = 9081, timeoutMs = 5000): Promise<ProbeIpResponse> {
+  const response = await apiFetch<{ data?: ProbeIpResponse } | ProbeIpResponse>('/api/v1/discover/probe-ip', {
+    method: 'POST',
+    body: JSON.stringify({ ip_address: ipAddress, port, timeout_ms: timeoutMs }),
+  });
+  return (response as { data?: ProbeIpResponse }).data || (response as ProbeIpResponse);
+}
+
 // ============== Response Data Extraction Utilities ==============
 // These utilities safely handle API responses that may be wrapped in { data: ... }
 // or returned as raw arrays/objects, preventing "x.map is not a function" errors.

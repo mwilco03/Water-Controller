@@ -35,6 +35,7 @@ struct dcp_discovery {
     int socket_fd;
     int if_index;
     uint8_t mac_address[6];
+    bool owns_socket;  /* True if we created the socket, false if external */
 
     /* Discovery state */
     dcp_discovery_callback_t callback;
@@ -219,6 +220,7 @@ wtc_result_t dcp_discovery_init(dcp_discovery_t **discovery,
         free(dcp);
         return WTC_ERROR_IO;
     }
+    dcp->owns_socket = true;
 
     /* Get interface info */
     wtc_result_t res = get_interface_info(dcp);
@@ -247,12 +249,32 @@ wtc_result_t dcp_discovery_init(dcp_discovery_t **discovery,
     return WTC_OK;
 }
 
+void dcp_set_socket(dcp_discovery_t *discovery, int socket_fd) {
+    if (!discovery) return;
+
+    pthread_mutex_lock(&discovery->lock);
+
+    /* Close our own socket if we have one */
+    if (discovery->owns_socket && discovery->socket_fd >= 0) {
+        close(discovery->socket_fd);
+    }
+
+    /* Use the external socket */
+    discovery->socket_fd = socket_fd;
+    discovery->owns_socket = false;
+
+    LOG_INFO("DCP using shared socket fd=%d", socket_fd);
+
+    pthread_mutex_unlock(&discovery->lock);
+}
+
 void dcp_discovery_cleanup(dcp_discovery_t *discovery) {
     if (!discovery) return;
 
     dcp_discovery_stop(discovery);
 
-    if (discovery->socket_fd >= 0) {
+    /* Only close socket if we own it */
+    if (discovery->owns_socket && discovery->socket_fd >= 0) {
         close(discovery->socket_fd);
     }
 
