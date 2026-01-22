@@ -6,8 +6,8 @@ Wants=water-controller-api.service
 
 [Service]
 Type=simple
-User=wtc
-Group=wtc
+User=root
+Group=root
 WorkingDirectory=/opt/water-controller
 ExecStart=/opt/water-controller/bin/water_treat_controller -c /etc/water-controller/controller.conf
 ExecReload=/bin/kill -HUP $MAINPID
