@@ -290,6 +290,10 @@ static void *recv_thread_func(void *arg) {
             if (frame_id >= PROFINET_FRAME_ID_DCP &&
                 frame_id <= PROFINET_FRAME_ID_DCP_IDENT) {
                 /* DCP frame */
+                char src_mac_str[18];
+                mac_to_string(src_mac, src_mac_str, sizeof(src_mac_str));
+                LOG_DEBUG("DCP frame received: frame_id=0x%04X, src=%s, len=%zd",
+                          frame_id, src_mac_str, len);
                 dcp_process_frame(ctrl->dcp, buffer, len);
             } else if (frame_id >= PROFINET_FRAME_ID_RTC1_MIN &&
                        frame_id <= PROFINET_FRAME_ID_RTC1_MAX) {
@@ -449,6 +453,13 @@ wtc_result_t profinet_controller_init(profinet_controller_t **controller,
         free(ctrl);
         return res;
     }
+
+    /* Have DCP use the controller's raw socket for sending frames.
+     * This ensures DCP frames are sent/received on the same socket that
+     * the receive thread is polling, avoiding potential delivery issues
+     * with multiple raw sockets bound to the same interface.
+     */
+    dcp_set_socket(ctrl->dcp, ctrl->raw_socket);
 
     /* Initialize AR manager */
     res = ar_manager_init(&ctrl->ar_manager, ctrl->raw_socket, ctrl->mac_address);
