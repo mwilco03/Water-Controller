@@ -57,6 +57,11 @@ MAX_I2C_DEVICES = 16
 MAX_ONEWIRE_DEVICES = 16
 MAX_NOTIFICATIONS = 32
 
+# Debug: Override command offset if ctypes calculation doesn't match C struct
+# Set to None to use calculated offset, or set to actual C offset from controller logs
+# Example: SHM_COMMAND_OFFSET_OVERRIDE = 202120  (if C reports that offset)
+SHM_COMMAND_OFFSET_OVERRIDE: int | None = None
+
 # Protocol version for compatibility checking
 PROTOCOL_VERSION_MAJOR = 1
 PROTOCOL_VERSION_MINOR = 0
@@ -387,6 +392,29 @@ class WtcSharedMemory(ctypes.Structure):
     ]
 
 
+# Log struct sizes at module load for debugging offset mismatches
+_py_shm_size = ctypes.sizeof(WtcSharedMemory)
+_py_cmd_offset = WtcSharedMemory.command.offset
+_py_seq_offset = WtcSharedMemory.command_sequence.offset
+logger.info(f"Python SHM struct: size={_py_shm_size}, command offset={_py_cmd_offset}, "
+            f"command_sequence offset={_py_seq_offset}")
+
+
+def _get_command_offset() -> int:
+    """Get command offset, using override if set, otherwise ctypes calculation."""
+    if SHM_COMMAND_OFFSET_OVERRIDE is not None:
+        return SHM_COMMAND_OFFSET_OVERRIDE
+    return WtcSharedMemory.command.offset
+
+
+def _get_command_sequence_offset() -> int:
+    """Get command_sequence offset, using override if set, otherwise ctypes calculation."""
+    if SHM_COMMAND_OFFSET_OVERRIDE is not None:
+        # command_sequence is right after command (which is 132 bytes)
+        return SHM_COMMAND_OFFSET_OVERRIDE + ctypes.sizeof(ShmCommand)
+    return WtcSharedMemory.command_sequence.offset
+
+
 class WtcShmClient:
     """Client for accessing Water Treatment Controller shared memory"""
 
@@ -394,6 +422,8 @@ class WtcShmClient:
         self.shm = None
         self.mm = None
         self._command_seq = 0
+        # Log offsets on first use for debugging
+        self._logged_offsets = False
 
     def connect(self) -> bool:
         """Connect to shared memory with version validation"""
@@ -601,12 +631,19 @@ class WtcShmClient:
             struct.pack_into('i', cmd_data, data_offset, kwargs['interlock_id'])
 
         # Write command to shared memory using correct field offset
-        shm_cmd_offset = WtcSharedMemory.command.offset
+        shm_cmd_offset = _get_command_offset()
+        seq_offset = _get_command_sequence_offset()
+
+        # Log offsets once for debugging
+        if not self._logged_offsets:
+            logger.info(f"SHM offsets: command={shm_cmd_offset}, sequence={seq_offset}, "
+                       f"override={SHM_COMMAND_OFFSET_OVERRIDE}")
+            self._logged_offsets = True
+
         self.mm.seek(shm_cmd_offset)
         self.mm.write(bytes(cmd_data))
 
-        # Update sequence using correct field offset
-        seq_offset = WtcSharedMemory.command_sequence.offset
+        # Update sequence using correct field offset (use the already-computed seq_offset)
         struct.pack_into('I', self.mm, seq_offset, self._command_seq)
 
         return True
@@ -796,14 +833,21 @@ class WtcShmClient:
             struct.pack_into('HH', cmd_data, data_offset + 64 + 16, vendor_id, device_id)
 
         # Write to shared memory command buffer
-        # Use ctypes field offset to get correct position of command struct
+        # Use helper functions to get correct offset (supports override for debugging)
         try:
-            cmd_offset = WtcSharedMemory.command.offset
+            cmd_offset = _get_command_offset()
+            seq_offset = _get_command_sequence_offset()
+
+            # Log offsets once for debugging
+            if not self._logged_offsets:
+                logger.info(f"SHM offsets: command={cmd_offset}, sequence={seq_offset}, "
+                           f"override={SHM_COMMAND_OFFSET_OVERRIDE}")
+                self._logged_offsets = True
+
             self.mm.seek(cmd_offset)
             self.mm.write(bytes(cmd_data[:ctypes.sizeof(ShmCommand)]))
 
-            # command_sequence immediately follows command in the struct
-            seq_offset = WtcSharedMemory.command_sequence.offset
+            # Update command_sequence to signal new command
             struct.pack_into('I', self.mm, seq_offset, self._command_seq)
             return True
         except Exception as e:
@@ -846,10 +890,10 @@ class WtcShmClient:
         struct.pack_into('III', cmd_data, 0, self._command_seq, SHM_CMD_DCP_DISCOVER, timeout_ms)
 
         try:
-            cmd_offset = WtcSharedMemory.command.offset
+            cmd_offset = _get_command_offset()
             self.mm.seek(cmd_offset)
             self.mm.write(bytes(cmd_data))
-            logger.info("DCP discovery command sent to controller")
+            logger.info(f"DCP discovery command sent to controller (offset={cmd_offset})")
 
             # Poll for discovery results in shared memory
             # The controller writes discovered devices to a discovery buffer
@@ -957,9 +1001,10 @@ class WtcShmClient:
         struct.pack_into(f'{len(unit_bytes)}sff', cmd_data, 124, unit_bytes, scale_min, scale_max)
 
         try:
-            cmd_offset = WtcSharedMemory.command.offset
+            cmd_offset = _get_command_offset()
             self.mm.seek(cmd_offset)
             self.mm.write(bytes(cmd_data[:ctypes.sizeof(ShmCommand)]))
+            logger.debug(f"Slot config command sent (offset={cmd_offset})")
             return True
         except Exception as e:
             logger.error(f"Failed to send slot config command: {e}")
@@ -1020,10 +1065,10 @@ class WtcShmClient:
             offset += 98
 
         try:
-            cmd_offset = WtcSharedMemory.command.offset
+            cmd_offset = _get_command_offset()
             self.mm.seek(cmd_offset)
             self.mm.write(bytes(cmd_data[:512]))  # Command struct is limited
-            logger.debug(f"User sync command sent for {station_name}")
+            logger.debug(f"User sync command sent for {station_name} (offset={cmd_offset})")
             return True
         except Exception as e:
             logger.error(f"Failed to send user sync command: {e}")
