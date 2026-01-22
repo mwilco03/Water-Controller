@@ -100,6 +100,7 @@ def build_dcp_identify_all_frame(src_mac: bytes, xid: int = 0x12345678) -> bytes
 
     Frame structure:
     - Ethernet header (14 bytes): dst_mac, src_mac, ethertype
+    - Frame ID (2 bytes): 0xFEFE for DCP Identify Request
     - DCP header (10 bytes): service_id, service_type, xid, response_delay, data_length
     - DCP block (4 bytes): option=0xFF (all), suboption=0xFF, length=0
     """
@@ -107,6 +108,9 @@ def build_dcp_identify_all_frame(src_mac: bytes, xid: int = 0x12345678) -> bytes
     dst_mac = DCP_MULTICAST_MAC
     ethertype = struct.pack(">H", PROFINET_ETHERTYPE)
     eth_header = dst_mac + src_mac + ethertype
+
+    # Frame ID - 0xFEFE for DCP Identify Request
+    frame_id = struct.pack(">H", 0xFEFE)
 
     # DCP header
     service_id = DCP_SERVICE_ID_IDENTIFY
@@ -124,7 +128,7 @@ def build_dcp_identify_all_frame(src_mac: bytes, xid: int = 0x12345678) -> bytes
     # DCP block - Identify All (option=0xFF, suboption=0xFF)
     dcp_block = struct.pack(">BBH", DCP_OPTION_ALL, 0xFF, 0)
 
-    return eth_header + dcp_header + dcp_block
+    return eth_header + frame_id + dcp_header + dcp_block
 
 
 def parse_dcp_response(data: bytes) -> DCPDevice | None:
@@ -133,7 +137,7 @@ def parse_dcp_response(data: bytes) -> DCPDevice | None:
 
     Returns DCPDevice with extracted information, or None if not a valid response.
     """
-    if len(data) < 14:
+    if len(data) < 16:  # Minimum: 14 (eth) + 2 (frame_id)
         return None
 
     # Ethernet header
@@ -144,29 +148,36 @@ def parse_dcp_response(data: bytes) -> DCPDevice | None:
     if ethertype != PROFINET_ETHERTYPE:
         return None
 
+    # Frame ID at offset 14
+    frame_id = struct.unpack(">H", data[14:16])[0]
+
+    # Accept DCP response frame IDs (0xFEFC-0xFEFF)
+    if frame_id < 0xFEFC or frame_id > 0xFEFF:
+        return None
+
     # Format MAC address
     mac_str = ":".join(f"{b:02X}" for b in src_mac)
 
-    # DCP header starts at offset 14
-    if len(data) < 24:
+    # DCP header starts at offset 16 (after frame ID)
+    if len(data) < 26:
         return None
 
-    service_id = data[14]
-    service_type = data[15]
+    service_id = data[16]
+    service_type = data[17]
 
     if service_id != DCP_SERVICE_ID_IDENTIFY or service_type != DCP_SERVICE_TYPE_RESPONSE:
         return None
 
     # Parse XID and data length
-    xid = struct.unpack(">I", data[16:20])[0]
-    response_delay = struct.unpack(">H", data[20:22])[0]
-    data_length = struct.unpack(">H", data[22:24])[0]
+    xid = struct.unpack(">I", data[18:22])[0]
+    response_delay = struct.unpack(">H", data[22:24])[0]
+    data_length = struct.unpack(">H", data[24:26])[0]
 
     device = DCPDevice(mac_address=mac_str)
 
-    # Parse DCP blocks starting at offset 24
-    offset = 24
-    end = min(24 + data_length, len(data))
+    # Parse DCP blocks starting at offset 26
+    offset = 26
+    end = min(26 + data_length, len(data))
 
     while offset + 4 <= end:
         option = data[offset]
