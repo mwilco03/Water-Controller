@@ -542,8 +542,40 @@ wtc_result_t profinet_controller_connect(profinet_controller_t *controller,
                                           const char *station_name,
                                           const slot_config_t *slots,
                                           int slot_count) {
-    if (!controller || !station_name || !slots || slot_count <= 0) {
+    if (!controller || !station_name) {
         return WTC_ERROR_INVALID_PARAM;
+    }
+
+    /*
+     * Default slot configuration for Water-Treat RTU (GSDML V2.4):
+     * - Slots 1-8: Input modules (sensors) - 5 bytes each
+     * - Slots 9-15: Output modules (actuators) - 4 bytes each
+     *
+     * Used when no explicit slot configuration is provided.
+     */
+    slot_config_t default_slots[15];
+    if (!slots || slot_count <= 0) {
+        memset(default_slots, 0, sizeof(default_slots));
+
+        /* Input slots 1-8: Generic sensors (MEASUREMENT_CUSTOM for flexibility) */
+        for (int i = 0; i < 8; i++) {
+            default_slots[i].slot = i + 1;
+            default_slots[i].subslot = 1;
+            default_slots[i].type = SLOT_TYPE_SENSOR;
+            default_slots[i].measurement_type = MEASUREMENT_CUSTOM;
+        }
+
+        /* Output slots 9-15: Generic actuators (ACTUATOR_RELAY as default) */
+        for (int i = 0; i < 7; i++) {
+            default_slots[8 + i].slot = 9 + i;
+            default_slots[8 + i].subslot = 1;
+            default_slots[8 + i].type = SLOT_TYPE_ACTUATOR;
+            default_slots[8 + i].actuator_type = ACTUATOR_RELAY;
+        }
+
+        slots = default_slots;
+        slot_count = 15;
+        LOG_INFO("Using default slot configuration (8 inputs, 7 outputs)");
     }
 
     pthread_mutex_lock(&controller->lock);
