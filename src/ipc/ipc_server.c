@@ -16,6 +16,7 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <stddef.h>
 #include <errno.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
@@ -101,6 +102,10 @@ wtc_result_t ipc_server_init(ipc_server_t **server) {
     srv->running = false;
 
     LOG_INFO(LOG_TAG, "IPC server initialized (shm: %s)", SHM_NAME);
+    LOG_INFO(LOG_TAG, "SHM size=%zu, command offset=%zu, command_sequence offset=%zu",
+             sizeof(wtc_shared_memory_t),
+             offsetof(wtc_shared_memory_t, command),
+             offsetof(wtc_shared_memory_t, command_sequence));
     *server = srv;
     return WTC_OK;
 }
