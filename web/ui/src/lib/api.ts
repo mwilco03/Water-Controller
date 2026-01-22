@@ -478,19 +478,28 @@ export async function discoverRTUDevices(stationName: string): Promise<unknown> 
 }
 
 // DCP Discovery API
+interface DiscoveryResponse {
+  devices: DiscoveredDevice[];
+  scan_duration_seconds?: number;
+}
+
 export async function discoverRTUs(timeoutMs = 5000): Promise<DiscoveredDevice[]> {
-  const data = await apiFetch<{ devices: DiscoveredDevice[]; scan_duration_ms: number }>(
+  const response = await apiFetch<{ data?: DiscoveryResponse } | DiscoveryResponse>(
     '/api/v1/discover/rtu',
     {
       method: 'POST',
       body: JSON.stringify({ timeout_ms: timeoutMs }),
     }
   );
+  // Handle both { data: { devices: [...] } } and { devices: [...] } formats
+  const data = (response as { data?: DiscoveryResponse }).data || (response as DiscoveryResponse);
   return data.devices || [];
 }
 
 export async function getCachedDiscovery(): Promise<DiscoveredDevice[]> {
-  const data = await apiFetch<{ devices: DiscoveredDevice[] }>('/api/v1/discover/cached');
+  const response = await apiFetch<{ data?: DiscoveryResponse } | DiscoveryResponse>('/api/v1/discover/cached');
+  // Handle both { data: { devices: [...] } } and { devices: [...] } formats
+  const data = (response as { data?: DiscoveryResponse }).data || (response as DiscoveryResponse);
   return data.devices || [];
 }
 
