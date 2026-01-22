@@ -809,7 +809,7 @@ wtc_result_t rpc_send_and_receive(rpc_context_t *ctx,
     memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
     addr.sin_port = htons(PNIO_RPC_PORT);
-    addr.sin_addr.s_addr = device_ip;
+    addr.sin_addr.s_addr = htonl(device_ip);  /* Convert host to network byte order */
 
     /* Send request */
     ssize_t sent = sendto(ctx->socket_fd, request, req_len, 0,
@@ -819,8 +819,11 @@ wtc_result_t rpc_send_and_receive(rpc_context_t *ctx,
         return WTC_ERROR_IO;
     }
 
-    LOG_DEBUG("RPC request sent: %zd bytes to %08X:%u",
-              sent, ntohl(device_ip), PNIO_RPC_PORT);
+    LOG_DEBUG("RPC request sent: %zd bytes to %d.%d.%d.%d:%u",
+              sent,
+              (device_ip >> 24) & 0xFF, (device_ip >> 16) & 0xFF,
+              (device_ip >> 8) & 0xFF, device_ip & 0xFF,
+              PNIO_RPC_PORT);
 
     /* Wait for response */
     struct pollfd pfd;

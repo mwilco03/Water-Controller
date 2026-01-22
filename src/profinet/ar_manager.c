@@ -639,8 +639,10 @@ wtc_result_t ar_send_connect_request(ar_manager_t *manager,
     ar->state = AR_STATE_CONNECT_REQ;
     ar->last_activity_ms = time_get_ms();
 
-    LOG_INFO("Sending RPC Connect Request to %s (IP: %08X)",
-             ar->device_station_name, ar->device_ip);
+    LOG_INFO("Sending RPC Connect Request to %s (IP: %d.%d.%d.%d)",
+             ar->device_station_name,
+             (ar->device_ip >> 24) & 0xFF, (ar->device_ip >> 16) & 0xFF,
+             (ar->device_ip >> 8) & 0xFF, ar->device_ip & 0xFF);
 
     /* Build connect request parameters */
     connect_request_params_t params;
