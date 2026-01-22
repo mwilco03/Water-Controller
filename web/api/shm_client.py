@@ -286,7 +286,60 @@ class ShmDcpDiscoverCmd(ctypes.Structure):
     ]
 
 
+class ShmI2cDiscoverCmd(ctypes.Structure):
+    """I2C discover command"""
+    _fields_ = [
+        ("rtu_station", c_char * 64),
+        ("bus_number", c_int),
+    ]
+
+
+class ShmOnewireDiscoverCmd(ctypes.Structure):
+    """1-Wire discover command"""
+    _fields_ = [
+        ("rtu_station", c_char * 64),
+        ("bus_number", c_int),
+    ]
+
+
+class ShmConfigureSlotCmd(ctypes.Structure):
+    """Configure slot command"""
+    _fields_ = [
+        ("rtu_station", c_char * 64),
+        ("slot", c_int),
+        ("slot_type", c_int),
+        ("name", c_char * 64),
+        ("unit", c_char * 16),
+        ("measurement_type", c_int),
+        ("actuator_type", c_int),
+    ]
+
+
+# User sync constants - must match C IPC_USER_SYNC_MAX_USERS
+IPC_USER_SYNC_MAX_USERS = 32
+
+
+class ShmUserSyncUser(ctypes.Structure):
+    """Single user record for sync command"""
+    _fields_ = [
+        ("username", c_char * 32),
+        ("password_hash", c_char * 64),
+        ("role", c_uint8),
+        ("flags", c_uint8),
+    ]
+
+
+class ShmUserSyncCmd(ctypes.Structure):
+    """User sync command - THIS IS THE LARGEST UNION MEMBER (~3.2KB)"""
+    _fields_ = [
+        ("station_name", c_char * 64),
+        ("user_count", c_uint32),
+        ("users", ShmUserSyncUser * IPC_USER_SYNC_MAX_USERS),
+    ]
+
+
 class ShmCommandUnion(ctypes.Union):
+    """Command union - size determined by largest member (user_sync_cmd ~3.2KB)"""
     _fields_ = [
         ("actuator_cmd", ShmActuatorCmd),
         ("setpoint_cmd", ShmSetpointCmd),
@@ -298,6 +351,10 @@ class ShmCommandUnion(ctypes.Union):
         ("connect_rtu_cmd", ShmConnectRtuCmd),
         ("disconnect_rtu_cmd", ShmDisconnectRtuCmd),
         ("dcp_discover_cmd", ShmDcpDiscoverCmd),
+        ("i2c_discover_cmd", ShmI2cDiscoverCmd),
+        ("onewire_discover_cmd", ShmOnewireDiscoverCmd),
+        ("configure_slot_cmd", ShmConfigureSlotCmd),
+        ("user_sync_cmd", ShmUserSyncCmd),
     ]
 
 
