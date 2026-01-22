@@ -616,6 +616,7 @@ static wtc_result_t initialize_components(void) {
     ipc_server_set_registry(g_ipc, g_registry);
     ipc_server_set_alarm_manager(g_ipc, g_alarms);
     ipc_server_set_control_engine(g_ipc, g_control);
+    ipc_server_set_profinet(g_ipc, g_profinet);
 
     /* Initialize Modbus gateway */
     modbus_gateway_config_t mb_config = {
