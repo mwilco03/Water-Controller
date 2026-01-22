@@ -105,6 +105,143 @@ async def create_rtu(
     return build_success_response(response_data)
 
 
+@router.post("/add-by-ip", status_code=201)
+async def add_rtu_by_ip(
+    ip_address: str = Query(..., description="RTU IP address"),
+    port: int = Query(9081, ge=1, le=65535, description="RTU HTTP API port"),
+    timeout_ms: int = Query(5000, ge=100, le=30000, description="Timeout in milliseconds"),
+    auto_connect: bool = Query(False, description="Automatically connect after adding"),
+    db: Session = Depends(get_db)
+) -> dict[str, Any]:
+    """
+    Add RTU by IP address - fetches config from device to get correct PROFINET identity.
+
+    This is the recommended way to add RTUs:
+    1. Pings the IP to verify reachability
+    2. Fetches /config endpoint to get actual PROFINET station_name, vendor_id, device_id
+    3. Creates RTU in database with correct identity
+    4. Optionally initiates PROFINET connection
+
+    This ensures the station_name matches what the RTU reports via DCP discovery,
+    which is required for PROFINET connection to succeed.
+    """
+    import httpx
+
+    # Check if IP already exists
+    existing = db.query(RTU).filter(RTU.ip_address == ip_address).first()
+    if existing:
+        raise HTTPException(
+            status_code=409,
+            detail=f"RTU with IP {ip_address} already exists: {existing.station_name}"
+        )
+
+    url = f"http://{ip_address}:{port}/config"
+    timeout_sec = timeout_ms / 1000.0
+
+    # Fetch config from RTU
+    try:
+        async with httpx.AsyncClient(timeout=timeout_sec) as client:
+            response = await client.get(url)
+
+        if response.status_code != 200:
+            raise HTTPException(
+                status_code=502,
+                detail=f"RTU returned HTTP {response.status_code} from /config endpoint"
+            )
+
+        config = response.json()
+
+    except httpx.ConnectTimeout:
+        raise HTTPException(
+            status_code=504,
+            detail=f"Connection timeout to {ip_address}:{port} ({timeout_ms}ms)"
+        )
+    except httpx.ConnectError:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Cannot connect to {ip_address}:{port} - device unreachable"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Error fetching RTU config: {e}"
+        )
+
+    # Extract PROFINET config
+    pn_config = config.get("profinet", {})
+    station_name = pn_config.get("station_name")
+    vendor_id = pn_config.get("vendor_id")
+    device_id = pn_config.get("device_id")
+
+    if not station_name:
+        raise HTTPException(
+            status_code=502,
+            detail="RTU config missing profinet.station_name"
+        )
+
+    # Check if station_name already exists
+    existing_name = db.query(RTU).filter(RTU.station_name == station_name).first()
+    if existing_name:
+        raise HTTPException(
+            status_code=409,
+            detail=f"RTU with station_name '{station_name}' already exists (IP: {existing_name.ip_address})"
+        )
+
+    # Create RTU with correct identity from device
+    rtu = RTU(
+        station_name=station_name,
+        ip_address=ip_address,
+        vendor_id=f"0x{vendor_id:04X}" if vendor_id else None,
+        device_id=f"0x{device_id:04X}" if device_id else None,
+        state=RtuState.OFFLINE,
+    )
+    db.add(rtu)
+    db.commit()
+    db.refresh(rtu)
+
+    logger.info(f"Added RTU by IP: {station_name} at {ip_address} (vendor=0x{vendor_id:04X}, device=0x{device_id:04X})")
+
+    # Register with PROFINET controller
+    controller_registered = False
+    profinet = get_profinet_client()
+    try:
+        if profinet.is_connected():
+            controller_registered = profinet.add_rtu(
+                station_name,
+                ip_address,
+                vendor_id or 0,
+                device_id or 0,
+                8  # Default slot count
+            )
+            logger.info(f"RTU {station_name} registered with PROFINET controller")
+    except Exception as e:
+        logger.warning(f"Could not register RTU {station_name} with controller: {e}")
+
+    # Auto-connect if requested
+    connected = False
+    if auto_connect and controller_registered:
+        try:
+            connected = profinet.connect_rtu(station_name)
+            if connected:
+                rtu.update_state(RtuState.CONNECTING)
+                db.commit()
+        except Exception as e:
+            logger.warning(f"Auto-connect failed for {station_name}: {e}")
+
+    return build_success_response({
+        "id": rtu.id,
+        "station_name": rtu.station_name,
+        "ip_address": rtu.ip_address,
+        "vendor_id": rtu.vendor_id,
+        "device_id": rtu.device_id,
+        "state": rtu.state,
+        "controller_registered": controller_registered,
+        "auto_connect_initiated": connected,
+        "source": "fetched_from_device",
+        "profinet_config": pn_config,
+    })
+
+
 @router.get("")
 async def list_rtus(
     state: str | None = Query(None, description="Filter by state"),
@@ -961,6 +1098,126 @@ async def probe_rtu_http(
 
     if not result["reachable"]:
         logger.warning(f"RTU probe {name} ({ip_address}:{port}): {result['error']}")
+
+    return build_success_response(result)
+
+
+@router.post("/{name}/fetch-config")
+async def fetch_rtu_config(
+    name: str,
+    port: int = Query(9081, ge=1, le=65535, description="RTU HTTP API port"),
+    timeout_ms: int = Query(5000, ge=100, le=30000, description="Timeout in milliseconds"),
+    update_db: bool = Query(False, description="Update database with fetched PROFINET identity"),
+    db: Session = Depends(get_db)
+) -> dict[str, Any]:
+    """
+    Fetch RTU configuration from its HTTP /config endpoint.
+
+    This retrieves the RTU's actual PROFINET identity (station_name, vendor_id,
+    device_id) which may differ from what's stored in the database.
+
+    Use update_db=true to sync the database with the RTU's actual identity.
+    This is critical for PROFINET connection - the station_name must match
+    what the RTU reports via DCP discovery.
+
+    Returns:
+        - fetched: True if /config was successfully retrieved
+        - profinet_config: The RTU's PROFINET settings (station_name, vendor_id, device_id)
+        - mismatch: True if database values differ from RTU's actual values
+        - updated: True if database was updated (when update_db=true)
+    """
+    import httpx
+
+    rtu = get_rtu_or_404(db, name)
+    ip_address = rtu.ip_address
+
+    if not ip_address:
+        raise HTTPException(
+            status_code=400,
+            detail=f"RTU '{name}' has no IP address configured"
+        )
+
+    url = f"http://{ip_address}:{port}/config"
+    timeout_sec = timeout_ms / 1000.0
+
+    result = {
+        "station_name": name,
+        "ip_address": ip_address,
+        "fetched": False,
+        "profinet_config": None,
+        "mismatch": False,
+        "mismatch_details": {},
+        "updated": False,
+        "error": None,
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=timeout_sec) as client:
+            response = await client.get(url)
+
+        if response.status_code != 200:
+            result["error"] = f"HTTP {response.status_code}"
+            return build_success_response(result)
+
+        config = response.json()
+        result["fetched"] = True
+
+        # Extract PROFINET config
+        pn_config = config.get("profinet", {})
+        result["profinet_config"] = {
+            "station_name": pn_config.get("station_name"),
+            "vendor_id": pn_config.get("vendor_id"),
+            "device_id": pn_config.get("device_id"),
+            "product_name": pn_config.get("product_name"),
+            "enabled": pn_config.get("enabled"),
+        }
+
+        # Check for mismatches
+        rtu_station = pn_config.get("station_name")
+        rtu_vendor = pn_config.get("vendor_id")
+        rtu_device = pn_config.get("device_id")
+
+        # Convert hex strings to int for comparison if needed
+        db_vendor = int(rtu.vendor_id, 16) if rtu.vendor_id else None
+        db_device = int(rtu.device_id, 16) if rtu.device_id else None
+
+        mismatches = {}
+        if rtu_station and rtu_station != rtu.station_name:
+            mismatches["station_name"] = {"db": rtu.station_name, "rtu": rtu_station}
+        if rtu_vendor is not None and db_vendor != rtu_vendor:
+            mismatches["vendor_id"] = {"db": rtu.vendor_id, "rtu": f"0x{rtu_vendor:04X}"}
+        if rtu_device is not None and db_device != rtu_device:
+            mismatches["device_id"] = {"db": rtu.device_id, "rtu": f"0x{rtu_device:04X}"}
+
+        if mismatches:
+            result["mismatch"] = True
+            result["mismatch_details"] = mismatches
+            logger.warning(f"RTU {name} identity mismatch: {mismatches}")
+
+        # Update database if requested
+        if update_db and mismatches:
+            if rtu_station:
+                # NOTE: Changing station_name is complex - it's the primary identifier
+                # For now, just update vendor_id and device_id
+                logger.info(f"RTU {name}: station_name mismatch (db={rtu.station_name}, rtu={rtu_station})")
+                logger.info(f"To fix: rename RTU in database to '{rtu_station}' or reconfigure RTU")
+
+            if rtu_vendor is not None:
+                rtu.vendor_id = f"0x{rtu_vendor:04X}"
+            if rtu_device is not None:
+                rtu.device_id = f"0x{rtu_device:04X}"
+
+            db.commit()
+            result["updated"] = True
+            logger.info(f"Updated RTU {name} PROFINET identity from device config")
+
+    except httpx.ConnectTimeout:
+        result["error"] = f"Connection timeout ({timeout_ms}ms)"
+    except httpx.ConnectError as e:
+        result["error"] = f"Connection refused: {e}"
+    except Exception as e:
+        result["error"] = str(e)
+        logger.exception(f"Error fetching RTU config: {e}")
 
     return build_success_response(result)
 
