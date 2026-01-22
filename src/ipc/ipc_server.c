@@ -428,11 +428,13 @@ static wtc_result_t handle_rtu_command(ipc_server_t *server, shm_command_t *cmd)
                 rtu_device_t *device = rtu_registry_get_device(server->registry,
                                                                 cmd->connect_rtu_cmd.station_name);
                 if (device) {
-                    LOG_INFO(LOG_TAG, "Connect RTU: %s (slots=%p, slot_count=%d)",
+                    LOG_INFO(LOG_TAG, "Connect RTU: %s at %s (slots=%p, slot_count=%d)",
                              cmd->connect_rtu_cmd.station_name,
+                             device->ip_address,
                              (void*)device->slots, device->slot_count);
                     result = profinet_controller_connect(server->profinet,
                                                           cmd->connect_rtu_cmd.station_name,
+                                                          device->ip_address,  /* IP for fallback DCP lookup */
                                                           device->slots,
                                                           device->slot_count);
                     LOG_INFO(LOG_TAG, "Connect RTU command: %s (result=%d)",
