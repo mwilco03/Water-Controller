@@ -540,6 +540,7 @@ wtc_result_t profinet_controller_process(profinet_controller_t *controller) {
 
 wtc_result_t profinet_controller_connect(profinet_controller_t *controller,
                                           const char *station_name,
+                                          const char *device_ip_str,
                                           const slot_config_t *slots,
                                           int slot_count) {
     if (!controller || !station_name) {
@@ -588,22 +589,53 @@ wtc_result_t profinet_controller_connect(profinet_controller_t *controller,
         return WTC_ERROR_ALREADY_EXISTS;
     }
 
+    /* Parse IP address if provided (for fallback lookup) */
+    uint32_t target_ip = 0;
+    if (device_ip_str && device_ip_str[0]) {
+        struct in_addr addr;
+        if (inet_pton(AF_INET, device_ip_str, &addr) == 1) {
+            target_ip = ntohl(addr.s_addr);
+            LOG_DEBUG("Target IP for lookup: %s (0x%08X)", device_ip_str, target_ip);
+        }
+    }
+
     /* Get device info from DCP cache */
     dcp_device_info_t devices[64];
     int device_count = 64;
     dcp_get_devices(controller->dcp, devices, &device_count, 64);
 
+    LOG_INFO("DCP cache has %d devices, searching for '%s' or IP 0x%08X",
+             device_count, station_name, target_ip);
+
     dcp_device_info_t *device = NULL;
+
+    /* First try: match by station_name */
     for (int i = 0; i < device_count; i++) {
+        LOG_DEBUG("DCP device %d: station='%s', ip=0x%08X",
+                  i, devices[i].station_name, devices[i].ip_address);
         if (strcmp(devices[i].station_name, station_name) == 0) {
             device = &devices[i];
+            LOG_INFO("Found device by station_name: %s", station_name);
             break;
+        }
+    }
+
+    /* Second try: match by IP address */
+    if (!device && target_ip != 0) {
+        for (int i = 0; i < device_count; i++) {
+            if (devices[i].ip_address == target_ip) {
+                device = &devices[i];
+                LOG_INFO("Found device by IP (station_name mismatch): DCP has '%s', we requested '%s'",
+                         devices[i].station_name, station_name);
+                break;
+            }
         }
     }
 
     if (!device) {
         pthread_mutex_unlock(&controller->lock);
-        LOG_ERROR("Device not found: %s", station_name);
+        LOG_ERROR("Device not found in DCP cache: name='%s', ip='%s' (cache has %d devices)",
+                  station_name, device_ip_str ? device_ip_str : "none", device_count);
         return WTC_ERROR_NOT_FOUND;
     }
 

@@ -385,6 +385,10 @@ static wtc_result_t handle_rtu_command(ipc_server_t *server, shm_command_t *cmd)
     wtc_result_t result = WTC_OK;
     const char *cmd_name = NULL;
 
+    /* Debug: log every RTU command received */
+    LOG_INFO(LOG_TAG, "RTU command received: type=%d, profinet=%p, registry=%p",
+             cmd->command_type, (void*)server->profinet, (void*)server->registry);
+
     switch (cmd->command_type) {
         case SHM_CMD_ADD_RTU:
             cmd_name = "add_rtu";
@@ -417,12 +421,20 @@ static wtc_result_t handle_rtu_command(ipc_server_t *server, shm_command_t *cmd)
 
         case SHM_CMD_CONNECT_RTU:
             cmd_name = "connect_rtu";
-            if (server->profinet) {
+            if (!server->profinet) {
+                LOG_ERROR(LOG_TAG, "Connect RTU failed: PROFINET controller not set on IPC server!");
+                result = WTC_ERROR_NOT_INITIALIZED;
+            } else {
                 rtu_device_t *device = rtu_registry_get_device(server->registry,
                                                                 cmd->connect_rtu_cmd.station_name);
                 if (device) {
+                    LOG_INFO(LOG_TAG, "Connect RTU: %s at %s (slots=%p, slot_count=%d)",
+                             cmd->connect_rtu_cmd.station_name,
+                             device->ip_address,
+                             (void*)device->slots, device->slot_count);
                     result = profinet_controller_connect(server->profinet,
                                                           cmd->connect_rtu_cmd.station_name,
+                                                          device->ip_address,  /* IP for fallback DCP lookup */
                                                           device->slots,
                                                           device->slot_count);
                     LOG_INFO(LOG_TAG, "Connect RTU command: %s (result=%d)",
