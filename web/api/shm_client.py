@@ -946,7 +946,13 @@ class WtcShmClient:
         self._command_seq += 1
 
         cmd_data = bytearray(ctypes.sizeof(ShmCommand))
-        struct.pack_into('III', cmd_data, 0, self._command_seq, SHM_CMD_DCP_DISCOVER, timeout_ms)
+        # Pack header: sequence (4), command_type (4)
+        struct.pack_into('II', cmd_data, 0, self._command_seq, SHM_CMD_DCP_DISCOVER)
+        # Pack command data in union at proper offset
+        # dcp_discover_cmd layout: network_interface[32], timeout_ms(u32)
+        data_offset = ShmCommand.cmd.offset
+        # network_interface left empty (use default), timeout_ms at offset +32
+        struct.pack_into('I', cmd_data, data_offset + 32, timeout_ms)
 
         try:
             cmd_offset = _get_command_offset()
@@ -1034,21 +1040,29 @@ class WtcShmClient:
         logger.info(f"Configuring slot {slot} on {station_name} as {slot_type}")
         self._command_seq += 1
 
-        cmd_data = bytearray(256)
+        cmd_data = bytearray(ctypes.sizeof(ShmCommand))
         struct.pack_into('II', cmd_data, 0, self._command_seq, SHM_CMD_CONFIGURE_SLOT)
 
+        # configure_slot_cmd layout (within union at ShmCommand.cmd.offset):
+        # rtu_station[64], slot(int), slot_type(int), name[64], unit[16], measurement_type(int), actuator_type(int)
+        data_offset = ShmCommand.cmd.offset
+
         station_bytes = station_name.encode('utf-8')[:63]
-        struct.pack_into(f'{len(station_bytes)}s', cmd_data, 8, station_bytes)
-        struct.pack_into('i', cmd_data, 72, slot)
+        struct.pack_into(f'{len(station_bytes)}s', cmd_data, data_offset, station_bytes)
+        struct.pack_into('i', cmd_data, data_offset + 64, slot)
 
-        type_bytes = slot_type.encode('utf-8')[:15]
-        struct.pack_into(f'{len(type_bytes)}s', cmd_data, 76, type_bytes)
+        # slot_type is an int in C, convert string to int (0=unknown, 1=sensor, 2=actuator, etc.)
+        slot_type_int = {'sensor': 1, 'actuator': 2, 'input': 1, 'output': 2}.get(slot_type.lower(), 0)
+        struct.pack_into('i', cmd_data, data_offset + 68, slot_type_int)
 
-        name_bytes = name.encode('utf-8')[:31]
-        struct.pack_into(f'{len(name_bytes)}s', cmd_data, 92, name_bytes)
+        name_bytes = name.encode('utf-8')[:63]
+        struct.pack_into(f'{len(name_bytes)}s', cmd_data, data_offset + 72, name_bytes)
 
-        unit_bytes = unit.encode('utf-8')[:7]
-        struct.pack_into(f'{len(unit_bytes)}sff', cmd_data, 124, unit_bytes, scale_min, scale_max)
+        unit_bytes = unit.encode('utf-8')[:15]
+        struct.pack_into(f'{len(unit_bytes)}s', cmd_data, data_offset + 136, unit_bytes)
+
+        # measurement_type and actuator_type left as 0 for now
+        # scale_min/scale_max not in current C struct - may need future addition
 
         try:
             cmd_offset = _get_command_offset()
@@ -1087,19 +1101,23 @@ class WtcShmClient:
         logger.info(f"Syncing {len(users)} users to RTU {station_name}")
         self._command_seq += 1
 
-        # Build command data
-        # Format: seq(4) + cmd_type(4) + station_name(64) + user_count(4) + users...
-        cmd_data = bytearray(4096)  # Large buffer for user data
+        # Build command data using proper struct offsets
+        # user_sync_cmd layout: station_name[64], user_count(u32), users[32]
+        cmd_data = bytearray(ctypes.sizeof(ShmCommand))
         struct.pack_into('II', cmd_data, 0, self._command_seq, SHM_CMD_USER_SYNC)
 
+        # Command data starts at union offset (includes alignment padding)
+        data_offset = ShmCommand.cmd.offset
+
         station_bytes = station_name.encode('utf-8')[:63]
-        struct.pack_into(f'{len(station_bytes)}s', cmd_data, 8, station_bytes)
+        struct.pack_into(f'{len(station_bytes)}s', cmd_data, data_offset, station_bytes)
 
-        user_count = min(len(users), 32)  # Max 32 users per sync
-        struct.pack_into('I', cmd_data, 72, user_count)
+        user_count = min(len(users), IPC_USER_SYNC_MAX_USERS)
+        struct.pack_into('I', cmd_data, data_offset + 64, user_count)
 
-        # Pack user records: username(32) + password_hash(64) + role(1) + flags(1)
-        offset = 76
+        # Pack user records: username(32) + password_hash(64) + role(1) + flags(1) = 98 bytes each
+        # Users array starts at offset 68 within user_sync_cmd
+        users_offset = data_offset + 68
         for i in range(user_count):
             user = users[i]
             username = user.get('username', '')[:31].encode('utf-8')
@@ -1108,11 +1126,10 @@ class WtcShmClient:
             active = 1 if user.get('active', True) else 0
             flags = active | 0x02  # Bit 1 = synced_from_controller
 
-            struct.pack_into('32s64sBB', cmd_data, offset,
+            struct.pack_into('32s64sBB', cmd_data, users_offset + (i * 98),
                             username.ljust(32, b'\x00'),
                             password_hash.ljust(64, b'\x00'),
                             role, flags)
-            offset += 98
 
         try:
             cmd_offset = _get_command_offset()
