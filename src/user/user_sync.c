@@ -121,8 +121,10 @@ int user_sync_serialize(const user_t *users,
 
     memset(payload, 0, sizeof(user_sync_payload_t));
 
-    /* Fill header */
+    /* Fill header (v2 format with magic and operation) */
+    payload->header.magic = USER_SYNC_MAGIC;
     payload->header.version = USER_SYNC_PROTOCOL_VERSION;
+    payload->header.operation = USER_SYNC_OP_FULL_SYNC;
     payload->header.user_count = (uint8_t)user_count;
     payload->header.timestamp = (uint32_t)(time_get_ms() / 1000);
     payload->header.nonce = (uint32_t)time_get_ms(); /* Simple nonce */
@@ -131,12 +133,15 @@ int user_sync_serialize(const user_t *users,
     for (int i = 0; i < user_count; i++) {
         user_sync_record_t *record = &payload->users[i];
 
+        /* Set user ID from controller database */
+        record->user_id = users[i].user_id;
+
         /* Copy username (truncate if needed) */
         strncpy(record->username, users[i].username,
                 USER_SYNC_USERNAME_LEN - 1);
         record->username[USER_SYNC_USERNAME_LEN - 1] = '\0';
 
-        /* Copy password hash */
+        /* Copy password hash (v2: 24 bytes max) */
         strncpy(record->password_hash, users[i].password_hash,
                 USER_SYNC_HASH_LEN - 1);
         record->password_hash[USER_SYNC_HASH_LEN - 1] = '\0';
@@ -149,7 +154,7 @@ int user_sync_serialize(const user_t *users,
         if (users[i].active) {
             record->flags |= USER_FLAG_ACTIVE;
         }
-        record->flags |= USER_FLAG_SYNCED; /* Mark as synced from controller */
+        record->flags |= USER_FLAG_SYNC_TO_RTUS; /* Mark for RTU sync */
     }
 
     /* Calculate checksum over user records */
@@ -158,8 +163,8 @@ int user_sync_serialize(const user_t *users,
         (size_t)user_count * sizeof(user_sync_record_t)
     );
 
-    LOG_DEBUG(LOG_TAG, "Serialized %d users, checksum=0x%04X",
-              user_count, payload->header.checksum);
+    LOG_DEBUG(LOG_TAG, "Serialized %d users (v2), magic=0x%08X, checksum=0x%04X",
+              user_count, payload->header.magic, payload->header.checksum);
 
     return 0;
 }
@@ -172,11 +177,15 @@ int user_sync_deserialize(const user_sync_payload_t *payload,
         return WTC_USER_SYNC_ERROR_INVALID_PARAM;
     }
 
-    /* Check version */
-    if (payload->header.version != USER_SYNC_PROTOCOL_VERSION) {
-        LOG_ERROR(LOG_TAG, "Version mismatch: expected %d, got %d",
-                  USER_SYNC_PROTOCOL_VERSION, payload->header.version);
-        return WTC_USER_SYNC_ERROR_VERSION;
+    /* Validate header using shared v2 validation */
+    user_sync_result_t validate_result = user_sync_validate_header(&payload->header);
+    if (validate_result != USER_SYNC_OK) {
+        LOG_ERROR(LOG_TAG, "Header validation failed: %s",
+                  user_sync_result_str(validate_result));
+        if (validate_result == USER_SYNC_ERR_VERSION_MISMATCH) {
+            return WTC_USER_SYNC_ERROR_VERSION;
+        }
+        return WTC_USER_SYNC_ERROR_INVALID_PARAM;
     }
 
     int count = payload->header.user_count;
@@ -199,15 +208,16 @@ int user_sync_deserialize(const user_sync_payload_t *payload,
         return WTC_USER_SYNC_ERROR_CHECKSUM;
     }
 
-    /* Extract user records */
+    /* Extract user records (v2 format with user_id) */
     for (int i = 0; i < count; i++) {
         const user_sync_record_t *record = &payload->users[i];
 
-        users[i].user_id = i + 1;
+        users[i].user_id = record->user_id;
         strncpy(users[i].username, record->username, WTC_MAX_USERNAME - 1);
         users[i].username[WTC_MAX_USERNAME - 1] = '\0';
-        strncpy(users[i].password_hash, record->password_hash, 255);
-        users[i].password_hash[255] = '\0';
+        strncpy(users[i].password_hash, record->password_hash,
+                sizeof(users[i].password_hash) - 1);
+        users[i].password_hash[sizeof(users[i].password_hash) - 1] = '\0';
         users[i].role = (user_role_t)record->role;
         users[i].active = (record->flags & USER_FLAG_ACTIVE) != 0;
         users[i].created_at_ms = 0;
@@ -215,7 +225,8 @@ int user_sync_deserialize(const user_sync_payload_t *payload,
     }
 
     *user_count = count;
-    LOG_DEBUG(LOG_TAG, "Deserialized %d users", count);
+    LOG_DEBUG(LOG_TAG, "Deserialized %d users (v2, op=%s)",
+              count, user_sync_op_str(payload->header.operation));
 
     return 0;
 }
