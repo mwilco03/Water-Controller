@@ -670,8 +670,9 @@ class WtcShmClient:
         cid_bytes = correlation_id.encode('utf-8')[:CORRELATION_ID_LEN-1]
         struct.pack_into(f'{len(cid_bytes)}s', cmd_data, 8, cid_bytes)
 
-        # Command data starts after correlation_id (offset 8 + 37 = 45)
-        data_offset = 8 + CORRELATION_ID_LEN
+        # Command data union - use actual ctypes offset (includes alignment padding!)
+        # DO NOT use manual calculation (8 + 37 = 45) - the union is aligned to offset 48
+        data_offset = ShmCommand.cmd.offset
 
         if cmd_type == SHM_CMD_ACTUATOR:
             station = kwargs['station'].encode('utf-8')[:63]
@@ -861,7 +862,7 @@ class WtcShmClient:
         - sequence (4 bytes) at offset 0
         - command_type (4 bytes) at offset 4
         - correlation_id (37 bytes) at offset 8
-        - command data union starts at offset 45 (8 + CORRELATION_ID_LEN)
+        - command data union starts at ShmCommand.cmd.offset (includes padding!)
         """
         self._command_seq += 1
 
@@ -875,8 +876,9 @@ class WtcShmClient:
         cid_bytes = correlation_id.encode('utf-8')[:CORRELATION_ID_LEN-1]
         struct.pack_into(f'{len(cid_bytes)}s', cmd_data, 8, cid_bytes)
 
-        # Command data union starts after correlation_id (offset 8 + 37 = 45)
-        data_offset = 8 + CORRELATION_ID_LEN
+        # Command data union - use actual ctypes offset (includes alignment padding!)
+        # DO NOT use manual calculation (8 + 37 = 45) - the union is aligned to offset 48
+        data_offset = ShmCommand.cmd.offset
 
         # Pack station name (64 bytes) - all RTU commands have station_name first
         station_bytes = station_name.encode('utf-8')[:63]
@@ -969,54 +971,45 @@ class WtcShmClient:
 
     def _read_discovery_results(self) -> list[dict[str, Any]]:
         """
-        Read discovered devices from the shared memory discovery buffer.
-        The C controller populates this buffer after DCP discovery.
+        Read discovered devices from shared memory using proper struct offsets.
+        The C controller populates discovered_devices[] after DCP discovery.
         """
         if not self.mm:
             return []
 
         devices = []
         try:
-            # Discovery results are stored after RTU array in shared memory
-            # Format: count (uint32), then array of discovery_entry structs
-            # Each entry: mac[6], ip[4], name[64], vendor[32], device_type[16], vendor_id, device_id
-            discovery_offset = 0x8000  # Discovery buffer offset (32KB into SHM)
+            # Read entire shared memory as struct
+            data = WtcSharedMemory.from_buffer_copy(self.mm)
 
-            self.mm.seek(discovery_offset)
-            count_data = self.mm.read(4)
-            if not count_data or len(count_data) < 4:
+            count = data.discovered_device_count
+            if count <= 0 or count > MAX_DISCOVERY_DEVICES:
                 return []
 
-            count = struct.unpack('I', count_data)[0]
-            if count == 0 or count > 256:  # Sanity check
-                return []
+            # Read each discovered device from the array
+            for i in range(count):
+                dev = data.discovered_devices[i]
 
-            # Read each discovered device
-            for _i in range(count):
-                entry_data = self.mm.read(128)  # Each entry is 128 bytes
-                if len(entry_data) < 128:
-                    break
+                # C writes these as null-terminated strings
+                station_name = dev.station_name.decode('utf-8', errors='ignore').rstrip('\x00')
+                ip_address = dev.ip_address.decode('utf-8', errors='ignore').rstrip('\x00')
+                mac_address = dev.mac_address.decode('utf-8', errors='ignore').rstrip('\x00')
 
-                mac_bytes = entry_data[0:6]
-                ip_bytes = entry_data[6:10]
-                name = entry_data[10:74].rstrip(b'\x00').decode('utf-8', errors='ignore')
-                vendor = entry_data[74:106].rstrip(b'\x00').decode('utf-8', errors='ignore')
-                dev_type = entry_data[106:122].rstrip(b'\x00').decode('utf-8', errors='ignore')
-                vendor_id, device_id = struct.unpack('HH', entry_data[122:126])
+                # Skip empty entries
+                if not station_name and not mac_address:
+                    continue
 
-                mac_str = ':'.join(f'{b:02X}' for b in mac_bytes)
-                ip_str = '.'.join(str(b) for b in ip_bytes)
-
-                if mac_str != '00:00:00:00:00:00':
-                    devices.append({
-                        "mac_address": mac_str,
-                        "ip_address": ip_str if ip_str != '0.0.0.0' else None,
-                        "device_name": name or f"profinet-{mac_str[-8:].replace(':', '')}",
-                        "vendor_name": vendor or "Unknown",
-                        "device_type": dev_type or "PROFINET Device",
-                        "profinet_vendor_id": vendor_id,
-                        "profinet_device_id": device_id
-                    })
+                devices.append({
+                    "mac_address": mac_address or "00:00:00:00:00:00",
+                    "ip_address": ip_address if ip_address else None,
+                    "device_name": station_name or f"profinet-{mac_address[-8:].replace(':', '') if mac_address else 'unknown'}",
+                    "station_name": station_name,  # PROFINET NameOfStation (rtu-XXXX)
+                    "vendor_name": "Unknown",  # Not in current struct
+                    "device_type": "PROFINET Device",
+                    "profinet_vendor_id": dev.vendor_id,
+                    "profinet_device_id": dev.device_id,
+                    "reachable": dev.reachable,
+                })
 
         except Exception as e:
             logger.error(f"Failed to read discovery results: {e}")
