@@ -52,6 +52,7 @@ struct profinet_controller {
     /* Interface info */
     int if_index;
     uint8_t mac_address[6];
+    uint32_t ip_address;  /* Auto-detected from interface */
 };
 
 /* Receive buffer size */
@@ -80,10 +81,37 @@ static wtc_result_t get_interface_info(profinet_controller_t *ctrl) {
     }
     memcpy(ctrl->mac_address, ifr.ifr_hwaddr.sa_data, 6);
 
+    /* Get IP address - use AF_INET socket for this ioctl */
+    int ip_sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (ip_sock >= 0) {
+        memset(&ifr, 0, sizeof(ifr));
+        strncpy(ifr.ifr_name, ctrl->config.interface_name, IFNAMSIZ - 1);
+        if (ioctl(ip_sock, SIOCGIFADDR, &ifr) >= 0) {
+            struct sockaddr_in *addr = (struct sockaddr_in *)&ifr.ifr_addr;
+            ctrl->ip_address = ntohl(addr->sin_addr.s_addr);
+        } else {
+            LOG_WARN("Failed to get IP address for %s: %s (will use config or heuristic)",
+                     ctrl->config.interface_name, strerror(errno));
+            ctrl->ip_address = 0;
+        }
+        close(ip_sock);
+    } else {
+        LOG_WARN("Failed to create socket for IP query: %s", strerror(errno));
+        ctrl->ip_address = 0;
+    }
+
     char mac_str[18];
     mac_to_string(ctrl->mac_address, mac_str, sizeof(mac_str));
-    LOG_INFO("Interface %s: index=%d, MAC=%s",
-             ctrl->config.interface_name, ctrl->if_index, mac_str);
+
+    char ip_str[INET_ADDRSTRLEN] = "none";
+    if (ctrl->ip_address != 0) {
+        struct in_addr addr;
+        addr.s_addr = htonl(ctrl->ip_address);
+        inet_ntop(AF_INET, &addr, ip_str, sizeof(ip_str));
+    }
+
+    LOG_INFO("Interface %s: index=%d, MAC=%s, IP=%s",
+             ctrl->config.interface_name, ctrl->if_index, mac_str, ip_str);
 
     return WTC_OK;
 }
@@ -434,9 +462,20 @@ wtc_result_t profinet_controller_init(profinet_controller_t **controller,
     /* Register AR state change callback for config sync and notifications */
     ar_manager_set_state_callback(ctrl->ar_manager, ar_state_change_callback, ctrl);
 
-    /* Set controller IP for RPC communication */
-    if (config->ip_address != 0) {
-        ar_manager_set_controller_ip(ctrl->ar_manager, config->ip_address);
+    /* Set controller IP for RPC communication
+     * Priority: config->ip_address > auto-detected from interface > .1 heuristic (in ar_manager)
+     */
+    uint32_t controller_ip = config->ip_address;
+    if (controller_ip == 0 && ctrl->ip_address != 0) {
+        controller_ip = ctrl->ip_address;
+        LOG_INFO("Using auto-detected controller IP: %d.%d.%d.%d",
+                 (controller_ip >> 24) & 0xFF,
+                 (controller_ip >> 16) & 0xFF,
+                 (controller_ip >> 8) & 0xFF,
+                 controller_ip & 0xFF);
+    }
+    if (controller_ip != 0) {
+        ar_manager_set_controller_ip(ctrl->ar_manager, controller_ip);
     }
 
     *controller = ctrl;
