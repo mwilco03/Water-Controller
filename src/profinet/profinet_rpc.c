@@ -567,6 +567,65 @@ wtc_result_t rpc_parse_connect_response(const uint8_t *buffer,
 
     size_t pos = sizeof(profinet_rpc_header_t);
 
+    /*
+     * PNIO Connect Response format (after RPC header):
+     * - ArgsMaximum (4 bytes, always 0)
+     * - ErrorStatus1 (4 bytes) - PNIO error code
+     * - ErrorStatus2 (4 bytes) - Additional error info
+     * - MaxCount (4 bytes) - NDR array max
+     * - Offset (4 bytes) - NDR array offset (always 0)
+     * - ActualCount (4 bytes) - NDR array actual count
+     * - Then the PNIO blocks (ARBlockRes, IOCRBlockRes, etc.)
+     */
+    if (pos + 24 > buf_len) {
+        LOG_ERROR("Connect response too short for NDR header");
+        return WTC_ERROR_PROTOCOL;
+    }
+
+    /* Parse NDR/PNIO header - values are little-endian */
+    uint32_t args_maximum = buffer[pos] | (buffer[pos+1] << 8) |
+                            (buffer[pos+2] << 16) | (buffer[pos+3] << 24);
+    pos += 4;
+    (void)args_maximum;
+
+    uint32_t error_status1 = buffer[pos] | (buffer[pos+1] << 8) |
+                             (buffer[pos+2] << 16) | (buffer[pos+3] << 24);
+    pos += 4;
+
+    uint32_t error_status2 = buffer[pos] | (buffer[pos+1] << 8) |
+                             (buffer[pos+2] << 16) | (buffer[pos+3] << 24);
+    pos += 4;
+
+    LOG_DEBUG("Connect response NDR: error1=0x%08X, error2=0x%08X",
+              error_status1, error_status2);
+
+    /* Check for PNIO-level errors */
+    if (error_status1 != 0 || error_status2 != 0) {
+        LOG_ERROR("Connect response PNIO error: status1=0x%08X, status2=0x%08X",
+                  error_status1, error_status2);
+        response->success = false;
+        response->error_code = (uint8_t)(error_status2 & 0xFF);
+        return WTC_ERROR_PROTOCOL;
+    }
+
+    /* Skip NDR array conformance header */
+    uint32_t max_count = buffer[pos] | (buffer[pos+1] << 8) |
+                         (buffer[pos+2] << 16) | (buffer[pos+3] << 24);
+    pos += 4;
+
+    pos += 4;  /* Skip offset (always 0) */
+
+    uint32_t actual_count = buffer[pos] | (buffer[pos+1] << 8) |
+                            (buffer[pos+2] << 16) | (buffer[pos+3] << 24);
+    pos += 4;
+
+    LOG_DEBUG("Connect response NDR array: max=%u, actual=%u", max_count, actual_count);
+
+    if (actual_count == 0) {
+        LOG_ERROR("Connect response: no PNIO data in response");
+        return WTC_ERROR_PROTOCOL;
+    }
+
     /* Parse blocks */
     while (pos + 6 <= buf_len) {
         uint16_t block_type = read_u16_be(buffer, &pos);
