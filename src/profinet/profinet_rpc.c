@@ -20,6 +20,24 @@
 #include <errno.h>
 #include <unistd.h>
 
+/* For htole16/htole32 (host to little-endian) - portable byte order conversion */
+#ifdef __linux__
+#include <endian.h>
+#elif defined(__APPLE__)
+#include <libkern/OSByteOrder.h>
+#define htole16(x) OSSwapHostToLittleInt16(x)
+#define htole32(x) OSSwapHostToLittleInt32(x)
+#elif defined(_WIN32)
+/* Windows is always little-endian on supported architectures */
+#define htole16(x) (x)
+#define htole32(x) (x)
+#else
+/* Fallback: assume little-endian, but warn at compile time */
+#warning "Unknown platform - assuming little-endian byte order"
+#define htole16(x) (x)
+#define htole32(x) (x)
+#endif
+
 /* ============== Constants ============== */
 
 /* RPC timeouts */
@@ -192,14 +210,20 @@ static wtc_result_t build_rpc_header(uint8_t *buf,
     memcpy(hdr->activity_uuid, ctx->activity_uuid, 16);
 
     hdr->server_boot = 0;
-    hdr->interface_version = htonl(1);
-    hdr->sequence_number = htonl(ctx->sequence_number);
+    /*
+     * drep[0] = RPC_DREP_LITTLE_ENDIAN means all multi-byte fields must be
+     * little-endian on the wire. Use htole16/htole32 for portability:
+     * - On little-endian (x86, most ARM): no-op
+     * - On big-endian (some ARM, PowerPC): byte-swap
+     */
+    hdr->interface_version = htole32(1);
+    hdr->sequence_number = htole32(ctx->sequence_number);
     ctx->sequence_number++;
 
-    hdr->opnum = htons(opnum);
-    hdr->interface_hint = 0xFFFF;
-    hdr->activity_hint = 0xFFFF;
-    hdr->fragment_length = htons(fragment_length);
+    hdr->opnum = htole16(opnum);
+    hdr->interface_hint = htole16(0xFFFF);
+    hdr->activity_hint = htole16(0xFFFF);
+    hdr->fragment_length = htole16(fragment_length);
     hdr->fragment_number = 0;
     hdr->auth_protocol = 0;
     hdr->serial_low = 0;
@@ -566,6 +590,9 @@ wtc_result_t rpc_parse_connect_response(const uint8_t *buffer,
 
     size_t pos = sizeof(profinet_rpc_header_t);
 
+    LOG_INFO("Connect response: total_len=%zu bytes (RPC hdr=%zu, need NDR=%zu)",
+             buf_len, pos, pos + 20);
+
     /*
      * PNIO Connect Response NDR format (after RPC header):
      * - ArgsMaximum (4 bytes, always 0)
@@ -579,7 +606,13 @@ wtc_result_t rpc_parse_connect_response(const uint8_t *buffer,
      * indicated by RPC FAULT packet type or missing/invalid blocks.
      */
     if (pos + 20 > buf_len) {
-        LOG_ERROR("Connect response too short for NDR header");
+        LOG_ERROR("Connect response too short for NDR header: got %zu bytes, need %zu",
+                  buf_len, pos + 20);
+        /* Log first bytes for diagnosis */
+        if (buf_len >= 4) {
+            LOG_ERROR("Response first 4 bytes: %02X %02X %02X %02X",
+                      buffer[0], buffer[1], buffer[2], buffer[3]);
+        }
         return WTC_ERROR_PROTOCOL;
     }
 
@@ -895,7 +928,12 @@ wtc_result_t rpc_send_and_receive(rpc_context_t *ctx,
     }
 
     *resp_len = (size_t)received;
-    LOG_DEBUG("RPC response received: %zd bytes", received);
+    LOG_INFO("RPC response received: %zd bytes from %d.%d.%d.%d",
+             received,
+             ntohl(addr.sin_addr.s_addr) >> 24,
+             (ntohl(addr.sin_addr.s_addr) >> 16) & 0xFF,
+             (ntohl(addr.sin_addr.s_addr) >> 8) & 0xFF,
+             ntohl(addr.sin_addr.s_addr) & 0xFF);
     return WTC_OK;
 }
 
