@@ -388,12 +388,99 @@ profinet_ar_t *ar_manager_get_ar_by_frame_id(ar_manager_t *manager,
     return NULL;
 }
 
+/* Timeout for waiting for ApplicationReady from device (30 seconds) */
+#define AR_APP_READY_TIMEOUT_MS 30000
+
 wtc_result_t ar_manager_process(ar_manager_t *manager) {
     if (!manager) {
         return WTC_ERROR_INVALID_PARAM;
     }
 
     uint64_t now_ms = time_get_ms();
+
+    /*
+     * Poll for incoming RPC requests from devices.
+     * Devices send ApplicationReady after we send PrmEnd.
+     * Per IEC 61158-6-10: Device sends ApplicationReady TO Controller.
+     */
+    if (manager->rpc_initialized) {
+        uint8_t recv_buf[RPC_MAX_PDU_SIZE];
+        size_t recv_len = 0;
+        uint32_t source_ip = 0;
+        uint16_t source_port = 0;
+
+        wtc_result_t res = rpc_poll_incoming(&manager->rpc_ctx, recv_buf,
+                                              sizeof(recv_buf), &recv_len,
+                                              &source_ip, &source_port);
+        if (res == WTC_OK && recv_len > 0) {
+            /* Parse incoming RPC */
+            incoming_control_request_t incoming_req;
+            res = rpc_parse_incoming_control_request(recv_buf, recv_len, &incoming_req);
+
+            if (res == WTC_OK) {
+                incoming_req.source_ip = source_ip;
+                incoming_req.source_port = source_port;
+
+                /* Handle based on control command */
+                if (incoming_req.control_command == CONTROL_CMD_APP_READY) {
+                    LOG_INFO("Received ApplicationReady from device at %d.%d.%d.%d:%u",
+                             source_ip & 0xFF, (source_ip >> 8) & 0xFF,
+                             (source_ip >> 16) & 0xFF, (source_ip >> 24) & 0xFF,
+                             source_port);
+
+                    /* Find AR by session key and/or AR UUID */
+                    profinet_ar_t *ar = NULL;
+                    for (int i = 0; i < manager->ar_count; i++) {
+                        if (manager->ars[i] &&
+                            manager->ars[i]->session_key == incoming_req.session_key &&
+                            memcmp(manager->ars[i]->ar_uuid, incoming_req.ar_uuid, 16) == 0) {
+                            ar = manager->ars[i];
+                            break;
+                        }
+                    }
+
+                    if (ar) {
+                        if (ar->state == AR_STATE_READY) {
+                            /* Build and send response */
+                            uint8_t resp_buf[RPC_MAX_PDU_SIZE];
+                            size_t resp_len = sizeof(resp_buf);
+
+                            res = rpc_build_control_response(&manager->rpc_ctx,
+                                                              &incoming_req,
+                                                              resp_buf, &resp_len);
+                            if (res == WTC_OK) {
+                                res = rpc_send_response(&manager->rpc_ctx,
+                                                         source_ip, source_port,
+                                                         resp_buf, resp_len);
+                            }
+
+                            if (res == WTC_OK) {
+                                /* Transition to RUN state */
+                                ar_state_t old_state = ar->state;
+                                ar->state = AR_STATE_RUN;
+                                ar->last_activity_ms = now_ms;
+                                notify_state_change(manager, ar, old_state, AR_STATE_RUN);
+                                LOG_INFO("AR %s received ApplicationReady, now RUNNING",
+                                         ar->device_station_name);
+                            } else {
+                                LOG_ERROR("Failed to respond to ApplicationReady for %s",
+                                          ar->device_station_name);
+                            }
+                        } else {
+                            LOG_WARN("Received ApplicationReady for AR %s in unexpected state %d",
+                                     ar->device_station_name, ar->state);
+                        }
+                    } else {
+                        LOG_WARN("Received ApplicationReady for unknown AR (session_key=%u)",
+                                 incoming_req.session_key);
+                    }
+                } else {
+                    LOG_DEBUG("Received incoming RPC with command %u (not ApplicationReady)",
+                              incoming_req.control_command);
+                }
+            }
+        }
+    }
 
     /* Process each AR state machine */
     for (int i = 0; i < manager->ar_count; i++) {
@@ -436,15 +523,18 @@ wtc_result_t ar_manager_process(ar_manager_t *manager) {
             break;
 
         case AR_STATE_READY:
-            /* Ready for cyclic data exchange - send ApplicationReady RPC */
-            LOG_DEBUG("AR %s ready, sending ApplicationReady",
-                      ar->device_station_name);
-            if (ar_send_application_ready(manager, ar) != WTC_OK) {
-                LOG_ERROR("AR %s ApplicationReady failed, aborting",
+            /*
+             * Waiting for ApplicationReady from device.
+             * Per IEC 61158-6-10: After PrmEnd, the DEVICE sends ApplicationReady
+             * to the CONTROLLER, not the other way around.
+             * The RPC polling above handles incoming ApplicationReady.
+             */
+            if (now_ms - ar->last_activity_ms > AR_APP_READY_TIMEOUT_MS) {
+                LOG_ERROR("AR %s timeout waiting for ApplicationReady from device",
                           ar->device_station_name);
-                /* State already set to ABORT by ar_send_application_ready */
+                ar->state = AR_STATE_ABORT;
+                ar->last_activity_ms = now_ms;
             }
-            /* ar_send_application_ready sets state to RUN on success */
             break;
 
         case AR_STATE_RUN:
