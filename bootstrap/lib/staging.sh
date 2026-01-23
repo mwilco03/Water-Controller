@@ -126,8 +126,10 @@ clone_to_staging() {
     fi
 
     # Get commit info
-    local commit_sha
+    local commit_sha commit_date commit_subject
     commit_sha=$(cd "$staging_dir/repo" && git rev-parse HEAD)
+    commit_date=$(cd "$staging_dir/repo" && git log -1 --format=%ci HEAD)
+    commit_subject=$(cd "$staging_dir/repo" && git log -1 --format=%s HEAD)
     local commit_short="${commit_sha:0:7}"
 
     log_info "Cloned successfully: $commit_short"
@@ -135,6 +137,8 @@ clone_to_staging() {
     # Store commit info for later
     echo "$commit_sha" > "$staging_dir/.commit_sha"
     echo "$branch" > "$staging_dir/.branch"
+    echo "$commit_date" > "$staging_dir/.commit_date"
+    echo "$commit_subject" > "$staging_dir/.commit_subject"
 
     return 0
 }
@@ -311,6 +315,8 @@ write_version_file() {
     local branch=""
     local version=""
     local tag=""
+    local commit_date=""
+    local commit_subject=""
 
     if [[ -f "$staging_dir/.commit_sha" ]]; then
         commit_sha=$(cat "$staging_dir/.commit_sha")
@@ -318,6 +324,14 @@ write_version_file() {
 
     if [[ -f "$staging_dir/.branch" ]]; then
         branch=$(cat "$staging_dir/.branch")
+    fi
+
+    if [[ -f "$staging_dir/.commit_date" ]]; then
+        commit_date=$(cat "$staging_dir/.commit_date")
+    fi
+
+    if [[ -f "$staging_dir/.commit_subject" ]]; then
+        commit_subject=$(cat "$staging_dir/.commit_subject")
     fi
 
     # Try to get version from package.json or pyproject.toml
@@ -338,14 +352,17 @@ write_version_file() {
     local version_content
     version_content=$(cat <<EOF
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "package": "water-controller",
   "version": "${version:-0.0.0}",
   "commit_sha": "$commit_sha",
   "commit_short": "${commit_sha:0:7}",
+  "commit_date": "$commit_date",
+  "commit_subject": "$commit_subject",
   "branch": "$branch",
   "tag": "$tag",
   "installed_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "installed_at_local": "$(date '+%Y-%m-%d %H:%M:%S %Z')",
   "installed_by": "bootstrap.sh",
   "bootstrap_version": "$BOOTSTRAP_VERSION",
   "previous_version": "$previous_version",
@@ -357,4 +374,57 @@ EOF
     echo "$version_content" | run_privileged tee "$VERSION_FILE" > /dev/null
 
     log_info "Version file written: $VERSION_FILE"
+}
+
+# Show completion summary with version info and timestamp
+show_completion_summary() {
+    local action="${1:-install}"
+    local staging_dir="${2:-}"
+
+    echo ""
+    echo "============================================================"
+    echo "  Water-Controller $action completed"
+    echo "============================================================"
+
+    # Show commit info
+    if [[ -n "$staging_dir" ]] && [[ -f "$staging_dir/.commit_sha" ]]; then
+        local sha branch commit_date commit_subject
+        sha=$(cat "$staging_dir/.commit_sha")
+        branch=$(cat "$staging_dir/.branch" 2>/dev/null || echo "unknown")
+        commit_date=$(cat "$staging_dir/.commit_date" 2>/dev/null || echo "unknown")
+        commit_subject=$(cat "$staging_dir/.commit_subject" 2>/dev/null || echo "")
+
+        echo ""
+        echo "  Build Info:"
+        echo "    Commit:  ${sha:0:12}"
+        echo "    Branch:  $branch"
+        echo "    Date:    $commit_date"
+        if [[ -n "$commit_subject" ]]; then
+            echo "    Message: $commit_subject"
+        fi
+    elif [[ -f "$VERSION_FILE" ]]; then
+        # Read from installed version file
+        local sha branch commit_date commit_subject
+        sha=$(extract_json_value "$VERSION_FILE" "commit_sha")
+        branch=$(extract_json_value "$VERSION_FILE" "branch")
+        commit_date=$(extract_json_value "$VERSION_FILE" "commit_date")
+        commit_subject=$(extract_json_value "$VERSION_FILE" "commit_subject")
+
+        echo ""
+        echo "  Build Info:"
+        echo "    Commit:  ${sha:0:12}"
+        echo "    Branch:  $branch"
+        if [[ -n "$commit_date" ]]; then
+            echo "    Date:    $commit_date"
+        fi
+        if [[ -n "$commit_subject" ]]; then
+            echo "    Message: $commit_subject"
+        fi
+    fi
+
+    echo ""
+    echo "  Completed at: $(date '+%Y-%m-%d %H:%M:%S %Z')"
+    echo "  Version file: $VERSION_FILE"
+    echo "============================================================"
+    echo ""
 }
