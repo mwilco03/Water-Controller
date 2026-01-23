@@ -344,14 +344,14 @@ properties:
 
       default_slots:
         type: integer
-        default: 64
-        description: "Default slot count per RTU"
+        default: 247
+        description: "Default slot count per RTU (matches RTU GSDML 247 slots)"
         x-c-define: "WTC_DEFAULT_SLOTS"
 
       max_slots:
         type: integer
-        default: 256
-        description: "Maximum slots per RTU for fixed arrays"
+        default: 247
+        description: "Maximum slots per RTU (PROFINET/Modbus parity: slots 0-246)"
         x-c-define: "WTC_MAX_SLOTS"
 
   debug:

@@ -2,7 +2,7 @@
   AUTO-GENERATED FILE - DO NOT EDIT MANUALLY
 
   Generated from: schemas/config/*.schema.yaml
-  Generated at: 2026-01-21 20:06:31 UTC
+  Generated at: 2026-01-23 14:43:37 UTC
   Generator: scripts/generate_docs.py
 
   To update this file, modify the source schemas and run:
@@ -192,14 +192,14 @@ System limits and maximums
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `limits.default_slots` | `integer` | `64` | Default slot count per RTU |
+| `limits.default_slots` | `integer` | `247` | Default slot count per RTU (matches RTU GSDML 247 slots) |
 | `limits.max_alarm_rules` | `integer` | `512` | Maximum number of alarm rules |
 | `limits.max_historian_tags` | `integer` | `1024` | Maximum number of historian tags |
 | `limits.max_interlocks` | `integer` | `128` | Maximum number of interlocks |
 | `limits.max_pid_loops` | `integer` | `64` | Maximum number of PID control loops |
 | `limits.max_rtus` | `integer` | `256` | Maximum number of RTU devices |
 | `limits.max_sequences` | `integer` | `32` | Maximum number of control sequences |
-| `limits.max_slots` | `integer` | `256` | Maximum slots per RTU for fixed arrays |
+| `limits.max_slots` | `integer` | `247` | Maximum slots per RTU (PROFINET/Modbus parity: slots 0-246) |
 
 ### logging
 

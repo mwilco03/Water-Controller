@@ -2,7 +2,7 @@
 AUTO-GENERATED FILE - DO NOT EDIT MANUALLY
 
 Generated from: schemas/config/*.schema.yaml
-Generated at: 2026-01-21 20:06:31 UTC
+Generated at: 2026-01-23 14:43:37 UTC
 Generator: scripts/generate_pydantic.py
 
 To update this file, modify the source schemas and run:
@@ -279,14 +279,14 @@ class IpcConfig(BaseModel):
 class LimitsConfig(BaseModel):
     """System limits and maximums"""
 
-    default_slots: int = Field(default=64, description="Default slot count per RTU")
+    default_slots: int = Field(default=247, description="Default slot count per RTU (matches RTU GSDML 247 slots)")
     max_alarm_rules: int = Field(default=512, description="Maximum number of alarm rules")
     max_historian_tags: int = Field(default=1024, description="Maximum number of historian tags")
     max_interlocks: int = Field(default=128, description="Maximum number of interlocks")
     max_pid_loops: int = Field(default=64, description="Maximum number of PID control loops")
     max_rtus: int = Field(default=256, description="Maximum number of RTU devices")
     max_sequences: int = Field(default=32, description="Maximum number of control sequences")
-    max_slots: int = Field(default=256, description="Maximum slots per RTU for fixed arrays")
+    max_slots: int = Field(default=247, description="Maximum slots per RTU (PROFINET/Modbus parity: slots 0-246)")
 
     model_config = {
         "extra": "forbid",

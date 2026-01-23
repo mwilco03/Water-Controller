@@ -49,8 +49,8 @@ definitions:
       slot_id:
         type: integer
         minimum: 0
-        maximum: 255
-        description: "Slot number (0 is typically DAP)"
+        maximum: 246
+        description: "Slot number (0=DAP, 1-246=sensor/actuator)"
       subslot_id:
         type: integer
         minimum: 0
@@ -107,8 +107,8 @@ definitions:
       slot_count:
         type: integer
         minimum: 1
-        maximum: 256
-        description: "Number of configured slots"
+        maximum: 247
+        description: "Number of configured slots (max 247 per GSDML)"
       slots:
         type: array
         items:
