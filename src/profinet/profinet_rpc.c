@@ -421,13 +421,11 @@ wtc_result_t rpc_build_connect_request(rpc_context_t *ctx,
     memcpy(buffer + pos, params->station_name, name_len);
     pos += name_len;
 
-    /* Calculate block length BEFORE padding (PROFINET spec: BlockLength excludes padding)
-     * Expected: 54 + station_name_length
+    /* Calculate block length: 54 + station_name_length
      * = 2 (version) + 52 (fixed fields) + name_len */
     size_t ar_block_len = pos - ar_block_start - 4;  /* Exclude type + length */
 
-    /* Padding is applied after block content (not included in BlockLength) */
-    align_to_4(&pos);
+    /* Fill AR block header - NO padding between blocks, they must be contiguous */
     size_t save_pos = ar_block_start;
     write_block_header(buffer, BLOCK_TYPE_AR_BLOCK_REQ,
                         (uint16_t)ar_block_len, &save_pos);
@@ -454,23 +452,24 @@ wtc_result_t rpc_build_connect_request(rpc_context_t *ctx,
         memset(buffer + pos, 0, 6);     /* Multicast MAC (not used) */
         pos += 6;
 
-        /* API section */
+        /* API section - structure per PROFINET spec / p-net pf_get_iocr_api_entry() */
         write_u16_be(buffer, 1, &pos);  /* Number of APIs */
 
         /* API 0 */
         write_u32_be(buffer, 0, &pos);  /* API number */
 
-        /* Count slots for this IOCR type */
-        int slot_count = 0;
+        /* Count IODataObjects for this IOCR type */
+        int io_data_count = 0;
         for (int j = 0; j < params->expected_count; j++) {
             bool is_input_iocr = (params->iocr[i].type == IOCR_TYPE_INPUT);
             if (params->expected_config[j].is_input == is_input_iocr) {
-                slot_count++;
+                io_data_count++;
             }
         }
-        write_u16_be(buffer, (uint16_t)slot_count, &pos);
+        write_u16_be(buffer, (uint16_t)io_data_count, &pos);  /* NumberOfIODataObjects */
 
-        /* Slot data */
+        /* IODataObjects - each has slot, subslot, frame_offset */
+        uint16_t frame_offset = 0;
         for (int j = 0; j < params->expected_count; j++) {
             bool is_input_iocr = (params->iocr[i].type == IOCR_TYPE_INPUT);
             if (params->expected_config[j].is_input != is_input_iocr) {
@@ -478,15 +477,25 @@ wtc_result_t rpc_build_connect_request(rpc_context_t *ctx,
             }
 
             write_u16_be(buffer, params->expected_config[j].slot, &pos);
-            write_u16_be(buffer, 1, &pos);  /* Subslot count */
             write_u16_be(buffer, params->expected_config[j].subslot, &pos);
-            write_u16_be(buffer, params->expected_config[j].data_length, &pos);
+            write_u16_be(buffer, frame_offset, &pos);  /* IODataObjectFrameOffset */
+            frame_offset += params->expected_config[j].data_length;
+        }
 
-            /* IOCS/IOPS length (consumer status) */
-            write_u8(buffer + pos, 1);  /* 1 byte status */
-            pos++;
-            write_u8(buffer + pos, 1);
-            pos++;
+        /* IOCS section - same slots but for consumer status */
+        write_u16_be(buffer, (uint16_t)io_data_count, &pos);  /* NumberOfIOCS */
+
+        frame_offset = 0;
+        for (int j = 0; j < params->expected_count; j++) {
+            bool is_input_iocr = (params->iocr[i].type == IOCR_TYPE_INPUT);
+            if (params->expected_config[j].is_input != is_input_iocr) {
+                continue;
+            }
+
+            write_u16_be(buffer, params->expected_config[j].slot, &pos);
+            write_u16_be(buffer, params->expected_config[j].subslot, &pos);
+            write_u16_be(buffer, frame_offset, &pos);  /* IOCS FrameOffset */
+            frame_offset += 1;  /* IOCS is 1 byte per submodule */
         }
 
         /* Fill IOCR block header */
