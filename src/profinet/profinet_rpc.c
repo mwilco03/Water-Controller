@@ -52,16 +52,31 @@
 #define BLOCK_VERSION_HIGH          1
 #define BLOCK_VERSION_LOW           0
 
-/* PROFINET IO Device Interface UUID */
+/*
+ * PROFINET IO Device Interface UUID: DEA00001-6C97-11D1-8271-00A02442DF7D
+ *
+ * DCE-RPC UUID wire format with drep=little-endian (0x10):
+ * - data1 (uint32): 0xDEA00001 → little-endian bytes: 01 00 A0 DE
+ * - data2 (uint16): 0x6C97 → little-endian bytes: 97 6C
+ * - data3 (uint16): 0x11D1 → little-endian bytes: D1 11
+ * - data4 (8 bytes): unchanged: 82 71 00 A0 24 42 DF 7D
+ */
 const uint8_t PNIO_DEVICE_INTERFACE_UUID[16] = {
-    0xDE, 0xA0, 0x00, 0x01, 0x6C, 0x97, 0x11, 0xD1,
-    0x82, 0x71, 0x00, 0xA0, 0x24, 0x42, 0xDF, 0x7D
+    0x01, 0x00, 0xA0, 0xDE,  /* data1: 0xDEA00001 LE */
+    0x97, 0x6C,              /* data2: 0x6C97 LE */
+    0xD1, 0x11,              /* data3: 0x11D1 LE */
+    0x82, 0x71, 0x00, 0xA0, 0x24, 0x42, 0xDF, 0x7D  /* data4: unchanged */
 };
 
-/* PROFINET IO Controller Interface UUID */
+/*
+ * PROFINET IO Controller Interface UUID: DEA00002-6C97-11D1-8271-00A02442DF7D
+ * Same format as above but with data1 = 0xDEA00002
+ */
 const uint8_t PNIO_CONTROLLER_INTERFACE_UUID[16] = {
-    0xDE, 0xA0, 0x00, 0x02, 0x6C, 0x97, 0x11, 0xD1,
-    0x82, 0x71, 0x00, 0xA0, 0x24, 0x42, 0xDF, 0x7D
+    0x02, 0x00, 0xA0, 0xDE,  /* data1: 0xDEA00002 LE */
+    0x97, 0x6C,              /* data2: 0x6C97 LE */
+    0xD1, 0x11,              /* data3: 0x11D1 LE */
+    0x82, 0x71, 0x00, 0xA0, 0x24, 0x42, 0xDF, 0x7D  /* data4: unchanged */
 };
 
 /* ============== Internal Helpers ============== */
@@ -84,7 +99,7 @@ static void write_u16_be(uint8_t *buf, uint16_t val, size_t *pos)
 }
 
 /**
- * @brief Write uint32 in network byte order to buffer.
+ * @brief Write uint32 in network byte order (big-endian) to buffer.
  *
  * @param[out] buf   Destination buffer
  * @param[in]  val   Value to write
@@ -97,6 +112,25 @@ static void write_u32_be(uint8_t *buf, uint32_t val, size_t *pos)
 {
     uint32_t be = htonl(val);
     memcpy(buf + *pos, &be, 4);
+    *pos += 4;
+}
+
+/**
+ * @brief Write uint32 in little-endian byte order to buffer.
+ *
+ * Used for NDR header fields when drep=little-endian.
+ *
+ * @param[out] buf   Destination buffer
+ * @param[in]  val   Value to write
+ * @param[in,out] pos Current position, incremented by 4
+ *
+ * @note Thread safety: SAFE
+ * @note Memory: NO_ALLOC
+ */
+static void write_u32_le(uint8_t *buf, uint32_t val, size_t *pos)
+{
+    uint32_t le = htole32(val);
+    memcpy(buf + *pos, &le, 4);
     *pos += 4;
 }
 
@@ -342,15 +376,28 @@ wtc_result_t rpc_build_connect_request(rpc_context_t *ctx,
     }
 
     size_t pos = sizeof(profinet_rpc_header_t);  /* Skip header, fill later */
-    size_t ar_args_start = pos;
 
     /*
-     * Connect Request structure (per IEC 61158-6):
-     * - AR Block Request
-     * - IOCR Block Request(s)
-     * - Alarm CR Block Request
-     * - Expected Submodule Block(s)
+     * Connect Request structure (per IEC 61158-6 / PN-AL-Protocol 4.10.3.4):
+     * - NDR Header (20 bytes, little-endian per drep)
+     *   - ArgsMaximum (4 bytes)
+     *   - ArgsLength (4 bytes)
+     *   - MaxCount (4 bytes)
+     *   - Offset (4 bytes) - always 0
+     *   - ActualCount (4 bytes)
+     * - PNIO Blocks (big-endian per PROFINET spec):
+     *   - AR Block Request
+     *   - IOCR Block Request(s)
+     *   - Alarm CR Block Request
+     *   - Expected Submodule Block(s)
      */
+
+    /* Reserve space for NDR header - fill in after we know block lengths */
+    size_t ndr_header_pos = pos;
+    pos += 20;  /* 5 x uint32 = 20 bytes */
+
+    /* Track start of PNIO blocks for length calculation */
+    size_t pnio_blocks_start = pos;
 
     /* ============== AR Block Request ============== */
     size_t ar_block_start = pos;
@@ -539,6 +586,26 @@ wtc_result_t rpc_build_connect_request(rpc_context_t *ctx,
     save_pos = exp_block_start;
     write_block_header(buffer, BLOCK_TYPE_EXPECTED_SUBMOD_BLOCK,
                         (uint16_t)exp_block_len, &save_pos);
+
+    /* ============== Fill NDR Header ============== */
+
+    /*
+     * NDR header fields (little-endian per drep):
+     * - ArgsMaximum: max buffer size for response (use same as ArgsLength)
+     * - ArgsLength: length of PNIO blocks that follow
+     * - MaxCount: NDR array max (same as ArgsLength for conformant array)
+     * - Offset: always 0
+     * - ActualCount: actual length (same as ArgsLength)
+     */
+    uint32_t pnio_blocks_len = (uint32_t)(pos - pnio_blocks_start);
+    size_t ndr_pos = ndr_header_pos;
+    write_u32_le(buffer, pnio_blocks_len, &ndr_pos);  /* ArgsMaximum */
+    write_u32_le(buffer, pnio_blocks_len, &ndr_pos);  /* ArgsLength */
+    write_u32_le(buffer, pnio_blocks_len, &ndr_pos);  /* MaxCount */
+    write_u32_le(buffer, 0, &ndr_pos);                /* Offset - always 0 */
+    write_u32_le(buffer, pnio_blocks_len, &ndr_pos);  /* ActualCount */
+
+    LOG_DEBUG("NDR header: ArgsLen=%u bytes of PNIO blocks", pnio_blocks_len);
 
     /* ============== Finalize RPC Header ============== */
 
@@ -759,6 +826,13 @@ wtc_result_t rpc_build_control_request(rpc_context_t *ctx,
 
     size_t pos = sizeof(profinet_rpc_header_t);
 
+    /* Reserve space for NDR header (20 bytes) */
+    size_t ndr_header_pos = pos;
+    pos += 20;
+
+    /* Track start of PNIO blocks */
+    size_t pnio_blocks_start = pos;
+
     /* IOD Control Request Block */
     size_t block_start = pos;
     pos += 6;  /* Skip header */
@@ -775,6 +849,15 @@ wtc_result_t rpc_build_control_request(rpc_context_t *ctx,
     size_t save_pos = block_start;
     write_block_header(buffer, BLOCK_TYPE_IOD_CONTROL_REQ,
                         (uint16_t)block_len, &save_pos);
+
+    /* Fill NDR header (little-endian per drep) */
+    uint32_t pnio_blocks_len = (uint32_t)(pos - pnio_blocks_start);
+    size_t ndr_pos = ndr_header_pos;
+    write_u32_le(buffer, pnio_blocks_len, &ndr_pos);  /* ArgsMaximum */
+    write_u32_le(buffer, pnio_blocks_len, &ndr_pos);  /* ArgsLength */
+    write_u32_le(buffer, pnio_blocks_len, &ndr_pos);  /* MaxCount */
+    write_u32_le(buffer, 0, &ndr_pos);                /* Offset */
+    write_u32_le(buffer, pnio_blocks_len, &ndr_pos);  /* ActualCount */
 
     /* Build RPC header */
     uint16_t fragment_length = (uint16_t)(pos - sizeof(profinet_rpc_header_t));
@@ -1288,15 +1371,24 @@ wtc_result_t rpc_build_control_response(rpc_context_t *ctx,
     memcpy(hdr->activity_uuid, request->activity_uuid, 16);
 
     hdr->server_boot = 0;
-    hdr->interface_version = htonl(1);
-    hdr->sequence_number = htonl(request->sequence_number);
+    /* RPC header fields use little-endian per drep */
+    hdr->interface_version = htole32(1);
+    hdr->sequence_number = htole32(request->sequence_number);
 
-    hdr->opnum = htons(RPC_OPNUM_CONTROL);
-    hdr->interface_hint = 0xFFFF;
-    hdr->activity_hint = 0xFFFF;
+    hdr->opnum = htole16(RPC_OPNUM_CONTROL);
+    hdr->interface_hint = htole16(0xFFFF);
+    hdr->activity_hint = htole16(0xFFFF);
+
+    size_t pos = sizeof(profinet_rpc_header_t);
+
+    /* Reserve space for NDR header */
+    size_t ndr_header_pos = pos;
+    pos += 20;
+
+    /* Track start of PNIO blocks */
+    size_t pnio_blocks_start = pos;
 
     /* Build IOD Control Response block */
-    size_t pos = sizeof(profinet_rpc_header_t);
     size_t block_start = pos;
     pos += 6;  /* Skip header, fill later */
 
@@ -1314,9 +1406,18 @@ wtc_result_t rpc_build_control_response(rpc_context_t *ctx,
     write_block_header(buffer, BLOCK_TYPE_IOD_CONTROL_RES,
                         (uint16_t)block_len, &save_pos);
 
+    /* Fill NDR header (little-endian per drep) */
+    uint32_t pnio_blocks_len = (uint32_t)(pos - pnio_blocks_start);
+    size_t ndr_pos = ndr_header_pos;
+    write_u32_le(buffer, pnio_blocks_len, &ndr_pos);  /* ArgsMaximum */
+    write_u32_le(buffer, pnio_blocks_len, &ndr_pos);  /* ArgsLength */
+    write_u32_le(buffer, pnio_blocks_len, &ndr_pos);  /* MaxCount */
+    write_u32_le(buffer, 0, &ndr_pos);                /* Offset */
+    write_u32_le(buffer, pnio_blocks_len, &ndr_pos);  /* ActualCount */
+
     /* Update fragment length in RPC header */
     uint16_t fragment_length = (uint16_t)(pos - sizeof(profinet_rpc_header_t));
-    hdr->fragment_length = htons(fragment_length);
+    hdr->fragment_length = htole16(fragment_length);
     hdr->fragment_number = 0;
     hdr->auth_protocol = 0;
     hdr->serial_low = 0;
