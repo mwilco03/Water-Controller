@@ -2,7 +2,7 @@
  * AUTO-GENERATED FILE - DO NOT EDIT MANUALLY
  *
  * Generated from: schemas/config/*.schema.yaml
- * Generated at: 2026-01-21 20:06:31 UTC
+ * Generated at: 2026-01-23 14:43:37 UTC
  * Generator: scripts/generate_c_types.py
  *
  * To update this file, modify the source schemas and run:
@@ -43,11 +43,11 @@ extern "C" {
 /** Maximum number of historian tags */
 #define WTC_MAX_HISTORIAN_TAGS 1024
 
-/** Default slot count per RTU */
-#define WTC_DEFAULT_SLOTS 64
+/** Default slot count per RTU (matches RTU GSDML 247 slots) */
+#define WTC_DEFAULT_SLOTS 247
 
-/** Maximum slots per RTU for fixed arrays */
-#define WTC_MAX_SLOTS 256
+/** Maximum slots per RTU (PROFINET/Modbus parity: slots 0-246) */
+#define WTC_MAX_SLOTS 247
 
 /** Maximum number of historian tags */
 #define WTC_MAX_HISTORIAN_TAGS 1024
@@ -367,7 +367,7 @@ typedef struct {
  * Maximum number of RTU devices...
  */
 typedef struct {
-    /** Default slot count per RTU */
+    /** Default slot count per RTU (matches RTU GSDML 247 slots) */
     uint8_t default_slots;
     /** Maximum number of alarm rules */
     uint8_t max_alarm_rules;
@@ -381,7 +381,7 @@ typedef struct {
     uint8_t max_rtus;
     /** Maximum number of control sequences */
     uint8_t max_sequences;
-    /** Maximum slots per RTU for fixed arrays */
+    /** Maximum slots per RTU (PROFINET/Modbus parity: slots 0-246) */
     uint8_t max_slots;
 } controller_limits_config_t;
 

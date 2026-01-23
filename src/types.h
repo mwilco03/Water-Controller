@@ -36,12 +36,12 @@ extern "C" {
 #define WTC_MAX_HISTORIAN_TAGS  1024
 
 /* Default slot counts (can be overridden per-device) */
-#define WTC_DEFAULT_SLOTS       64
-#define WTC_DEFAULT_SENSORS     32
-#define WTC_DEFAULT_ACTUATORS   32
+#define WTC_DEFAULT_SLOTS       247   /* Match RTU GSDML: PhysicalSlots 0..246 */
+#define WTC_DEFAULT_SENSORS     123   /* Half of usable slots (1-246) */
+#define WTC_DEFAULT_ACTUATORS   123   /* Half of usable slots (1-246) */
 
 /* Max slots for fixed-size arrays in configuration structs */
-#define WTC_MAX_SLOTS           256
+#define WTC_MAX_SLOTS           247   /* PROFINET/Modbus parity: 247 total slots */
 
 /* Return codes */
 typedef enum {
