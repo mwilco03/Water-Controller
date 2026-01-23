@@ -420,10 +420,14 @@ wtc_result_t rpc_build_connect_request(rpc_context_t *ctx,
     write_u16_be(buffer, (uint16_t)name_len, &pos);
     memcpy(buffer + pos, params->station_name, name_len);
     pos += name_len;
-    align_to_4(&pos);
 
-    /* Fill AR block header */
+    /* Calculate block length BEFORE padding (PROFINET spec: BlockLength excludes padding)
+     * Expected: 54 + station_name_length
+     * = 2 (version) + 52 (fixed fields) + name_len */
     size_t ar_block_len = pos - ar_block_start - 4;  /* Exclude type + length */
+
+    /* Padding is applied after block content (not included in BlockLength) */
+    align_to_4(&pos);
     size_t save_pos = ar_block_start;
     write_block_header(buffer, BLOCK_TYPE_AR_BLOCK_REQ,
                         (uint16_t)ar_block_len, &save_pos);
