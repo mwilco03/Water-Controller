@@ -20,6 +20,9 @@ extern "C" {
 
 /* ============== RPC Constants (IEC 61158-6) ============== */
 
+/* Maximum RPC PDU size */
+#define RPC_MAX_PDU_SIZE            1464
+
 /* RPC Port */
 #define PNIO_RPC_PORT               34964
 
@@ -455,6 +458,84 @@ wtc_result_t rpc_release(rpc_context_t *ctx,
                           uint32_t device_ip,
                           const uint8_t *ar_uuid,
                           uint16_t session_key);
+
+/* ============== RPC Server (for incoming requests from device) ============== */
+
+/* Incoming Control Request info (parsed from device's ApplicationReady) */
+typedef struct {
+    uint8_t ar_uuid[16];        /* AR UUID from request */
+    uint16_t session_key;       /* Session key from request */
+    uint16_t control_command;   /* Control command (APP_READY, etc.) */
+    uint32_t source_ip;         /* Source IP of the request */
+    uint16_t source_port;       /* Source port of the request */
+    uint8_t activity_uuid[16];  /* Activity UUID for response */
+    uint32_t sequence_number;   /* Sequence number for response */
+} incoming_control_request_t;
+
+/**
+ * @brief Poll for incoming RPC requests (non-blocking).
+ *
+ * Checks the RPC socket for incoming UDP packets from devices.
+ * Used to receive ApplicationReady callbacks from RTU.
+ *
+ * @param[in]  ctx       RPC context
+ * @param[out] buffer    Buffer to receive data
+ * @param[in]  buf_size  Size of buffer
+ * @param[out] recv_len  Actual received length (0 if no data)
+ * @param[out] source_ip Source IP address (network byte order)
+ * @param[out] source_port Source port (host byte order)
+ * @return WTC_OK on success (check recv_len for data), error on failure
+ */
+wtc_result_t rpc_poll_incoming(rpc_context_t *ctx,
+                                uint8_t *buffer,
+                                size_t buf_size,
+                                size_t *recv_len,
+                                uint32_t *source_ip,
+                                uint16_t *source_port);
+
+/**
+ * @brief Parse incoming Control Request (ApplicationReady from device).
+ *
+ * @param[in]  buffer    Received RPC packet
+ * @param[in]  buf_len   Length of received data
+ * @param[out] request   Parsed request info
+ * @return WTC_OK on success, error code on failure
+ */
+wtc_result_t rpc_parse_incoming_control_request(const uint8_t *buffer,
+                                                  size_t buf_len,
+                                                  incoming_control_request_t *request);
+
+/**
+ * @brief Build Control Response for incoming request.
+ *
+ * Builds a response to send back to device after receiving ApplicationReady.
+ *
+ * @param[in]  ctx             RPC context
+ * @param[in]  request         The incoming request we're responding to
+ * @param[out] buffer          Output buffer
+ * @param[in,out] buf_len      Buffer size in, PDU length out
+ * @return WTC_OK on success, error code on failure
+ */
+wtc_result_t rpc_build_control_response(rpc_context_t *ctx,
+                                         const incoming_control_request_t *request,
+                                         uint8_t *buffer,
+                                         size_t *buf_len);
+
+/**
+ * @brief Send Control Response to device.
+ *
+ * @param[in] ctx        RPC context
+ * @param[in] dest_ip    Destination IP (network byte order)
+ * @param[in] dest_port  Destination port (host byte order)
+ * @param[in] response   Response buffer
+ * @param[in] resp_len   Response length
+ * @return WTC_OK on success, error code on failure
+ */
+wtc_result_t rpc_send_response(rpc_context_t *ctx,
+                                uint32_t dest_ip,
+                                uint16_t dest_port,
+                                const uint8_t *response,
+                                size_t resp_len);
 
 #ifdef __cplusplus
 }

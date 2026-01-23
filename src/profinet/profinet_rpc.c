@@ -28,7 +28,6 @@
 #define RPC_DEFAULT_TIMEOUT_MS      5000
 
 /* Buffer sizes */
-#define RPC_MAX_PDU_SIZE            1464
 #define RPC_HEADER_SIZE             80
 
 /* Block version */
@@ -1074,5 +1073,271 @@ wtc_result_t rpc_release(rpc_context_t *ctx,
     }
 
     LOG_INFO("Release successful");
+    return WTC_OK;
+}
+
+/* ============== RPC Server Functions (receive callbacks from device) ============== */
+
+wtc_result_t rpc_poll_incoming(rpc_context_t *ctx,
+                                uint8_t *buffer,
+                                size_t buf_size,
+                                size_t *recv_len,
+                                uint32_t *source_ip,
+                                uint16_t *source_port)
+{
+    if (!ctx || !buffer || !recv_len || !source_ip || !source_port) {
+        return WTC_ERROR_INVALID_PARAM;
+    }
+
+    *recv_len = 0;
+
+    if (ctx->socket_fd < 0) {
+        return WTC_ERROR_NOT_INITIALIZED;
+    }
+
+    /* Non-blocking poll */
+    struct pollfd pfd;
+    pfd.fd = ctx->socket_fd;
+    pfd.events = POLLIN;
+
+    int poll_result = poll(&pfd, 1, 0);  /* 0 = non-blocking */
+    if (poll_result < 0) {
+        if (errno == EINTR) {
+            return WTC_OK;  /* Interrupted, no data */
+        }
+        LOG_ERROR("RPC poll failed: %s", strerror(errno));
+        return WTC_ERROR_IO;
+    }
+
+    if (poll_result == 0) {
+        return WTC_OK;  /* No data available */
+    }
+
+    /* Data available, receive it */
+    struct sockaddr_in src_addr;
+    socklen_t addr_len = sizeof(src_addr);
+
+    ssize_t received = recvfrom(ctx->socket_fd, buffer, buf_size, 0,
+                                 (struct sockaddr *)&src_addr, &addr_len);
+    if (received < 0) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            return WTC_OK;  /* No data */
+        }
+        LOG_ERROR("RPC recvfrom failed: %s", strerror(errno));
+        return WTC_ERROR_IO;
+    }
+
+    *recv_len = (size_t)received;
+    *source_ip = src_addr.sin_addr.s_addr;
+    *source_port = ntohs(src_addr.sin_port);
+
+    LOG_DEBUG("RPC received %zd bytes from %d.%d.%d.%d:%u",
+              received,
+              (*source_ip) & 0xFF, (*source_ip >> 8) & 0xFF,
+              (*source_ip >> 16) & 0xFF, (*source_ip >> 24) & 0xFF,
+              *source_port);
+
+    return WTC_OK;
+}
+
+wtc_result_t rpc_parse_incoming_control_request(const uint8_t *buffer,
+                                                  size_t buf_len,
+                                                  incoming_control_request_t *request)
+{
+    if (!buffer || !request || buf_len < sizeof(profinet_rpc_header_t)) {
+        return WTC_ERROR_INVALID_PARAM;
+    }
+
+    memset(request, 0, sizeof(incoming_control_request_t));
+
+    const profinet_rpc_header_t *hdr = (const profinet_rpc_header_t *)buffer;
+
+    /* Check packet type - should be REQUEST from device */
+    if (hdr->packet_type != RPC_PACKET_TYPE_REQUEST) {
+        LOG_DEBUG("Incoming RPC: not a request (type=%u)", hdr->packet_type);
+        return WTC_ERROR_PROTOCOL;
+    }
+
+    /* Check opnum - should be CONTROL for ApplicationReady */
+    uint16_t opnum = ntohs(hdr->opnum);
+    if (opnum != RPC_OPNUM_CONTROL) {
+        LOG_DEBUG("Incoming RPC: unexpected opnum %u (expected CONTROL=%u)",
+                  opnum, RPC_OPNUM_CONTROL);
+        return WTC_ERROR_PROTOCOL;
+    }
+
+    /* Save activity UUID and sequence for response */
+    memcpy(request->activity_uuid, hdr->activity_uuid, 16);
+    request->sequence_number = ntohl(hdr->sequence_number);
+
+    /* Parse the IOD Control Request block */
+    size_t pos = sizeof(profinet_rpc_header_t);
+
+    if (pos + 6 > buf_len) {
+        LOG_ERROR("Incoming control request too short for block header");
+        return WTC_ERROR_PROTOCOL;
+    }
+
+    uint16_t block_type = read_u16_be(buffer, &pos);
+    if (block_type != BLOCK_TYPE_IOD_CONTROL_REQ) {
+        LOG_ERROR("Incoming control request: unexpected block type 0x%04X", block_type);
+        return WTC_ERROR_PROTOCOL;
+    }
+
+    uint16_t block_length = read_u16_be(buffer, &pos);
+    (void)block_length;
+
+    pos += 2;  /* Version */
+    pos += 2;  /* Reserved */
+
+    if (pos + 16 > buf_len) {
+        return WTC_ERROR_PROTOCOL;
+    }
+    memcpy(request->ar_uuid, buffer + pos, 16);
+    pos += 16;
+
+    if (pos + 2 > buf_len) {
+        return WTC_ERROR_PROTOCOL;
+    }
+    request->session_key = read_u16_be(buffer, &pos);
+
+    pos += 2;  /* Reserved */
+
+    if (pos + 2 > buf_len) {
+        return WTC_ERROR_PROTOCOL;
+    }
+    request->control_command = read_u16_be(buffer, &pos);
+
+    const char *cmd_name = "unknown";
+    switch (request->control_command) {
+    case CONTROL_CMD_PRM_END:
+        cmd_name = "PrmEnd";
+        break;
+    case CONTROL_CMD_APP_READY:
+        cmd_name = "ApplicationReady";
+        break;
+    case CONTROL_CMD_RELEASE:
+        cmd_name = "Release";
+        break;
+    }
+
+    LOG_INFO("Received incoming %s request (session_key=%u)",
+             cmd_name, request->session_key);
+
+    return WTC_OK;
+}
+
+wtc_result_t rpc_build_control_response(rpc_context_t *ctx,
+                                         const incoming_control_request_t *request,
+                                         uint8_t *buffer,
+                                         size_t *buf_len)
+{
+    if (!ctx || !request || !buffer || !buf_len) {
+        return WTC_ERROR_INVALID_PARAM;
+    }
+
+    if (*buf_len < RPC_MAX_PDU_SIZE) {
+        return WTC_ERROR_NO_MEMORY;
+    }
+
+    /* Build RPC header for RESPONSE */
+    profinet_rpc_header_t *hdr = (profinet_rpc_header_t *)buffer;
+    memset(hdr, 0, sizeof(profinet_rpc_header_t));
+
+    hdr->version = RPC_VERSION_MAJOR;
+    hdr->packet_type = RPC_PACKET_TYPE_RESPONSE;
+    hdr->flags1 = RPC_FLAG1_LAST_FRAGMENT | RPC_FLAG1_IDEMPOTENT;
+    hdr->flags2 = 0;
+    hdr->drep[0] = RPC_DREP_LITTLE_ENDIAN;
+    hdr->drep[1] = RPC_DREP_ASCII;
+    hdr->drep[2] = 0;
+    hdr->serial_high = 0;
+
+    /* Object UUID (AR UUID) */
+    memcpy(hdr->object_uuid, request->ar_uuid, 16);
+
+    /* Interface UUID - use Controller interface for response */
+    memcpy(hdr->interface_uuid, PNIO_CONTROLLER_INTERFACE_UUID, 16);
+
+    /* Activity UUID - must match the request */
+    memcpy(hdr->activity_uuid, request->activity_uuid, 16);
+
+    hdr->server_boot = 0;
+    hdr->interface_version = htonl(1);
+    hdr->sequence_number = htonl(request->sequence_number);
+
+    hdr->opnum = htons(RPC_OPNUM_CONTROL);
+    hdr->interface_hint = 0xFFFF;
+    hdr->activity_hint = 0xFFFF;
+
+    /* Build IOD Control Response block */
+    size_t pos = sizeof(profinet_rpc_header_t);
+    size_t block_start = pos;
+    pos += 6;  /* Skip header, fill later */
+
+    write_u16_be(buffer, 0, &pos);  /* Reserved */
+    memcpy(buffer + pos, request->ar_uuid, 16);
+    pos += 16;
+    write_u16_be(buffer, request->session_key, &pos);
+    write_u16_be(buffer, 0, &pos);  /* Reserved */
+    write_u16_be(buffer, request->control_command, &pos);  /* Echo command */
+    write_u16_be(buffer, 0, &pos);  /* Control block properties */
+
+    /* Fill block header */
+    size_t block_len = pos - block_start - 4;
+    size_t save_pos = block_start;
+    write_block_header(buffer, BLOCK_TYPE_IOD_CONTROL_RES,
+                        (uint16_t)block_len, &save_pos);
+
+    /* Update fragment length in RPC header */
+    uint16_t fragment_length = (uint16_t)(pos - sizeof(profinet_rpc_header_t));
+    hdr->fragment_length = htons(fragment_length);
+    hdr->fragment_number = 0;
+    hdr->auth_protocol = 0;
+    hdr->serial_low = 0;
+
+    *buf_len = pos;
+
+    LOG_DEBUG("Built control response: %zu bytes", pos);
+    return WTC_OK;
+}
+
+wtc_result_t rpc_send_response(rpc_context_t *ctx,
+                                uint32_t dest_ip,
+                                uint16_t dest_port,
+                                const uint8_t *response,
+                                size_t resp_len)
+{
+    if (!ctx || !response || resp_len == 0) {
+        return WTC_ERROR_INVALID_PARAM;
+    }
+
+    if (ctx->socket_fd < 0) {
+        return WTC_ERROR_NOT_INITIALIZED;
+    }
+
+    struct sockaddr_in dest_addr;
+    memset(&dest_addr, 0, sizeof(dest_addr));
+    dest_addr.sin_family = AF_INET;
+    dest_addr.sin_addr.s_addr = dest_ip;
+    dest_addr.sin_port = htons(dest_port);
+
+    ssize_t sent = sendto(ctx->socket_fd, response, resp_len, 0,
+                           (struct sockaddr *)&dest_addr, sizeof(dest_addr));
+    if (sent < 0) {
+        LOG_ERROR("RPC sendto failed: %s", strerror(errno));
+        return WTC_ERROR_IO;
+    }
+
+    if ((size_t)sent != resp_len) {
+        LOG_WARN("RPC partial send: %zd of %zu bytes", sent, resp_len);
+    }
+
+    LOG_DEBUG("RPC response sent: %zd bytes to %d.%d.%d.%d:%u",
+              sent,
+              dest_ip & 0xFF, (dest_ip >> 8) & 0xFF,
+              (dest_ip >> 16) & 0xFF, (dest_ip >> 24) & 0xFF,
+              dest_port);
+
     return WTC_OK;
 }
