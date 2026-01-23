@@ -935,10 +935,15 @@ wtc_result_t profinet_controller_write_output(profinet_controller_t *controller,
 #define RPC_OPNUM_WRITE         1
 #define RPC_TIMEOUT_MS          5000
 
-/* PROFINET IO Device Interface UUID */
+/*
+ * PROFINET IO Device Interface UUID: DEA00001-6C97-11D1-8271-00A02442DF7D
+ * DCE-RPC wire format with drep=little-endian (first 3 fields are LE)
+ */
 static const uint8_t PNIO_DEVICE_INTERFACE_UUID[16] = {
-    0xDE, 0xA0, 0x00, 0x01, 0x6C, 0x97, 0x11, 0xD1,
-    0x82, 0x71, 0x00, 0xA0, 0x24, 0x42, 0xDF, 0x7D
+    0x01, 0x00, 0xA0, 0xDE,  /* data1: 0xDEA00001 LE */
+    0x97, 0x6C,              /* data2: 0x6C97 LE */
+    0xD1, 0x11,              /* data3: 0x11D1 LE */
+    0x82, 0x71, 0x00, 0xA0, 0x24, 0x42, 0xDF, 0x7D  /* data4: unchanged */
 };
 
 /* Build RPC read/write request */

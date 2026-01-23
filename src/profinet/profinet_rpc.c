@@ -52,16 +52,31 @@
 #define BLOCK_VERSION_HIGH          1
 #define BLOCK_VERSION_LOW           0
 
-/* PROFINET IO Device Interface UUID */
+/*
+ * PROFINET IO Device Interface UUID: DEA00001-6C97-11D1-8271-00A02442DF7D
+ *
+ * DCE-RPC UUID wire format with drep=little-endian (0x10):
+ * - data1 (uint32): 0xDEA00001 → little-endian bytes: 01 00 A0 DE
+ * - data2 (uint16): 0x6C97 → little-endian bytes: 97 6C
+ * - data3 (uint16): 0x11D1 → little-endian bytes: D1 11
+ * - data4 (8 bytes): unchanged: 82 71 00 A0 24 42 DF 7D
+ */
 const uint8_t PNIO_DEVICE_INTERFACE_UUID[16] = {
-    0xDE, 0xA0, 0x00, 0x01, 0x6C, 0x97, 0x11, 0xD1,
-    0x82, 0x71, 0x00, 0xA0, 0x24, 0x42, 0xDF, 0x7D
+    0x01, 0x00, 0xA0, 0xDE,  /* data1: 0xDEA00001 LE */
+    0x97, 0x6C,              /* data2: 0x6C97 LE */
+    0xD1, 0x11,              /* data3: 0x11D1 LE */
+    0x82, 0x71, 0x00, 0xA0, 0x24, 0x42, 0xDF, 0x7D  /* data4: unchanged */
 };
 
-/* PROFINET IO Controller Interface UUID */
+/*
+ * PROFINET IO Controller Interface UUID: DEA00002-6C97-11D1-8271-00A02442DF7D
+ * Same format as above but with data1 = 0xDEA00002
+ */
 const uint8_t PNIO_CONTROLLER_INTERFACE_UUID[16] = {
-    0xDE, 0xA0, 0x00, 0x02, 0x6C, 0x97, 0x11, 0xD1,
-    0x82, 0x71, 0x00, 0xA0, 0x24, 0x42, 0xDF, 0x7D
+    0x02, 0x00, 0xA0, 0xDE,  /* data1: 0xDEA00002 LE */
+    0x97, 0x6C,              /* data2: 0x6C97 LE */
+    0xD1, 0x11,              /* data3: 0x11D1 LE */
+    0x82, 0x71, 0x00, 0xA0, 0x24, 0x42, 0xDF, 0x7D  /* data4: unchanged */
 };
 
 /* ============== Internal Helpers ============== */
