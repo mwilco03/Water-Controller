@@ -485,7 +485,8 @@ class WtcShmClient:
     def connect(self) -> bool:
         """Connect to shared memory with version validation"""
         try:
-            self.shm = posix_ipc.SharedMemory(SHM_NAME)
+            # O_RDWR required for writing commands to shared memory
+            self.shm = posix_ipc.SharedMemory(SHM_NAME, posix_ipc.O_RDWR)
             self.mm = mmap.mmap(self.shm.fd, ctypes.sizeof(WtcSharedMemory))
 
             # Verify magic number

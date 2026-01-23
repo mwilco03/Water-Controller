@@ -260,6 +260,41 @@ cleanup_docker_partial() {
 # Main Docker Install Function
 # =============================================================================
 
+# Clean up existing WTC containers and processes
+cleanup_existing_wtc() {
+    log_step "Cleaning up existing WTC installation..."
+
+    # Stop and remove existing WTC containers (regardless of state)
+    local containers
+    containers=$(docker ps -a --filter "name=wtc-" --format "{{.Names}}" 2>/dev/null || true)
+    if [[ -n "$containers" ]]; then
+        log_info "Stopping existing WTC containers..."
+        echo "$containers" | xargs -r docker stop 2>/dev/null || true
+        echo "$containers" | xargs -r docker rm -f 2>/dev/null || true
+    fi
+
+    # Run docker compose down if compose file exists
+    if [[ -f "/opt/water-controller/docker/docker-compose.yml" ]]; then
+        log_info "Running docker compose down..."
+        (cd /opt/water-controller/docker && docker compose down --remove-orphans 2>/dev/null) || true
+    fi
+
+    # Clean up stale shared memory
+    if [[ -e "/dev/shm/wtc_shared_memory" ]]; then
+        log_info "Removing stale shared memory..."
+        rm -f /dev/shm/wtc_shared_memory 2>/dev/null || true
+    fi
+
+    # Kill any orphan controller processes (baremetal leftovers)
+    if pgrep -f "water_treat_controller" >/dev/null 2>&1; then
+        log_info "Killing orphan controller processes..."
+        pkill -9 -f "water_treat_controller" 2>/dev/null || true
+        sleep 1
+    fi
+
+    log_info "Cleanup complete"
+}
+
 # Run Docker deployment
 do_docker_install() {
     log_step "Starting Docker deployment..."
@@ -267,6 +302,9 @@ do_docker_install() {
     # Set up cleanup trap for partial failure
     local docker_install_failed="false"
     trap 'docker_install_failed="true"' ERR
+
+    # Clean up any existing installation first
+    cleanup_existing_wtc
 
     # Pre-deployment checks (non-blocking, warnings only)
     check_docker_resources || log_warn "Resource checks failed, proceeding anyway..."
