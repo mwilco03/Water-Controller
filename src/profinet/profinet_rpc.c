@@ -566,6 +566,9 @@ wtc_result_t rpc_parse_connect_response(const uint8_t *buffer,
 
     size_t pos = sizeof(profinet_rpc_header_t);
 
+    LOG_INFO("Connect response: total_len=%zu bytes (RPC hdr=%zu, need NDR=%zu)",
+             buf_len, pos, pos + 20);
+
     /*
      * PNIO Connect Response NDR format (after RPC header):
      * - ArgsMaximum (4 bytes, always 0)
@@ -579,7 +582,13 @@ wtc_result_t rpc_parse_connect_response(const uint8_t *buffer,
      * indicated by RPC FAULT packet type or missing/invalid blocks.
      */
     if (pos + 20 > buf_len) {
-        LOG_ERROR("Connect response too short for NDR header");
+        LOG_ERROR("Connect response too short for NDR header: got %zu bytes, need %zu",
+                  buf_len, pos + 20);
+        /* Log first bytes for diagnosis */
+        if (buf_len >= 4) {
+            LOG_ERROR("Response first 4 bytes: %02X %02X %02X %02X",
+                      buffer[0], buffer[1], buffer[2], buffer[3]);
+        }
         return WTC_ERROR_PROTOCOL;
     }
 
@@ -895,7 +904,12 @@ wtc_result_t rpc_send_and_receive(rpc_context_t *ctx,
     }
 
     *resp_len = (size_t)received;
-    LOG_DEBUG("RPC response received: %zd bytes", received);
+    LOG_INFO("RPC response received: %zd bytes from %d.%d.%d.%d",
+             received,
+             ntohl(addr.sin_addr.s_addr) >> 24,
+             (ntohl(addr.sin_addr.s_addr) >> 16) & 0xFF,
+             (ntohl(addr.sin_addr.s_addr) >> 8) & 0xFF,
+             ntohl(addr.sin_addr.s_addr) & 0xFF);
     return WTC_OK;
 }
 
