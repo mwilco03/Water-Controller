@@ -452,23 +452,24 @@ wtc_result_t rpc_build_connect_request(rpc_context_t *ctx,
         memset(buffer + pos, 0, 6);     /* Multicast MAC (not used) */
         pos += 6;
 
-        /* API section */
+        /* API section - structure per PROFINET spec / p-net pf_get_iocr_api_entry() */
         write_u16_be(buffer, 1, &pos);  /* Number of APIs */
 
         /* API 0 */
         write_u32_be(buffer, 0, &pos);  /* API number */
 
-        /* Count slots for this IOCR type */
-        int slot_count = 0;
+        /* Count IODataObjects for this IOCR type */
+        int io_data_count = 0;
         for (int j = 0; j < params->expected_count; j++) {
             bool is_input_iocr = (params->iocr[i].type == IOCR_TYPE_INPUT);
             if (params->expected_config[j].is_input == is_input_iocr) {
-                slot_count++;
+                io_data_count++;
             }
         }
-        write_u16_be(buffer, (uint16_t)slot_count, &pos);
+        write_u16_be(buffer, (uint16_t)io_data_count, &pos);  /* NumberOfIODataObjects */
 
-        /* Slot data */
+        /* IODataObjects - each has slot, subslot, frame_offset */
+        uint16_t frame_offset = 0;
         for (int j = 0; j < params->expected_count; j++) {
             bool is_input_iocr = (params->iocr[i].type == IOCR_TYPE_INPUT);
             if (params->expected_config[j].is_input != is_input_iocr) {
@@ -476,15 +477,25 @@ wtc_result_t rpc_build_connect_request(rpc_context_t *ctx,
             }
 
             write_u16_be(buffer, params->expected_config[j].slot, &pos);
-            write_u16_be(buffer, 1, &pos);  /* Subslot count */
             write_u16_be(buffer, params->expected_config[j].subslot, &pos);
-            write_u16_be(buffer, params->expected_config[j].data_length, &pos);
+            write_u16_be(buffer, frame_offset, &pos);  /* IODataObjectFrameOffset */
+            frame_offset += params->expected_config[j].data_length;
+        }
 
-            /* IOCS/IOPS length (consumer status) */
-            write_u8(buffer + pos, 1);  /* 1 byte status */
-            pos++;
-            write_u8(buffer + pos, 1);
-            pos++;
+        /* IOCS section - same slots but for consumer status */
+        write_u16_be(buffer, (uint16_t)io_data_count, &pos);  /* NumberOfIOCS */
+
+        frame_offset = 0;
+        for (int j = 0; j < params->expected_count; j++) {
+            bool is_input_iocr = (params->iocr[i].type == IOCR_TYPE_INPUT);
+            if (params->expected_config[j].is_input != is_input_iocr) {
+                continue;
+            }
+
+            write_u16_be(buffer, params->expected_config[j].slot, &pos);
+            write_u16_be(buffer, params->expected_config[j].subslot, &pos);
+            write_u16_be(buffer, frame_offset, &pos);  /* IOCS FrameOffset */
+            frame_offset += 1;  /* IOCS is 1 byte per submodule */
         }
 
         /* Fill IOCR block header */
