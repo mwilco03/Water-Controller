@@ -194,6 +194,15 @@ return build_success_response(MySchema(name=name, results=counts).model_dump())
 - `extractObjectData<T>(response, fallback)` - unwraps object payloads
 - `extractErrorMessage(detail, fallback)` - extracts error messages
 
+## External Codebases
+
+For PROFINET protocol questions or implementation details, the following external codebases can be queried through the user:
+
+- **p-net**: Reference PROFINET stack (https://github.com/rtlabs-com/p-net) - Ask user for specific file contents or code snippets
+- **Water-Treat RTU**: RTU device firmware (https://github.com/mwilco03/Water-Treat) - Ask user for device-side implementation details
+
+When making assumptions about protocol behavior (e.g., block length calculations, byte ordering, padding), verify against the actual p-net source code by asking the user.
+
 ## References
 
 - Architecture: `/docs/architecture/SYSTEM_DESIGN.md`
