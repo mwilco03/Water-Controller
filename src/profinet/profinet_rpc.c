@@ -20,6 +20,24 @@
 #include <errno.h>
 #include <unistd.h>
 
+/* For htole16/htole32 (host to little-endian) - portable byte order conversion */
+#ifdef __linux__
+#include <endian.h>
+#elif defined(__APPLE__)
+#include <libkern/OSByteOrder.h>
+#define htole16(x) OSSwapHostToLittleInt16(x)
+#define htole32(x) OSSwapHostToLittleInt32(x)
+#elif defined(_WIN32)
+/* Windows is always little-endian on supported architectures */
+#define htole16(x) (x)
+#define htole32(x) (x)
+#else
+/* Fallback: assume little-endian, but warn at compile time */
+#warning "Unknown platform - assuming little-endian byte order"
+#define htole16(x) (x)
+#define htole32(x) (x)
+#endif
+
 /* ============== Constants ============== */
 
 /* RPC timeouts */
@@ -192,14 +210,20 @@ static wtc_result_t build_rpc_header(uint8_t *buf,
     memcpy(hdr->activity_uuid, ctx->activity_uuid, 16);
 
     hdr->server_boot = 0;
-    hdr->interface_version = htonl(1);
-    hdr->sequence_number = htonl(ctx->sequence_number);
+    /*
+     * drep[0] = RPC_DREP_LITTLE_ENDIAN means all multi-byte fields must be
+     * little-endian on the wire. Use htole16/htole32 for portability:
+     * - On little-endian (x86, most ARM): no-op
+     * - On big-endian (some ARM, PowerPC): byte-swap
+     */
+    hdr->interface_version = htole32(1);
+    hdr->sequence_number = htole32(ctx->sequence_number);
     ctx->sequence_number++;
 
-    hdr->opnum = htons(opnum);
-    hdr->interface_hint = 0xFFFF;
-    hdr->activity_hint = 0xFFFF;
-    hdr->fragment_length = htons(fragment_length);
+    hdr->opnum = htole16(opnum);
+    hdr->interface_hint = htole16(0xFFFF);
+    hdr->activity_hint = htole16(0xFFFF);
+    hdr->fragment_length = htole16(fragment_length);
     hdr->fragment_number = 0;
     hdr->auth_protocol = 0;
     hdr->serial_low = 0;
