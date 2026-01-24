@@ -736,6 +736,27 @@ wtc_result_t rpc_parse_connect_response(const uint8_t *buffer,
     if (actual_count == 0 || args_length == 0) {
         LOG_ERROR("Connect response: empty PNIO data (args_len=%u, actual=%u)",
                   args_length, actual_count);
+
+        /* Dump raw response for diagnosis */
+        LOG_ERROR("RPC header: version=%u type=%u flags1=0x%02X flags2=0x%02X",
+                  hdr->version, hdr->packet_type, hdr->flags1, hdr->flags2);
+        LOG_ERROR("RPC header: frag_num=%u opnum=%u frag_len=%u",
+                  hdr->fragment_number, hdr->opnum, hdr->fragment_length);
+
+        /* Dump first 40 bytes as hex for analysis */
+        char hex_dump[128];
+        size_t dump_len = buf_len < 40 ? buf_len : 40;
+        for (size_t i = 0; i < dump_len && i * 3 < sizeof(hex_dump) - 1; i++) {
+            snprintf(hex_dump + i * 3, 4, "%02X ", buffer[i]);
+        }
+        LOG_ERROR("Response hex (first %zu bytes): %s", dump_len, hex_dump);
+
+        /* Check if this might be a PNIO error response */
+        /* The NDR ArgsMaximum field might contain error info in some implementations */
+        LOG_ERROR("NDR ArgsMaximum=0x%08X (might contain status)", args_maximum);
+
+        response->success = false;
+        response->error_code = PNIO_ERR_CODE_CONNECT;
         return WTC_ERROR_PROTOCOL;
     }
 
