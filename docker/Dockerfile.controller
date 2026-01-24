@@ -9,6 +9,10 @@
 # =============================================================================
 FROM debian:bookworm-slim AS builder
 
+# Build args for version info (passed from docker-compose or build command)
+ARG GIT_COMMIT=unknown
+ARG GIT_DATE=unknown
+
 RUN apt-get update && apt-get install -y \
     build-essential \
     cmake \
@@ -26,8 +30,14 @@ COPY tests/ tests/
 
 # Build controller (release mode, no tests)
 # Build as STATIC libraries to avoid shared library issues in runtime
+# Pass git info via cmake defines (no .git dir in Docker context)
 RUN mkdir build && cd build && \
-    cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=OFF -DBUILD_SHARED_LIBS=OFF .. && \
+    cmake -DCMAKE_BUILD_TYPE=Release \
+          -DBUILD_TESTS=OFF \
+          -DBUILD_SHARED_LIBS=OFF \
+          -DGIT_COMMIT_SHORT="${GIT_COMMIT}" \
+          -DGIT_COMMIT_DATE="${GIT_DATE}" \
+          .. && \
     make -j$(nproc) && \
     echo "=== BUILD VERIFICATION ===" && \
     ls -la water_treat_controller && \

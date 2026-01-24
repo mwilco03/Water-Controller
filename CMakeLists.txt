@@ -12,20 +12,25 @@ include(${CMAKE_SOURCE_DIR}/cmake/board-detect.cmake)
 configure_board_settings()
 
 # Get git version info for build identification
-execute_process(
-    COMMAND git rev-parse --short=7 HEAD
-    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-    OUTPUT_VARIABLE GIT_COMMIT_SHORT
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-    ERROR_QUIET
-)
-execute_process(
-    COMMAND git log -1 --format=%ci
-    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-    OUTPUT_VARIABLE GIT_COMMIT_DATE
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-    ERROR_QUIET
-)
+# These can be passed via -DGIT_COMMIT_SHORT=xxx for Docker builds
+if(NOT DEFINED GIT_COMMIT_SHORT OR GIT_COMMIT_SHORT STREQUAL "unknown")
+    execute_process(
+        COMMAND git rev-parse --short=7 HEAD
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        OUTPUT_VARIABLE GIT_COMMIT_SHORT
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+    )
+endif()
+if(NOT DEFINED GIT_COMMIT_DATE OR GIT_COMMIT_DATE STREQUAL "unknown")
+    execute_process(
+        COMMAND git log -1 --format=%ci
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        OUTPUT_VARIABLE GIT_COMMIT_DATE
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+    )
+endif()
 if(NOT GIT_COMMIT_SHORT)
     set(GIT_COMMIT_SHORT "unknown")
 endif()
