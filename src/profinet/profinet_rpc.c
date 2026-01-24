@@ -458,11 +458,16 @@ wtc_result_t rpc_build_connect_request(rpc_context_t *ctx,
         /* API 0 */
         write_u32_be(buffer, 0, &pos);  /* API number */
 
-        /* Count IODataObjects for this IOCR type */
+        /*
+         * Count IODataObjects for this IOCR type.
+         * Skip entries with data_length == 0 (e.g., DAP slot 0) - they don't
+         * have cyclic I/O data and shouldn't be in the IOCR data mapping.
+         */
         int io_data_count = 0;
         for (int j = 0; j < params->expected_count; j++) {
             bool is_input_iocr = (params->iocr[i].type == IOCR_TYPE_INPUT);
-            if (params->expected_config[j].is_input == is_input_iocr) {
+            if (params->expected_config[j].is_input == is_input_iocr &&
+                params->expected_config[j].data_length > 0) {
                 io_data_count++;
             }
         }
@@ -472,7 +477,9 @@ wtc_result_t rpc_build_connect_request(rpc_context_t *ctx,
         uint16_t frame_offset = 0;
         for (int j = 0; j < params->expected_count; j++) {
             bool is_input_iocr = (params->iocr[i].type == IOCR_TYPE_INPUT);
-            if (params->expected_config[j].is_input != is_input_iocr) {
+            /* Skip non-matching direction and zero-length entries (DAP) */
+            if (params->expected_config[j].is_input != is_input_iocr ||
+                params->expected_config[j].data_length == 0) {
                 continue;
             }
 
@@ -488,7 +495,9 @@ wtc_result_t rpc_build_connect_request(rpc_context_t *ctx,
         frame_offset = 0;
         for (int j = 0; j < params->expected_count; j++) {
             bool is_input_iocr = (params->iocr[i].type == IOCR_TYPE_INPUT);
-            if (params->expected_config[j].is_input != is_input_iocr) {
+            /* Skip non-matching direction and zero-length entries (DAP) */
+            if (params->expected_config[j].is_input != is_input_iocr ||
+                params->expected_config[j].data_length == 0) {
                 continue;
             }
 
