@@ -422,6 +422,16 @@ do_docker_install() {
         export GRAFANA_PASSWORD="$GRAFANA_PASSWORD"
         export DB_PASSWORD="$DB_PASSWORD"
 
+        # Get git version info for build identification
+        if [[ -d "../.git" ]]; then
+            export GIT_COMMIT=$(git -C .. rev-parse --short=7 HEAD 2>/dev/null || echo "unknown")
+            export GIT_DATE=$(git -C .. log -1 --format=%ci 2>/dev/null || echo "unknown")
+            log_info "Building commit: $GIT_COMMIT ($GIT_DATE)"
+        else
+            export GIT_COMMIT="unknown"
+            export GIT_DATE="unknown"
+        fi
+
         docker compose build --no-cache --progress=plain 2>&1 | while IFS= read -r line; do
             # Show build step numbers only (e.g., "#7" from "#7 [api 1/8] FROM docker...")
             if echo "$line" | grep -qE "^#[0-9]+ \["; then
