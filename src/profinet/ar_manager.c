@@ -18,6 +18,8 @@
 #include <sys/socket.h>
 #include <linux/if_packet.h>
 #include <arpa/inet.h>
+#include <time.h>
+#include <ctype.h>
 
 /* Maximum ARs */
 #define MAX_ARS 64
@@ -994,4 +996,329 @@ void ar_manager_set_state_callback(ar_manager_t *manager,
         manager->state_callback = callback;
         manager->state_callback_ctx = ctx;
     }
+}
+
+/* ============== Resilient Connection Implementation ============== */
+
+/**
+ * @brief Convert string to lowercase in place.
+ */
+static void str_to_lower(char *str) {
+    for (; *str; str++) {
+        if (*str >= 'A' && *str <= 'Z') {
+            *str = *str + ('a' - 'A');
+        }
+    }
+}
+
+/**
+ * @brief Convert string to uppercase in place.
+ */
+static void str_to_upper(char *str) {
+    for (; *str; str++) {
+        if (*str >= 'a' && *str <= 'z') {
+            *str = *str - ('a' - 'A');
+        }
+    }
+}
+
+/**
+ * @brief Remove dashes from string in place.
+ */
+static void str_remove_dashes(char *str) {
+    char *src = str, *dst = str;
+    while (*src) {
+        if (*src != '-') {
+            *dst++ = *src;
+        }
+        src++;
+    }
+    *dst = '\0';
+}
+
+bool ar_generate_name_variation(const char *original,
+                                 connect_strategy_t strategy,
+                                 char *output,
+                                 size_t output_len) {
+    if (!original || !output || output_len == 0) {
+        return false;
+    }
+
+    /* Copy original */
+    strncpy(output, original, output_len - 1);
+    output[output_len - 1] = '\0';
+
+    switch (strategy) {
+    case CONNECT_STRATEGY_STANDARD:
+        /* Use as-is */
+        return true;
+
+    case CONNECT_STRATEGY_LOWERCASE:
+        str_to_lower(output);
+        return true;
+
+    case CONNECT_STRATEGY_UPPERCASE:
+        str_to_upper(output);
+        return true;
+
+    case CONNECT_STRATEGY_NO_DASH:
+        str_remove_dashes(output);
+        return true;
+
+    case CONNECT_STRATEGY_MINIMAL_CONFIG:
+    case CONNECT_STRATEGY_REDISCOVER:
+        /* These don't modify the name */
+        return true;
+
+    default:
+        return false;
+    }
+}
+
+/**
+ * @brief Get strategy name for logging.
+ */
+static const char *strategy_name(connect_strategy_t strategy) {
+    switch (strategy) {
+    case CONNECT_STRATEGY_STANDARD:       return "standard";
+    case CONNECT_STRATEGY_LOWERCASE:      return "lowercase";
+    case CONNECT_STRATEGY_UPPERCASE:      return "uppercase";
+    case CONNECT_STRATEGY_NO_DASH:        return "no-dash";
+    case CONNECT_STRATEGY_MINIMAL_CONFIG: return "minimal-config";
+    case CONNECT_STRATEGY_REDISCOVER:     return "rediscover";
+    default:                              return "unknown";
+    }
+}
+
+/**
+ * @brief Build connect parameters with strategy-specific modifications.
+ */
+static void build_connect_params_with_strategy(ar_manager_t *manager,
+                                                profinet_ar_t *ar,
+                                                connect_strategy_t strategy,
+                                                connect_request_params_t *params) {
+    /* Start with standard params */
+    build_connect_params(manager, ar, params);
+
+    /* Apply strategy-specific modifications */
+    switch (strategy) {
+    case CONNECT_STRATEGY_LOWERCASE:
+    case CONNECT_STRATEGY_UPPERCASE:
+    case CONNECT_STRATEGY_NO_DASH: {
+        char modified_name[64];
+        if (ar_generate_name_variation(ar->device_station_name, strategy,
+                                        modified_name, sizeof(modified_name))) {
+            strncpy(params->station_name, modified_name,
+                    sizeof(params->station_name) - 1);
+            params->station_name[sizeof(params->station_name) - 1] = '\0';
+        }
+        break;
+    }
+
+    case CONNECT_STRATEGY_MINIMAL_CONFIG:
+        /*
+         * Minimal configuration: only DAP slot.
+         * This tests if the device accepts connection at all.
+         * If successful, we can probe for actual modules later.
+         */
+        params->expected_count = 1;  /* Only DAP */
+        params->iocr[0].data_length = 0;
+        params->iocr[1].data_length = 0;
+        LOG_DEBUG("Using minimal config: only DAP slot");
+        break;
+
+    case CONNECT_STRATEGY_STANDARD:
+    case CONNECT_STRATEGY_REDISCOVER:
+    default:
+        /* No modifications needed */
+        break;
+    }
+}
+
+/**
+ * @brief Calculate delay with exponential backoff.
+ */
+static uint32_t calculate_backoff_delay(int attempt, int base_ms, int max_ms) {
+    /* Exponential backoff: base * 2^attempt, capped at max */
+    uint32_t delay = base_ms * (1 << attempt);
+    if (delay > (uint32_t)max_ms) {
+        delay = max_ms;
+    }
+    /* Add small jitter (0-10% of delay) to avoid thundering herd */
+    delay += (rand() % (delay / 10 + 1));
+    return delay;
+}
+
+/**
+ * @brief Sleep for specified milliseconds.
+ */
+static void sleep_ms(uint32_t ms) {
+    struct timespec ts;
+    ts.tv_sec = ms / 1000;
+    ts.tv_nsec = (ms % 1000) * 1000000;
+    nanosleep(&ts, NULL);
+}
+
+wtc_result_t ar_connect_resilient(ar_manager_t *manager,
+                                   profinet_ar_t *ar,
+                                   const resilient_connect_opts_t *opts) {
+    if (!manager || !ar) {
+        return WTC_ERROR_INVALID_PARAM;
+    }
+
+    /* Use defaults if not specified */
+    resilient_connect_opts_t default_opts = RESILIENT_CONNECT_OPTS_DEFAULT;
+    if (!opts) {
+        opts = &default_opts;
+    }
+
+    LOG_INFO("Starting resilient connection to %s (max_attempts=%d)",
+             ar->device_station_name, opts->max_attempts);
+
+    /* Build list of strategies to try */
+    connect_strategy_t strategies[CONNECT_STRATEGY_COUNT];
+    int strategy_count = 0;
+
+    /* Always try standard first */
+    strategies[strategy_count++] = CONNECT_STRATEGY_STANDARD;
+
+    /* Add name variations if enabled */
+    if (opts->try_name_variations) {
+        strategies[strategy_count++] = CONNECT_STRATEGY_LOWERCASE;
+        strategies[strategy_count++] = CONNECT_STRATEGY_UPPERCASE;
+        strategies[strategy_count++] = CONNECT_STRATEGY_NO_DASH;
+    }
+
+    /* Add minimal config if enabled */
+    if (opts->try_minimal_config) {
+        strategies[strategy_count++] = CONNECT_STRATEGY_MINIMAL_CONFIG;
+    }
+
+    wtc_result_t last_error = WTC_ERROR_PROTOCOL;
+    int total_attempts = 0;
+
+    for (int round = 0; round < opts->max_attempts && total_attempts < opts->max_attempts; round++) {
+        LOG_DEBUG("Connection round %d/%d", round + 1, opts->max_attempts);
+
+        /* Try each strategy in this round */
+        for (int s = 0; s < strategy_count && total_attempts < opts->max_attempts; s++) {
+            connect_strategy_t strategy = strategies[s];
+            total_attempts++;
+
+            LOG_INFO("Attempt %d/%d: strategy=%s for %s",
+                     total_attempts, opts->max_attempts,
+                     strategy_name(strategy), ar->device_station_name);
+
+            /* Reset AR state for new attempt */
+            ar->state = AR_STATE_INIT;
+            ar->retry_count++;
+
+            /* Set controller IP if not already set */
+            if (manager->controller_ip == 0 && ar->device_ip != 0) {
+                manager->controller_ip = (ar->device_ip & 0xFFFFFF00) | 0x00000001;
+                LOG_DEBUG("Auto-configured controller IP: %d.%d.%d.%d",
+                          (manager->controller_ip >> 24) & 0xFF,
+                          (manager->controller_ip >> 16) & 0xFF,
+                          (manager->controller_ip >> 8) & 0xFF,
+                          manager->controller_ip & 0xFF);
+            }
+
+            /* Ensure RPC context is initialized */
+            wtc_result_t res = ensure_rpc_initialized(manager);
+            if (res != WTC_OK) {
+                LOG_ERROR("Failed to initialize RPC context");
+                last_error = res;
+                continue;
+            }
+
+            /* Build parameters with strategy */
+            connect_request_params_t params;
+            build_connect_params_with_strategy(manager, ar, strategy, &params);
+
+            LOG_DEBUG("Sending Connect Request with station_name='%s'",
+                      params.station_name);
+
+            /* Update AR state */
+            ar->state = AR_STATE_CONNECT_REQ;
+            ar->last_activity_ms = time_get_ms();
+
+            /* Send connect and wait for response */
+            connect_response_t response;
+            res = rpc_connect(&manager->rpc_ctx, ar->device_ip, &params, &response);
+
+            if (res == WTC_OK && response.success) {
+                /* Success! Update AR with response data */
+                memcpy(ar->device_mac, response.device_mac, 6);
+
+                /* Update frame IDs from response */
+                for (int i = 0; i < response.frame_id_count && i < ar->iocr_count; i++) {
+                    if (ar->iocr[i].frame_id != response.frame_ids[i].assigned) {
+                        LOG_DEBUG("Frame ID updated for IOCR %d: 0x%04X -> 0x%04X",
+                                  i, ar->iocr[i].frame_id, response.frame_ids[i].assigned);
+                        ar->iocr[i].frame_id = response.frame_ids[i].assigned;
+                    }
+                }
+
+                /* If we used a modified name, update the AR's stored name */
+                if (strategy != CONNECT_STRATEGY_STANDARD &&
+                    strategy != CONNECT_STRATEGY_MINIMAL_CONFIG &&
+                    strategy != CONNECT_STRATEGY_REDISCOVER) {
+                    strncpy(ar->device_station_name, params.station_name,
+                            sizeof(ar->device_station_name) - 1);
+                    ar->device_station_name[sizeof(ar->device_station_name) - 1] = '\0';
+                    LOG_INFO("Updated station name to '%s' (strategy=%s)",
+                             ar->device_station_name, strategy_name(strategy));
+                }
+
+                if (response.has_diff) {
+                    LOG_WARN("Device reported module differences");
+                }
+
+                ar->state = AR_STATE_CONNECT_CNF;
+                ar->last_activity_ms = time_get_ms();
+
+                LOG_INFO("Resilient connect SUCCEEDED on attempt %d (strategy=%s)",
+                         total_attempts, strategy_name(strategy));
+                return WTC_OK;
+            }
+
+            /* Connection failed - log details */
+            if (res != WTC_OK) {
+                LOG_WARN("Attempt %d failed: RPC error %d", total_attempts, res);
+                last_error = res;
+            } else if (!response.success) {
+                LOG_WARN("Attempt %d rejected: error_code=0x%02X",
+                         total_attempts, response.error_code);
+                last_error = WTC_ERROR_PROTOCOL;
+            }
+
+            ar->state = AR_STATE_INIT;  /* Reset for next attempt */
+
+            /* Delay before next attempt (skip if last attempt) */
+            if (total_attempts < opts->max_attempts) {
+                uint32_t delay = calculate_backoff_delay(total_attempts - 1,
+                                                          opts->base_delay_ms,
+                                                          opts->max_delay_ms);
+                LOG_DEBUG("Waiting %u ms before next attempt", delay);
+                sleep_ms(delay);
+            }
+        }
+
+        /* Optional: Try DCP rediscovery between rounds */
+        if (opts->try_rediscovery && round < opts->max_attempts - 1) {
+            LOG_INFO("Round %d failed, would trigger DCP rediscovery", round + 1);
+            /*
+             * TODO: Trigger DCP rediscovery here if we have access to the
+             * discovery context. For now, just continue to next round.
+             */
+        }
+    }
+
+    /* All attempts failed */
+    ar->state = AR_STATE_ABORT;
+    ar->last_activity_ms = time_get_ms();
+
+    LOG_ERROR("Resilient connect FAILED after %d attempts for %s",
+              total_attempts, ar->device_station_name);
+    return last_error;
 }

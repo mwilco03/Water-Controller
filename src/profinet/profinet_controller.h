@@ -123,6 +123,10 @@ typedef struct {
     uint64_t last_activity_ms;
     uint32_t watchdog_ms;
 
+    /* Resilient connection tracking */
+    int retry_count;                /* Number of connection retry attempts */
+    uint64_t last_connect_attempt_ms;  /* Time of last connection attempt */
+
     /* Authority handoff - who has control of this device */
     authority_context_t authority;
 
