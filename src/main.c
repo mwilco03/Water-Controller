@@ -300,7 +300,7 @@ static wtc_result_t save_config_to_database(void) {
 /* Print usage */
 static void print_usage(const char *program) {
     printf("Water Treatment Controller - PROFINET IO Controller\n");
-    printf("Version %s\n\n", WTC_VERSION_STRING);
+    printf("Version %s (build %s)\n\n", WTC_VERSION, WTC_BUILD_COMMIT);
     printf("Usage: %s [options]\n\n", program);
     printf("Options:\n");
     printf("  -i, --interface <name>   Network interface (default: auto-detect)\n");
@@ -865,7 +865,9 @@ int main(int argc, char *argv[]) {
     };
     logger_init(&log_config);
 
-    LOG_INFO("Starting Water Treatment Controller v%s", WTC_VERSION_STRING);
+    LOG_INFO("Starting Water Treatment Controller v%s (build %s)",
+             WTC_VERSION, WTC_BUILD_COMMIT);
+    LOG_INFO("Build date: %s", WTC_BUILD_DATE);
     LOG_INFO("Interface: %s, Cycle time: %u ms", g_config.interface, g_config.cycle_time_ms);
 
     /* Set up signal handlers */
