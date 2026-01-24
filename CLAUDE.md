@@ -47,7 +47,36 @@ Envelope: `{ data: <payload> }`. Keep flat. Frontend: `response.data || response
 
 ## Architecture Decisions
 
-**Slots**: PROFINET frame positions, not DB entities. Store `slot_number` as nullable int on sensors/controls.
+## Docker Deployment Architecture
+
+**CRITICAL: Bootstrap uses Docker mode by default. There is NO build directory on the host.**
+
+The controller binary is compiled and runs INSIDE the `wtc-controller` container:
+- Source cloned to: `/opt/water-controller/` (on host)
+- Binary location: `/usr/local/bin/water_treat_controller` (inside container)
+- Container built from: `docker/Dockerfile.controller`
+
+**To rebuild the controller after code changes:**
+```bash
+cd /opt/water-controller/docker
+docker compose build controller
+docker compose up -d controller
+```
+
+**To view controller logs:**
+```bash
+docker logs wtc-controller -f
+```
+
+**The controller logs its version at startup:**
+```
+Starting Water Treatment Controller v1.2.0 (build abc1234)
+Build date: 2026-01-24 00:27:06 +0000
+```
+
+This tells you exactly which commit is running.
+
+## External Codebases
 
 **Pre-production**: No migration concerns. Features must work via `docker compose up`—no manual steps.
 
