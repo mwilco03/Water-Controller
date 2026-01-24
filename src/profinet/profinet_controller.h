@@ -119,6 +119,9 @@ typedef struct {
     ar_slot_info_t slot_info[WTC_MAX_SLOTS];
     int slot_count;
 
+    /* Device profile - if set, used instead of slot_info for module idents */
+    const void *device_profile;  /* Pointer to device_profile_t (forward declared) */
+
     /* Timing */
     uint64_t last_activity_ms;
     uint32_t watchdog_ms;

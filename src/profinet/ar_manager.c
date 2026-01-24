@@ -304,7 +304,10 @@ wtc_result_t ar_manager_create_ar(ar_manager_t *manager,
         return res;
     }
 
-    /* Store slot configuration for GSDML module identification */
+    /* Store device profile if provided */
+    new_ar->device_profile = config->profile;
+
+    /* Store slot configuration for GSDML module identification (legacy) */
     new_ar->slot_count = 0;
     for (int i = 0; i < config->slot_count && new_ar->slot_count < WTC_MAX_SLOTS; i++) {
         ar_slot_info_t *info = &new_ar->slot_info[new_ar->slot_count];
@@ -649,52 +652,81 @@ static void build_connect_params(ar_manager_t *manager,
     /*
      * Expected configuration using GSDML-defined module identifiers.
      * Module identifiers must match the Water-Treat RTU GSDML exactly.
+     *
+     * If a device profile is set, use it directly.
+     * Otherwise, fall back to legacy slot_info array.
      */
     params->expected_count = 0;
 
-    /* Add DAP slot 0 (Device Access Point - always present) */
-    params->expected_config[params->expected_count].slot = 0;
-    params->expected_config[params->expected_count].module_ident = GSDML_MOD_DAP;
-    params->expected_config[params->expected_count].subslot = 1;
-    params->expected_config[params->expected_count].submodule_ident = GSDML_SUBMOD_DAP;
-    params->expected_config[params->expected_count].data_length = 0;
-    params->expected_config[params->expected_count].is_input = true;
-    params->expected_count++;
+    if (ar->device_profile) {
+        /* Use device profile for expected configuration */
+        const device_profile_t *profile = (const device_profile_t *)ar->device_profile;
+        LOG_INFO("Using device profile: %s (%d slots)", profile->name, profile->slot_count);
 
-    /* Add slots from stored slot configuration with GSDML module IDs */
-    for (int i = 0; i < ar->slot_count && params->expected_count < WTC_MAX_SLOTS; i++) {
-        ar_slot_info_t *slot = &ar->slot_info[i];
-        uint32_t mod_ident, submod_ident;
-        uint16_t data_length;
-        bool is_input;
+        for (int i = 0; i < profile->slot_count && params->expected_count < WTC_MAX_SLOTS; i++) {
+            params->expected_config[params->expected_count].slot = profile->slots[i].slot;
+            params->expected_config[params->expected_count].subslot = profile->slots[i].subslot;
+            params->expected_config[params->expected_count].module_ident = profile->slots[i].module_ident;
+            params->expected_config[params->expected_count].submodule_ident = profile->slots[i].submodule_ident;
+            params->expected_config[params->expected_count].data_length =
+                profile->slots[i].direction == 1 ? profile->slots[i].input_len :
+                profile->slots[i].direction == 2 ? profile->slots[i].output_len : 0;
+            params->expected_config[params->expected_count].is_input =
+                (profile->slots[i].direction == 1 || profile->slots[i].direction == 3);
+            params->expected_count++;
 
-        if (slot->type == SLOT_TYPE_SENSOR) {
-            /* Input module - use measurement type for GSDML ID */
-            mod_ident = gsdml_get_input_module_ident(slot->measurement_type);
-            submod_ident = gsdml_get_input_submodule_ident(slot->measurement_type);
-            data_length = GSDML_INPUT_DATA_SIZE;  /* 5 bytes: 4B float + 1B quality */
-            is_input = true;
-        } else if (slot->type == SLOT_TYPE_ACTUATOR) {
-            /* Output module - use actuator type for GSDML ID */
-            mod_ident = gsdml_get_output_module_ident(slot->actuator_type);
-            submod_ident = gsdml_get_output_submodule_ident(slot->actuator_type);
-            data_length = GSDML_OUTPUT_DATA_SIZE;  /* 4 bytes: 1B cmd + 1B duty + 2B reserved */
-            is_input = false;
-        } else {
-            continue;  /* Skip unknown slot types */
+            LOG_DEBUG("Profile slot %d/%d: mod=0x%08X submod=0x%08X dir=%d",
+                      profile->slots[i].slot, profile->slots[i].subslot,
+                      profile->slots[i].module_ident, profile->slots[i].submodule_ident,
+                      profile->slots[i].direction);
         }
+    } else {
+        /* Legacy: build from slot_info array */
 
-        params->expected_config[params->expected_count].slot = slot->slot;
-        params->expected_config[params->expected_count].module_ident = mod_ident;
-        params->expected_config[params->expected_count].subslot = slot->subslot > 0 ? slot->subslot : 1;
-        params->expected_config[params->expected_count].submodule_ident = submod_ident;
-        params->expected_config[params->expected_count].data_length = data_length;
-        params->expected_config[params->expected_count].is_input = is_input;
+        /* Add DAP slot 0 (Device Access Point - always present) */
+        params->expected_config[params->expected_count].slot = 0;
+        params->expected_config[params->expected_count].module_ident = GSDML_MOD_DAP;
+        params->expected_config[params->expected_count].subslot = 1;
+        params->expected_config[params->expected_count].submodule_ident = GSDML_SUBMOD_DAP;
+        params->expected_config[params->expected_count].data_length = 0;
+        params->expected_config[params->expected_count].is_input = true;
         params->expected_count++;
 
-        LOG_DEBUG("Slot %d: type=%s mod=0x%08X submod=0x%08X len=%u",
-                  slot->slot, is_input ? "INPUT" : "OUTPUT",
-                  mod_ident, submod_ident, data_length);
+        /* Add slots from stored slot configuration with GSDML module IDs */
+        for (int i = 0; i < ar->slot_count && params->expected_count < WTC_MAX_SLOTS; i++) {
+            ar_slot_info_t *slot = &ar->slot_info[i];
+            uint32_t mod_ident, submod_ident;
+            uint16_t data_length;
+            bool is_input;
+
+            if (slot->type == SLOT_TYPE_SENSOR) {
+                /* Input module - use measurement type for GSDML ID */
+                mod_ident = gsdml_get_input_module_ident(slot->measurement_type);
+                submod_ident = gsdml_get_input_submodule_ident(slot->measurement_type);
+                data_length = GSDML_INPUT_DATA_SIZE;  /* 5 bytes: 4B float + 1B quality */
+                is_input = true;
+            } else if (slot->type == SLOT_TYPE_ACTUATOR) {
+                /* Output module - use actuator type for GSDML ID */
+                mod_ident = gsdml_get_output_module_ident(slot->actuator_type);
+                submod_ident = gsdml_get_output_submodule_ident(slot->actuator_type);
+                data_length = GSDML_OUTPUT_DATA_SIZE;  /* 4 bytes: 1B cmd + 1B duty + 2B reserved */
+                is_input = false;
+            } else {
+                continue;  /* Skip unknown slot types */
+            }
+
+            params->expected_config[params->expected_count].slot = slot->slot;
+            params->expected_config[params->expected_count].module_ident = mod_ident;
+            params->expected_config[params->expected_count].subslot = slot->subslot > 0 ? slot->subslot : 1;
+            params->expected_config[params->expected_count].submodule_ident = submod_ident;
+            params->expected_config[params->expected_count].data_length = data_length;
+            params->expected_config[params->expected_count].is_input = is_input;
+            params->expected_count++;
+
+            LOG_DEBUG("Slot %d: type=%s mod=0x%08X submod=0x%08X len=%u",
+                      slot->slot, is_input ? "INPUT" : "OUTPUT",
+                      mod_ident, submod_ident, data_length);
+        }
     }
 
     params->max_alarm_data_length = 200;
@@ -1122,9 +1154,31 @@ static void build_connect_params_with_strategy(ar_manager_t *manager,
          * If successful, we can probe for actual modules later.
          */
         params->expected_count = 1;  /* Only DAP */
+        params->expected_config[0].slot = 0;
+        params->expected_config[0].subslot = 1;
+        params->expected_config[0].module_ident = GSDML_MOD_DAP;
+        params->expected_config[0].submodule_ident = GSDML_SUBMOD_DAP;
+        params->expected_config[0].data_length = 0;
+        params->expected_config[0].is_input = true;
         params->iocr[0].data_length = 0;
         params->iocr[1].data_length = 0;
-        LOG_DEBUG("Using minimal config: only DAP slot");
+        LOG_INFO("Using minimal config: only DAP slot 0");
+        break;
+
+    case CONNECT_STRATEGY_DAP_ONLY:
+        /*
+         * DAP-only connection for basic connectivity testing.
+         * Same as minimal, but explicitly named for clarity.
+         */
+        params->expected_count = 1;  /* Only DAP */
+        params->expected_config[0].slot = 0;
+        params->expected_config[0].subslot = 1;
+        params->expected_config[0].module_ident = GSDML_MOD_DAP;
+        params->expected_config[0].submodule_ident = GSDML_SUBMOD_DAP;
+        params->expected_config[0].data_length = 0;
+        params->expected_config[0].is_input = true;
+        params->iocr_count = 0;  /* No IOCRs for DAP-only */
+        LOG_INFO("Using DAP-only config for connectivity test");
         break;
 
     case CONNECT_STRATEGY_STANDARD:

@@ -8,6 +8,7 @@
 #define WTC_AR_MANAGER_H
 
 #include "profinet_controller.h"
+#include "device_config.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -30,9 +31,12 @@ typedef struct {
     uint16_t vendor_id;
     uint16_t device_id;
 
-    /* IO configuration */
+    /* IO configuration - legacy slot-based config */
     slot_config_t slots[WTC_MAX_SLOTS];
     int slot_count;
+
+    /* Device profile - preferred over slots if set */
+    const device_profile_t *profile;
 
     /* Timing */
     uint32_t cycle_time_us;
@@ -134,6 +138,7 @@ typedef enum {
     CONNECT_STRATEGY_UPPERCASE,      /* Force uppercase station name */
     CONNECT_STRATEGY_NO_DASH,        /* Remove dashes from station name */
     CONNECT_STRATEGY_MINIMAL_CONFIG, /* Minimal expected configuration */
+    CONNECT_STRATEGY_DAP_ONLY,       /* DAP only - verify basic connectivity */
     CONNECT_STRATEGY_REDISCOVER,     /* Re-run DCP discovery first */
     CONNECT_STRATEGY_COUNT
 } connect_strategy_t;
