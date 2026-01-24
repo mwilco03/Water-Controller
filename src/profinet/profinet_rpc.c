@@ -1494,3 +1494,145 @@ wtc_result_t rpc_send_response(rpc_context_t *ctx,
 
     return WTC_OK;
 }
+
+/* ============== Error Analysis Implementation ============== */
+
+/**
+ * @brief Map block error code1 to block type.
+ */
+static uint16_t error_code1_to_block_type(uint8_t err_code1) {
+    switch (err_code1) {
+    case PNIO_CM_ERR1_AR_BLOCK:       return BLOCK_TYPE_AR_BLOCK_REQ;
+    case PNIO_CM_ERR1_IOCR_BLOCK:     return BLOCK_TYPE_IOCR_BLOCK_REQ;
+    case PNIO_CM_ERR1_ALARM_CR_BLOCK: return BLOCK_TYPE_ALARM_CR_BLOCK_REQ;
+    case PNIO_CM_ERR1_EXPECTED_SUBMOD: return BLOCK_TYPE_EXPECTED_SUBMOD_BLOCK;
+    default: return 0;
+    }
+}
+
+/**
+ * @brief Get human-readable description for IOCR error.
+ */
+static const char *get_iocr_error_desc(uint8_t err_code2) {
+    switch (err_code2) {
+    case PNIO_IOCR_ERR2_TYPE:        return "Invalid IOCR type";
+    case PNIO_IOCR_ERR2_LT_FIELD:    return "Invalid LT field (must be 0x8892)";
+    case PNIO_IOCR_ERR2_RT_CLASS:    return "Invalid RT class";
+    case PNIO_IOCR_ERR2_RESERVED:    return "Reserved bits not zero";
+    case PNIO_IOCR_ERR2_CSDU_LENGTH: return "C_SDU length out of range";
+    case PNIO_IOCR_ERR2_FRAME_ID:    return "Invalid frame ID for IOCR type";
+    case PNIO_IOCR_ERR2_SEND_CLOCK:  return "Invalid send clock factor";
+    case PNIO_IOCR_ERR2_REDUCTION:   return "Invalid reduction ratio";
+    case PNIO_IOCR_ERR2_PHASE:       return "Invalid phase (must be >= 1)";
+    case PNIO_IOCR_ERR2_DATA_LENGTH: return "Data length too large";
+    case PNIO_IOCR_ERR2_FRAME_OFFSET: return "Invalid frame send offset";
+    case PNIO_IOCR_ERR2_WATCHDOG:    return "Invalid watchdog factor";
+    case PNIO_IOCR_ERR2_DATA_HOLD:   return "Invalid data hold factor";
+    default: return "Unknown IOCR error";
+    }
+}
+
+void rpc_analyze_error(const connect_response_t *response,
+                       error_analysis_t *analysis) {
+    if (!response || !analysis) {
+        return;
+    }
+
+    memset(analysis, 0, sizeof(error_analysis_t));
+    analysis->err_decode = response->error_decode;
+    analysis->err_code1 = response->error_code1 & 0xFF;
+    analysis->err_code2 = response->error_code2 & 0xFF;
+
+    /* If no error info, check if response indicates general failure */
+    if (response->error_code == PNIO_ERR_CODE_OK && response->success) {
+        analysis->action = RECOVERY_NONE;
+        analysis->description = "No error";
+        return;
+    }
+
+    /* Check for PNIO-CM errors (connection manager) */
+    if (response->error_decode == PNIO_ERR_DECODE_PNIOCM) {
+        analysis->is_block_error = true;
+        analysis->problem_block = error_code1_to_block_type(analysis->err_code1);
+
+        switch (analysis->err_code1) {
+        case PNIO_CM_ERR1_CONNECT:
+            /* General connect error */
+            switch (analysis->err_code2) {
+            case PNIO_CM_ERR2_UNKNOWN_BLOCK:
+                analysis->action = RECOVERY_TRY_MINIMAL;
+                analysis->description = "Unknown block type - try minimal config";
+                break;
+            case PNIO_CM_ERR2_INVALID_LENGTH:
+                analysis->action = RECOVERY_FIX_BLOCK_LENGTH;
+                analysis->description = "Invalid block length";
+                break;
+            case PNIO_CM_ERR2_RESOURCE:
+                analysis->action = RECOVERY_WAIT_AND_RETRY;
+                analysis->description = "Device out of resources";
+                break;
+            default:
+                analysis->action = RECOVERY_RETRY_SAME;
+                analysis->description = "General connect error";
+            }
+            break;
+
+        case PNIO_CM_ERR1_AR_BLOCK:
+            /* AR Block error - often station name mismatch */
+            analysis->action = RECOVERY_TRY_LOWERCASE;
+            analysis->description = "AR block error - check station name";
+            break;
+
+        case PNIO_CM_ERR1_IOCR_BLOCK:
+            /* IOCR Block error */
+            analysis->description = get_iocr_error_desc(analysis->err_code2);
+            switch (analysis->err_code2) {
+            case PNIO_IOCR_ERR2_PHASE:
+                analysis->action = RECOVERY_FIX_PHASE;
+                break;
+            case PNIO_IOCR_ERR2_SEND_CLOCK:
+            case PNIO_IOCR_ERR2_REDUCTION:
+            case PNIO_IOCR_ERR2_WATCHDOG:
+            case PNIO_IOCR_ERR2_DATA_HOLD:
+                analysis->action = RECOVERY_FIX_TIMING;
+                break;
+            default:
+                analysis->action = RECOVERY_TRY_MINIMAL;
+            }
+            break;
+
+        case PNIO_CM_ERR1_ALARM_CR_BLOCK:
+            /* Alarm CR error */
+            if (analysis->err_code2 == PNIO_ALARM_ERR2_LENGTH) {
+                analysis->action = RECOVERY_FIX_BLOCK_LENGTH;
+                analysis->description = "Invalid AlarmCR block length";
+            } else {
+                analysis->action = RECOVERY_TRY_MINIMAL;
+                analysis->description = "AlarmCR block error";
+            }
+            break;
+
+        case PNIO_CM_ERR1_EXPECTED_SUBMOD:
+            /* Expected submodule config mismatch */
+            analysis->action = RECOVERY_TRY_MINIMAL;
+            analysis->description = "Expected submodule mismatch - try minimal config";
+            break;
+
+        default:
+            analysis->action = RECOVERY_RETRY_SAME;
+            analysis->description = "Unknown PNIO-CM error";
+        }
+    } else if (response->error_code == PNIO_ERR_CODE_CONNECT) {
+        /* Generic connect failure */
+        analysis->action = RECOVERY_REDISCOVER;
+        analysis->description = "Connect failed - try rediscovery";
+    } else {
+        /* Unknown error type */
+        analysis->action = RECOVERY_WAIT_AND_RETRY;
+        analysis->description = "Unknown error type";
+    }
+
+    LOG_INFO("Error analysis: decode=0x%02X code1=0x%02X code2=0x%02X -> %s (action=%d)",
+             analysis->err_decode, analysis->err_code1, analysis->err_code2,
+             analysis->description, analysis->action);
+}

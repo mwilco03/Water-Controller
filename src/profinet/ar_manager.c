@@ -1282,23 +1282,97 @@ wtc_result_t ar_connect_resilient(ar_manager_t *manager,
                 return WTC_OK;
             }
 
-            /* Connection failed - log details */
+            /* Connection failed - analyze error and adapt strategy */
             if (res != WTC_OK) {
                 LOG_WARN("Attempt %d failed: RPC error %d", total_attempts, res);
                 last_error = res;
+
+                /* RPC-level failure (timeout, network) - just retry with backoff */
+                if (res == WTC_ERROR_TIMEOUT) {
+                    LOG_INFO("Timeout detected - will retry with longer delay");
+                }
             } else if (!response.success) {
-                LOG_WARN("Attempt %d rejected: error_code=0x%02X",
-                         total_attempts, response.error_code);
+                LOG_WARN("Attempt %d rejected: error_code=0x%02X decode=0x%02X",
+                         total_attempts, response.error_code, response.error_decode);
                 last_error = WTC_ERROR_PROTOCOL;
+
+                /* Analyze error and potentially adjust next strategy */
+                error_analysis_t analysis;
+                rpc_analyze_error(&response, &analysis);
+
+                LOG_INFO("Error analysis: %s (recommended action=%d)",
+                         analysis.description, analysis.action);
+
+                /* Dynamically adjust strategy order based on error */
+                switch (analysis.action) {
+                case RECOVERY_TRY_LOWERCASE:
+                    /* Move lowercase to front of strategy list */
+                    if (s < strategy_count - 1 &&
+                        strategies[s + 1] != CONNECT_STRATEGY_LOWERCASE) {
+                        for (int i = s + 1; i < strategy_count; i++) {
+                            if (strategies[i] == CONNECT_STRATEGY_LOWERCASE) {
+                                /* Swap to next position */
+                                connect_strategy_t tmp = strategies[s + 1];
+                                strategies[s + 1] = CONNECT_STRATEGY_LOWERCASE;
+                                strategies[i] = tmp;
+                                LOG_DEBUG("Promoting LOWERCASE strategy due to error");
+                                break;
+                            }
+                        }
+                    }
+                    break;
+
+                case RECOVERY_TRY_MINIMAL:
+                    /* Move minimal config to next position */
+                    if (s < strategy_count - 1 &&
+                        strategies[s + 1] != CONNECT_STRATEGY_MINIMAL_CONFIG) {
+                        for (int i = s + 1; i < strategy_count; i++) {
+                            if (strategies[i] == CONNECT_STRATEGY_MINIMAL_CONFIG) {
+                                connect_strategy_t tmp = strategies[s + 1];
+                                strategies[s + 1] = CONNECT_STRATEGY_MINIMAL_CONFIG;
+                                strategies[i] = tmp;
+                                LOG_DEBUG("Promoting MINIMAL_CONFIG strategy due to error");
+                                break;
+                            }
+                        }
+                    }
+                    break;
+
+                case RECOVERY_WAIT_AND_RETRY:
+                    /* Double the backoff for next attempt */
+                    LOG_DEBUG("Will use extended delay due to resource error");
+                    break;
+
+                case RECOVERY_NONE:
+                    /* Fatal error - skip remaining attempts */
+                    LOG_ERROR("Fatal error - aborting connection attempts");
+                    total_attempts = opts->max_attempts;
+                    break;
+
+                default:
+                    break;
+                }
             }
 
             ar->state = AR_STATE_INIT;  /* Reset for next attempt */
 
+            /* Calculate delay - extend if error suggests waiting */
+            uint32_t delay = calculate_backoff_delay(total_attempts - 1,
+                                                      opts->base_delay_ms,
+                                                      opts->max_delay_ms);
+
+            /* Extend delay for timeout or resource errors */
+            if (res == WTC_ERROR_TIMEOUT ||
+                (response.error_decode == PNIO_ERR_DECODE_PNIOCM &&
+                 (response.error_code1 & 0xFF) == PNIO_CM_ERR2_RESOURCE)) {
+                delay = delay * 2;
+                if (delay > (uint32_t)opts->max_delay_ms * 2) {
+                    delay = opts->max_delay_ms * 2;
+                }
+            }
+
             /* Delay before next attempt (skip if last attempt) */
             if (total_attempts < opts->max_attempts) {
-                uint32_t delay = calculate_backoff_delay(total_attempts - 1,
-                                                          opts->base_delay_ms,
-                                                          opts->max_delay_ms);
                 LOG_DEBUG("Waiting %u ms before next attempt", delay);
                 sleep_ms(delay);
             }
