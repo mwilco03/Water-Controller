@@ -689,6 +689,7 @@ wtc_result_t rpc_parse_connect_response(const uint8_t *buffer,
 
     /*
      * PNIO Connect Response NDR format (after RPC header):
+     * - PNIO Status (4 bytes) - ErrorCode, ErrorDecode, ErrorCode1, ErrorCode2
      * - ArgsMaximum (4 bytes, always 0)
      * - ArgsLength (4 bytes) - length of PNIO data
      * - MaxCount (4 bytes) - NDR array max
@@ -696,17 +697,70 @@ wtc_result_t rpc_parse_connect_response(const uint8_t *buffer,
      * - ActualCount (4 bytes) - NDR array actual count
      * - Then the PNIO blocks (ARBlockRes, IOCRBlockRes, etc.)
      *
-     * Note: There is NO error status in this header. PNIO errors are
-     * indicated by RPC FAULT packet type or missing/invalid blocks.
+     * Note: Error responses may be shorter - parse PNIO Status first.
      */
+
+    /* Minimum: 4 bytes for PNIO Status */
+    if (pos + 4 > buf_len) {
+        LOG_ERROR("Connect response too short for PNIO Status: got %zu bytes, need %zu",
+                  buf_len, pos + 4);
+        return WTC_ERROR_PROTOCOL;
+    }
+
+    /* Parse PNIO Status (4 bytes) - this comes FIRST */
+    response->error_code = buffer[pos];
+    response->error_decode = buffer[pos + 1];
+    response->error_code1 = buffer[pos + 2];
+    response->error_code2 = buffer[pos + 3];
+    pos += 4;
+
+    LOG_INFO("PNIO Status: ErrorCode=0x%02X, ErrorDecode=0x%02X, "
+             "ErrorCode1=0x%02X, ErrorCode2=0x%02X",
+             response->error_code, response->error_decode,
+             response->error_code1, response->error_code2);
+
+    /* Check for error in PNIO Status */
+    if (response->error_decode == PNIO_ERR_DECODE_PNIOCM ||
+        response->error_code != 0) {
+        /* Connection Manager error or general error - extract details */
+        const char *block_name = "Unknown";
+        const char *error_desc = "Unknown error";
+
+        switch (response->error_code1) {
+        case PNIO_CM_ERR1_AR_BLOCK:       block_name = "ARBlockReq"; break;
+        case PNIO_CM_ERR1_IOCR_BLOCK:     block_name = "IOCRBlockReq"; break;
+        case PNIO_CM_ERR1_ALARM_CR_BLOCK: block_name = "AlarmCRBlockReq"; break;
+        case PNIO_CM_ERR1_EXPECTED_SUBMOD: block_name = "ExpectedSubmoduleBlock"; break;
+        }
+
+        /* Map ErrorCode2 to description */
+        if (response->error_code1 == PNIO_CM_ERR1_ALARM_CR_BLOCK) {
+            switch (response->error_code2) {
+            case 0x00: error_desc = "Invalid AlarmCR type"; break;
+            case 0x01: error_desc = "Invalid block length"; break;
+            case 0x02: error_desc = "Invalid LT field"; break;
+            case 0x03: error_desc = "Invalid AlarmCR properties"; break;
+            case 0x04: error_desc = "Invalid RTA timeout"; break;
+            case 0x05: error_desc = "Invalid RTA retries"; break;
+            case 0x06: error_desc = "Invalid local alarm ref"; break;
+            case 0x07: error_desc = "Invalid max alarm data length"; break;
+            case 0x08: error_desc = "Invalid tag header high"; break;
+            case 0x09: error_desc = "Invalid tag header low"; break;
+            default: error_desc = "Unspecified AlarmCR error"; break;
+            }
+        }
+
+        LOG_ERROR("PNIO-CM Error in %s: %s (ErrorCode2=0x%02X)",
+                  block_name, error_desc, response->error_code2);
+
+        response->success = false;
+        return WTC_ERROR_PROTOCOL;
+    }
+
+    /* Check we have enough data for full NDR header (20 more bytes) */
     if (pos + 20 > buf_len) {
         LOG_ERROR("Connect response too short for NDR header: got %zu bytes, need %zu",
                   buf_len, pos + 20);
-        /* Log first bytes for diagnosis */
-        if (buf_len >= 4) {
-            LOG_ERROR("Response first 4 bytes: %02X %02X %02X %02X",
-                      buffer[0], buffer[1], buffer[2], buffer[3]);
-        }
         return WTC_ERROR_PROTOCOL;
     }
 
@@ -734,8 +788,11 @@ wtc_result_t rpc_parse_connect_response(const uint8_t *buffer,
               args_length, max_count, actual_count);
 
     if (actual_count == 0 || args_length == 0) {
+        /* This shouldn't happen if PNIO Status was OK */
         LOG_ERROR("Connect response: empty PNIO data (args_len=%u, actual=%u)",
                   args_length, actual_count);
+        response->success = false;
+        response->error_code = PNIO_ERR_CODE_CONNECT;
         return WTC_ERROR_PROTOCOL;
     }
 
@@ -1493,4 +1550,146 @@ wtc_result_t rpc_send_response(rpc_context_t *ctx,
               dest_port);
 
     return WTC_OK;
+}
+
+/* ============== Error Analysis Implementation ============== */
+
+/**
+ * @brief Map block error code1 to block type.
+ */
+static uint16_t error_code1_to_block_type(uint8_t err_code1) {
+    switch (err_code1) {
+    case PNIO_CM_ERR1_AR_BLOCK:       return BLOCK_TYPE_AR_BLOCK_REQ;
+    case PNIO_CM_ERR1_IOCR_BLOCK:     return BLOCK_TYPE_IOCR_BLOCK_REQ;
+    case PNIO_CM_ERR1_ALARM_CR_BLOCK: return BLOCK_TYPE_ALARM_CR_BLOCK_REQ;
+    case PNIO_CM_ERR1_EXPECTED_SUBMOD: return BLOCK_TYPE_EXPECTED_SUBMOD_BLOCK;
+    default: return 0;
+    }
+}
+
+/**
+ * @brief Get human-readable description for IOCR error.
+ */
+static const char *get_iocr_error_desc(uint8_t err_code2) {
+    switch (err_code2) {
+    case PNIO_IOCR_ERR2_TYPE:        return "Invalid IOCR type";
+    case PNIO_IOCR_ERR2_LT_FIELD:    return "Invalid LT field (must be 0x8892)";
+    case PNIO_IOCR_ERR2_RT_CLASS:    return "Invalid RT class";
+    case PNIO_IOCR_ERR2_RESERVED:    return "Reserved bits not zero";
+    case PNIO_IOCR_ERR2_CSDU_LENGTH: return "C_SDU length out of range";
+    case PNIO_IOCR_ERR2_FRAME_ID:    return "Invalid frame ID for IOCR type";
+    case PNIO_IOCR_ERR2_SEND_CLOCK:  return "Invalid send clock factor";
+    case PNIO_IOCR_ERR2_REDUCTION:   return "Invalid reduction ratio";
+    case PNIO_IOCR_ERR2_PHASE:       return "Invalid phase (must be >= 1)";
+    case PNIO_IOCR_ERR2_DATA_LENGTH: return "Data length too large";
+    case PNIO_IOCR_ERR2_FRAME_OFFSET: return "Invalid frame send offset";
+    case PNIO_IOCR_ERR2_WATCHDOG:    return "Invalid watchdog factor";
+    case PNIO_IOCR_ERR2_DATA_HOLD:   return "Invalid data hold factor";
+    default: return "Unknown IOCR error";
+    }
+}
+
+void rpc_analyze_error(const connect_response_t *response,
+                       error_analysis_t *analysis) {
+    if (!response || !analysis) {
+        return;
+    }
+
+    memset(analysis, 0, sizeof(error_analysis_t));
+    analysis->err_decode = response->error_decode;
+    analysis->err_code1 = response->error_code1 & 0xFF;
+    analysis->err_code2 = response->error_code2 & 0xFF;
+
+    /* If no error info, check if response indicates general failure */
+    if (response->error_code == PNIO_ERR_CODE_OK && response->success) {
+        analysis->action = RECOVERY_NONE;
+        analysis->description = "No error";
+        return;
+    }
+
+    /* Check for PNIO-CM errors (connection manager) */
+    if (response->error_decode == PNIO_ERR_DECODE_PNIOCM) {
+        analysis->is_block_error = true;
+        analysis->problem_block = error_code1_to_block_type(analysis->err_code1);
+
+        switch (analysis->err_code1) {
+        case PNIO_CM_ERR1_CONNECT:
+            /* General connect error */
+            switch (analysis->err_code2) {
+            case PNIO_CM_ERR2_UNKNOWN_BLOCK:
+                analysis->action = RECOVERY_TRY_MINIMAL;
+                analysis->description = "Unknown block type - try minimal config";
+                break;
+            case PNIO_CM_ERR2_INVALID_LENGTH:
+                analysis->action = RECOVERY_FIX_BLOCK_LENGTH;
+                analysis->description = "Invalid block length";
+                break;
+            case PNIO_CM_ERR2_RESOURCE:
+                analysis->action = RECOVERY_WAIT_AND_RETRY;
+                analysis->description = "Device out of resources";
+                break;
+            default:
+                analysis->action = RECOVERY_RETRY_SAME;
+                analysis->description = "General connect error";
+            }
+            break;
+
+        case PNIO_CM_ERR1_AR_BLOCK:
+            /* AR Block error - often station name mismatch */
+            analysis->action = RECOVERY_TRY_LOWERCASE;
+            analysis->description = "AR block error - check station name";
+            break;
+
+        case PNIO_CM_ERR1_IOCR_BLOCK:
+            /* IOCR Block error */
+            analysis->description = get_iocr_error_desc(analysis->err_code2);
+            switch (analysis->err_code2) {
+            case PNIO_IOCR_ERR2_PHASE:
+                analysis->action = RECOVERY_FIX_PHASE;
+                break;
+            case PNIO_IOCR_ERR2_SEND_CLOCK:
+            case PNIO_IOCR_ERR2_REDUCTION:
+            case PNIO_IOCR_ERR2_WATCHDOG:
+            case PNIO_IOCR_ERR2_DATA_HOLD:
+                analysis->action = RECOVERY_FIX_TIMING;
+                break;
+            default:
+                analysis->action = RECOVERY_TRY_MINIMAL;
+            }
+            break;
+
+        case PNIO_CM_ERR1_ALARM_CR_BLOCK:
+            /* Alarm CR error */
+            if (analysis->err_code2 == PNIO_ALARM_ERR2_LENGTH) {
+                analysis->action = RECOVERY_FIX_BLOCK_LENGTH;
+                analysis->description = "Invalid AlarmCR block length";
+            } else {
+                analysis->action = RECOVERY_TRY_MINIMAL;
+                analysis->description = "AlarmCR block error";
+            }
+            break;
+
+        case PNIO_CM_ERR1_EXPECTED_SUBMOD:
+            /* Expected submodule config mismatch */
+            analysis->action = RECOVERY_TRY_MINIMAL;
+            analysis->description = "Expected submodule mismatch - try minimal config";
+            break;
+
+        default:
+            analysis->action = RECOVERY_RETRY_SAME;
+            analysis->description = "Unknown PNIO-CM error";
+        }
+    } else if (response->error_code == PNIO_ERR_CODE_CONNECT) {
+        /* Generic connect failure */
+        analysis->action = RECOVERY_REDISCOVER;
+        analysis->description = "Connect failed - try rediscovery";
+    } else {
+        /* Unknown error type */
+        analysis->action = RECOVERY_WAIT_AND_RETRY;
+        analysis->description = "Unknown error type";
+    }
+
+    LOG_INFO("Error analysis: decode=0x%02X code1=0x%02X code2=0x%02X -> %s (action=%d)",
+             analysis->err_decode, analysis->err_code1, analysis->err_code2,
+             analysis->description, analysis->action);
 }

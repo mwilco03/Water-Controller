@@ -645,35 +645,16 @@ wtc_result_t profinet_controller_connect(profinet_controller_t *controller,
     }
 
     /*
-     * Default slot configuration for Water-Treat RTU (GSDML V2.4):
-     * - Slots 1-8: Input modules (sensors) - 5 bytes each
-     * - Slots 9-15: Output modules (actuators) - 4 bytes each
+     * Default: Use RTU_CPU_TEMP profile which matches the RTU's guaranteed
+     * default configuration (DAP + CPU temperature sensor at slot 1).
      *
-     * Used when no explicit slot configuration is provided.
+     * This ensures the controller requests only modules the RTU has plugged.
      */
-    slot_config_t default_slots[15];
+    const device_profile_t *default_profile = NULL;
     if (!slots || slot_count <= 0) {
-        memset(default_slots, 0, sizeof(default_slots));
-
-        /* Input slots 1-8: Generic sensors (MEASUREMENT_CUSTOM for flexibility) */
-        for (int i = 0; i < 8; i++) {
-            default_slots[i].slot = i + 1;
-            default_slots[i].subslot = 1;
-            default_slots[i].type = SLOT_TYPE_SENSOR;
-            default_slots[i].measurement_type = MEASUREMENT_CUSTOM;
-        }
-
-        /* Output slots 9-15: Generic actuators (ACTUATOR_RELAY as default) */
-        for (int i = 0; i < 7; i++) {
-            default_slots[8 + i].slot = 9 + i;
-            default_slots[8 + i].subslot = 1;
-            default_slots[8 + i].type = SLOT_TYPE_ACTUATOR;
-            default_slots[8 + i].actuator_type = ACTUATOR_RELAY;
-        }
-
-        slots = default_slots;
-        slot_count = 15;
-        LOG_INFO("Using default slot configuration (8 inputs, 7 outputs)");
+        default_profile = device_config_get_profile(DEVICE_PROFILE_TYPE_RTU_CPU_TEMP);
+        LOG_INFO("Using RTU_CPU_TEMP profile: %s (%d slots)",
+                 default_profile->name, default_profile->slot_count);
     }
 
     pthread_mutex_lock(&controller->lock);
@@ -773,8 +754,15 @@ wtc_result_t profinet_controller_connect(profinet_controller_t *controller,
     ar_config.vendor_id = device->vendor_id;
     ar_config.device_id = device->device_id;
 
-    memcpy(ar_config.slots, slots, slot_count * sizeof(slot_config_t));
-    ar_config.slot_count = slot_count;
+    /* Use profile if available, otherwise legacy slots */
+    if (default_profile) {
+        ar_config.profile = default_profile;
+        ar_config.slot_count = 0;  /* Profile takes precedence */
+    } else if (slots && slot_count > 0) {
+        memcpy(ar_config.slots, slots, slot_count * sizeof(slot_config_t));
+        ar_config.slot_count = slot_count;
+        ar_config.profile = NULL;
+    }
 
     ar_config.cycle_time_us = controller->config.cycle_time_us;
     ar_config.reduction_ratio = controller->config.reduction_ratio;
