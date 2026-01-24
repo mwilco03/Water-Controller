@@ -62,6 +62,33 @@ static const device_profile_t DEVICE_PROFILE_MINIMAL = {
 };
 
 /*
+ * RTU_CPU_TEMP_PROFILE - RTU with just CPU temperature sensor
+ *
+ * This matches the RTU's guaranteed default configuration:
+ * - Slot 0: DAP (always present)
+ * - Slot 1: CPU Temperature sensor (auto-detected thermal zone)
+ *
+ * Use this for initial connectivity testing.
+ */
+static const device_profile_t DEVICE_PROFILE_RTU_CPU_TEMP = {
+    .name = "rtu-cpu-temp",
+    .description = "RTU with CPU temperature sensor only",
+    .slots = {
+        /* DAP at slot 0 */
+        { .slot = 0, .subslot = 1,
+          .module_ident = GSDML_MOD_DAP,
+          .submodule_ident = GSDML_SUBMOD_DAP,
+          .direction = 0, .input_len = 0, .output_len = 0 },
+        /* CPU Temperature at slot 1 */
+        { .slot = 1, .subslot = 1,
+          .module_ident = GSDML_MOD_TEMPERATURE,
+          .submodule_ident = GSDML_SUBMOD_TEMPERATURE,
+          .direction = 1, .input_len = GSDML_INPUT_DATA_SIZE, .output_len = 0 },
+    },
+    .slot_count = 2,
+};
+
+/*
  * WATER_TREAT_RTU_PROFILE - Full Water-Treat RTU configuration
  *
  * This MUST match what Water-Treat/profinet_manager.c plugs:
@@ -135,6 +162,7 @@ static const device_profile_t DEVICE_PROFILE_WATER_TREAT = {
 
 typedef enum {
     DEVICE_PROFILE_TYPE_MINIMAL,
+    DEVICE_PROFILE_TYPE_RTU_CPU_TEMP,
     DEVICE_PROFILE_TYPE_WATER_TREAT,
     DEVICE_PROFILE_TYPE_CUSTOM,
 } device_profile_type_t;
@@ -151,6 +179,8 @@ static inline const device_profile_t *device_config_get_profile(
     switch (type) {
     case DEVICE_PROFILE_TYPE_MINIMAL:
         return &DEVICE_PROFILE_MINIMAL;
+    case DEVICE_PROFILE_TYPE_RTU_CPU_TEMP:
+        return &DEVICE_PROFILE_RTU_CPU_TEMP;
     case DEVICE_PROFILE_TYPE_WATER_TREAT:
         return &DEVICE_PROFILE_WATER_TREAT;
     default:
