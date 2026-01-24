@@ -95,11 +95,43 @@ step_install_dependencies() {
 }
 
 # =============================================================================
-# Step 3: P-Net PROFINET Installation
+# Step 3: Database Setup (PostgreSQL/TimescaleDB)
+# =============================================================================
+
+step_setup_database() {
+    log_info "=== Step 3: Database Setup ==="
+
+    if [ "${DRY_RUN:-0}" -eq 1 ]; then
+        log_info "[DRY RUN] Would setup PostgreSQL/TimescaleDB:"
+        log_info "  - Install PostgreSQL if not present"
+        log_info "  - Install TimescaleDB extension"
+        log_info "  - Create database: water_treatment"
+        log_info "  - Create user: wtc"
+        log_info "  - Initialize schema from init.sql"
+        return 0
+    fi
+
+    # Run complete database setup
+    if ! setup_database; then
+        log_error "Database setup failed. API cannot connect to database. Check PostgreSQL installation and logs."
+        return 1
+    fi
+
+    # Verify database is ready
+    if ! verify_database; then
+        log_warn "Database verification had issues, but continuing..."
+    fi
+
+    log_info "Database setup complete"
+    return 0
+}
+
+# =============================================================================
+# Step 4: P-Net PROFINET Installation
 # =============================================================================
 
 step_install_pnet() {
-    log_info "=== Step 3: P-Net PROFINET Installation ==="
+    log_info "=== Step 4: P-Net PROFINET Installation ==="
     log_info "P-Net is the cornerstone of industrial communication"
 
     if [ "${DRY_RUN:-0}" -eq 1 ]; then
@@ -164,11 +196,11 @@ step_install_pnet() {
 }
 
 # =============================================================================
-# Step 4: Acquire and Build Source
+# Step 5: Acquire and Build Source
 # =============================================================================
 
 step_build() {
-    log_info "=== Step 4: Source Acquisition and Build ==="
+    log_info "=== Step 5: Source Acquisition and Build ==="
 
     if [ "${SKIP_BUILD:-0}" -eq 1 ]; then
         log_info "Skipping build (--skip-build)"
@@ -241,11 +273,11 @@ step_build() {
 }
 
 # =============================================================================
-# Step 5: Install Files
+# Step 6: Install Files
 # =============================================================================
 
 step_install_files() {
-    log_info "=== Step 5: File Installation ==="
+    log_info "=== Step 6: File Installation ==="
 
     if [ "${DRY_RUN:-0}" -eq 1 ]; then
         log_info "[DRY RUN] Would install files to:"
@@ -295,11 +327,11 @@ step_install_files() {
 }
 
 # =============================================================================
-# Step 6: Configure Service
+# Step 7: Configure Service
 # =============================================================================
 
 step_configure_service() {
-    log_info "=== Step 6: Service Configuration ==="
+    log_info "=== Step 7: Service Configuration ==="
 
     if [ "${DRY_RUN:-0}" -eq 1 ]; then
         log_info "[DRY RUN] Would configure systemd service"
@@ -323,11 +355,11 @@ step_configure_service() {
 }
 
 # =============================================================================
-# Step 7: Network and Storage Configuration
+# Step 8: Network and Storage Configuration
 # =============================================================================
 
 step_configure_network_storage() {
-    log_info "=== Step 7: Network and Storage Configuration ==="
+    log_info "=== Step 8: Network and Storage Configuration ==="
 
     if [ "${SKIP_NETWORK:-0}" -eq 1 ] && [ "${CONFIGURE_NETWORK:-0}" -eq 0 ]; then
         log_info "Skipping network configuration"
@@ -386,11 +418,11 @@ step_configure_network_storage() {
 }
 
 # =============================================================================
-# Step 8: Start Service
+# Step 9: Start Service
 # =============================================================================
 
 step_start_service() {
-    log_info "=== Step 8: Starting Service ==="
+    log_info "=== Step 9: Starting Service ==="
 
     if [ "${DRY_RUN:-0}" -eq 1 ]; then
         log_info "[DRY RUN] Would start water-controller service"
@@ -417,11 +449,11 @@ step_start_service() {
 }
 
 # =============================================================================
-# Step 9: Validation
+# Step 10: Validation
 # =============================================================================
 
 step_validate() {
-    log_info "=== Step 9: Post-Installation Validation ==="
+    log_info "=== Step 10: Post-Installation Validation ==="
 
     if [ "${SKIP_VALIDATION:-0}" -eq 1 ]; then
         log_info "Skipping validation (--skip-validation)"
@@ -445,11 +477,11 @@ step_validate() {
 }
 
 # =============================================================================
-# Step 10: Documentation
+# Step 11: Documentation
 # =============================================================================
 
 step_generate_docs() {
-    log_info "=== Step 10: Generating Documentation ==="
+    log_info "=== Step 11: Generating Documentation ==="
 
     if [ "${DRY_RUN:-0}" -eq 1 ]; then
         log_info "[DRY RUN] Would generate documentation"
