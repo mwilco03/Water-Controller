@@ -689,6 +689,7 @@ wtc_result_t rpc_parse_connect_response(const uint8_t *buffer,
 
     /*
      * PNIO Connect Response NDR format (after RPC header):
+     * - PNIO Status (4 bytes) - ErrorCode, ErrorDecode, ErrorCode1, ErrorCode2
      * - ArgsMaximum (4 bytes, always 0)
      * - ArgsLength (4 bytes) - length of PNIO data
      * - MaxCount (4 bytes) - NDR array max
@@ -696,17 +697,70 @@ wtc_result_t rpc_parse_connect_response(const uint8_t *buffer,
      * - ActualCount (4 bytes) - NDR array actual count
      * - Then the PNIO blocks (ARBlockRes, IOCRBlockRes, etc.)
      *
-     * Note: There is NO error status in this header. PNIO errors are
-     * indicated by RPC FAULT packet type or missing/invalid blocks.
+     * Note: Error responses may be shorter - parse PNIO Status first.
      */
+
+    /* Minimum: 4 bytes for PNIO Status */
+    if (pos + 4 > buf_len) {
+        LOG_ERROR("Connect response too short for PNIO Status: got %zu bytes, need %zu",
+                  buf_len, pos + 4);
+        return WTC_ERROR_PROTOCOL;
+    }
+
+    /* Parse PNIO Status (4 bytes) - this comes FIRST */
+    response->error_code = buffer[pos];
+    response->error_decode = buffer[pos + 1];
+    response->error_code1 = buffer[pos + 2];
+    response->error_code2 = buffer[pos + 3];
+    pos += 4;
+
+    LOG_INFO("PNIO Status: ErrorCode=0x%02X, ErrorDecode=0x%02X, "
+             "ErrorCode1=0x%02X, ErrorCode2=0x%02X",
+             response->error_code, response->error_decode,
+             response->error_code1, response->error_code2);
+
+    /* Check for error in PNIO Status */
+    if (response->error_decode == PNIO_ERR_DECODE_PNIOCM ||
+        response->error_code != 0) {
+        /* Connection Manager error or general error - extract details */
+        const char *block_name = "Unknown";
+        const char *error_desc = "Unknown error";
+
+        switch (response->error_code1) {
+        case PNIO_CM_ERR1_AR_BLOCK:       block_name = "ARBlockReq"; break;
+        case PNIO_CM_ERR1_IOCR_BLOCK:     block_name = "IOCRBlockReq"; break;
+        case PNIO_CM_ERR1_ALARM_CR_BLOCK: block_name = "AlarmCRBlockReq"; break;
+        case PNIO_CM_ERR1_EXPECTED_SUBMOD: block_name = "ExpectedSubmoduleBlock"; break;
+        }
+
+        /* Map ErrorCode2 to description */
+        if (response->error_code1 == PNIO_CM_ERR1_ALARM_CR_BLOCK) {
+            switch (response->error_code2) {
+            case 0x00: error_desc = "Invalid AlarmCR type"; break;
+            case 0x01: error_desc = "Invalid block length"; break;
+            case 0x02: error_desc = "Invalid LT field"; break;
+            case 0x03: error_desc = "Invalid AlarmCR properties"; break;
+            case 0x04: error_desc = "Invalid RTA timeout"; break;
+            case 0x05: error_desc = "Invalid RTA retries"; break;
+            case 0x06: error_desc = "Invalid local alarm ref"; break;
+            case 0x07: error_desc = "Invalid max alarm data length"; break;
+            case 0x08: error_desc = "Invalid tag header high"; break;
+            case 0x09: error_desc = "Invalid tag header low"; break;
+            default: error_desc = "Unspecified AlarmCR error"; break;
+            }
+        }
+
+        LOG_ERROR("PNIO-CM Error in %s: %s (ErrorCode2=0x%02X)",
+                  block_name, error_desc, response->error_code2);
+
+        response->success = false;
+        return WTC_ERROR_PROTOCOL;
+    }
+
+    /* Check we have enough data for full NDR header (20 more bytes) */
     if (pos + 20 > buf_len) {
         LOG_ERROR("Connect response too short for NDR header: got %zu bytes, need %zu",
                   buf_len, pos + 20);
-        /* Log first bytes for diagnosis */
-        if (buf_len >= 4) {
-            LOG_ERROR("Response first 4 bytes: %02X %02X %02X %02X",
-                      buffer[0], buffer[1], buffer[2], buffer[3]);
-        }
         return WTC_ERROR_PROTOCOL;
     }
 
@@ -734,27 +788,9 @@ wtc_result_t rpc_parse_connect_response(const uint8_t *buffer,
               args_length, max_count, actual_count);
 
     if (actual_count == 0 || args_length == 0) {
+        /* This shouldn't happen if PNIO Status was OK */
         LOG_ERROR("Connect response: empty PNIO data (args_len=%u, actual=%u)",
                   args_length, actual_count);
-
-        /* Dump raw response for diagnosis */
-        LOG_ERROR("RPC header: version=%u type=%u flags1=0x%02X flags2=0x%02X",
-                  hdr->version, hdr->packet_type, hdr->flags1, hdr->flags2);
-        LOG_ERROR("RPC header: frag_num=%u opnum=%u frag_len=%u",
-                  hdr->fragment_number, hdr->opnum, hdr->fragment_length);
-
-        /* Dump first 40 bytes as hex for analysis */
-        char hex_dump[128];
-        size_t dump_len = buf_len < 40 ? buf_len : 40;
-        for (size_t i = 0; i < dump_len && i * 3 < sizeof(hex_dump) - 1; i++) {
-            snprintf(hex_dump + i * 3, 4, "%02X ", buffer[i]);
-        }
-        LOG_ERROR("Response hex (first %zu bytes): %s", dump_len, hex_dump);
-
-        /* Check if this might be a PNIO error response */
-        /* The NDR ArgsMaximum field might contain error info in some implementations */
-        LOG_ERROR("NDR ArgsMaximum=0x%08X (might contain status)", args_maximum);
-
         response->success = false;
         response->error_code = PNIO_ERR_CODE_CONNECT;
         return WTC_ERROR_PROTOCOL;
