@@ -1,0 +1,229 @@
+# ============================================================================
+# Controller Rebuild Workflow
+# ============================================================================
+# Purpose: Build and publish the PROFINET controller image after merge to main
+#
+# Triggers:
+#   - Push to main/master branch (after PR merge)
+#   - Manual dispatch for ad-hoc rebuilds
+#
+# Image Published:
+#   - ghcr.io/{owner}/water-controller/controller:{tag}
+#
+# Deployment:
+#   - If a self-hosted runner labeled 'wtc-deploy' is available, the workflow
+#     will automatically pull the new image and restart the controller
+#   - See docs for self-hosted runner setup
+#
+# Usage on deployment server:
+#   # After workflow completes, or manually:
+#   docker pull ghcr.io/{owner}/water-controller/controller:latest
+#   cd /opt/water-controller/docker
+#   docker compose up -d controller
+# ============================================================================
+
+name: Controller Rebuild
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - 'src/**'
+      - 'CMakeLists.txt'
+      - 'cmake/**'
+      - 'docker/Dockerfile.controller'
+      - 'docker/controller-entrypoint.sh'
+      - '.github/workflows/controller-rebuild.yml'
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: 'Deploy to server after build'
+        required: false
+        default: true
+        type: boolean
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}/controller
+
+jobs:
+  # ============================================================================
+  # Build and Push Controller Image
+  # ============================================================================
+  build:
+    name: Build Controller Image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image_tag: ${{ steps.meta.outputs.version }}
+      image_digest: ${{ steps.build.outputs.digest }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for git describe
+
+      - name: Get git version info
+        id: git
+        run: |
+          echo "commit=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+          echo "date=$(git log -1 --format='%Y-%m-%d %H:%M:%S %z')" >> $GITHUB_OUTPUT
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,prefix=,format=short
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=ref,event=branch
+
+      - name: Build and push controller image
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/Dockerfile.controller
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            GIT_COMMIT=${{ steps.git.outputs.commit }}
+            GIT_DATE=${{ steps.git.outputs.date }}
+
+      - name: Create build summary
+        run: |
+          cat >> $GITHUB_STEP_SUMMARY << EOF
+          ## Controller Image Built
+
+          | Property | Value |
+          |----------|-------|
+          | Image | \`${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}\` |
+          | Tag | \`${{ steps.meta.outputs.version }}\` |
+          | Commit | \`${{ steps.git.outputs.commit }}\` |
+          | Build Date | \`${{ steps.git.outputs.date }}\` |
+          | Digest | \`${{ steps.build.outputs.digest }}\` |
+
+          ### Pull Command
+          \`\`\`bash
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          \`\`\`
+
+          ### Deploy on Server
+          \`\`\`bash
+          cd /opt/water-controller/docker
+          docker compose pull controller
+          docker compose up -d controller
+          docker logs wtc-controller -f
+          \`\`\`
+          EOF
+
+  # ============================================================================
+  # Deploy to Server (optional, requires self-hosted runner)
+  # ============================================================================
+  deploy:
+    name: Deploy Controller
+    needs: build
+    runs-on: [self-hosted, wtc-deploy]
+    if: |
+      (github.event_name == 'push' || inputs.deploy) &&
+      github.ref == 'refs/heads/main'
+    # Allow this job to be skipped if no self-hosted runner available
+    continue-on-error: true
+
+    steps:
+      - name: Pull new controller image
+        run: |
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+
+      - name: Restart controller
+        working-directory: /opt/water-controller/docker
+        run: |
+          # Export git info for compose build args
+          export GIT_COMMIT=${{ needs.build.outputs.image_tag }}
+          export GIT_DATE="$(date -u +'%Y-%m-%d %H:%M:%S +0000')"
+
+          # Stop, remove, and restart with new image
+          docker compose stop controller
+          docker compose rm -f controller
+          docker compose up -d controller
+
+      - name: Verify controller started
+        run: |
+          # Wait for controller to be healthy
+          echo "Waiting for controller to start..."
+          sleep 10
+
+          # Check health
+          if docker ps --filter "name=wtc-controller" --filter "health=healthy" | grep -q wtc-controller; then
+            echo "✓ Controller is healthy"
+          else
+            echo "⚠ Controller health check pending, checking logs..."
+            docker logs wtc-controller --tail 20
+          fi
+
+      - name: Show controller version
+        run: |
+          echo "Controller logs (first 10 lines):"
+          docker logs wtc-controller --tail 10 2>&1 | head -20
+
+  # ============================================================================
+  # Notify (if deployment was skipped due to no runner)
+  # ============================================================================
+  notify-manual:
+    name: Manual Deploy Instructions
+    needs: [build, deploy]
+    runs-on: ubuntu-latest
+    if: failure() || needs.deploy.result == 'skipped'
+
+    steps:
+      - name: Post manual deploy instructions
+        run: |
+          cat >> $GITHUB_STEP_SUMMARY << EOF
+          ## Manual Deployment Required
+
+          No self-hosted runner with label \`wtc-deploy\` was available.
+
+          Run these commands on your deployment server:
+
+          \`\`\`bash
+          # Pull the new image
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+
+          # Restart the controller
+          cd /opt/water-controller/docker
+          docker compose pull controller
+          docker compose up -d controller
+
+          # Verify it's running
+          docker logs wtc-controller -f
+          \`\`\`
+
+          ### Alternative: Set up auto-deploy
+
+          To enable automatic deployment, set up a self-hosted runner on your server:
+          1. Go to Settings > Actions > Runners > New self-hosted runner
+          2. Follow the installation instructions
+          3. Add the label \`wtc-deploy\` to the runner
+          4. Future merges will auto-deploy
+          EOF
