@@ -525,8 +525,13 @@ wtc_result_t rpc_build_connect_request(rpc_context_t *ctx,
     write_u16_be(buffer, 3, &pos);    /* RTA retries */
     write_u16_be(buffer, 0x0001, &pos);  /* Local alarm reference */
     write_u16_be(buffer, params->max_alarm_data_length, &pos);
-    write_u16_be(buffer, 0, &pos);  /* Tag header high */
-    write_u16_be(buffer, 0, &pos);  /* Tag header low */
+    /*
+     * Alarm CR Tag Headers (VLAN priority for alarm frames):
+     * Format: Priority (3 bits) << 13 | DEI (1 bit) << 12 | VLAN_ID (12 bits)
+     * High priority = 6 (0xC000), Low priority = 5 (0xA000)
+     */
+    write_u16_be(buffer, 0xC000, &pos);  /* Tag header high: priority 6 */
+    write_u16_be(buffer, 0xA000, &pos);  /* Tag header low: priority 5 */
 
     size_t alarm_block_len = pos - alarm_block_start - 4;
     save_pos = alarm_block_start;
