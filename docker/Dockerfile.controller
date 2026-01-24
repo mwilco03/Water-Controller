@@ -56,6 +56,10 @@ RUN apt-get update && apt-get install -y \
     iproute2 \
     && rm -rf /var/lib/apt/lists/*
 
+# Build args need to be re-declared in this stage
+ARG GIT_COMMIT=unknown
+ARG GIT_DATE=unknown
+
 # Copy controller binary (statically linked to internal libs)
 COPY --from=builder /app/build/water_treat_controller /usr/local/bin/
 
@@ -65,6 +69,9 @@ RUN chmod +x /usr/local/bin/controller-entrypoint.sh
 
 # Create config and log directories
 RUN mkdir -p /etc/water-controller /var/log/water-controller
+
+# Write version file for runtime inspection
+RUN echo "{\"version\": \"1.2.0\", \"commit\": \"${GIT_COMMIT}\", \"build_date\": \"${GIT_DATE}\"}" > /etc/water-controller/version.json
 
 # Create non-root user for security
 RUN groupadd -r wtc && useradd -r -g wtc wtc
