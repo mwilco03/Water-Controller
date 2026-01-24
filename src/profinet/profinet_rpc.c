@@ -443,7 +443,7 @@ wtc_result_t rpc_build_connect_request(rpc_context_t *ctx,
         write_u16_be(buffer, params->iocr[i].frame_id, &pos);
         write_u16_be(buffer, params->iocr[i].send_clock_factor, &pos);
         write_u16_be(buffer, params->iocr[i].reduction_ratio, &pos);
-        write_u16_be(buffer, 0, &pos);  /* Phase */
+        write_u16_be(buffer, 1, &pos);  /* Phase: must be >= 1 and <= reduction_ratio */
         write_u16_be(buffer, 0, &pos);  /* Sequence (deprecated) */
         write_u32_be(buffer, 0, &pos);  /* Frame send offset */
         write_u16_be(buffer, params->iocr[i].watchdog_factor, &pos);
