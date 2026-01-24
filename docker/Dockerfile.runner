@@ -1,0 +1,72 @@
+# GitHub Actions Self-Hosted Runner for Water Controller Deployment
+# ============================================================================
+# Purpose: Auto-deploy controller after merge to main
+#
+# Usage:
+#   # Build the runner image
+#   docker build -f docker/Dockerfile.runner -t wtc-runner .
+#
+#   # Run with required environment variables
+#   docker run -d \
+#     --name wtc-runner \
+#     --restart unless-stopped \
+#     -e GITHUB_OWNER=mwilco03 \
+#     -e GITHUB_REPO=Water-Controller \
+#     -e GITHUB_TOKEN=<your-pat-token> \
+#     -e RUNNER_LABELS=wtc-deploy \
+#     -v /var/run/docker.sock:/var/run/docker.sock \
+#     -v /opt/water-controller:/opt/water-controller \
+#     wtc-runner
+#
+# Token Requirements:
+#   Create a PAT at https://github.com/settings/tokens with:
+#   - repo (full control)
+#   - admin:org (if org runner) OR just use repo token for repo runner
+#
+# Or use a fine-grained token with:
+#   - Actions: Read and write
+#   - Administration: Read and write (for runner registration)
+# ============================================================================
+
+FROM debian:bookworm-slim
+
+ARG RUNNER_VERSION=2.321.0
+ARG TARGETARCH
+
+# Install dependencies
+RUN apt-get update && apt-get install -y \
+    curl \
+    jq \
+    git \
+    sudo \
+    docker.io \
+    docker-compose-plugin \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create runner user
+RUN useradd -m -s /bin/bash runner \
+    && usermod -aG docker runner \
+    && echo "runner ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+
+WORKDIR /home/runner
+
+# Download and extract runner based on architecture
+RUN ARCH=$(case ${TARGETARCH} in \
+        "amd64") echo "x64" ;; \
+        "arm64") echo "arm64" ;; \
+        "arm") echo "arm" ;; \
+        *) echo "x64" ;; \
+    esac) && \
+    curl -sL "https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/actions-runner-linux-${ARCH}-${RUNNER_VERSION}.tar.gz" \
+    | tar xz
+
+# Set ownership
+RUN chown -R runner:runner /home/runner
+
+# Copy entrypoint script
+COPY docker/runner-entrypoint.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/runner-entrypoint.sh
+
+USER runner
+
+ENTRYPOINT ["/usr/local/bin/runner-entrypoint.sh"]

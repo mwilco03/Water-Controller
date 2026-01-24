@@ -1,0 +1,38 @@
+# GitHub Actions Self-Hosted Runner
+# ============================================================================
+# Runs a self-hosted runner for auto-deploying the controller after merge
+#
+# Setup:
+#   1. Create a GitHub PAT at https://github.com/settings/tokens
+#      - Permissions: repo (full), admin:repo_hook
+#
+#   2. Create .env.runner file:
+#      echo "GITHUB_TOKEN=ghp_your_token_here" > .env.runner
+#
+#   3. Start the runner:
+#      docker compose -f docker-compose.runner.yml up -d
+#
+#   4. Verify registration at:
+#      https://github.com/mwilco03/Water-Controller/settings/actions/runners
+# ============================================================================
+
+services:
+  runner:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.runner
+    container_name: wtc-github-runner
+    restart: unless-stopped
+    environment:
+      GITHUB_OWNER: ${GITHUB_OWNER:-mwilco03}
+      GITHUB_REPO: ${GITHUB_REPO:-Water-Controller}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:?Create .env.runner with GITHUB_TOKEN=ghp_xxx}
+      RUNNER_NAME: ${RUNNER_NAME:-wtc-deploy-runner}
+      RUNNER_LABELS: ${RUNNER_LABELS:-wtc-deploy}
+    volumes:
+      # Docker socket for running docker commands
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Water controller directory for deployment
+      - /opt/water-controller:/opt/water-controller
+    env_file:
+      - .env.runner
