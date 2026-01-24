@@ -141,7 +141,7 @@ export default function LoginPage() {
         </div>
 
         <p className="text-center text-hmi-muted text-sm mt-4">
-          Water Treatment Controller v1.0.0
+          Water Treatment Controller v1.2.0
         </p>
       </div>
     </div>

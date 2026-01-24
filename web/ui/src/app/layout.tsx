@@ -257,7 +257,7 @@ function AppShell({ children }: { children: React.ReactNode }) {
         <footer className="hidden lg:block border-t border-hmi-border py-2">
           <div className="hmi-container flex items-center justify-between text-xs text-hmi-muted">
             <span>
-              Water Treatment Controller v{versionInfo?.version || '1.2.1'}
+              Water Treatment Controller v{versionInfo?.version || '1.2.0'}
               {versionInfo?.build?.commit && (
                 <span className="ml-1 opacity-70">({versionInfo.build.commit.slice(0, 7)})</span>
               )}

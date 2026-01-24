@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 SERVER_START_TIME = datetime.now(UTC)
 
 # Controller version for version negotiation
-CONTROLLER_VERSION = "1.2.1"
+CONTROLLER_VERSION = "1.2.0"
 
 # Path to version file written by bootstrap.sh
 VERSION_FILE_PATH = "/opt/water-controller/.version"
