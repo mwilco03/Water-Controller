@@ -1,206 +1,215 @@
 #!/usr/bin/env python3
 """
-PROFINET IO Controller using Scapy
-Connects to p-net RTU devices
+PROFINET IO Controller - Manual packet building
+No dependency on Scapy contrib modules
 """
 
-import uuid
 import struct
 import socket
+import uuid
 import time
-from typing import Optional, Tuple
+from typing import Optional
 
-from scapy.all import conf, get_if_hwaddr, sendp, sniff, Ether
-from scapy.contrib.pnio_dcp import ProfinetDCP, DCPIdentifyBlock
-from scapy.contrib.pnio_rpc import (
-    PNIOServiceReqPDU, PNIOServiceResPDU,
-    ARBlockReq, IOCRBlockReq, AlarmCRBlockReq,
-    ExpectedSubmoduleBlockReq, ExpectedSubmoduleDataDescription,
-    IODControlReq, Block
-)
-from scapy.contrib.dce_rpc import DceRpc4
-
-# PROFINET constants
-PNIO_INTERFACE_UUID = "dea00001-6c97-11d1-8271-00a02442df7d"
-PNIO_OBJECT_UUID = "dea00000-6c97-11d1-8271-00a02442df7d"
+# Constants
 RPC_PORT = 34964
+PNIO_INTERFACE_UUID = bytes.fromhex("dea000016c9711d1827100a02442df7d")
+PROFINET_ETHERTYPE = 0x8892
 
-# Module IDs for RTU
-GSDML_MOD_DAP = 0x00000001
-GSDML_SUBMOD_DAP = 0x00000001
-GSDML_MOD_TEMPERATURE = 0x00000040
-GSDML_SUBMOD_TEMPERATURE = 0x00000041
+# Block types
+BLOCK_AR_REQ = 0x0101
+BLOCK_IOCR_REQ = 0x0102
+BLOCK_ALARM_CR_REQ = 0x0103
+BLOCK_EXPECTED_SUBMOD = 0x0104
+
+# Module IDs
+MOD_DAP = 0x00000001
+SUBMOD_DAP = 0x00000001
+MOD_TEMP = 0x00000040
+SUBMOD_TEMP = 0x00000041
 
 
-class PNController:
-    """PROFINET IO Controller"""
+def build_block_header(block_type: int, length: int) -> bytes:
+    """Build PNIO block header: type(2) + length(2) + version(2)"""
+    return struct.pack(">HHbb", block_type, length, 1, 0)
 
-    def __init__(self, interface: str = "eth0"):
-        self.interface = interface
-        self.mac = get_if_hwaddr(interface)
-        self.ar_uuid = uuid.uuid4().bytes
-        self.session_key = 1
-        self.device_ip: Optional[str] = None
-        self.device_mac: Optional[str] = None
 
-    def discover(self, station_name: str = "water-treat-rtu", timeout: float = 5.0) -> Optional[dict]:
-        """DCP Identify to find device"""
-        print(f"[DCP] Discovering {station_name}...")
+def build_ar_block(ar_uuid: bytes, session_key: int, mac: bytes) -> bytes:
+    """Build ARBlockReq"""
+    station = b"controller"
+    content = struct.pack(">H", 0x0001)  # AR Type: IOCAR
+    content += ar_uuid  # 16 bytes
+    content += struct.pack(">H", session_key)
+    content += mac  # 6 bytes
+    content += struct.pack(">H", 0x0001)  # Object UUID version
+    content += PNIO_INTERFACE_UUID  # 16 bytes
+    content += uuid.uuid4().bytes  # CMInitiatorObjectUUID
+    content += struct.pack(">I", 0x00000011)  # AR Properties
+    content += struct.pack(">H", 100)  # Timeout
+    content += struct.pack(">H", len(station))  # Station name length
+    content += station
 
-        # Build DCP Identify request
-        dcp = Ether(dst="01:0e:cf:00:00:00", src=self.mac, type=0x8892) / \
-              ProfinetDCP(service_id=0x05, service_type=0x00, xid=0x1234) / \
-              DCPIdentifyBlock(option=0x02, sub_option=0x02)  # NameOfStation
+    header = build_block_header(BLOCK_AR_REQ, len(content) + 2)
+    return header + content
 
-        result = None
 
-        def handle_response(pkt):
-            nonlocal result
-            if ProfinetDCP in pkt and pkt[ProfinetDCP].service_type == 0x01:
-                # Parse response
-                result = {
-                    "mac": pkt.src,
-                    "ip": None,  # Extract from DCP blocks
-                    "station_name": station_name
-                }
+def build_iocr_block(iocr_type: int, ref: int, frame_id: int, data_len: int) -> bytes:
+    """Build IOCRBlockReq"""
+    content = struct.pack(">H", iocr_type)  # 1=Input, 2=Output
+    content += struct.pack(">H", ref)
+    content += struct.pack(">H", PROFINET_ETHERTYPE)  # LT
+    content += struct.pack(">I", 0x00000000)  # Properties (RT Class 1)
+    content += struct.pack(">H", data_len)
+    content += struct.pack(">H", frame_id)
+    content += struct.pack(">H", 32)  # SendClockFactor
+    content += struct.pack(">H", 32)  # ReductionRatio
+    content += struct.pack(">H", 1)   # Phase
+    content += struct.pack(">I", 0xFFFFFFFF)  # FrameSendOffset
+    content += struct.pack(">H", 10)  # WatchdogFactor
+    content += struct.pack(">H", 10)  # DataHoldFactor
+    content += struct.pack(">H", 0)   # Reserved
+    content += b"\x00" * 6  # CMInitiatorMAC
+    content += struct.pack(">H", 0)  # SubframeData/reserved
+    content += struct.pack(">H", 0)  # NumberOfAPIs
+
+    header = build_block_header(BLOCK_IOCR_REQ, len(content) + 2)
+    return header + content
+
+
+def build_alarm_cr_block() -> bytes:
+    """Build AlarmCRBlockReq - BlockLength=18 for RT_CLASS_1"""
+    content = struct.pack(">H", 0x0001)  # AlarmCRType
+    content += struct.pack(">H", PROFINET_ETHERTYPE)  # LT
+    content += struct.pack(">I", 0x00000000)  # Properties
+    content += struct.pack(">H", 100)  # RTATimeoutFactor
+    content += struct.pack(">H", 3)    # RTARetries
+    content += struct.pack(">H", 1)    # LocalAlarmReference
+    content += struct.pack(">H", 128)  # MaxAlarmDataLength (128 not 200!)
+    # No tag headers for RT_CLASS_1
+
+    header = build_block_header(BLOCK_ALARM_CR_REQ, len(content) + 2)
+    return header + content
+
+
+def build_expected_submod_block() -> bytes:
+    """Build ExpectedSubmoduleBlockReq for DAP + CPU Temp"""
+    content = struct.pack(">H", 1)  # NumberOfAPIs
+
+    # API 0
+    content += struct.pack(">I", 0)  # API number
+    content += struct.pack(">H", 2)  # SlotCount (DAP + Temp)
+
+    # Slot 0: DAP
+    content += struct.pack(">H", 0)  # SlotNumber
+    content += struct.pack(">I", MOD_DAP)  # ModuleIdentNumber
+    content += struct.pack(">H", 0)  # ModuleProperties
+    content += struct.pack(">H", 1)  # NumberOfSubmodules
+    content += struct.pack(">H", 1)  # SubslotNumber
+    content += struct.pack(">I", SUBMOD_DAP)
+    content += struct.pack(">H", 0)  # SubmoduleProperties
+    content += struct.pack(">H", 0)  # DataDescriptionCount
+
+    # Slot 1: CPU Temp (5 bytes input)
+    content += struct.pack(">H", 1)  # SlotNumber
+    content += struct.pack(">I", MOD_TEMP)
+    content += struct.pack(">H", 0)  # ModuleProperties
+    content += struct.pack(">H", 1)  # NumberOfSubmodules
+    content += struct.pack(">H", 1)  # SubslotNumber
+    content += struct.pack(">I", SUBMOD_TEMP)
+    content += struct.pack(">H", 0x0001)  # SubmoduleProperties: Input
+    content += struct.pack(">H", 1)  # DataDescriptionCount
+    content += struct.pack(">H", 0x0001)  # DataDescription Type: Input
+    content += struct.pack(">H", 5)  # Length: 5 bytes
+    content += struct.pack(">B", 0)  # IOCSLength
+    content += struct.pack(">B", 1)  # IOPSLength
+
+    header = build_block_header(BLOCK_EXPECTED_SUBMOD, len(content) + 2)
+    return header + content
+
+
+def build_rpc_header(opnum: int, activity_uuid: bytes, frag_len: int) -> bytes:
+    """Build DCE/RPC header"""
+    hdr = struct.pack("<B", 4)  # Version
+    hdr += struct.pack("<B", 0)  # Packet type: Request
+    hdr += struct.pack("<H", 0x0020)  # Flags: First frag
+    hdr += struct.pack("<I", 0x00000010)  # Data representation (LE, ASCII, IEEE)
+    hdr += struct.pack("<H", 0)  # Serial high
+    hdr += PNIO_INTERFACE_UUID  # Interface UUID (LE)
+    hdr += activity_uuid  # Activity UUID
+    hdr += struct.pack("<I", 0)  # Server boot time
+    hdr += struct.pack("<I", 1)  # Interface version
+    hdr += struct.pack("<I", 0)  # Sequence number
+    hdr += struct.pack("<H", opnum)  # Opnum: 0=Connect
+    hdr += struct.pack("<H", 0)  # Interface hint
+    hdr += struct.pack("<H", 0)  # Activity hint
+    hdr += struct.pack("<H", frag_len)  # Fragment length
+    hdr += struct.pack("<H", 0)  # Fragment number
+    hdr += struct.pack("<B", 0x02)  # Auth length (dummy)
+    hdr += struct.pack("<B", 0)  # Serial low
+    return hdr
+
+
+def build_connect_request(ar_uuid: bytes, session_key: int, mac: bytes) -> bytes:
+    """Build complete Connect Request"""
+    # PNIO blocks
+    blocks = b""
+    blocks += build_ar_block(ar_uuid, session_key, mac)
+    blocks += build_iocr_block(1, 1, 0x8001, 6)  # Input IOCR
+    blocks += build_iocr_block(2, 2, 0x8000, 1)  # Output IOCR
+    blocks += build_alarm_cr_block()
+    blocks += build_expected_submod_block()
+
+    # NDR header
+    ndr = struct.pack("<I", len(blocks))  # ArgsMaximum
+    ndr += struct.pack("<I", len(blocks))  # ArgsLength
+    ndr += struct.pack("<I", len(blocks))  # MaxCount
+    ndr += struct.pack("<I", 0)  # Offset
+    ndr += struct.pack("<I", len(blocks))  # ActualCount
+    ndr += blocks
+
+    # RPC header
+    activity = uuid.uuid4().bytes
+    rpc = build_rpc_header(0, activity, len(ndr))
+
+    return rpc + ndr
+
+
+def connect(device_ip: str, mac: bytes) -> bool:
+    """Connect to PROFINET device"""
+    ar_uuid = uuid.uuid4().bytes
+
+    pkt = build_connect_request(ar_uuid, 1, mac)
+
+    print(f"[RPC] Sending Connect Request ({len(pkt)} bytes) to {device_ip}:{RPC_PORT}")
+    print(f"[RPC] AlarmCR BlockLength=18 (no tag headers)")
+
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.settimeout(5.0)
+
+    try:
+        sock.sendto(pkt, (device_ip, RPC_PORT))
+        resp, addr = sock.recvfrom(4096)
+        print(f"[RPC] Response: {len(resp)} bytes")
+
+        # Parse PNIO Status (after RPC header at offset 80)
+        if len(resp) > 84:
+            status = resp[80:84]
+            print(f"[RPC] PNIO Status: {status.hex()}")
+            if status == b"\x00\x00\x00\x00":
+                print("[RPC] SUCCESS!")
                 return True
-            return False
-
-        sendp(dcp, iface=self.interface, verbose=False)
-        sniff(iface=self.interface, timeout=timeout, store=False,
-              stop_filter=handle_response, filter="ether proto 0x8892")
-
-        if result:
-            self.device_mac = result["mac"]
-            print(f"[DCP] Found device: MAC={result['mac']}")
-        return result
-
-    def connect(self, device_ip: str) -> bool:
-        """RPC Connect to device"""
-        self.device_ip = device_ip
-        print(f"[RPC] Connecting to {device_ip}...")
-
-        # Build Connect Request blocks
-        ar_block = ARBlockReq(
-            ARType=0x0001,  # IOCAR
-            ARUUID=self.ar_uuid,
-            SessionKey=self.session_key,
-            CMInitiatorMac=bytes.fromhex(self.mac.replace(":", "")),
-            CMInitiatorObjectUUID=uuid.UUID(PNIO_OBJECT_UUID).bytes,
-            StationNameLength=len("controller"),
-            CMInitiatorStationName=b"controller"
-        )
-
-        # Input IOCR (receive from device)
-        iocr_input = IOCRBlockReq(
-            IOCRType=0x0001,  # Input
-            IOCRReference=0x0001,
-            LT=0x8892,
-            IOCRProperties=0x00000000,
-            DataLength=5 + 1,  # 5 bytes data + 1 IOPS
-            FrameID=0x8001,
-            SendClockFactor=32,
-            ReductionRatio=32,
-            Phase=1,
-            FrameSendOffset=0xFFFFFFFF,
-            WatchdogFactor=10,
-            DataHoldFactor=10
-        )
-
-        # Output IOCR (send to device)
-        iocr_output = IOCRBlockReq(
-            IOCRType=0x0002,  # Output
-            IOCRReference=0x0002,
-            LT=0x8892,
-            IOCRProperties=0x00000000,
-            DataLength=1,  # Minimal
-            FrameID=0x8000,
-            SendClockFactor=32,
-            ReductionRatio=32,
-            Phase=1,
-            FrameSendOffset=0xFFFFFFFF,
-            WatchdogFactor=10,
-            DataHoldFactor=10
-        )
-
-        # Alarm CR
-        alarm_cr = AlarmCRBlockReq(
-            AlarmCRType=0x0001,
-            LT=0x8892,
-            AlarmCRProperties=0x00000000,
-            RTATimeoutFactor=100,
-            RTARetries=3,
-            LocalAlarmReference=0x0001,
-            MaxAlarmDataLength=128  # Fixed: was 200
-        )
-
-        # Expected Submodules - DAP + CPU Temp
-        exp_submod = ExpectedSubmoduleBlockReq(
-            NumberOfAPIs=1,
-            API=0,
-            SlotNumber=0,
-            ModuleIdentNumber=GSDML_MOD_DAP,
-            ModuleProperties=0,
-            NumberOfSubmodules=1,
-            SubmoduleBlocks=[
-                ExpectedSubmoduleDataDescription(
-                    SubslotNumber=1,
-                    SubmoduleIdentNumber=GSDML_SUBMOD_DAP,
-                    SubmoduleProperties=0,
-                    DataDescription=[]
-                )
-            ]
-        )
-
-        # TODO: Add slot 1 (CPU Temp) to ExpectedSubmodules
-
-        # Build RPC request
-        pnio_req = PNIOServiceReqPDU(
-            args_max=16384,
-            blocks=[ar_block, iocr_input, iocr_output, alarm_cr, exp_submod]
-        )
-
-        rpc = DceRpc4(
-            type="request",
-            flags1=0x20,  # First frag
-            opnum=0,  # Connect
-            if_uuid=PNIO_INTERFACE_UUID,
-            act_uuid=uuid.uuid4().bytes,
-            payload=pnio_req
-        )
-
-        # Send via UDP
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.settimeout(5.0)
-        sock.sendto(bytes(rpc), (device_ip, RPC_PORT))
-
-        try:
-            resp_data, addr = sock.recvfrom(4096)
-            print(f"[RPC] Response: {len(resp_data)} bytes from {addr}")
-            # TODO: Parse response
-            return True
-        except socket.timeout:
-            print("[RPC] Timeout waiting for response")
-            return False
-        finally:
-            sock.close()
-
-
-def main():
-    """Main entry point"""
-    import sys
-
-    iface = sys.argv[1] if len(sys.argv) > 1 else "eth0"
-    device_ip = sys.argv[2] if len(sys.argv) > 2 else "192.168.6.7"
-
-    ctrl = PNController(interface=iface)
-
-    # Try discovery first
-    ctrl.discover()
-
-    # Connect to known IP
-    ctrl.connect(device_ip)
+            else:
+                print(f"[RPC] Error: code={status[0]:02x} decode={status[1]:02x} "
+                      f"code1={status[2]:02x} code2={status[3]:02x}")
+        return False
+    except socket.timeout:
+        print("[RPC] Timeout")
+        return False
+    finally:
+        sock.close()
 
 
 if __name__ == "__main__":
-    main()
+    import sys
+    ip = sys.argv[1] if len(sys.argv) > 1 else "192.168.6.7"
+    mac = bytes.fromhex("020000000001")  # Placeholder
+    connect(ip, mac)
