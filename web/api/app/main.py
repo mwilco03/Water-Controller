@@ -50,6 +50,11 @@ from .services.controller_heartbeat import (
     heartbeat_lifespan_startup,
     heartbeat_lifespan_shutdown,
 )
+from .services.pn_controller import (
+    init_controller as pn_controller_init,
+    shutdown_controller as pn_controller_shutdown,
+    get_controller as get_pn_controller,
+)
 from .core.ports import get_allowed_origins
 
 # Setup logging
@@ -106,6 +111,18 @@ async def lifespan(app: FastAPI):
     # Start controller heartbeat for automatic reconnection
     await heartbeat_lifespan_startup()
 
+    # Initialize Python PROFINET controller
+    # This replaces the C controller + shared memory architecture
+    pn_ctrl = pn_controller_init()
+    logger.info("Python PROFINET controller initialized")
+
+    # Auto-add configured RTUs from environment or database
+    default_rtu_ip = os.environ.get("WTC_RTU_IP", "192.168.6.7")
+    default_rtu_name = os.environ.get("WTC_RTU_NAME", "water-treat-rtu")
+    if default_rtu_ip:
+        pn_ctrl.add_rtu(default_rtu_name, default_rtu_ip)
+        logger.info(f"Added default RTU: {default_rtu_name} at {default_rtu_ip}")
+
     # Log final startup status
     if startup_result.is_fully_healthy:
         logger.info("STARTUP COMPLETE: All systems operational")
@@ -117,6 +134,10 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     logger.info("Shutting down Water Treatment Controller API")
+
+    # Stop Python PROFINET controller
+    pn_controller_shutdown()
+    logger.info("Python PROFINET controller stopped")
 
     # Stop controller heartbeat
     await heartbeat_lifespan_shutdown()

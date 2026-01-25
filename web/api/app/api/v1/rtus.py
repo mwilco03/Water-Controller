@@ -507,43 +507,45 @@ async def discover_modules(
     """
     Discover modules in RTU slots via PROFINET.
 
-    RTU must be RUNNING. Queries the PROFINET controller via shared memory IPC
-    for slot module information (sensors and actuators).
+    RTU must be RUNNING. Queries the PROFINET controller for slot module
+    information (sensors and actuators).
 
     Returns 503 if controller is not connected.
     """
-    from ...services.shm_client import get_shm_client
-
     rtu = get_rtu_or_404(db, name)
 
     if rtu.state != RtuState.RUNNING:
         raise RtuNotConnectedError(name, rtu.state)
 
-    # Get PROFINET discovery via shared memory IPC
-    shm = get_shm_client()
-    if not shm.is_connected():
+    profinet = get_profinet_client()
+
+    if not profinet.is_connected():
         raise HTTPException(
             status_code=503,
-            detail="PROFINET controller not connected. Start the C controller process."
+            detail="PROFINET controller not connected. Start the controller process."
         )
 
-    shm_rtu = shm.get_rtu(name)
-    if not shm_rtu:
+    # Get sensor values from controller
+    sensors = profinet.get_sensor_values(name)
+    actuators = profinet.get_actuator_states(name)
+
+    if not sensors and not actuators:
         raise HTTPException(
             status_code=503,
-            detail=f"RTU '{name}' not found in controller shared memory. "
-                   "Ensure the RTU is configured and connected in the PROFINET controller."
+            detail=f"RTU '{name}' not found in controller. "
+                   "Ensure the RTU is configured and connected."
         )
 
     discovered = []
 
-    # Get sensors from shared memory
-    for sensor in shm_rtu.get("sensors", []):
+    # Convert sensor readings to discovery format
+    for sensor in sensors:
+        slot = sensor.get("slot", 0)
         discovered.append({
-            "slot_number": sensor["slot"],
-            "tag": f"AI_{sensor['slot']:02d}",
+            "slot_number": slot,
+            "tag": f"AI_{slot:02d}",
             "type": "sensor",
-            "description": f"Analog Input Slot {sensor['slot']}",
+            "description": f"Analog Input Slot {slot}",
             "data_type": "float32",
             "unit": "",
             "scale_min": 0.0,
@@ -553,13 +555,14 @@ async def discover_modules(
             "quality": sensor.get("quality"),
         })
 
-    # Get actuators from shared memory
-    for actuator in shm_rtu.get("actuators", []):
+    # Convert actuator states to discovery format
+    for actuator in actuators:
+        slot = actuator.get("slot", 0)
         discovered.append({
-            "slot_number": actuator["slot"],
-            "tag": f"DO_{actuator['slot']:02d}",
+            "slot_number": slot,
+            "tag": f"DO_{slot:02d}",
             "type": "control",
-            "description": f"Digital Output Slot {actuator['slot']}",
+            "description": f"Digital Output Slot {slot}",
             "data_type": "uint16",
             "unit": "",
             "current_command": actuator.get("command"),
@@ -571,8 +574,6 @@ async def discover_modules(
         "discovered": discovered,
         "count": len(discovered),
         "source": "profinet",
-        "vendor_id": shm_rtu.get("vendor_id"),
-        "device_id": shm_rtu.get("device_id"),
     })
 
 

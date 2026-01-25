@@ -1,0 +1,14 @@
+version: '3.8'
+
+services:
+  pn-controller:
+    build: .
+    container_name: pn-controller
+    network_mode: host  # Required for raw sockets and DCP multicast
+    privileged: true    # Required for raw socket access
+    environment:
+      - DEVICE_IP=${DEVICE_IP:-192.168.6.7}
+      - INTERFACE=${INTERFACE:-eth0}
+    command: python3 pn_scapy_controller.py ${INTERFACE:-eth0} ${DEVICE_IP:-192.168.6.7}
+    volumes:
+      - ./:/app:ro

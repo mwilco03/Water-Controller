@@ -97,13 +97,21 @@ services:
       # Network interface for DCP discovery (same as controller)
       # Leave unset for auto-detection, or set WTC_INTERFACE in environment
       WTC_INTERFACE: ${WTC_INTERFACE:-}
-      # Shared memory name for POSIX IPC with controller (must match C code)
+      # Python PROFINET controller (replaces C controller + shared memory)
+      # Set to 0 to use C controller via shared memory instead
+      WTC_USE_PYTHON_CONTROLLER: ${WTC_USE_PYTHON_CONTROLLER:-1}
+      # Default RTU to connect to on startup
+      WTC_RTU_IP: ${WTC_RTU_IP:-192.168.6.7}
+      WTC_RTU_NAME: ${WTC_RTU_NAME:-water-treat-rtu}
+      # Shared memory name for POSIX IPC with controller (fallback if Python controller disabled)
       WTC_SHM_NAME: /wtc_shared_memory
     depends_on:
       database:
         condition: service_healthy
-      controller:
-        condition: service_healthy
+      # C controller is optional when Python controller is enabled
+      # Uncomment to require C controller:
+      # controller:
+      #   condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/health').raise_for_status()"]
       interval: 30s

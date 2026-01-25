@@ -529,6 +529,7 @@ wtc_result_t rpc_build_connect_request(rpc_context_t *ctx,
      * Alarm CR Tag Headers (VLAN priority for alarm frames):
      * Format: Priority (3 bits) << 13 | DEI (1 bit) << 12 | VLAN_ID (12 bits)
      * High priority = 6 (0xC000), Low priority = 5 (0xA000)
+     * Included per IEC 61158-6-10, BlockLength=22
      */
     write_u16_be(buffer, 0xC000, &pos);  /* Tag header high: priority 6 */
     write_u16_be(buffer, 0xA000, &pos);  /* Tag header low: priority 5 */
@@ -537,6 +538,18 @@ wtc_result_t rpc_build_connect_request(rpc_context_t *ctx,
     save_pos = alarm_block_start;
     write_block_header(buffer, BLOCK_TYPE_ALARM_CR_BLOCK_REQ,
                         (uint16_t)alarm_block_len, &save_pos);
+
+    /* Debug: dump AlarmCRBlockReq hex */
+    LOG_INFO("AlarmCRBlockReq: BlockLength=%zu (0x%04zX), total=%zu bytes",
+             alarm_block_len, alarm_block_len, pos - alarm_block_start);
+    {
+        char hex[256];
+        size_t hex_pos = 0;
+        for (size_t i = alarm_block_start; i < pos && hex_pos < 250; i++) {
+            hex_pos += snprintf(hex + hex_pos, sizeof(hex) - hex_pos, "%02X ", buffer[i]);
+        }
+        LOG_INFO("AlarmCRBlockReq hex: %s", hex);
+    }
 
     /* ============== Expected Submodule Block ============== */
     size_t exp_block_start = pos;
@@ -705,6 +718,18 @@ wtc_result_t rpc_parse_connect_response(const uint8_t *buffer,
         LOG_ERROR("Connect response too short for PNIO Status: got %zu bytes, need %zu",
                   buf_len, pos + 4);
         return WTC_ERROR_PROTOCOL;
+    }
+
+    /* Debug: dump first 40 bytes of response after RPC header */
+    LOG_INFO("Connect Response NDR data (pos=%zu, len=%zu):", pos, buf_len);
+    {
+        char hex[256];
+        size_t hex_pos = 0;
+        size_t dump_len = (buf_len - pos) < 40 ? (buf_len - pos) : 40;
+        for (size_t i = 0; i < dump_len && hex_pos < 250; i++) {
+            hex_pos += snprintf(hex + hex_pos, sizeof(hex) - hex_pos, "%02X ", buffer[pos + i]);
+        }
+        LOG_INFO("Response hex: %s", hex);
     }
 
     /* Parse PNIO Status (4 bytes) - this comes FIRST */
