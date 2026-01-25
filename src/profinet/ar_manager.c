@@ -730,6 +730,23 @@ static void build_connect_params(ar_manager_t *manager,
     }
 
     params->max_alarm_data_length = 200;
+
+    /* Summary log for debugging Connect Request configuration */
+    LOG_INFO("=== Connect Request Configuration ===");
+    LOG_INFO("  Profile: %s", ar->device_profile ?
+             ((const device_profile_t *)ar->device_profile)->name : "(legacy slots)");
+    LOG_INFO("  Expected slots: %d", params->expected_count);
+    for (int i = 0; i < params->expected_count; i++) {
+        LOG_INFO("    [%d] slot=%u subslot=%u mod=0x%08X submod=0x%08X len=%u %s",
+                 i,
+                 params->expected_config[i].slot,
+                 params->expected_config[i].subslot,
+                 params->expected_config[i].module_ident,
+                 params->expected_config[i].submodule_ident,
+                 params->expected_config[i].data_length,
+                 params->expected_config[i].is_input ? "INPUT" : "OUTPUT");
+    }
+    LOG_INFO("=====================================");
 }
 
 wtc_result_t ar_send_connect_request(ar_manager_t *manager,
