@@ -353,6 +353,7 @@ class ProfinetClient:
                         "slot": slot,
                         "value": reading.value,
                         "quality": QUALITY_NAMES.get(reading.quality, "unknown"),
+                        "quality_code": reading.quality,  # Numeric code for frontend
                         "timestamp": reading.timestamp,
                     }
                     for slot, reading in rtu.sensors.items()

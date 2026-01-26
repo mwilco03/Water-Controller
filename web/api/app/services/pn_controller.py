@@ -46,6 +46,15 @@ BLOCK_MODULE_DIFF = 0x8104
 BLOCK_PRM_END_RES = 0x8110
 BLOCK_APP_READY_RES = 0x8112
 
+# IOD Read/Write block types
+BLOCK_IOD_READ_REQ = 0x0009
+BLOCK_IOD_READ_RES = 0x8009
+
+# PROFINET Record Data indices
+INDEX_SUBSTITUTION_DATA = 0x8000  # Substitution active data (input)
+INDEX_INPUT_DATA = 0x8001  # Input data status
+INDEX_OUTPUT_DATA = 0x8002  # Output data status
+
 # Control Command values
 CONTROL_PRM_END = 0x0001
 CONTROL_APP_READY = 0x0002
@@ -245,6 +254,83 @@ def build_control_request(ar_uuid: bytes, session_key: int, control_cmd: int,
     rpc = build_rpc_header(OPNUM_CONTROL, activity_uuid, len(ndr), seq_num)
 
     return rpc + ndr
+
+
+def build_read_request(ar_uuid: bytes, activity_uuid: bytes, seq_num: int,
+                       api: int, slot: int, subslot: int, index: int,
+                       record_length: int = 64) -> bytes:
+    """Build RPC Read Request for reading record data from a submodule"""
+    # IODReadReqHeader block
+    # BlockHeader: type(2) + length(2) + version(2) = 6 bytes
+    # SeqNumber(2) + ARUUID(16) + API(4) + Slot(2) + Subslot(2) + Padding(2)
+    # Index(2) + RecordLength(4) + TargetARUUID(16, optional) + Padding(2, optional)
+
+    content = struct.pack(">H", seq_num)  # SeqNumber
+    content += ar_uuid  # ARUUID (16 bytes)
+    content += struct.pack(">I", api)  # API
+    content += struct.pack(">H", slot)  # SlotNumber
+    content += struct.pack(">H", subslot)  # SubslotNumber
+    content += struct.pack(">H", 0)  # Padding
+    content += struct.pack(">H", index)  # Index
+    content += struct.pack(">I", record_length)  # RecordDataLength
+
+    # Build block header: type=0x0009, length=content+2 (for version bytes)
+    header = build_block_header(BLOCK_IOD_READ_REQ, len(content) + 2)
+    block = header + content
+
+    # NDR header
+    ndr = struct.pack("<I", len(block))  # ArgsMaximum
+    ndr += struct.pack("<I", len(block))  # ArgsLength
+    ndr += struct.pack("<I", len(block))  # MaxCount
+    ndr += struct.pack("<I", 0)  # Offset
+    ndr += struct.pack("<I", len(block))  # ActualCount
+    ndr += block
+
+    rpc = build_rpc_header(OPNUM_READ, activity_uuid, len(ndr), seq_num)
+
+    return rpc + ndr
+
+
+def parse_read_response(data: bytes) -> Tuple[bool, bytes, int]:
+    """
+    Parse RPC Read Response
+    Returns: (success, record_data, error_code)
+    """
+    if len(data) < 80:
+        return False, b"", -1
+
+    # RPC header is 80 bytes
+    pkt_type = data[1]
+    if pkt_type != 2:  # Not a Response
+        return False, b"", -2
+
+    # Skip RPC header (80 bytes) and NDR header (20 bytes)
+    offset = 100
+
+    # Look for IODReadRes block (0x8009)
+    while offset < len(data) - 6:
+        if offset + 4 > len(data):
+            break
+        block_type = struct.unpack(">H", data[offset:offset+2])[0]
+        block_len = struct.unpack(">H", data[offset+2:offset+4])[0]
+
+        if block_type == BLOCK_IOD_READ_RES:
+            # Found read response block
+            # Skip header (6 bytes) + SeqNumber(2) + ARUUID(16) + API(4) + Slot(2) + Subslot(2)
+            # + Padding(2) + Index(2) + RecordDataLength(4)
+            data_offset = offset + 6 + 2 + 16 + 4 + 2 + 2 + 2 + 2 + 4
+            if data_offset < len(data):
+                record_len = struct.unpack(">I", data[offset+6+2+16+4+2+2+2+2:offset+6+2+16+4+2+2+2+2+4])[0]
+                record_data = data[data_offset:data_offset+record_len]
+                return True, record_data, 0
+
+        # Move to next block
+        if block_len == 0:
+            offset += 6
+        else:
+            offset += 6 + block_len - 2
+
+    return False, b"", -3
 
 
 def parse_connect_response(data: bytes) -> Tuple[bool, bytes, str]:
@@ -621,26 +707,77 @@ class PNController:
                     logger.info(f"[{rtu.station_name}] Slot {slot} quality set to BAD - network read failed")
 
     def _read_via_rpc(self, rtu: RTUState):
-        """Read data via RPC ReadImplicit"""
-        # Build ReadImplicit request for CPU temp slot
-        # This is a simplified implementation
+        """Read data via RPC Read request for CPU temperature slot"""
+        ar_uuid = rtu.ar_context.ar_uuid
+        if not ar_uuid:
+            raise RuntimeError("No AR context - connection not established")
+
+        activity_uuid = rtu.ar_context.activity_uuid
+        if not activity_uuid:
+            raise RuntimeError("No activity UUID - connection not established")
+
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.settimeout(1.0)
+        sock.settimeout(2.0)
 
         try:
-            # Build simple read request
-            ar_uuid = rtu.ar_context.ar_uuid
-            if not ar_uuid:
-                return
-
-            rtu.ar_context.seq_num += 1
-
-            # For now, update timestamp to show we're trying
+            # Increment sequence number (thread-safe)
             with self._lock:
-                rtu.last_update = time.time()
+                rtu.ar_context.seq_num += 1
+                seq_num = rtu.ar_context.seq_num
 
-        except Exception:
-            pass
+            # Build Read request for slot 1 (CPU temp), subslot 1, index 0x8001 (input data)
+            pkt = build_read_request(
+                ar_uuid=ar_uuid,
+                activity_uuid=activity_uuid,
+                seq_num=seq_num,
+                api=0,  # API 0
+                slot=1,  # Slot 1: CPU Temperature
+                subslot=1,  # Subslot 1
+                index=INDEX_INPUT_DATA,  # Input data index
+                record_length=64
+            )
+
+            # Send request
+            sock.sendto(pkt, (rtu.ip_address, RPC_PORT))
+
+            # Receive response
+            data, addr = sock.recvfrom(4096)
+
+            # Parse response
+            success, record_data, error_code = parse_read_response(data)
+
+            if success and len(record_data) >= 4:
+                # Parse CPU temperature (4-byte float, big-endian)
+                temp_value = struct.unpack(">f", record_data[:4])[0]
+
+                # Get IOPS (IO Provider Status) if present
+                iops = record_data[4] if len(record_data) > 4 else 0x80  # Good
+
+                # Determine quality from IOPS
+                if iops & 0x80:  # Good bit set
+                    quality = QUALITY_GOOD
+                elif iops & 0x40:  # Uncertain
+                    quality = QUALITY_UNCERTAIN
+                else:
+                    quality = QUALITY_BAD
+
+                # Update sensor data (thread-safe)
+                with self._lock:
+                    rtu.sensors[1] = SensorReading(
+                        slot=1,
+                        value=temp_value,
+                        quality=quality,
+                        timestamp=time.time()
+                    )
+                    rtu.last_update = time.time()
+
+                logger.debug(f"[{rtu.station_name}] Read temp={temp_value:.2f}°C quality={quality:#x}")
+            else:
+                logger.warning(f"[{rtu.station_name}] Read failed: error_code={error_code}")
+                raise RuntimeError(f"Read response error: {error_code}")
+
+        except socket.timeout:
+            raise RuntimeError("Read timeout - RTU not responding")
         finally:
             sock.close()
 
