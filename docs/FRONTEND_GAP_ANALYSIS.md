@@ -1,6 +1,6 @@
 # Frontend Gap Analysis
 
-**Date:** 2026-01-26
+**Date:** 2026-01-26 (Updated)
 **Scope:** `/web/ui` - Next.js 14 HMI Frontend
 **Total Files:** 107 TypeScript/React files
 
@@ -8,13 +8,19 @@
 
 ## Executive Summary
 
-The frontend is **70% functional** with core SCADA workflows operational. However, there are significant gaps:
+The frontend is **80% functional** with core SCADA workflows operational.
+
+### Issues Fixed (This Session)
+
+1. **CRITICAL: API inventory endpoint returned wrong structure** - Fixed to return `sensors[]` and `controls[]` with real-time PROFINET values
+2. **Modbus tab removed from Settings** - Eliminates duplication with standalone `/modbus` page
+3. **CoupledActionsPanel wired into Control page** - Now shows PID/interlock relationships
+4. **MaintenanceScheduler already wired** - Confirmed working in Alarms page
+
+### Remaining Gaps
 
 - **2 pages are disabled stubs** (Users, I/O Tags)
-- **3 hooks are duplicated/redundant**
-- **Settings page duplicates** most of Modbus page functionality
-- **Several backend APIs have no frontend UI**
-- **Control couplings panel exists but isn't wired into any page**
+- **useRTUs hook is redundant** (can be deleted)
 
 ---
 

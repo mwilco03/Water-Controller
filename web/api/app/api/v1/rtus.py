@@ -807,62 +807,97 @@ async def get_rtu_inventory(
     db: Session = Depends(get_db)
 ) -> dict[str, Any]:
     """
-    Get RTU slot/module inventory.
+    Get RTU inventory with real-time sensor/control values.
 
-    Returns configured sensors and controls as inventory items.
-    Note: Slots are PROFINET frame positions, not database entities.
-    The inventory is derived from configured sensors/controls.
+    Returns configured sensors and controls with live values from PROFINET.
+    Frontend expects: { rtu_station, sensors[], controls[], last_refresh }
     """
     from ...models.rtu import Sensor, Control
 
     rtu = get_rtu_or_404(db, name)
 
-    # Get sensors and controls as inventory items
-    sensors = db.query(Sensor).filter(Sensor.rtu_id == rtu.id).all()
-    controls = db.query(Control).filter(Control.rtu_id == rtu.id).all()
+    # Get configured sensors and controls from database
+    db_sensors = db.query(Sensor).filter(Sensor.rtu_id == rtu.id).order_by(Sensor.tag).all()
+    db_controls = db.query(Control).filter(Control.rtu_id == rtu.id).order_by(Control.tag).all()
 
-    slots = []
+    # Get real-time values from PROFINET controller
+    profinet = get_profinet_client()
+    live_sensor_values = {}
+    live_actuator_states = {}
 
-    # Add sensors as input slots
-    for sensor in sensors:
-        slots.append({
-            "slot": sensor.slot_number,
-            "subslot": 0,
-            "type": "input",
-            "module_type": "analog_input",
-            "tag": sensor.tag,
+    if rtu.state == RtuState.RUNNING:
+        try:
+            sensor_readings = profinet.get_sensor_values(name)
+            for reading in sensor_readings:
+                slot = reading.get("slot")
+                if slot is not None:
+                    live_sensor_values[slot] = reading
+
+            actuator_readings = profinet.get_actuator_states(name)
+            for reading in actuator_readings:
+                slot = reading.get("slot")
+                if slot is not None:
+                    live_actuator_states[slot] = reading
+        except Exception as e:
+            logger.warning(f"Could not get live values for {name}: {e}")
+
+    # Build sensor response with live values merged
+    sensors = []
+    for sensor in db_sensors:
+        live = live_sensor_values.get(sensor.slot_number, {})
+        sensors.append({
+            "id": sensor.id,
+            "rtu_station": name,
+            "sensor_id": sensor.tag,
             "sensor_type": sensor.sensor_type,
+            "name": sensor.tag,
             "unit": sensor.unit,
+            "register_address": sensor.slot_number or 0,
+            "data_type": "float32",
+            "scale_min": sensor.scale_min,
+            "scale_max": sensor.scale_max,
+            "slot_number": sensor.slot_number,
             "channel": sensor.channel,
+            # Real-time values from PROFINET
+            "last_value": live.get("value"),
+            "last_quality": live.get("quality_code", 0x00 if live.get("value") is not None else 0xC0),
+            "last_updated": live.get("timestamp") or (
+                sensor.updated_at.isoformat() if sensor.updated_at else None
+            ),
         })
 
-    # Add controls as output slots
-    for control in controls:
-        slots.append({
-            "slot": control.slot_number,
-            "subslot": 0,
-            "type": "output",
-            "module_type": control.control_type,
-            "tag": control.tag,
+    # Build control response with live states merged
+    controls = []
+    for control in db_controls:
+        live = live_actuator_states.get(control.slot_number, {})
+        controls.append({
+            "id": control.id,
+            "rtu_station": name,
+            "control_id": control.tag,
+            "control_type": control.control_type,
+            "name": control.tag,
             "equipment_type": control.equipment_type,
+            "command_type": "on_off" if control.control_type == "discrete" else "analog",
+            "range_min": control.min_value,
+            "range_max": control.max_value,
             "unit": control.unit,
+            "slot_number": control.slot_number,
             "channel": control.channel,
+            # Real-time state from PROFINET
+            "current_state": live.get("state", "UNKNOWN"),
+            "commanded_value": live.get("commanded_value"),
+            "feedback_value": live.get("feedback_value"),
+            "interlock_active": live.get("interlock_active", False),
+            "last_updated": live.get("timestamp") or (
+                control.updated_at.isoformat() if control.updated_at else None
+            ),
         })
-
-    # Sort by slot number (None values at end)
-    slots.sort(key=lambda x: (x.get("slot") is None, x.get("slot") or 0))
-
-    # Calculate slot usage
-    populated_slots = sum(1 for s in slots if s.get("slot") is not None)
-    total_slots = rtu.slot_count or 0
 
     return build_success_response({
-        "station_name": rtu.station_name,
-        "slot_count": total_slots,
-        "populated_slots": populated_slots,
-        "empty_slots": max(0, total_slots - populated_slots),
-        "slots": slots,
-        "last_updated": rtu.updated_at.isoformat() if rtu.updated_at else None,
+        "rtu_station": name,
+        "sensors": sensors,
+        "controls": controls,
+        "last_refresh": rtu.updated_at.isoformat() if rtu.updated_at else None,
     })
 
 
