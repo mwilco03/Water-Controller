@@ -17,6 +17,14 @@ from uuid import uuid4
 
 logger = logging.getLogger(__name__)
 
+# Import cyclic I/O manager (Scapy-based Layer 2)
+try:
+    from .pn_cyclic_io import get_cyclic_io_manager, SCAPY_AVAILABLE
+    CYCLIC_IO_AVAILABLE = SCAPY_AVAILABLE
+except ImportError:
+    CYCLIC_IO_AVAILABLE = False
+    logger.warning("Cyclic I/O module not available - sensor data will not flow")
+
 # PROFINET Constants
 RPC_PORT = 34964
 PNIO_INTERFACE_UUID = bytes.fromhex("dea000016c9711d1827100a02442df7d")
@@ -448,18 +456,21 @@ class PNController:
             self._task.cancel()
         logger.info("PROFINET Controller stopped")
 
-    def add_rtu(self, station_name: str, ip_address: str) -> bool:
+    def add_rtu(self, station_name: str, ip_address: str, mac_address: str = "") -> bool:
         """Add RTU to manage"""
         with self._lock:
             if station_name in self.rtus:
-                # Update IP if different
+                # Update IP and MAC if provided
                 self.rtus[station_name].ip_address = ip_address
+                if mac_address:
+                    self.rtus[station_name].mac_address = mac_address
                 return True
             self.rtus[station_name] = RTUState(
                 station_name=station_name,
-                ip_address=ip_address
+                ip_address=ip_address,
+                mac_address=mac_address
             )
-            logger.info(f"Added RTU: {station_name} at {ip_address}")
+            logger.info(f"Added RTU: {station_name} at {ip_address} (MAC: {mac_address or 'unknown'})")
         return True
 
     def get_rtu_state(self, station_name: str) -> Optional[RTUState]:
@@ -527,6 +538,31 @@ class PNController:
                 rtu.connected = True
 
             logger.info(f"[{station_name}] PROFINET connection established - RUNNING")
+
+            # Step 4: Start Cyclic I/O (Scapy Layer 2)
+            if CYCLIC_IO_AVAILABLE and rtu.mac_address:
+                logger.info(f"[{station_name}] Step 4: Starting Cyclic I/O")
+                cyclic_mgr = get_cyclic_io_manager()
+
+                def on_sensor_data(data: bytes, timestamp: float):
+                    """Callback when input data received from RTU"""
+                    self._process_cyclic_input(station_name, data, timestamp)
+
+                success = cyclic_mgr.start_cyclic_io(
+                    station_name=station_name,
+                    device_mac=rtu.mac_address,
+                    device_ip=rtu.ip_address,
+                    on_input_data=on_sensor_data
+                )
+                if success:
+                    logger.info(f"[{station_name}] Cyclic I/O STARTED - Layer 2 RT frames active")
+                else:
+                    logger.warning(f"[{station_name}] Cyclic I/O failed to start - sensor data unavailable")
+            elif not CYCLIC_IO_AVAILABLE:
+                logger.warning(f"[{station_name}] Cyclic I/O not available (Scapy missing)")
+            elif not rtu.mac_address:
+                logger.warning(f"[{station_name}] No MAC address - cyclic I/O requires device MAC")
+
             return True
 
         except Exception as e:
@@ -536,6 +572,73 @@ class PNController:
                 rtu.error_message = str(e)
                 rtu.connected = False
             return False
+
+    def _process_cyclic_input(self, station_name: str, data: bytes, timestamp: float):
+        """
+        Process input data received via cyclic I/O (Layer 2).
+
+        Called by the cyclic I/O callback when PROFINET RT input frames arrive.
+
+        Data format (from Water-Treat RTU):
+        - Slot 1 (CPU Temp): 4-byte float (big-endian) + 1-byte IOPS
+        """
+        with self._lock:
+            rtu = self.rtus.get(station_name)
+            if not rtu:
+                return
+
+            # Parse input data - expect at least 5 bytes (4-byte float + 1-byte IOPS)
+            if len(data) >= 5:
+                # CPU Temperature (slot 1)
+                try:
+                    temp_value = struct.unpack(">f", data[0:4])[0]
+                    iops = data[4]  # IO Provider Status
+
+                    # Determine quality from IOPS
+                    # Bit 7 (0x80) = Good
+                    if iops & 0x80:
+                        quality = QUALITY_GOOD
+                    elif iops & 0x40:
+                        quality = QUALITY_UNCERTAIN
+                    else:
+                        quality = QUALITY_BAD
+
+                    # Update sensor reading
+                    rtu.sensors[1] = SensorReading(
+                        slot=1,
+                        value=temp_value,
+                        quality=quality,
+                        timestamp=timestamp
+                    )
+                    rtu.last_update = timestamp
+
+                    logger.debug(f"[{station_name}] Cyclic input: temp={temp_value:.2f}°C "
+                                f"quality=0x{quality:02X}")
+                except struct.error as e:
+                    logger.warning(f"[{station_name}] Failed to parse sensor data: {e}")
+            else:
+                logger.debug(f"[{station_name}] Cyclic input too short: {len(data)} bytes")
+
+    def disconnect_rtu(self, station_name: str) -> bool:
+        """Disconnect from RTU - stop cyclic I/O and release AR."""
+        with self._lock:
+            rtu = self.rtus.get(station_name)
+            if not rtu:
+                return False
+
+            # Stop cyclic I/O first
+            if CYCLIC_IO_AVAILABLE:
+                cyclic_mgr = get_cyclic_io_manager()
+                cyclic_mgr.stop_cyclic_io(station_name)
+                logger.info(f"[{station_name}] Cyclic I/O stopped")
+
+            # Update state
+            rtu.state = "OFFLINE"
+            rtu.connected = False
+            rtu.error_message = ""
+
+            logger.info(f"[{station_name}] Disconnected")
+            return True
 
     async def _rpc_connect(self, rtu: RTUState) -> Tuple[bool, bytes, bytes]:
         """Send RPC Connect Request, return (success, ar_uuid, activity_uuid)"""

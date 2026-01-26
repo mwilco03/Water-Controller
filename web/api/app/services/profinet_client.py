@@ -473,14 +473,8 @@ class ProfinetClient:
         """
         # Try Python controller first
         if self._use_python_controller and self._python_controller:
-            rtu = self._python_controller.get_rtu_state(station_name)
-            if rtu:
-                with self._python_controller._lock:
-                    rtu.state = "OFFLINE"
-                    rtu.connected = False
-                logger.info(f"Disconnected RTU: {station_name}")
-                return True
-            return False
+            # Use the disconnect method which stops cyclic I/O properly
+            return self._python_controller.disconnect_rtu(station_name)
 
         # Try C controller via SHM
         if not self._demo_mode and self._client and self._client.is_connected():
@@ -503,7 +497,8 @@ class ProfinetClient:
         ip_address: str,
         vendor_id: int = 0,
         device_id: int = 0,
-        slot_count: int = 0
+        slot_count: int = 0,
+        mac_address: str = ""
     ) -> bool:
         """Add RTU to controller.
 
@@ -512,7 +507,7 @@ class ProfinetClient:
         """
         # Try Python controller first
         if self._use_python_controller and self._python_controller:
-            return self._python_controller.add_rtu(station_name, ip_address)
+            return self._python_controller.add_rtu(station_name, ip_address, mac_address)
 
         # Try C controller via SHM
         if not self._demo_mode and self._client and self._client.is_connected():
