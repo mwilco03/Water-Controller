@@ -264,7 +264,7 @@ class ProfinetController:
         rpc = DceRpc4(
             type="request",
             flags1=0x20,
-            opnum=2,  # Control
+            opnum=4,  # Control (NOT 2 - that's Read!)
             if_id=PNIO_UUID,
             act_id=uuid4().bytes
         ) / pnio
@@ -287,6 +287,48 @@ class ProfinetController:
         finally:
             sock.close()
 
+    def application_ready(self) -> bool:
+        """Send ApplicationReady to device"""
+        if not self.connected:
+            print("[RPC] Not connected")
+            return False
+
+        print("[RPC] Sending ApplicationReady...")
+
+        ctrl = IODControlReq(
+            ARUUID=self.ar_uuid,
+            SessionKey=self.session_key,
+            ControlCommand=0x0002  # ApplicationReady
+        )
+
+        pnio = PNIOServiceReqPDU(args_max=16384, blocks=[ctrl])
+
+        rpc = DceRpc4(
+            type="request",
+            flags1=0x20,
+            opnum=4,  # Control
+            if_id=PNIO_UUID,
+            act_id=uuid4().bytes
+        ) / pnio
+
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.settimeout(5.0)
+
+        try:
+            sock.sendto(bytes(rpc), (self.device_ip, RPC_PORT))
+            resp, _ = sock.recvfrom(4096)
+            status = resp[80:84] if len(resp) >= 84 else b"\xff\xff\xff\xff"
+            if status == b"\x00\x00\x00\x00":
+                print("[RPC] ApplicationReady SUCCESS!")
+                return True
+            print(f"[RPC] ApplicationReady failed: {status.hex()}")
+            return False
+        except socket.timeout:
+            print("[RPC] ApplicationReady timeout")
+            return False
+        finally:
+            sock.close()
+
 
 def main():
     if not SCAPY_AVAILABLE:
@@ -303,8 +345,9 @@ def main():
 
     # Connect
     if ctrl.connect(device_ip):
-        # Send PrmEnd
-        ctrl.parameter_end()
+        # Complete handshake: PrmEnd then ApplicationReady
+        if ctrl.parameter_end():
+            ctrl.application_ready()
 
     return 0
 

@@ -211,11 +211,11 @@ def build_rpc_header(opnum: int, activity_uuid: bytes, frag_len: int,
     hdr += struct.pack("<I", 1)  # Interface version
     hdr += struct.pack("<I", seq_num)  # Sequence number
     hdr += struct.pack("<H", opnum)  # Opnum
-    hdr += struct.pack("<H", 0)  # Interface hint
-    hdr += struct.pack("<H", 0)  # Activity hint
+    hdr += struct.pack("<H", 0xFFFF)  # Interface hint (any)
+    hdr += struct.pack("<H", 0xFFFF)  # Activity hint (any)
     hdr += struct.pack("<H", frag_len)  # Fragment length
     hdr += struct.pack("<H", 0)  # Fragment number
-    hdr += struct.pack("<B", 0x02)  # Auth length (dummy)
+    hdr += struct.pack("<B", 0)  # Auth length (0 = no auth)
     hdr += struct.pack("<B", 0)  # Serial low
     return hdr
 
