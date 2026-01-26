@@ -14,10 +14,8 @@ Priority order:
 Demo mode must be explicitly enabled - it does NOT auto-enable.
 """
 
-import asyncio
 import logging
 import os
-import threading
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -26,7 +24,6 @@ logger = logging.getLogger(__name__)
 class ControllerNotConnectedError(Exception):
     """Raised when an operation requires controller connection but none is available."""
     pass
-
 
 # Python controller mode
 _USE_PYTHON_CONTROLLER = os.environ.get("WTC_USE_PYTHON_CONTROLLER", "1").lower() in ("1", "true", "yes")
@@ -41,22 +38,12 @@ if PYTHON_CONTROLLER_ENABLED:
 if DEMO_ENABLED:
     logger.info("Demo mode enabled via WTC_DEMO_MODE environment variable")
 
-# Try to import Python controller and its constants
+# Try to import Python controller
 try:
-    from .pn_controller import (
-        get_controller as get_python_controller,
-        QUALITY_GOOD,
-        QUALITY_UNCERTAIN,
-        QUALITY_BAD,
-        QUALITY_SIMULATED,
-    )
+    from .pn_controller import get_controller as get_python_controller
     PYTHON_CONTROLLER_AVAILABLE = True
 except ImportError:
     PYTHON_CONTROLLER_AVAILABLE = False
-    QUALITY_GOOD = 0x00
-    QUALITY_UNCERTAIN = 0x40
-    QUALITY_BAD = 0x80
-    QUALITY_SIMULATED = 0x41
     logger.debug("Python controller module not available")
 
 # Try to import the shared memory client
@@ -82,14 +69,7 @@ except ImportError:
         3: "RUNNING", 4: "ERROR", 5: "OFFLINE"
     }
     SENSOR_STATUS_NAMES = {0: "good", 1: "bad", 2: "uncertain"}
-    # Extended quality names to include simulated
-    QUALITY_NAMES = {
-        QUALITY_GOOD: "good",
-        QUALITY_UNCERTAIN: "uncertain",
-        QUALITY_BAD: "bad",
-        QUALITY_SIMULATED: "simulated",
-        0xC0: "not_connected"
-    }
+    QUALITY_NAMES = {0: "good", 0x40: "uncertain", 0x80: "bad", 0xC0: "not_connected"}
     CONN_STATE_RUNNING = 3
     CONN_STATE_OFFLINE = 5
     logger.info("Shared memory client not available - using direct network operations")
@@ -125,7 +105,6 @@ class ProfinetClient:
         self._demo_mode = DEMO_ENABLED
         self._last_reconnect_attempt: float = 0
         self._reconnect_cooldown: float = 5.0  # Minimum seconds between reconnect attempts
-        self._pending_connections: dict[str, asyncio.Task] = {}
 
         # Try Python controller first
         if self._use_python_controller:
@@ -197,16 +176,20 @@ class ProfinetClient:
         now = time.time()
         if not force and (now - self._last_reconnect_attempt) < self._reconnect_cooldown:
             logger.debug("Reconnect cooldown active, skipping")
+            # Don't call is_connected() here - it would cause infinite recursion
+            # Just check the client directly
             return self._client is not None and self._client.is_connected()
 
         self._last_reconnect_attempt = now
 
+        # Try to get a fresh connection from shm_client
         try:
             self._client = get_client()
             if self._client.is_connected():
                 logger.info("Successfully reconnected to PROFINET controller")
                 return True
             else:
+                # shm_client.get_client() attempts reconnect internally
                 logger.debug("Reconnect attempt: shared memory still not available")
                 return False
         except Exception as e:
@@ -214,17 +197,29 @@ class ProfinetClient:
             return False
 
     def _ensure_connected(self) -> bool:
-        """Lazy reconnect: ensure we're connected before operations."""
+        """
+        Lazy reconnect: ensure we're connected before operations.
+
+        Called internally before operations that need the controller.
+        Attempts reconnection if not currently connected.
+        """
         if self._demo_mode:
             return True
 
+        # Already connected?
         if self._client and self._client.is_connected():
             return True
 
+        # Try to reconnect (respects cooldown)
         return self.reconnect()
 
     def is_connected(self) -> bool:
-        """Check if connected to the controller."""
+        """
+        Check if connected to the controller.
+
+        Note: This performs a lazy reconnect attempt if disconnected.
+        """
+        # Python controller is always connected when available
         if self._use_python_controller and self._python_controller:
             return True
 
@@ -232,6 +227,7 @@ class ProfinetClient:
             demo = _get_demo_service()
             return demo is not None and demo.enabled
 
+        # Try lazy reconnect if not connected
         if not self._client or not self._client.is_connected():
             self._ensure_connected()
 
@@ -249,9 +245,11 @@ class ProfinetClient:
 
     def is_controller_running(self) -> bool:
         """Check if the PROFINET controller is running."""
+        # Check Python controller first
         if self._use_python_controller and self._python_controller:
-            return self._python_controller.is_running
+            return self._python_controller._running
 
+        # Check real C controller
         if not self._demo_mode and self._client:
             try:
                 if self._client.is_controller_running():
@@ -259,6 +257,7 @@ class ProfinetClient:
             except Exception as e:
                 logger.debug(f"is_controller_running check failed: {e}")
 
+        # Check demo mode
         if self._demo_mode:
             demo = _get_demo_service()
             if demo and demo.enabled:
@@ -268,12 +267,13 @@ class ProfinetClient:
 
     def get_status(self) -> dict[str, Any]:
         """Get controller status."""
+        # Try Python controller first
         if self._use_python_controller and self._python_controller:
             rtus = self._python_controller.get_all_rtus()
             return {
                 "connected": True,
                 "python_controller": True,
-                "controller_running": self._python_controller.is_running,
+                "controller_running": self._python_controller._running,
                 "rtu_count": len(rtus),
                 "rtus": [
                     {
@@ -281,13 +281,12 @@ class ProfinetClient:
                         "ip_address": rtu.ip_address,
                         "state": rtu.state,
                         "connected": rtu.connected,
-                        "using_simulated_data": rtu.using_simulated_data,
-                        "packet_loss_percent": rtu.packet_counters.loss_percent,
                     }
                     for rtu in rtus
                 ],
             }
 
+        # Try real C controller
         if not self._demo_mode and self._client:
             try:
                 if self._client.is_connected():
@@ -297,6 +296,7 @@ class ProfinetClient:
             except Exception as e:
                 logger.debug(f"get_status from controller failed: {e}")
 
+        # Try demo mode
         if self._demo_mode:
             demo = _get_demo_service()
             if demo and demo.enabled:
@@ -308,6 +308,7 @@ class ProfinetClient:
                     **demo_status,
                 }
 
+        # No controller, no demo - not connected
         return {
             "connected": False,
             "demo_mode": False,
@@ -317,16 +318,21 @@ class ProfinetClient:
 
     def get_rtu_state(self, station_name: str) -> str | None:
         """Get RTU connection state from controller."""
+        # Try Python controller first
         if self._use_python_controller and self._python_controller:
-            state = self._python_controller.get_rtu_state_str(station_name)
-            return state
+            rtu = self._python_controller.get_rtu_state(station_name)
+            if rtu:
+                return rtu.state
+            return None
 
+        # Try real C controller
         if not self._demo_mode and self._client and self._client.is_connected():
             rtu = self._client.get_rtu(station_name)
             if rtu:
                 state_code = rtu.get("connection_state", CONN_STATE_OFFLINE)
                 return CONNECTION_STATE_NAMES.get(state_code, "UNKNOWN")
 
+        # Try demo mode
         demo = _get_demo_service()
         if demo and demo.enabled:
             rtu = demo.get_rtu(station_name)
@@ -338,6 +344,7 @@ class ProfinetClient:
 
     def get_sensor_values(self, station_name: str) -> list[dict[str, Any]]:
         """Get sensor values from controller."""
+        # Try Python controller first
         if self._use_python_controller and self._python_controller:
             rtu = self._python_controller.get_rtu_state(station_name)
             if rtu:
@@ -346,18 +353,20 @@ class ProfinetClient:
                         "slot": slot,
                         "value": reading.value,
                         "quality": QUALITY_NAMES.get(reading.quality, "unknown"),
+                        "quality_code": reading.quality,  # Numeric code for frontend
                         "timestamp": reading.timestamp,
-                        "is_simulated": reading.is_simulated,
                     }
                     for slot, reading in rtu.sensors.items()
                 ]
             return []
 
+        # Try real C controller
         if not self._demo_mode and self._client and self._client.is_connected():
             sensors = self._client.get_sensors(station_name)
             if sensors:
                 return sensors
 
+        # Try demo mode
         demo = _get_demo_service()
         if demo and demo.enabled:
             return demo.get_sensors(station_name)
@@ -366,27 +375,13 @@ class ProfinetClient:
 
     def get_actuator_states(self, station_name: str) -> list[dict[str, Any]]:
         """Get actuator states from controller."""
-        # Try Python controller first
-        if self._use_python_controller and self._python_controller:
-            actuators = self._python_controller.get_all_actuators(station_name)
-            if actuators:
-                return [
-                    {
-                        "slot": slot,
-                        "command": state.command,
-                        "feedback": state.feedback,
-                        "forced": state.forced,
-                        "timestamp": state.timestamp,
-                    }
-                    for slot, state in actuators.items()
-                ]
-            return []
-
+        # Try real controller first
         if not self._demo_mode and self._client and self._client.is_connected():
             actuators = self._client.get_actuators(station_name)
             if actuators:
                 return actuators
 
+        # Try demo mode
         demo = _get_demo_service()
         if demo and demo.enabled:
             return demo.get_actuators(station_name)
@@ -400,14 +395,16 @@ class ProfinetClient:
         command: int,
         pwm_duty: int = 0
     ) -> bool:
-        """Send actuator command to controller."""
-        # Try Python controller first
-        if self._use_python_controller and self._python_controller:
-            return self._python_controller.command_actuator(station_name, slot, command)
+        """Send actuator command to controller.
 
+        Raises:
+            ControllerNotConnectedError: If no controller connection available.
+        """
+        # Try real controller first
         if not self._demo_mode and self._client and self._client.is_connected():
             return self._client.command_actuator(station_name, slot, command, pwm_duty)
 
+        # Try demo mode
         demo = _get_demo_service()
         if demo and demo.enabled:
             return demo.command_actuator(station_name, slot, command, pwm_duty)
@@ -418,45 +415,46 @@ class ProfinetClient:
         )
 
     def connect_rtu(self, station_name: str) -> bool:
-        """
-        Send RTU connect command to controller.
-
-        For Python controller, this schedules the async connection and returns True
-        if the connection was initiated. The actual connection happens asynchronously.
-        Poll get_rtu_state() to check when connection completes.
-
-        Returns:
-            True if connection was initiated, False if failed to initiate.
+        """Send RTU connect command to controller.
 
         Raises:
             ControllerNotConnectedError: If no controller connection available.
         """
+        # Try Python controller first
         if self._use_python_controller and self._python_controller:
-            # Schedule the async connection properly
+            import asyncio
+            import concurrent.futures
+
+            async def _do_connect():
+                return await self._python_controller.connect_rtu(station_name)
+
             try:
-                # Try to get running loop
+                # Check if we're in an async context
                 try:
                     loop = asyncio.get_running_loop()
-                    # We're in async context - schedule task
-                    task = loop.create_task(
-                        self._python_controller.connect_rtu(station_name)
+                    # Already in async context - run in thread pool to avoid blocking
+                    # This properly waits for the result instead of returning True blindly
+                    future = asyncio.run_coroutine_threadsafe(
+                        self._python_controller.connect_rtu(station_name),
+                        loop
                     )
-                    self._pending_connections[station_name] = task
-                    logger.info(f"Scheduled async connection for {station_name}")
-                    return True
+                    # Wait with timeout to get actual result
+                    return future.result(timeout=30.0)
                 except RuntimeError:
-                    # No running loop - run synchronously
-                    result = asyncio.run(
-                        self._python_controller.connect_rtu(station_name)
-                    )
-                    return result
+                    # No running loop - we can use asyncio.run
+                    return asyncio.run(_do_connect())
+            except concurrent.futures.TimeoutError:
+                logger.error(f"Connect timeout for {station_name}")
+                return False
             except Exception as e:
-                logger.error(f"Failed to initiate connection for {station_name}: {e}")
+                logger.error(f"Connect failed for {station_name}: {e}")
                 return False
 
+        # Try C controller via SHM
         if not self._demo_mode and self._client and self._client.is_connected():
             return self._client.connect_rtu(station_name)
 
+        # Demo mode
         demo = _get_demo_service()
         if demo and demo.enabled:
             logger.info(f"[DEMO] Connect RTU: {station_name}")
@@ -468,14 +466,21 @@ class ProfinetClient:
         )
 
     def disconnect_rtu(self, station_name: str) -> bool:
-        """Send RTU disconnect command to controller."""
-        if self._use_python_controller and self._python_controller:
-            self._python_controller.set_rtu_disconnected(station_name, "User requested disconnect")
-            return True
+        """Send RTU disconnect command to controller.
 
+        Raises:
+            ControllerNotConnectedError: If no controller connection available.
+        """
+        # Try Python controller first
+        if self._use_python_controller and self._python_controller:
+            # Use the disconnect method which stops cyclic I/O properly
+            return self._python_controller.disconnect_rtu(station_name)
+
+        # Try C controller via SHM
         if not self._demo_mode and self._client and self._client.is_connected():
             return self._client.disconnect_rtu(station_name)
 
+        # Demo mode
         demo = _get_demo_service()
         if demo and demo.enabled:
             logger.info(f"[DEMO] Disconnect RTU: {station_name}")
@@ -492,15 +497,23 @@ class ProfinetClient:
         ip_address: str,
         vendor_id: int = 0,
         device_id: int = 0,
-        slot_count: int = 0
+        slot_count: int = 0,
+        mac_address: str = ""
     ) -> bool:
-        """Add RTU to controller."""
-        if self._use_python_controller and self._python_controller:
-            return self._python_controller.add_rtu(station_name, ip_address)
+        """Add RTU to controller.
 
+        Raises:
+            ControllerNotConnectedError: If no controller connection available.
+        """
+        # Try Python controller first
+        if self._use_python_controller and self._python_controller:
+            return self._python_controller.add_rtu(station_name, ip_address, mac_address)
+
+        # Try C controller via SHM
         if not self._demo_mode and self._client and self._client.is_connected():
             return self._client.add_rtu(station_name, ip_address, vendor_id, device_id, slot_count)
 
+        # Demo mode
         demo = _get_demo_service()
         if demo and demo.enabled:
             logger.info(f"[DEMO] Add RTU: {station_name} at {ip_address}")
@@ -512,13 +525,25 @@ class ProfinetClient:
         )
 
     def remove_rtu(self, station_name: str) -> bool:
-        """Remove RTU from controller."""
-        if self._use_python_controller and self._python_controller:
-            return self._python_controller.remove_rtu(station_name)
+        """Remove RTU from controller.
 
+        Raises:
+            ControllerNotConnectedError: If no controller connection available.
+        """
+        # Try Python controller first
+        if self._use_python_controller and self._python_controller:
+            with self._python_controller._lock:
+                if station_name in self._python_controller.rtus:
+                    del self._python_controller.rtus[station_name]
+                    logger.info(f"Removed RTU: {station_name}")
+                    return True
+            return False
+
+        # Try C controller via SHM
         if not self._demo_mode and self._client and self._client.is_connected():
             return self._client.remove_rtu(station_name)
 
+        # Demo mode
         demo = _get_demo_service()
         if demo and demo.enabled:
             logger.info(f"[DEMO] Remove RTU: {station_name}")
@@ -529,56 +554,20 @@ class ProfinetClient:
             "Start the PROFINET controller or enable demo mode (WTC_DEMO_MODE=1)."
         )
 
-    def get_packet_counters(self, station_name: str) -> dict[str, Any] | None:
-        """Get real packet counters for an RTU."""
-        if self._use_python_controller and self._python_controller:
-            counters = self._python_controller.get_packet_counters(station_name)
-            if counters:
-                return {
-                    "sent": counters.sent,
-                    "received": counters.received,
-                    "timeouts": counters.timeouts,
-                    "errors": counters.errors,
-                    "lost": counters.lost,
-                    "loss_percent": counters.loss_percent,
-                }
-        return None
-
-    def is_using_simulated_data(self, station_name: str) -> bool:
-        """Check if RTU is using simulated data."""
-        if self._use_python_controller and self._python_controller:
-            return self._python_controller.is_using_simulated_data(station_name)
-        return False
-
-    def get_slot_config(self, station_name: str) -> list[dict[str, Any]]:
-        """Get slot configuration for an RTU."""
-        if self._use_python_controller and self._python_controller:
-            slots = self._python_controller.get_slot_config(station_name)
-            return [
-                {
-                    "slot_number": s.slot_number,
-                    "subslot": s.subslot,
-                    "slot_type": s.slot_type,
-                    "module_id": f"0x{s.module_id:08X}",
-                    "submodule_id": f"0x{s.submodule_id:08X}",
-                    "data_length": s.data_length,
-                    "description": s.description,
-                }
-                for s in slots
-            ]
-        return []
-
     def dcp_discover(self, timeout_ms: int = 5000) -> list[dict[str, Any]]:
         """Discover PROFINET devices on network."""
+        # Try real controller first
         if not self._demo_mode and self._client and self._client.is_connected():
             devices = self._client.dcp_discover(timeout_ms)
             if devices:
                 return devices
 
+        # Try demo mode
         demo = _get_demo_service()
         if demo and demo.enabled:
             return demo.dcp_discover(timeout_ms)
 
+        # No controller - try direct network discovery
         try:
             from .dcp_discovery import discover_profinet_devices_sync
             from ..core.network import get_profinet_interface
@@ -597,11 +586,13 @@ class ProfinetClient:
 
     def get_pid_loops(self) -> list[dict[str, Any]]:
         """Get PID loop states from controller."""
+        # Try real controller first
         if not self._demo_mode and self._client and self._client.is_connected():
             loops = self._client.get_pid_loops()
             if loops:
                 return loops
 
+        # Try demo mode
         demo = _get_demo_service()
         if demo and demo.enabled:
             return demo.get_pid_loops()
@@ -609,10 +600,16 @@ class ProfinetClient:
         return []
 
     def set_setpoint(self, loop_id: int, setpoint: float) -> bool:
-        """Set PID loop setpoint."""
+        """Set PID loop setpoint.
+
+        Raises:
+            ControllerNotConnectedError: If no controller connection available.
+        """
+        # Try real controller first
         if not self._demo_mode and self._client and self._client.is_connected():
             return self._client.set_setpoint(loop_id, setpoint)
 
+        # Try demo mode
         demo = _get_demo_service()
         if demo and demo.enabled:
             return demo.set_setpoint(loop_id, setpoint)
@@ -623,10 +620,16 @@ class ProfinetClient:
         )
 
     def set_pid_mode(self, loop_id: int, mode: int) -> bool:
-        """Set PID loop mode."""
+        """Set PID loop mode.
+
+        Raises:
+            ControllerNotConnectedError: If no controller connection available.
+        """
+        # Try real controller first
         if not self._demo_mode and self._client and self._client.is_connected():
             return self._client.set_pid_mode(loop_id, mode)
 
+        # Try demo mode
         demo = _get_demo_service()
         if demo and demo.enabled:
             return demo.set_pid_mode(loop_id, mode)
@@ -638,11 +641,13 @@ class ProfinetClient:
 
     def get_alarms(self) -> list[dict[str, Any]]:
         """Get active alarms from controller."""
+        # Try real controller first
         if not self._demo_mode and self._client and self._client.is_connected():
             alarms = self._client.get_alarms()
             if alarms:
                 return alarms
 
+        # Try demo mode
         demo = _get_demo_service()
         if demo and demo.enabled:
             return demo.get_alarms()
@@ -650,10 +655,16 @@ class ProfinetClient:
         return []
 
     def acknowledge_alarm(self, alarm_id: int, user: str) -> bool:
-        """Acknowledge alarm."""
+        """Acknowledge alarm.
+
+        Raises:
+            ControllerNotConnectedError: If no controller connection available.
+        """
+        # Try real controller first
         if not self._demo_mode and self._client and self._client.is_connected():
             return self._client.acknowledge_alarm(alarm_id, user)
 
+        # Try demo mode
         demo = _get_demo_service()
         if demo and demo.enabled:
             return demo.acknowledge_alarm(alarm_id, user)
@@ -664,18 +675,18 @@ class ProfinetClient:
         )
 
 
-# Thread-safe singleton
+# Global client instance with thread-safe double-check locking
+import threading as _threading
 _profinet_client: ProfinetClient | None = None
-_client_lock = threading.Lock()
+_profinet_client_lock = _threading.Lock()
 
 
 def get_profinet_client() -> ProfinetClient:
     """Get or create the PROFINET client (thread-safe)."""
     global _profinet_client
     if _profinet_client is None:
-        with _client_lock:
-            # Double-check locking
-            if _profinet_client is None:
+        with _profinet_client_lock:
+            if _profinet_client is None:  # Double-check after acquiring lock
                 _profinet_client = ProfinetClient()
                 _profinet_client.connect()
     return _profinet_client
