@@ -595,12 +595,14 @@ class ProfinetController:
 
             logger.info(f"[{device_ip}] PrmEnd confirmed")
 
-            # Step 3: ApplicationReady
-            logger.info(f"[{device_ip}] Step 3: ApplicationReady")
+            # Step 3: Wait for ApplicationReady from device
+            # NOTE: ApplicationReady is sent BY the device, not the controller!
+            # The controller waits for it and responds.
+            logger.info(f"[{device_ip}] Step 3: Waiting for ApplicationReady from device")
             self._set_state(ARState.READY)
 
-            if not self._rpc_control(ControlCommand.APP_READY):
-                raise Exception("ApplicationReady failed")
+            if not self._wait_for_app_ready(timeout_s=APP_READY_TIMEOUT_MS / 1000.0):
+                raise Exception("ApplicationReady from device not received")
 
             # Connection established
             self._set_state(ARState.RUN)
@@ -827,6 +829,290 @@ class ProfinetController:
         ) / pnio
 
         return self._rpc_send_recv(rpc, CONTROL_TIMEOUT_MS)
+
+    def _wait_for_app_ready(self, timeout_s: float = 30.0) -> bool:
+        """
+        Wait for ApplicationReady request from device and respond.
+
+        After PrmEnd, the DEVICE sends ApplicationReady to the controller.
+        The controller must receive it and send back a response.
+
+        Args:
+            timeout_s: How long to wait for ApplicationReady (default 30s)
+
+        Returns:
+            True if ApplicationReady received and response sent
+        """
+        if not self.ar:
+            return False
+
+        logger.info(f"Waiting up to {timeout_s}s for ApplicationReady from device...")
+
+        # Open UDP socket to receive on RPC port
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.settimeout(timeout_s)
+
+        try:
+            # Bind to RPC port to receive incoming requests
+            sock.bind(('0.0.0.0', RPC_PORT))
+            logger.debug(f"Listening on UDP port {RPC_PORT} for ApplicationReady")
+
+            while True:
+                try:
+                    data, addr = sock.recvfrom(4096)
+                    logger.debug(f"Received {len(data)} bytes from {addr}")
+
+                    # Parse incoming packet
+                    if len(data) < 80:
+                        logger.debug("Packet too short, ignoring")
+                        continue
+
+                    # Check if it's an RPC request (packet type 0)
+                    pkt_type = data[1]
+                    if pkt_type != 0:  # Not a request
+                        logger.debug(f"Not a request packet (type={pkt_type}), ignoring")
+                        continue
+
+                    # Check opnum (at offset 76-77, little-endian)
+                    opnum = struct.unpack("<H", data[76:78])[0]
+                    if opnum != RpcOpnum.CONTROL:
+                        logger.debug(f"Not a Control request (opnum={opnum}), ignoring")
+                        continue
+
+                    # Parse the IODControlReq block to get control command
+                    # Block starts after RPC header (80 bytes) + NDR header (20 bytes)
+                    # Actually the structure varies, let's look for the control command
+                    # In the block: Reserved(2) + ARUUID(16) + SessionKey(2) + AlarmSeqNum(2) + ControlCommand(2)
+                    # Block header is 6 bytes (type + length + version)
+
+                    # Find control command - it's at a known offset in the IODControlReq
+                    # RPC header = 80, NDR = 20, block header = 6, reserved = 2, ARUUID = 16, session = 2, alarm = 2
+                    # So control command is at offset 80 + 20 + 6 + 2 + 16 + 2 + 2 = 128
+                    if len(data) >= 130:
+                        ctrl_cmd = struct.unpack(">H", data[128:130])[0]
+                        logger.info(f"Received Control request: command=0x{ctrl_cmd:04X}")
+
+                        if ctrl_cmd == ControlCommand.APP_READY:
+                            logger.info("*** ApplicationReady received from device! ***")
+
+                            # Build and send response
+                            if self._send_app_ready_response(sock, addr, data):
+                                logger.info("ApplicationReady response sent")
+                                return True
+                            else:
+                                logger.error("Failed to send ApplicationReady response")
+                                return False
+                    else:
+                        logger.debug(f"Packet too short for control command ({len(data)} bytes)")
+
+                except socket.timeout:
+                    logger.error("Timeout waiting for ApplicationReady from device")
+                    return False
+
+        except OSError as e:
+            # Port might be in use
+            logger.warning(f"Could not bind to port {RPC_PORT}: {e}")
+            logger.info("Trying alternative: poll on existing connection...")
+            return self._poll_for_app_ready(timeout_s)
+        finally:
+            sock.close()
+
+    def _poll_for_app_ready(self, timeout_s: float) -> bool:
+        """
+        Alternative method: poll for ApplicationReady using the existing socket.
+
+        Used when we can't bind to the RPC port (already in use).
+        """
+        if not self.ar:
+            return False
+
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.settimeout(timeout_s)
+
+        try:
+            # Connect to device so we can receive their responses
+            sock.connect((self.ar.device_ip, RPC_PORT))
+
+            # The device should send ApplicationReady to us
+            # But since we're not bound to the port, we need to send something first
+            # to establish the "connection" for UDP
+
+            # Some devices send ApplicationReady to the source port of our last packet
+            # We can try receiving on the connected socket
+            start_time = time.time()
+            while (time.time() - start_time) < timeout_s:
+                try:
+                    data = sock.recv(4096)
+                    if len(data) >= 80:
+                        pkt_type = data[1]
+                        if pkt_type == 0:  # Request
+                            opnum = struct.unpack("<H", data[76:78])[0]
+                            if opnum == RpcOpnum.CONTROL and len(data) >= 130:
+                                ctrl_cmd = struct.unpack(">H", data[128:130])[0]
+                                if ctrl_cmd == ControlCommand.APP_READY:
+                                    logger.info("*** ApplicationReady received (poll mode)! ***")
+                                    # Send response
+                                    return self._send_app_ready_response(sock, (self.ar.device_ip, RPC_PORT), data)
+                except socket.timeout:
+                    pass  # Keep trying
+
+            logger.error("Timeout in poll mode waiting for ApplicationReady")
+            return False
+        finally:
+            sock.close()
+
+    def _send_app_ready_response(self, sock, addr, request_data: bytes) -> bool:
+        """
+        Send ApplicationReady response to device.
+
+        Args:
+            sock: Socket to send on
+            addr: Destination address (device IP, port)
+            request_data: The original request packet (to extract activity UUID, etc.)
+
+        Returns:
+            True if response sent successfully
+        """
+        if not self.ar:
+            return False
+
+        try:
+            # Extract activity UUID from request (bytes 24-40 in RPC header)
+            activity_uuid = request_data[24:40]
+
+            # Extract sequence number (bytes 64-68, little-endian)
+            seq_num = struct.unpack("<I", request_data[64:68])[0]
+
+            # Build RPC response header
+            resp = bytearray(200)  # Allocate enough space
+
+            # RPC header (80 bytes)
+            resp[0] = 4  # Version
+            resp[1] = 2  # Type: Response
+            resp[2] = 0x22  # Flags: Last fragment + Idempotent
+            resp[3] = 0  # Flags2
+
+            # Data representation (little-endian, ASCII, IEEE)
+            resp[4] = 0x10
+            resp[5:8] = b'\x00\x00\x00'
+
+            # Serial high
+            resp[8:10] = b'\x00\x00'
+
+            # Object UUID (AR UUID)
+            resp[10:26] = self.ar.ar_uuid
+
+            # Interface UUID (PNIO Controller)
+            resp[26:42] = bytes.fromhex("dea000026c9711d1827100a02442df7d")
+
+            # Activity UUID (must match request)
+            resp[42:58] = activity_uuid
+
+            # Server boot time
+            resp[58:62] = b'\x00\x00\x00\x00'
+
+            # Interface version (little-endian)
+            struct.pack_into("<I", resp, 62, 1)
+
+            # Sequence number (little-endian, match request)
+            struct.pack_into("<I", resp, 66, seq_num)
+
+            # Opnum (little-endian)
+            struct.pack_into("<H", resp, 70, RpcOpnum.CONTROL)
+
+            # Interface hint, Activity hint
+            struct.pack_into("<H", resp, 72, 0xFFFF)
+            struct.pack_into("<H", resp, 74, 0xFFFF)
+
+            # Fragment length (will update)
+            # Fragment number
+            struct.pack_into("<H", resp, 78, 0)
+
+            # Auth length, Serial low
+            resp[80] = 0
+            resp[81] = 0
+
+            # Wait, the standard RPC header is 80 bytes, but I've been writing past it
+            # Let me recalculate - RPC header format:
+            # 0: version (1), 1: type (1), 2-3: flags (2), 4-7: drep (4),
+            # 8-9: serial_high (2), 10-25: object_uuid (16), 26-41: interface_uuid (16),
+            # 42-57: activity_uuid (16), 58-61: server_boot (4), 62-65: if_version (4),
+            # 66-69: seq_num (4), 70-71: opnum (2), 72-73: if_hint (2), 74-75: act_hint (2),
+            # 76-77: frag_len (2), 78-79: frag_num (2), 80: auth_len (1), 81: serial_low (1)
+            # Total = 82 bytes
+
+            pos = 82
+
+            # NDR header (20 bytes) - for response format
+            # ArgsMaximum, ArgsLength, MaxCount, Offset, ActualCount (all 4 bytes each, little-endian)
+            # We'll fill in the actual sizes after building the block
+
+            ndr_pos = pos
+            pos += 20
+
+            block_start = pos
+
+            # IODControlRes block (block type 0x8110)
+            # Block header: type(2) + length(2) + version(2) = 6 bytes
+            struct.pack_into(">H", resp, pos, 0x8110)  # Block type
+            pos += 2
+            block_len_pos = pos
+            pos += 2  # Length (fill later)
+            resp[pos] = 1  # Version high
+            resp[pos + 1] = 0  # Version low
+            pos += 2
+
+            # Reserved
+            struct.pack_into(">H", resp, pos, 0)
+            pos += 2
+
+            # AR UUID
+            resp[pos:pos + 16] = self.ar.ar_uuid
+            pos += 16
+
+            # Session key
+            struct.pack_into(">H", resp, pos, self.ar.session_key)
+            pos += 2
+
+            # Alarm sequence number (can be 0)
+            struct.pack_into(">H", resp, pos, 0)
+            pos += 2
+
+            # Control command (echo back APP_READY)
+            struct.pack_into(">H", resp, pos, ControlCommand.APP_READY)
+            pos += 2
+
+            # Control block properties
+            struct.pack_into(">H", resp, pos, 0)
+            pos += 2
+
+            # Calculate block length (content after header, excluding type field)
+            block_content_len = pos - block_start - 6 + 2  # +2 for version in length
+            struct.pack_into(">H", resp, block_len_pos, block_content_len)
+
+            # Calculate total PNIO block size
+            pnio_size = pos - block_start
+
+            # Fill NDR header
+            struct.pack_into("<I", resp, ndr_pos, pnio_size)      # ArgsMaximum
+            struct.pack_into("<I", resp, ndr_pos + 4, pnio_size)  # ArgsLength
+            struct.pack_into("<I", resp, ndr_pos + 8, pnio_size)  # MaxCount
+            struct.pack_into("<I", resp, ndr_pos + 12, 0)         # Offset
+            struct.pack_into("<I", resp, ndr_pos + 16, pnio_size) # ActualCount
+
+            # Fragment length (total after RPC header)
+            frag_len = pos - 82
+            struct.pack_into("<H", resp, 76, frag_len)
+
+            # Send response
+            sock.sendto(bytes(resp[:pos]), addr)
+            logger.debug(f"Sent ApplicationReady response ({pos} bytes) to {addr}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to build/send ApplicationReady response: {e}")
+            return False
 
     def _rpc_send_recv(self, rpc_pkt, timeout_ms: int) -> bool:
         """Send RPC packet and wait for response."""
