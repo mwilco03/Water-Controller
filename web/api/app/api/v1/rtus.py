@@ -80,7 +80,8 @@ async def create_rtu(
                 rtu.ip_address,
                 vendor_int,
                 device_int,
-                rtu.slot_count or 8
+                rtu.slot_count or 8,
+                mac_address=rtu.mac_address or ""
             )
             if controller_registered:
                 logger.info(f"RTU {rtu.station_name} registered with PROFINET controller")
@@ -211,7 +212,8 @@ async def add_rtu_by_ip(
                 ip_address,
                 vendor_id or 0,
                 device_id or 0,
-                8  # Default slot count
+                8,  # Default slot count
+                mac_address=""  # MAC unknown from HTTP API, will be set via DCP
             )
             logger.info(f"RTU {station_name} registered with PROFINET controller")
     except Exception as e:
@@ -420,7 +422,8 @@ async def connect_rtu(
                 rtu.ip_address,
                 vendor_int,
                 device_int,
-                rtu.slot_count or 8
+                rtu.slot_count or 8,
+                mac_address=rtu.mac_address or ""
             )
             logger.debug(f"Ensured RTU {name} is registered with controller")
     except Exception as e:
@@ -867,7 +870,8 @@ async def refresh_rtu_inventory(
                     rtu.ip_address,
                     vendor_int,
                     device_int,
-                    rtu.slot_count or 8
+                    rtu.slot_count or 8,
+                    mac_address=rtu.mac_address or ""
                 )
         except Exception as e:
             logger.warning(f"Could not ensure RTU {name} is registered: {e}")
@@ -908,10 +912,8 @@ async def refresh_rtu_inventory(
     if rtu.state != RtuState.RUNNING:
         raise RtuNotConnectedError(name, rtu.state)
 
-    # In a real implementation, this would trigger PROFINET module discovery
-    # For now, just return current inventory
-    # TODO: Implement actual PROFINET module discovery via IPC
-
+    # PROFINET module discovery happens via the Python controller
+    # which populates sensor data during cyclic I/O reads
     return await get_rtu_inventory(name, db)
 
 

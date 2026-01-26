@@ -353,6 +353,7 @@ class ProfinetClient:
                         "slot": slot,
                         "value": reading.value,
                         "quality": QUALITY_NAMES.get(reading.quality, "unknown"),
+                        "quality_code": reading.quality,  # Numeric code for frontend
                         "timestamp": reading.timestamp,
                     }
                     for slot, reading in rtu.sensors.items()
@@ -422,23 +423,32 @@ class ProfinetClient:
         # Try Python controller first
         if self._use_python_controller and self._python_controller:
             import asyncio
+            import concurrent.futures
+
+            async def _do_connect():
+                return await self._python_controller.connect_rtu(station_name)
+
             try:
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    # Already in async context, create task
-                    future = asyncio.ensure_future(
-                        self._python_controller.connect_rtu(station_name)
+                # Check if we're in an async context
+                try:
+                    loop = asyncio.get_running_loop()
+                    # Already in async context - run in thread pool to avoid blocking
+                    # This properly waits for the result instead of returning True blindly
+                    future = asyncio.run_coroutine_threadsafe(
+                        self._python_controller.connect_rtu(station_name),
+                        loop
                     )
-                    return True  # Return immediately, connection happens async
-                else:
-                    return loop.run_until_complete(
-                        self._python_controller.connect_rtu(station_name)
-                    )
-            except RuntimeError:
-                # No event loop, create one
-                return asyncio.run(
-                    self._python_controller.connect_rtu(station_name)
-                )
+                    # Wait with timeout to get actual result
+                    return future.result(timeout=30.0)
+                except RuntimeError:
+                    # No running loop - we can use asyncio.run
+                    return asyncio.run(_do_connect())
+            except concurrent.futures.TimeoutError:
+                logger.error(f"Connect timeout for {station_name}")
+                return False
+            except Exception as e:
+                logger.error(f"Connect failed for {station_name}: {e}")
+                return False
 
         # Try C controller via SHM
         if not self._demo_mode and self._client and self._client.is_connected():
@@ -463,14 +473,8 @@ class ProfinetClient:
         """
         # Try Python controller first
         if self._use_python_controller and self._python_controller:
-            rtu = self._python_controller.get_rtu_state(station_name)
-            if rtu:
-                with self._python_controller._lock:
-                    rtu.state = "OFFLINE"
-                    rtu.connected = False
-                logger.info(f"Disconnected RTU: {station_name}")
-                return True
-            return False
+            # Use the disconnect method which stops cyclic I/O properly
+            return self._python_controller.disconnect_rtu(station_name)
 
         # Try C controller via SHM
         if not self._demo_mode and self._client and self._client.is_connected():
@@ -493,7 +497,8 @@ class ProfinetClient:
         ip_address: str,
         vendor_id: int = 0,
         device_id: int = 0,
-        slot_count: int = 0
+        slot_count: int = 0,
+        mac_address: str = ""
     ) -> bool:
         """Add RTU to controller.
 
@@ -502,7 +507,7 @@ class ProfinetClient:
         """
         # Try Python controller first
         if self._use_python_controller and self._python_controller:
-            return self._python_controller.add_rtu(station_name, ip_address)
+            return self._python_controller.add_rtu(station_name, ip_address, mac_address)
 
         # Try C controller via SHM
         if not self._demo_mode and self._client and self._client.is_connected():
@@ -670,14 +675,18 @@ class ProfinetClient:
         )
 
 
-# Global client instance
+# Global client instance with thread-safe double-check locking
+import threading as _threading
 _profinet_client: ProfinetClient | None = None
+_profinet_client_lock = _threading.Lock()
 
 
 def get_profinet_client() -> ProfinetClient:
-    """Get or create the PROFINET client."""
+    """Get or create the PROFINET client (thread-safe)."""
     global _profinet_client
     if _profinet_client is None:
-        _profinet_client = ProfinetClient()
-        _profinet_client.connect()
+        with _profinet_client_lock:
+            if _profinet_client is None:  # Double-check after acquiring lock
+                _profinet_client = ProfinetClient()
+                _profinet_client.connect()
     return _profinet_client

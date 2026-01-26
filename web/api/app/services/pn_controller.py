@@ -17,6 +17,14 @@ from uuid import uuid4
 
 logger = logging.getLogger(__name__)
 
+# Import cyclic I/O manager (Scapy-based Layer 2)
+try:
+    from .pn_cyclic_io import get_cyclic_io_manager, SCAPY_AVAILABLE
+    CYCLIC_IO_AVAILABLE = SCAPY_AVAILABLE
+except ImportError:
+    CYCLIC_IO_AVAILABLE = False
+    logger.warning("Cyclic I/O module not available - sensor data will not flow")
+
 # PROFINET Constants
 RPC_PORT = 34964
 PNIO_INTERFACE_UUID = bytes.fromhex("dea000016c9711d1827100a02442df7d")
@@ -46,6 +54,15 @@ BLOCK_MODULE_DIFF = 0x8104
 BLOCK_PRM_END_RES = 0x8110
 BLOCK_APP_READY_RES = 0x8112
 
+# IOD Read/Write block types
+BLOCK_IOD_READ_REQ = 0x0009
+BLOCK_IOD_READ_RES = 0x8009
+
+# PROFINET Record Data indices
+INDEX_SUBSTITUTION_DATA = 0x8000  # Substitution active data (input)
+INDEX_INPUT_DATA = 0x8001  # Input data status
+INDEX_OUTPUT_DATA = 0x8002  # Output data status
+
 # Control Command values
 CONTROL_PRM_END = 0x0001
 CONTROL_APP_READY = 0x0002
@@ -59,6 +76,12 @@ SUBMOD_TEMP = 0x00000041
 # Frame IDs for cyclic I/O
 INPUT_FRAME_ID = 0x8001
 OUTPUT_FRAME_ID = 0x8000
+
+# Data Quality Constants (OPC UA compatible)
+QUALITY_GOOD = 0x00
+QUALITY_UNCERTAIN = 0x40
+QUALITY_BAD = 0x80
+QUALITY_SIMULATED = 0x41  # Uncertain + Simulated bit - safety indicator
 
 
 def build_block_header(block_type: int, length: int) -> bytes:
@@ -241,6 +264,83 @@ def build_control_request(ar_uuid: bytes, session_key: int, control_cmd: int,
     return rpc + ndr
 
 
+def build_read_request(ar_uuid: bytes, activity_uuid: bytes, seq_num: int,
+                       api: int, slot: int, subslot: int, index: int,
+                       record_length: int = 64) -> bytes:
+    """Build RPC Read Request for reading record data from a submodule"""
+    # IODReadReqHeader block
+    # BlockHeader: type(2) + length(2) + version(2) = 6 bytes
+    # SeqNumber(2) + ARUUID(16) + API(4) + Slot(2) + Subslot(2) + Padding(2)
+    # Index(2) + RecordLength(4) + TargetARUUID(16, optional) + Padding(2, optional)
+
+    content = struct.pack(">H", seq_num)  # SeqNumber
+    content += ar_uuid  # ARUUID (16 bytes)
+    content += struct.pack(">I", api)  # API
+    content += struct.pack(">H", slot)  # SlotNumber
+    content += struct.pack(">H", subslot)  # SubslotNumber
+    content += struct.pack(">H", 0)  # Padding
+    content += struct.pack(">H", index)  # Index
+    content += struct.pack(">I", record_length)  # RecordDataLength
+
+    # Build block header: type=0x0009, length=content+2 (for version bytes)
+    header = build_block_header(BLOCK_IOD_READ_REQ, len(content) + 2)
+    block = header + content
+
+    # NDR header
+    ndr = struct.pack("<I", len(block))  # ArgsMaximum
+    ndr += struct.pack("<I", len(block))  # ArgsLength
+    ndr += struct.pack("<I", len(block))  # MaxCount
+    ndr += struct.pack("<I", 0)  # Offset
+    ndr += struct.pack("<I", len(block))  # ActualCount
+    ndr += block
+
+    rpc = build_rpc_header(OPNUM_READ, activity_uuid, len(ndr), seq_num)
+
+    return rpc + ndr
+
+
+def parse_read_response(data: bytes) -> Tuple[bool, bytes, int]:
+    """
+    Parse RPC Read Response
+    Returns: (success, record_data, error_code)
+    """
+    if len(data) < 80:
+        return False, b"", -1
+
+    # RPC header is 80 bytes
+    pkt_type = data[1]
+    if pkt_type != 2:  # Not a Response
+        return False, b"", -2
+
+    # Skip RPC header (80 bytes) and NDR header (20 bytes)
+    offset = 100
+
+    # Look for IODReadRes block (0x8009)
+    while offset < len(data) - 6:
+        if offset + 4 > len(data):
+            break
+        block_type = struct.unpack(">H", data[offset:offset+2])[0]
+        block_len = struct.unpack(">H", data[offset+2:offset+4])[0]
+
+        if block_type == BLOCK_IOD_READ_RES:
+            # Found read response block
+            # Skip header (6 bytes) + SeqNumber(2) + ARUUID(16) + API(4) + Slot(2) + Subslot(2)
+            # + Padding(2) + Index(2) + RecordDataLength(4)
+            data_offset = offset + 6 + 2 + 16 + 4 + 2 + 2 + 2 + 2 + 4
+            if data_offset < len(data):
+                record_len = struct.unpack(">I", data[offset+6+2+16+4+2+2+2+2:offset+6+2+16+4+2+2+2+2+4])[0]
+                record_data = data[data_offset:data_offset+record_len]
+                return True, record_data, 0
+
+        # Move to next block
+        if block_len == 0:
+            offset += 6
+        else:
+            offset += 6 + block_len - 2
+
+    return False, b"", -3
+
+
 def parse_connect_response(data: bytes) -> Tuple[bool, bytes, str]:
     """
     Parse Connect Response
@@ -328,7 +428,7 @@ class PNController:
     def __init__(self):
         self.rtus: Dict[str, RTUState] = {}
         self._running = False
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()  # RLock for re-entrant calls
         self._task: Optional[asyncio.Task] = None
         self._io_thread: Optional[threading.Thread] = None
         self._local_mac = self._get_local_mac()
@@ -356,18 +456,21 @@ class PNController:
             self._task.cancel()
         logger.info("PROFINET Controller stopped")
 
-    def add_rtu(self, station_name: str, ip_address: str) -> bool:
+    def add_rtu(self, station_name: str, ip_address: str, mac_address: str = "") -> bool:
         """Add RTU to manage"""
         with self._lock:
             if station_name in self.rtus:
-                # Update IP if different
+                # Update IP and MAC if provided
                 self.rtus[station_name].ip_address = ip_address
+                if mac_address:
+                    self.rtus[station_name].mac_address = mac_address
                 return True
             self.rtus[station_name] = RTUState(
                 station_name=station_name,
-                ip_address=ip_address
+                ip_address=ip_address,
+                mac_address=mac_address
             )
-            logger.info(f"Added RTU: {station_name} at {ip_address}")
+            logger.info(f"Added RTU: {station_name} at {ip_address} (MAC: {mac_address or 'unknown'})")
         return True
 
     def get_rtu_state(self, station_name: str) -> Optional[RTUState]:
@@ -411,12 +514,11 @@ class PNController:
             if not success:
                 raise Exception("Connect Request failed")
 
-            # Store AR context
-            rtu.ar_context.ar_uuid = ar_uuid
-            rtu.ar_context.activity_uuid = activity_uuid
-            rtu.ar_context.seq_num = 1
-
+            # Store AR context (thread-safe)
             with self._lock:
+                rtu.ar_context.ar_uuid = ar_uuid
+                rtu.ar_context.activity_uuid = activity_uuid
+                rtu.ar_context.seq_num = 1
                 rtu.state = "CONNECTED"
 
             # Step 2: PrmEnd (ParameterEnd)
@@ -436,6 +538,31 @@ class PNController:
                 rtu.connected = True
 
             logger.info(f"[{station_name}] PROFINET connection established - RUNNING")
+
+            # Step 4: Start Cyclic I/O (Scapy Layer 2)
+            if CYCLIC_IO_AVAILABLE and rtu.mac_address:
+                logger.info(f"[{station_name}] Step 4: Starting Cyclic I/O")
+                cyclic_mgr = get_cyclic_io_manager()
+
+                def on_sensor_data(data: bytes, timestamp: float):
+                    """Callback when input data received from RTU"""
+                    self._process_cyclic_input(station_name, data, timestamp)
+
+                success = cyclic_mgr.start_cyclic_io(
+                    station_name=station_name,
+                    device_mac=rtu.mac_address,
+                    device_ip=rtu.ip_address,
+                    on_input_data=on_sensor_data
+                )
+                if success:
+                    logger.info(f"[{station_name}] Cyclic I/O STARTED - Layer 2 RT frames active")
+                else:
+                    logger.warning(f"[{station_name}] Cyclic I/O failed to start - sensor data unavailable")
+            elif not CYCLIC_IO_AVAILABLE:
+                logger.warning(f"[{station_name}] Cyclic I/O not available (Scapy missing)")
+            elif not rtu.mac_address:
+                logger.warning(f"[{station_name}] No MAC address - cyclic I/O requires device MAC")
+
             return True
 
         except Exception as e:
@@ -445,6 +572,73 @@ class PNController:
                 rtu.error_message = str(e)
                 rtu.connected = False
             return False
+
+    def _process_cyclic_input(self, station_name: str, data: bytes, timestamp: float):
+        """
+        Process input data received via cyclic I/O (Layer 2).
+
+        Called by the cyclic I/O callback when PROFINET RT input frames arrive.
+
+        Data format (from Water-Treat RTU):
+        - Slot 1 (CPU Temp): 4-byte float (big-endian) + 1-byte IOPS
+        """
+        with self._lock:
+            rtu = self.rtus.get(station_name)
+            if not rtu:
+                return
+
+            # Parse input data - expect at least 5 bytes (4-byte float + 1-byte IOPS)
+            if len(data) >= 5:
+                # CPU Temperature (slot 1)
+                try:
+                    temp_value = struct.unpack(">f", data[0:4])[0]
+                    iops = data[4]  # IO Provider Status
+
+                    # Determine quality from IOPS
+                    # Bit 7 (0x80) = Good
+                    if iops & 0x80:
+                        quality = QUALITY_GOOD
+                    elif iops & 0x40:
+                        quality = QUALITY_UNCERTAIN
+                    else:
+                        quality = QUALITY_BAD
+
+                    # Update sensor reading
+                    rtu.sensors[1] = SensorReading(
+                        slot=1,
+                        value=temp_value,
+                        quality=quality,
+                        timestamp=timestamp
+                    )
+                    rtu.last_update = timestamp
+
+                    logger.debug(f"[{station_name}] Cyclic input: temp={temp_value:.2f}°C "
+                                f"quality=0x{quality:02X}")
+                except struct.error as e:
+                    logger.warning(f"[{station_name}] Failed to parse sensor data: {e}")
+            else:
+                logger.debug(f"[{station_name}] Cyclic input too short: {len(data)} bytes")
+
+    def disconnect_rtu(self, station_name: str) -> bool:
+        """Disconnect from RTU - stop cyclic I/O and release AR."""
+        with self._lock:
+            rtu = self.rtus.get(station_name)
+            if not rtu:
+                return False
+
+            # Stop cyclic I/O first
+            if CYCLIC_IO_AVAILABLE:
+                cyclic_mgr = get_cyclic_io_manager()
+                cyclic_mgr.stop_cyclic_io(station_name)
+                logger.info(f"[{station_name}] Cyclic I/O stopped")
+
+            # Update state
+            rtu.state = "OFFLINE"
+            rtu.connected = False
+            rtu.error_message = ""
+
+            logger.info(f"[{station_name}] Disconnected")
+            return True
 
     async def _rpc_connect(self, rtu: RTUState) -> Tuple[bool, bytes, bytes]:
         """Send RPC Connect Request, return (success, ar_uuid, activity_uuid)"""
@@ -523,11 +717,12 @@ class PNController:
                 logger.info(f"[{rtu.station_name}] PrmEnd SUCCESS")
                 return True
 
-            return True  # Accept any response as success for now
+            logger.error(f"[{rtu.station_name}] PrmEnd invalid response type: {data[1] if len(data) >= 2 else 'empty'}")
+            return False  # Invalid response type is a failure
 
         except socket.timeout:
-            logger.warning(f"[{rtu.station_name}] PrmEnd timeout - continuing anyway")
-            return True  # Some devices don't respond to PrmEnd
+            logger.error(f"[{rtu.station_name}] PrmEnd timeout - connection failed")
+            return False  # Timeout is a failure, don't mask it
         finally:
             sock.close()
 
@@ -565,11 +760,12 @@ class PNController:
                 logger.info(f"[{rtu.station_name}] ApplicationReady SUCCESS")
                 return True
 
-            return True  # Accept any response
+            logger.error(f"[{rtu.station_name}] ApplicationReady invalid response type: {data[1] if len(data) >= 2 else 'empty'}")
+            return False  # Invalid response type is a failure
 
         except socket.timeout:
-            logger.warning(f"[{rtu.station_name}] ApplicationReady timeout - continuing anyway")
-            return True  # Some devices don't respond
+            logger.error(f"[{rtu.station_name}] ApplicationReady timeout - connection failed")
+            return False  # Timeout is a failure, don't mask it
         finally:
             sock.close()
 
@@ -606,48 +802,87 @@ class PNController:
         try:
             self._read_via_rpc(rtu)
         except Exception as e:
-            logger.debug(f"RPC read failed for {rtu.station_name}: {e}")
-            # Fallback: simulate sensor data for testing
-            self._simulate_sensor_data(rtu)
+            logger.warning(f"[{rtu.station_name}] Cyclic read failed: {e}")
+            # Mark existing sensor data as BAD quality - never simulate data
+            with self._lock:
+                for slot, reading in rtu.sensors.items():
+                    reading.quality = QUALITY_BAD
+                    logger.info(f"[{rtu.station_name}] Slot {slot} quality set to BAD - network read failed")
 
     def _read_via_rpc(self, rtu: RTUState):
-        """Read data via RPC ReadImplicit"""
-        # Build ReadImplicit request for CPU temp slot
-        # This is a simplified implementation
+        """Read data via RPC Read request for CPU temperature slot"""
+        ar_uuid = rtu.ar_context.ar_uuid
+        if not ar_uuid:
+            raise RuntimeError("No AR context - connection not established")
+
+        activity_uuid = rtu.ar_context.activity_uuid
+        if not activity_uuid:
+            raise RuntimeError("No activity UUID - connection not established")
+
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.settimeout(1.0)
+        sock.settimeout(2.0)
 
         try:
-            # Build simple read request
-            ar_uuid = rtu.ar_context.ar_uuid
-            if not ar_uuid:
-                return
-
-            rtu.ar_context.seq_num += 1
-
-            # For now, update timestamp to show we're trying
+            # Increment sequence number (thread-safe)
             with self._lock:
-                rtu.last_update = time.time()
+                rtu.ar_context.seq_num += 1
+                seq_num = rtu.ar_context.seq_num
 
-        except Exception:
-            pass
+            # Build Read request for slot 1 (CPU temp), subslot 1, index 0x8001 (input data)
+            pkt = build_read_request(
+                ar_uuid=ar_uuid,
+                activity_uuid=activity_uuid,
+                seq_num=seq_num,
+                api=0,  # API 0
+                slot=1,  # Slot 1: CPU Temperature
+                subslot=1,  # Subslot 1
+                index=INDEX_INPUT_DATA,  # Input data index
+                record_length=64
+            )
+
+            # Send request
+            sock.sendto(pkt, (rtu.ip_address, RPC_PORT))
+
+            # Receive response
+            data, addr = sock.recvfrom(4096)
+
+            # Parse response
+            success, record_data, error_code = parse_read_response(data)
+
+            if success and len(record_data) >= 4:
+                # Parse CPU temperature (4-byte float, big-endian)
+                temp_value = struct.unpack(">f", record_data[:4])[0]
+
+                # Get IOPS (IO Provider Status) if present
+                iops = record_data[4] if len(record_data) > 4 else 0x80  # Good
+
+                # Determine quality from IOPS
+                if iops & 0x80:  # Good bit set
+                    quality = QUALITY_GOOD
+                elif iops & 0x40:  # Uncertain
+                    quality = QUALITY_UNCERTAIN
+                else:
+                    quality = QUALITY_BAD
+
+                # Update sensor data (thread-safe)
+                with self._lock:
+                    rtu.sensors[1] = SensorReading(
+                        slot=1,
+                        value=temp_value,
+                        quality=quality,
+                        timestamp=time.time()
+                    )
+                    rtu.last_update = time.time()
+
+                logger.debug(f"[{rtu.station_name}] Read temp={temp_value:.2f}°C quality={quality:#x}")
+            else:
+                logger.warning(f"[{rtu.station_name}] Read failed: error_code={error_code}")
+                raise RuntimeError(f"Read response error: {error_code}")
+
+        except socket.timeout:
+            raise RuntimeError("Read timeout - RTU not responding")
         finally:
             sock.close()
-
-    def _simulate_sensor_data(self, rtu: RTUState):
-        """Generate simulated sensor data for testing"""
-        import random
-
-        with self._lock:
-            # Simulate CPU temp in slot 1 (45-65°C range)
-            temp = 50.0 + random.uniform(-5, 15)
-            rtu.sensors[1] = SensorReading(
-                slot=1,
-                value=temp,
-                quality=0,  # Good
-                timestamp=time.time()
-            )
-            rtu.last_update = time.time()
 
     def _build_connect_request(self, ar_uuid: bytes, mac: bytes) -> bytes:
         """Build Connect Request packet"""
@@ -655,15 +890,18 @@ class PNController:
         return pkt
 
 
-# Singleton instance
+# Singleton instance with thread-safe double-check locking
 _controller: Optional[PNController] = None
+_controller_lock = threading.Lock()
 
 
 def get_controller() -> PNController:
-    """Get or create controller instance"""
+    """Get or create controller instance (thread-safe)"""
     global _controller
     if _controller is None:
-        _controller = PNController()
+        with _controller_lock:
+            if _controller is None:  # Double-check after acquiring lock
+                _controller = PNController()
     return _controller
 
 
