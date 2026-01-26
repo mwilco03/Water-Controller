@@ -1,6 +1,6 @@
 """
-PROFINET Controller Service - Direct Python Integration
-Complete implementation with Connect, PrmEnd, ApplicationReady, and Cyclic I/O
+PROFINET Controller Service - Scapy-based Implementation
+Uses Scapy's pnio_rpc module for proper PROFINET packet construction.
 
 This runs in the FastAPI process and provides real-time data to the API.
 """
@@ -17,6 +17,21 @@ from uuid import uuid4
 
 logger = logging.getLogger(__name__)
 
+# Import Scapy PROFINET modules
+try:
+    from scapy.all import conf, get_if_hwaddr
+    from scapy.contrib.pnio_rpc import (
+        Block, ARBlockReq, IOCRBlockReq, AlarmCRBlockReq,
+        ExpectedSubmoduleBlockReq, IODControlReq,
+        PNIOServiceReqPDU, PNIOServiceResPDU
+    )
+    from scapy.layers.dcerpc import DceRpc4
+    SCAPY_RPC_AVAILABLE = True
+    logger.info("Scapy PROFINET RPC modules loaded successfully")
+except ImportError as e:
+    SCAPY_RPC_AVAILABLE = False
+    logger.warning(f"Scapy RPC modules not available: {e}")
+
 # Import cyclic I/O manager (Scapy-based Layer 2)
 try:
     from .pn_cyclic_io import get_cyclic_io_manager, SCAPY_AVAILABLE
@@ -27,6 +42,7 @@ except ImportError:
 
 # PROFINET Constants
 RPC_PORT = 34964
+PNIO_UUID = "dea00001-6c97-11d1-8271-00a02442df7d"
 PNIO_INTERFACE_UUID = bytes.fromhex("dea000016c9711d1827100a02442df7d")
 PROFINET_ETHERTYPE = 0x8892
 
@@ -37,31 +53,6 @@ OPNUM_READ = 2
 OPNUM_WRITE = 3
 OPNUM_CONTROL = 4
 OPNUM_READ_IMPLICIT = 5
-
-# Block types - Request
-BLOCK_AR_REQ = 0x0101
-BLOCK_IOCR_REQ = 0x0102
-BLOCK_ALARM_CR_REQ = 0x0103
-BLOCK_EXPECTED_SUBMOD = 0x0104
-BLOCK_PRM_END_REQ = 0x0110
-BLOCK_APP_READY_REQ = 0x0112
-
-# Block types - Response
-BLOCK_AR_RES = 0x8101
-BLOCK_IOCR_RES = 0x8102
-BLOCK_ALARM_CR_RES = 0x8103
-BLOCK_MODULE_DIFF = 0x8104
-BLOCK_PRM_END_RES = 0x8110
-BLOCK_APP_READY_RES = 0x8112
-
-# IOD Read/Write block types
-BLOCK_IOD_READ_REQ = 0x0009
-BLOCK_IOD_READ_RES = 0x8009
-
-# PROFINET Record Data indices
-INDEX_SUBSTITUTION_DATA = 0x8000  # Substitution active data (input)
-INDEX_INPUT_DATA = 0x8001  # Input data status
-INDEX_OUTPUT_DATA = 0x8002  # Output data status
 
 # Control Command values
 CONTROL_PRM_END = 0x0001
@@ -81,309 +72,226 @@ OUTPUT_FRAME_ID = 0x8000
 QUALITY_GOOD = 0x00
 QUALITY_UNCERTAIN = 0x40
 QUALITY_BAD = 0x80
-QUALITY_SIMULATED = 0x41  # Uncertain + Simulated bit - safety indicator
+QUALITY_SIMULATED = 0x41
 
 
-def build_block_header(block_type: int, length: int) -> bytes:
-    """Build PNIO block header: type(2) + length(2) + version(2)"""
-    return struct.pack(">HHbb", block_type, length, 1, 0)
+# =============================================================================
+# LEGACY MANUAL PACKET BUILDING (COMMENTED OUT - REPLACED BY SCAPY)
+# =============================================================================
+# The following functions used manual struct.pack() for packet building.
+# They are preserved for reference but replaced by Scapy's proper classes.
+# =============================================================================
+
+# def build_block_header(block_type: int, length: int) -> bytes:
+#     """Build PNIO block header: type(2) + length(2) + version(2)"""
+#     return struct.pack(">HHbb", block_type, length, 1, 0)
+#
+# def build_ar_block(ar_uuid: bytes, session_key: int, mac: bytes) -> bytes:
+#     """Build ARBlockReq - REPLACED BY Scapy ARBlockReq"""
+#     pass
+#
+# def build_iocr_block(iocr_type: int, ref: int, frame_id: int, data_len: int) -> bytes:
+#     """Build IOCRBlockReq - REPLACED BY Scapy IOCRBlockReq"""
+#     pass
+#
+# def build_alarm_cr_block() -> bytes:
+#     """Build AlarmCRBlockReq - REPLACED BY Scapy AlarmCRBlockReq"""
+#     pass
+#
+# def build_expected_submod_block() -> bytes:
+#     """Build ExpectedSubmoduleBlockReq - REPLACED BY Scapy ExpectedSubmoduleBlockReq"""
+#     pass
+#
+# def build_rpc_header(opnum: int, activity_uuid: bytes, frag_len: int, seq_num: int = 0) -> bytes:
+#     """Build DCE/RPC header - REPLACED BY Scapy DceRpc4"""
+#     pass
+#
+# def build_connect_request(ar_uuid: bytes, session_key: int, mac: bytes) -> bytes:
+#     """Build complete Connect Request - REPLACED BY Scapy PNIOServiceReqPDU"""
+#     pass
 
 
-def build_ar_block(ar_uuid: bytes, session_key: int, mac: bytes) -> bytes:
-    """Build ARBlockReq"""
-    station = b"controller"
-    content = struct.pack(">H", 0x0001)  # AR Type: IOCAR
-    content += ar_uuid  # 16 bytes
-    content += struct.pack(">H", session_key)
-    content += mac  # 6 bytes
-    content += struct.pack(">H", 0x0001)  # Object UUID version
-    content += PNIO_INTERFACE_UUID  # 16 bytes
-    content += uuid4().bytes  # CMInitiatorObjectUUID
-    content += struct.pack(">I", 0x00000011)  # AR Properties
-    content += struct.pack(">H", 100)  # Timeout
-    content += struct.pack(">H", len(station))  # Station name length
-    content += station
+# =============================================================================
+# SCAPY-BASED PACKET BUILDING
+# =============================================================================
 
-    header = build_block_header(BLOCK_AR_REQ, len(content) + 2)
-    return header + content
-
-
-def build_iocr_block(iocr_type: int, ref: int, frame_id: int, data_len: int) -> bytes:
-    """Build IOCRBlockReq"""
-    content = struct.pack(">H", iocr_type)  # 1=Input, 2=Output
-    content += struct.pack(">H", ref)
-    content += struct.pack(">H", PROFINET_ETHERTYPE)  # LT
-    content += struct.pack(">I", 0x00000000)  # Properties (RT Class 1)
-    content += struct.pack(">H", data_len)
-    content += struct.pack(">H", frame_id)
-    content += struct.pack(">H", 32)  # SendClockFactor
-    content += struct.pack(">H", 32)  # ReductionRatio
-    content += struct.pack(">H", 1)   # Phase
-    content += struct.pack(">I", 0xFFFFFFFF)  # FrameSendOffset
-    content += struct.pack(">H", 10)  # WatchdogFactor
-    content += struct.pack(">H", 10)  # DataHoldFactor
-    content += struct.pack(">H", 0)   # Reserved
-    content += b"\x00" * 6  # CMInitiatorMAC
-    content += struct.pack(">H", 0)  # SubframeData/reserved
-    content += struct.pack(">H", 0)  # NumberOfAPIs
-
-    header = build_block_header(BLOCK_IOCR_REQ, len(content) + 2)
-    return header + content
-
-
-def build_alarm_cr_block() -> bytes:
-    """Build AlarmCRBlockReq - BlockLength=18 for RT_CLASS_1"""
-    content = struct.pack(">H", 0x0001)  # AlarmCRType
-    content += struct.pack(">H", PROFINET_ETHERTYPE)  # LT
-    content += struct.pack(">I", 0x00000000)  # Properties
-    content += struct.pack(">H", 100)  # RTATimeoutFactor
-    content += struct.pack(">H", 3)    # RTARetries
-    content += struct.pack(">H", 1)    # LocalAlarmReference
-    content += struct.pack(">H", 128)  # MaxAlarmDataLength (128 not 200!)
-    # No tag headers for RT_CLASS_1
-
-    header = build_block_header(BLOCK_ALARM_CR_REQ, len(content) + 2)
-    return header + content
-
-
-def build_expected_submod_block() -> bytes:
-    """Build ExpectedSubmoduleBlockReq for DAP + CPU Temp"""
-    content = struct.pack(">H", 1)  # NumberOfAPIs
-
-    # API 0
-    content += struct.pack(">I", 0)  # API number
-    content += struct.pack(">H", 2)  # SlotCount (DAP + Temp)
-
-    # Slot 0: DAP
-    content += struct.pack(">H", 0)  # SlotNumber
-    content += struct.pack(">I", MOD_DAP)  # ModuleIdentNumber
-    content += struct.pack(">H", 0)  # ModuleProperties
-    content += struct.pack(">H", 1)  # NumberOfSubmodules
-    content += struct.pack(">H", 1)  # SubslotNumber
-    content += struct.pack(">I", SUBMOD_DAP)
-    content += struct.pack(">H", 0)  # SubmoduleProperties
-    content += struct.pack(">H", 0)  # DataDescriptionCount
-
-    # Slot 1: CPU Temp (5 bytes input)
-    content += struct.pack(">H", 1)  # SlotNumber
-    content += struct.pack(">I", MOD_TEMP)
-    content += struct.pack(">H", 0)  # ModuleProperties
-    content += struct.pack(">H", 1)  # NumberOfSubmodules
-    content += struct.pack(">H", 1)  # SubslotNumber
-    content += struct.pack(">I", SUBMOD_TEMP)
-    content += struct.pack(">H", 0x0001)  # SubmoduleProperties: Input
-    content += struct.pack(">H", 1)  # DataDescriptionCount
-    content += struct.pack(">H", 0x0001)  # DataDescription Type: Input
-    content += struct.pack(">H", 5)  # Length: 5 bytes
-    content += struct.pack(">B", 0)  # IOCSLength
-    content += struct.pack(">B", 1)  # IOPSLength
-
-    header = build_block_header(BLOCK_EXPECTED_SUBMOD, len(content) + 2)
-    return header + content
-
-
-def build_control_block(block_type: int, ar_uuid: bytes, session_key: int,
-                        control_cmd: int) -> bytes:
-    """Build ControlBlockConnect for PrmEnd or ApplicationReady"""
-    content = b""
-    content += struct.pack(">H", 0)  # Reserved
-    content += ar_uuid  # 16 bytes - ARUUID
-    content += struct.pack(">H", session_key)  # SessionKey
-    content += struct.pack(">H", 0)  # Reserved
-    content += struct.pack(">H", control_cmd)  # ControlCommand
-    content += struct.pack(">H", 0)  # ControlBlockProperties
-
-    header = build_block_header(block_type, len(content) + 2)
-    return header + content
-
-
-def build_rpc_header(opnum: int, activity_uuid: bytes, frag_len: int,
-                     seq_num: int = 0) -> bytes:
-    """Build DCE/RPC header"""
-    hdr = struct.pack("<B", 4)  # Version
-    hdr += struct.pack("<B", 0)  # Packet type: Request
-    hdr += struct.pack("<H", 0x0020)  # Flags: First frag
-    hdr += struct.pack("<I", 0x00000010)  # Data representation (LE, ASCII, IEEE)
-    hdr += struct.pack("<H", 0)  # Serial high
-    hdr += PNIO_INTERFACE_UUID  # Interface UUID (LE)
-    hdr += activity_uuid  # Activity UUID
-    hdr += struct.pack("<I", 0)  # Server boot time
-    hdr += struct.pack("<I", 1)  # Interface version
-    hdr += struct.pack("<I", seq_num)  # Sequence number
-    hdr += struct.pack("<H", opnum)  # Opnum
-    hdr += struct.pack("<H", 0)  # Interface hint
-    hdr += struct.pack("<H", 0)  # Activity hint
-    hdr += struct.pack("<H", frag_len)  # Fragment length
-    hdr += struct.pack("<H", 0)  # Fragment number
-    hdr += struct.pack("<B", 0x02)  # Auth length (dummy)
-    hdr += struct.pack("<B", 0)  # Serial low
-    return hdr
-
-
-def build_connect_request(ar_uuid: bytes, session_key: int, mac: bytes) -> bytes:
-    """Build complete Connect Request"""
-    blocks = b""
-    blocks += build_ar_block(ar_uuid, session_key, mac)
-    blocks += build_iocr_block(1, 1, INPUT_FRAME_ID, 6)  # Input IOCR
-    blocks += build_iocr_block(2, 2, OUTPUT_FRAME_ID, 1)  # Output IOCR
-    blocks += build_alarm_cr_block()
-    blocks += build_expected_submod_block()
-
-    # NDR header
-    ndr = struct.pack("<I", len(blocks))  # ArgsMaximum
-    ndr += struct.pack("<I", len(blocks))  # ArgsLength
-    ndr += struct.pack("<I", len(blocks))  # MaxCount
-    ndr += struct.pack("<I", 0)  # Offset
-    ndr += struct.pack("<I", len(blocks))  # ActualCount
-    ndr += blocks
-
-    activity = uuid4().bytes
-    rpc = build_rpc_header(OPNUM_CONNECT, activity, len(ndr))
-
-    return rpc + ndr, activity
-
-
-def build_control_request(ar_uuid: bytes, session_key: int, control_cmd: int,
-                          activity_uuid: bytes, seq_num: int) -> bytes:
-    """Build Control Request (PrmEnd or ApplicationReady)"""
-    if control_cmd == CONTROL_PRM_END:
-        block = build_control_block(BLOCK_PRM_END_REQ, ar_uuid, session_key, control_cmd)
-    else:
-        block = build_control_block(BLOCK_APP_READY_REQ, ar_uuid, session_key, control_cmd)
-
-    # NDR header
-    ndr = struct.pack("<I", len(block))  # ArgsMaximum
-    ndr += struct.pack("<I", len(block))  # ArgsLength
-    ndr += struct.pack("<I", len(block))  # MaxCount
-    ndr += struct.pack("<I", 0)  # Offset
-    ndr += struct.pack("<I", len(block))  # ActualCount
-    ndr += block
-
-    rpc = build_rpc_header(OPNUM_CONTROL, activity_uuid, len(ndr), seq_num)
-
-    return rpc + ndr
-
-
-def build_read_request(ar_uuid: bytes, activity_uuid: bytes, seq_num: int,
-                       api: int, slot: int, subslot: int, index: int,
-                       record_length: int = 64) -> bytes:
-    """Build RPC Read Request for reading record data from a submodule"""
-    # IODReadReqHeader block
-    # BlockHeader: type(2) + length(2) + version(2) = 6 bytes
-    # SeqNumber(2) + ARUUID(16) + API(4) + Slot(2) + Subslot(2) + Padding(2)
-    # Index(2) + RecordLength(4) + TargetARUUID(16, optional) + Padding(2, optional)
-
-    content = struct.pack(">H", seq_num)  # SeqNumber
-    content += ar_uuid  # ARUUID (16 bytes)
-    content += struct.pack(">I", api)  # API
-    content += struct.pack(">H", slot)  # SlotNumber
-    content += struct.pack(">H", subslot)  # SubslotNumber
-    content += struct.pack(">H", 0)  # Padding
-    content += struct.pack(">H", index)  # Index
-    content += struct.pack(">I", record_length)  # RecordDataLength
-
-    # Build block header: type=0x0009, length=content+2 (for version bytes)
-    header = build_block_header(BLOCK_IOD_READ_REQ, len(content) + 2)
-    block = header + content
-
-    # NDR header
-    ndr = struct.pack("<I", len(block))  # ArgsMaximum
-    ndr += struct.pack("<I", len(block))  # ArgsLength
-    ndr += struct.pack("<I", len(block))  # MaxCount
-    ndr += struct.pack("<I", 0)  # Offset
-    ndr += struct.pack("<I", len(block))  # ActualCount
-    ndr += block
-
-    rpc = build_rpc_header(OPNUM_READ, activity_uuid, len(ndr), seq_num)
-
-    return rpc + ndr
-
-
-def parse_read_response(data: bytes) -> Tuple[bool, bytes, int]:
+def build_connect_request_scapy(ar_uuid: bytes, session_key: int, mac_str: str,
+                                 activity_uuid: bytes) -> bytes:
     """
-    Parse RPC Read Response
-    Returns: (success, record_data, error_code)
+    Build Connect Request using Scapy's PROFINET RPC classes.
+
+    This produces packets identical to what the working pn_scapy_controller.py generates.
     """
-    if len(data) < 80:
-        return False, b"", -1
+    if not SCAPY_RPC_AVAILABLE:
+        raise RuntimeError("Scapy RPC modules not available")
 
-    # RPC header is 80 bytes
-    pkt_type = data[1]
-    if pkt_type != 2:  # Not a Response
-        return False, b"", -2
+    # AR Block - Application Relationship
+    ar_block = ARBlockReq(
+        ARType=0x0001,  # IOCAR
+        ARUUID=ar_uuid,
+        SessionKey=session_key,
+        CMInitiatorMacAdd=mac_str.replace(":", ""),
+        CMInitiatorObjectUUID=uuid4().bytes,
+        ARProperties_ParameterizationServer=0,
+        ARProperties_DeviceAccess=0,
+        ARProperties_CompanionAR=0,
+        ARProperties_AcknowledgeCompanionAR=0,
+        ARProperties_Reserved1=0,
+        ARProperties_CMInitiator=1,
+        ARProperties_SupervisorTakeoverAllowed=0,
+        ARProperties_State=1,
+        CMInitiatorActivityTimeoutFactor=1000,
+        CMInitiatorUDPRTPort=0x8892,
+        StationNameLength=10,
+        CMInitiatorStationName=b"controller"
+    )
 
-    # Skip RPC header (80 bytes) and NDR header (20 bytes)
-    offset = 100
+    # Input IOCR - receive data from device
+    iocr_input = IOCRBlockReq(
+        IOCRType=0x0001,
+        IOCRReference=0x0001,
+        LT=0x8892,
+        IOCRProperties=0x00000000,
+        DataLength=6,  # 5 bytes data + 1 IOPS
+        FrameID=INPUT_FRAME_ID,
+        SendClockFactor=32,
+        ReductionRatio=32,
+        Phase=1,
+        Sequence=0,
+        FrameSendOffset=0xFFFFFFFF,
+        WatchdogFactor=10,
+        DataHoldFactor=10,
+        IOCRTagHeader=0xC000,
+        IOCRMulticastMACAdd="01:0e:cf:00:00:00"
+    )
 
-    # Look for IODReadRes block (0x8009)
-    while offset < len(data) - 6:
-        if offset + 4 > len(data):
-            break
-        block_type = struct.unpack(">H", data[offset:offset+2])[0]
-        block_len = struct.unpack(">H", data[offset+2:offset+4])[0]
+    # Output IOCR - send data to device
+    iocr_output = IOCRBlockReq(
+        IOCRType=0x0002,
+        IOCRReference=0x0002,
+        LT=0x8892,
+        IOCRProperties=0x00000000,
+        DataLength=4,
+        FrameID=OUTPUT_FRAME_ID,
+        SendClockFactor=32,
+        ReductionRatio=32,
+        Phase=1,
+        Sequence=0,
+        FrameSendOffset=0xFFFFFFFF,
+        WatchdogFactor=10,
+        DataHoldFactor=10,
+        IOCRTagHeader=0xC000,
+        IOCRMulticastMACAdd="01:0e:cf:00:00:00"
+    )
 
-        if block_type == BLOCK_IOD_READ_RES:
-            # Found read response block
-            # Skip header (6 bytes) + SeqNumber(2) + ARUUID(16) + API(4) + Slot(2) + Subslot(2)
-            # + Padding(2) + Index(2) + RecordDataLength(4)
-            data_offset = offset + 6 + 2 + 16 + 4 + 2 + 2 + 2 + 2 + 4
-            if data_offset < len(data):
-                record_len = struct.unpack(">I", data[offset+6+2+16+4+2+2+2+2:offset+6+2+16+4+2+2+2+2+4])[0]
-                record_data = data[data_offset:data_offset+record_len]
-                return True, record_data, 0
+    # Alarm CR
+    alarm_cr = AlarmCRBlockReq(
+        AlarmCRType=0x0001,
+        LT=0x8892,
+        AlarmCRProperties=0x00000000,
+        RTATimeoutFactor=100,
+        RTARetries=3,
+        LocalAlarmReference=0x0001,
+        MaxAlarmDataLength=128  # 128, not 200!
+    )
 
-        # Move to next block
-        if block_len == 0:
-            offset += 6
-        else:
-            offset += 6 + block_len - 2
+    # Expected Submodules - DAP + CPU Temp
+    exp_submod = ExpectedSubmoduleBlockReq(
+        NumberOfAPIs=1,
+        APIs=[{
+            'API': 0,
+            'SlotNumber': 0,
+            'ModuleIdentNumber': MOD_DAP,
+            'ModuleProperties': 0,
+            'Submodules': [{
+                'SubslotNumber': 1,
+                'SubmoduleIdentNumber': SUBMOD_DAP,
+                'SubmoduleProperties': 0,
+                'DataDescription': []
+            }]
+        }, {
+            'API': 0,
+            'SlotNumber': 1,
+            'ModuleIdentNumber': MOD_TEMP,
+            'ModuleProperties': 0,
+            'Submodules': [{
+                'SubslotNumber': 1,
+                'SubmoduleIdentNumber': SUBMOD_TEMP,
+                'SubmoduleProperties': 0x0002,  # Input
+                'DataDescription': [{
+                    'DataDescription': 1,  # Input
+                    'SubmoduleDataLength': 5,
+                    'LengthIOCS': 1,
+                    'LengthIOPS': 1
+                }]
+            }]
+        }]
+    )
 
-    return False, b"", -3
+    # Assemble PNIO service request
+    pnio = PNIOServiceReqPDU(
+        args_max=16384,
+        blocks=[ar_block, iocr_input, iocr_output, alarm_cr, exp_submod]
+    )
+
+    # Wrap in DCE/RPC
+    rpc = DceRpc4(
+        type="request",
+        flags1=0x20,
+        opnum=OPNUM_CONNECT,
+        if_id=PNIO_UUID,
+        act_id=activity_uuid
+    ) / pnio
+
+    return bytes(rpc)
 
 
-def parse_connect_response(data: bytes) -> Tuple[bool, bytes, str]:
+def build_control_request_scapy(ar_uuid: bytes, session_key: int,
+                                 control_cmd: int, activity_uuid: bytes) -> bytes:
     """
-    Parse Connect Response
-    Returns: (success, ar_uuid_from_response, error_message)
+    Build Control Request (PrmEnd or ApplicationReady) using Scapy.
     """
-    if len(data) < 80:
-        return False, b"", "Response too short"
+    if not SCAPY_RPC_AVAILABLE:
+        raise RuntimeError("Scapy RPC modules not available")
 
-    # RPC header is 80 bytes
-    # Check packet type
-    pkt_type = data[1]
-    if pkt_type != 2:  # Not a Response
-        return False, b"", f"Not a response packet (type={pkt_type})"
+    ctrl = IODControlReq(
+        ARUUID=ar_uuid,
+        SessionKey=session_key,
+        ControlCommand=control_cmd
+    )
 
-    # Look for IODConnectRes block (0x0116) in the response
-    # Scan for block headers
-    ar_uuid = b""
-    offset = 62  # Start of NDR/block data in short response
+    pnio = PNIOServiceReqPDU(args_max=16384, blocks=[ctrl])
 
-    while offset < len(data) - 6:
-        if offset + 4 > len(data):
-            break
-        block_type = struct.unpack(">H", data[offset:offset+2])[0]
-        block_len = struct.unpack(">H", data[offset+2:offset+4])[0]
+    rpc = DceRpc4(
+        type="request",
+        flags1=0x20,
+        opnum=OPNUM_CONTROL,
+        if_id=PNIO_UUID,
+        act_id=activity_uuid
+    ) / pnio
 
-        if block_type == 0x0116:  # IODConnectRes
-            logger.info(f"Found IODConnectRes at offset {offset}")
-            # AR-UUID would be in the response blocks
-            # For now, consider it success if we got this block
-            return True, ar_uuid, ""
+    return bytes(rpc)
 
-        # Move to next block
-        if block_len == 0:
-            offset += 6
-        else:
-            offset += 6 + block_len - 2  # block_len includes version bytes
 
-    # Fallback: check if response indicates success
-    # Short response without error is considered success
-    if len(data) >= 70:
-        return True, ar_uuid, ""
+# =============================================================================
+# LEGACY MANUAL PACKET BUILDING (COMMENTED OUT - USE SCAPY CLASSES ABOVE)
+# =============================================================================
+# def build_read_request(...):
+#     """Build RPC Read Request - REPLACED BY Scapy IODReadReqPDU (not yet implemented)"""
+#     pass
+#
+# def parse_read_response(...):
+#     """Parse RPC Read Response - cyclic I/O now uses Layer 2 frames instead"""
+#     pass
+# =============================================================================
 
-    return False, b"", "No valid response block found"
+# =============================================================================
+# LEGACY RESPONSE PARSER (COMMENTED OUT - REPLACED BY _parse_pnio_response)
+# =============================================================================
+# def parse_connect_response(data: bytes) -> Tuple[bool, bytes, str]:
+#     """Parse Connect Response - REPLACED BY _parse_pnio_response method"""
+#     pass
+# =============================================================================
 
 
 @dataclass
@@ -433,10 +341,57 @@ class PNController:
         self._io_thread: Optional[threading.Thread] = None
         self._local_mac = self._get_local_mac()
 
-    def _get_local_mac(self) -> bytes:
-        """Get local MAC address for controller"""
+    def _get_local_mac(self) -> str:
+        """Get local MAC address for controller (string format: 02:00:00:00:00:01)"""
+        # Try to get real MAC from network interface using Scapy
+        if SCAPY_RPC_AVAILABLE:
+            try:
+                # Try common interfaces
+                for iface in ["eth0", "ens192", "enp0s3", "en0"]:
+                    try:
+                        mac = get_if_hwaddr(iface)
+                        if mac and mac != "00:00:00:00:00:00":
+                            logger.info(f"Using MAC {mac} from interface {iface}")
+                            return mac
+                    except Exception:
+                        continue
+            except Exception as e:
+                logger.debug(f"Could not get interface MAC: {e}")
         # Default controller MAC
-        return bytes([0x02, 0x00, 0x00, 0x00, 0x00, 0x01])
+        return "02:00:00:00:00:01"
+
+    def _parse_pnio_response(self, data: bytes, operation: str) -> Tuple[bool, str]:
+        """
+        Parse PROFINET RPC response, check PNIO status.
+
+        Based on pn_scapy_controller.py reference implementation.
+        PNIO Status is at offset 80 (after 80-byte RPC header).
+
+        Returns: (success, error_message)
+        """
+        if len(data) < 84:
+            return False, f"Response too short ({len(data)} bytes)"
+
+        # Check DCE/RPC packet type (offset 1)
+        pkt_type = data[1]
+        if pkt_type != 2:  # 2 = Response
+            return False, f"Not a response packet (type={pkt_type})"
+
+        # PNIO Status at offset 80 (4 bytes)
+        status = data[80:84]
+        logger.debug(f"[{operation}] PNIO Status: {status.hex()}")
+
+        if status == b"\x00\x00\x00\x00":
+            return True, ""
+        else:
+            # Parse error details
+            code, decode, code1, code2 = status
+            blocks = {
+                1: "ARBlock", 2: "IOCRBlock", 3: "AlarmCRBlock",
+                4: "ExpectedSubmod", 5: "IODControlBlock"
+            }
+            error_msg = f"Error in {blocks.get(code1, f'Block {code1}')}: decode=0x{decode:02x} err=0x{code2:02x}"
+            return False, error_msg
 
     def start(self):
         """Start controller background task"""
@@ -641,15 +596,25 @@ class PNController:
             return True
 
     async def _rpc_connect(self, rtu: RTUState) -> Tuple[bool, bytes, bytes]:
-        """Send RPC Connect Request, return (success, ar_uuid, activity_uuid)"""
-        ar_uuid = uuid4().bytes
-        rtu.ar_context.ar_uuid = ar_uuid
+        """Send RPC Connect Request using Scapy, return (success, ar_uuid, activity_uuid)"""
+        if not SCAPY_RPC_AVAILABLE:
+            logger.error(f"[{rtu.station_name}] Scapy RPC modules not available")
+            return False, b"", b""
 
-        pkt, activity_uuid = build_connect_request(ar_uuid, rtu.ar_context.session_key,
-                                                    self._local_mac)
+        ar_uuid = uuid4().bytes
+        activity_uuid = uuid4().bytes
+        rtu.ar_context.ar_uuid = ar_uuid
         rtu.ar_context.activity_uuid = activity_uuid
 
-        logger.info(f"[{rtu.station_name}] Connect Request: {len(pkt)} bytes to {rtu.ip_address}:{RPC_PORT}")
+        # Build Connect Request using Scapy classes
+        pkt = build_connect_request_scapy(
+            ar_uuid=ar_uuid,
+            session_key=rtu.ar_context.session_key,
+            mac_str=self._local_mac,  # Format: "02:00:00:00:00:01"
+            activity_uuid=activity_uuid
+        )
+
+        logger.info(f"[{rtu.station_name}] Connect Request (Scapy): {len(pkt)} bytes to {rtu.ip_address}:{RPC_PORT}")
 
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.settimeout(5.0)
@@ -667,11 +632,10 @@ class PNController:
             logger.info(f"[{rtu.station_name}] Connect Response: {len(data)} bytes")
             logger.debug(f"[{rtu.station_name}] Response hex: {data[:80].hex()}")
 
-            # Parse response
-            success, resp_ar_uuid, error = parse_connect_response(data)
+            # Parse response - check PNIO status at offset 80
+            success, error = self._parse_pnio_response(data, "Connect")
             if success:
                 logger.info(f"[{rtu.station_name}] Connect SUCCESS")
-                # Use our AR-UUID since response may not include it
                 return True, ar_uuid, activity_uuid
             else:
                 logger.error(f"[{rtu.station_name}] Connect failed: {error}")
@@ -684,18 +648,22 @@ class PNController:
             sock.close()
 
     async def _rpc_prm_end(self, rtu: RTUState) -> bool:
-        """Send PrmEnd (ParameterEnd) Control Request"""
+        """Send PrmEnd (ParameterEnd) Control Request using Scapy"""
+        if not SCAPY_RPC_AVAILABLE:
+            logger.error(f"[{rtu.station_name}] Scapy RPC modules not available")
+            return False
+
         rtu.ar_context.seq_num += 1
 
-        pkt = build_control_request(
-            rtu.ar_context.ar_uuid,
-            rtu.ar_context.session_key,
-            CONTROL_PRM_END,
-            rtu.ar_context.activity_uuid,
-            rtu.ar_context.seq_num
+        # Build Control Request using Scapy classes
+        pkt = build_control_request_scapy(
+            ar_uuid=rtu.ar_context.ar_uuid,
+            session_key=rtu.ar_context.session_key,
+            control_cmd=CONTROL_PRM_END,
+            activity_uuid=uuid4().bytes  # New activity UUID for this request
         )
 
-        logger.info(f"[{rtu.station_name}] PrmEnd Request: {len(pkt)} bytes")
+        logger.info(f"[{rtu.station_name}] PrmEnd Request (Scapy): {len(pkt)} bytes")
 
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.settimeout(5.0)
@@ -712,13 +680,14 @@ class PNController:
 
             logger.info(f"[{rtu.station_name}] PrmEnd Response: {len(data)} bytes")
 
-            # Check for response packet type
-            if len(data) >= 2 and data[1] == 2:  # Response type
+            # Parse response - check PNIO status
+            success, error = self._parse_pnio_response(data, "PrmEnd")
+            if success:
                 logger.info(f"[{rtu.station_name}] PrmEnd SUCCESS")
                 return True
 
-            logger.error(f"[{rtu.station_name}] PrmEnd invalid response type: {data[1] if len(data) >= 2 else 'empty'}")
-            return False  # Invalid response type is a failure
+            logger.error(f"[{rtu.station_name}] PrmEnd failed: {error}")
+            return False
 
         except socket.timeout:
             logger.error(f"[{rtu.station_name}] PrmEnd timeout - connection failed")
@@ -727,18 +696,22 @@ class PNController:
             sock.close()
 
     async def _rpc_app_ready(self, rtu: RTUState) -> bool:
-        """Send ApplicationReady Control Request"""
+        """Send ApplicationReady Control Request using Scapy"""
+        if not SCAPY_RPC_AVAILABLE:
+            logger.error(f"[{rtu.station_name}] Scapy RPC modules not available")
+            return False
+
         rtu.ar_context.seq_num += 1
 
-        pkt = build_control_request(
-            rtu.ar_context.ar_uuid,
-            rtu.ar_context.session_key,
-            CONTROL_APP_READY,
-            rtu.ar_context.activity_uuid,
-            rtu.ar_context.seq_num
+        # Build Control Request using Scapy classes
+        pkt = build_control_request_scapy(
+            ar_uuid=rtu.ar_context.ar_uuid,
+            session_key=rtu.ar_context.session_key,
+            control_cmd=CONTROL_APP_READY,
+            activity_uuid=uuid4().bytes  # New activity UUID for this request
         )
 
-        logger.info(f"[{rtu.station_name}] ApplicationReady Request: {len(pkt)} bytes")
+        logger.info(f"[{rtu.station_name}] ApplicationReady Request (Scapy): {len(pkt)} bytes")
 
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.settimeout(5.0)
@@ -755,13 +728,14 @@ class PNController:
 
             logger.info(f"[{rtu.station_name}] ApplicationReady Response: {len(data)} bytes")
 
-            # Check for response packet type
-            if len(data) >= 2 and data[1] == 2:  # Response type
+            # Parse response - check PNIO status
+            success, error = self._parse_pnio_response(data, "ApplicationReady")
+            if success:
                 logger.info(f"[{rtu.station_name}] ApplicationReady SUCCESS")
                 return True
 
-            logger.error(f"[{rtu.station_name}] ApplicationReady invalid response type: {data[1] if len(data) >= 2 else 'empty'}")
-            return False  # Invalid response type is a failure
+            logger.error(f"[{rtu.station_name}] ApplicationReady failed: {error}")
+            return False
 
         except socket.timeout:
             logger.error(f"[{rtu.station_name}] ApplicationReady timeout - connection failed")
@@ -770,124 +744,62 @@ class PNController:
             sock.close()
 
     def _cyclic_io_loop(self):
-        """Background thread for cyclic I/O data exchange"""
-        logger.info("Cyclic I/O thread started")
+        """
+        Background thread for monitoring cyclic I/O status.
+
+        IMPORTANT: Actual cyclic data exchange happens via Layer 2 PROFINET RT frames
+        handled by pn_cyclic_io.py (Scapy-based). This thread monitors connection health
+        and marks data as BAD if no updates are received within the watchdog period.
+        """
+        logger.info("Cyclic I/O watchdog thread started")
+        watchdog_timeout = 5.0  # Mark data BAD if no update in 5 seconds
 
         while self._running:
             try:
+                current_time = time.time()
+
                 with self._lock:
                     running_rtus = [r for r in self.rtus.values() if r.state == "RUNNING"]
 
                 for rtu in running_rtus:
-                    try:
-                        self._read_cyclic_data(rtu)
-                    except Exception as e:
-                        logger.debug(f"Cyclic read error for {rtu.station_name}: {e}")
+                    # Check if we've received data recently (from Layer 2 cyclic I/O)
+                    data_age = current_time - rtu.last_update if rtu.last_update > 0 else float('inf')
 
-                time.sleep(0.1)  # 100ms cycle time
+                    if data_age > watchdog_timeout and rtu.sensors:
+                        # No data received within watchdog period - mark all as BAD
+                        with self._lock:
+                            for slot, reading in rtu.sensors.items():
+                                if reading.quality != QUALITY_BAD:
+                                    reading.quality = QUALITY_BAD
+                                    logger.warning(f"[{rtu.station_name}] Slot {slot} quality set to BAD - "
+                                                  f"no cyclic data for {data_age:.1f}s")
+
+                time.sleep(1.0)  # Check every second
 
             except Exception as e:
-                logger.error(f"Cyclic I/O loop error: {e}")
+                logger.error(f"Cyclic I/O watchdog error: {e}")
                 time.sleep(1.0)
 
-        logger.info("Cyclic I/O thread stopped")
+        logger.info("Cyclic I/O watchdog thread stopped")
 
-    def _read_cyclic_data(self, rtu: RTUState):
-        """
-        Read cyclic I/O data from RTU
-        For RT_CLASS_1, this uses Layer 2 PROFINET frames
-        Fallback: Use implicit read via RPC if raw sockets unavailable
-        """
-        # Try to read via RPC Read Implicit (works without raw sockets)
-        try:
-            self._read_via_rpc(rtu)
-        except Exception as e:
-            logger.warning(f"[{rtu.station_name}] Cyclic read failed: {e}")
-            # Mark existing sensor data as BAD quality - never simulate data
-            with self._lock:
-                for slot, reading in rtu.sensors.items():
-                    reading.quality = QUALITY_BAD
-                    logger.info(f"[{rtu.station_name}] Slot {slot} quality set to BAD - network read failed")
+    # =============================================================================
+    # LEGACY RPC READ (COMMENTED OUT - REPLACED BY LAYER 2 CYCLIC I/O)
+    # =============================================================================
+    # The actual sensor data now flows via PROFINET RT Layer 2 frames, handled by
+    # pn_cyclic_io.py. The callback _process_cyclic_input() receives data from
+    # the Scapy-based frame sniffer.
+    #
+    # def _read_via_rpc(self, rtu: RTUState):
+    #     """Read data via RPC Read - REPLACED BY Layer 2 cyclic I/O"""
+    #     pass
+    # =============================================================================
 
-    def _read_via_rpc(self, rtu: RTUState):
-        """Read data via RPC Read request for CPU temperature slot"""
-        ar_uuid = rtu.ar_context.ar_uuid
-        if not ar_uuid:
-            raise RuntimeError("No AR context - connection not established")
-
-        activity_uuid = rtu.ar_context.activity_uuid
-        if not activity_uuid:
-            raise RuntimeError("No activity UUID - connection not established")
-
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.settimeout(2.0)
-
-        try:
-            # Increment sequence number (thread-safe)
-            with self._lock:
-                rtu.ar_context.seq_num += 1
-                seq_num = rtu.ar_context.seq_num
-
-            # Build Read request for slot 1 (CPU temp), subslot 1, index 0x8001 (input data)
-            pkt = build_read_request(
-                ar_uuid=ar_uuid,
-                activity_uuid=activity_uuid,
-                seq_num=seq_num,
-                api=0,  # API 0
-                slot=1,  # Slot 1: CPU Temperature
-                subslot=1,  # Subslot 1
-                index=INDEX_INPUT_DATA,  # Input data index
-                record_length=64
-            )
-
-            # Send request
-            sock.sendto(pkt, (rtu.ip_address, RPC_PORT))
-
-            # Receive response
-            data, addr = sock.recvfrom(4096)
-
-            # Parse response
-            success, record_data, error_code = parse_read_response(data)
-
-            if success and len(record_data) >= 4:
-                # Parse CPU temperature (4-byte float, big-endian)
-                temp_value = struct.unpack(">f", record_data[:4])[0]
-
-                # Get IOPS (IO Provider Status) if present
-                iops = record_data[4] if len(record_data) > 4 else 0x80  # Good
-
-                # Determine quality from IOPS
-                if iops & 0x80:  # Good bit set
-                    quality = QUALITY_GOOD
-                elif iops & 0x40:  # Uncertain
-                    quality = QUALITY_UNCERTAIN
-                else:
-                    quality = QUALITY_BAD
-
-                # Update sensor data (thread-safe)
-                with self._lock:
-                    rtu.sensors[1] = SensorReading(
-                        slot=1,
-                        value=temp_value,
-                        quality=quality,
-                        timestamp=time.time()
-                    )
-                    rtu.last_update = time.time()
-
-                logger.debug(f"[{rtu.station_name}] Read temp={temp_value:.2f}°C quality={quality:#x}")
-            else:
-                logger.warning(f"[{rtu.station_name}] Read failed: error_code={error_code}")
-                raise RuntimeError(f"Read response error: {error_code}")
-
-        except socket.timeout:
-            raise RuntimeError("Read timeout - RTU not responding")
-        finally:
-            sock.close()
-
-    def _build_connect_request(self, ar_uuid: bytes, mac: bytes) -> bytes:
-        """Build Connect Request packet"""
-        pkt, _ = build_connect_request(ar_uuid, 1, mac)
-        return pkt
+    # Placeholder for deleted code that referenced undefined functions:
+    # - build_read_request (removed - was manual struct.pack)
+    # - parse_read_response (removed - was manual parsing)
+    # - INDEX_INPUT_DATA (removed - not used with Layer 2)
+    # The actual data path is now:
+    #   Layer 2 RT Frame -> pn_cyclic_io.py -> _process_cyclic_input() callback
 
 
 # Singleton instance with thread-safe double-check locking
