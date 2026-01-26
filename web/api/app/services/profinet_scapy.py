@@ -679,8 +679,10 @@ class ProfinetController:
         if not self.ar:
             return False
 
-        # Build AR block
-        ar_block = ARBlockReq(
+        try:
+            logger.debug("Building AR block...")
+            # Build AR block
+            ar_block = ARBlockReq(
             ARType=ARType.IOCAR,
             ARUUID=self.ar.ar_uuid,
             SessionKey=self.ar.session_key,
@@ -698,111 +700,136 @@ class ProfinetController:
             CMInitiatorUDPRTPort=PROFINET_ETHERTYPE,
             StationNameLength=len(self.station_name),
             CMInitiatorStationName=self.station_name.encode()
-        )
+            )
+            logger.debug("AR block built successfully")
 
-        # Build IOCR blocks
-        # Calculate input data length from profile
-        input_len = sum(s.data_length for s in profile if s.direction == "input") + 1  # +1 for IOPS
-        output_len = sum(s.data_length for s in profile if s.direction == "output") + 1
-        if output_len == 1:
-            output_len = 4  # Minimum
+            # Build IOCR blocks
+            # Calculate input data length from profile
+            input_len = sum(s.data_length for s in profile if s.direction == "input") + 1  # +1 for IOPS
+            output_len = sum(s.data_length for s in profile if s.direction == "output") + 1
+            if output_len == 1:
+                output_len = 4  # Minimum
 
-        iocr_input = IOCRBlockReq(
-            IOCRType=IOCRType.INPUT,
-            IOCRReference=0x0001,
-            LT=PROFINET_ETHERTYPE,
-            IOCRProperties=0x00000000,  # RT Class 1
-            DataLength=input_len,
-            FrameID=FRAME_ID_INPUT,
-            SendClockFactor=32,
-            ReductionRatio=32,
-            Phase=1,
-            Sequence=0,
-            FrameSendOffset=0xFFFFFFFF,
-            WatchdogFactor=10,
-            DataHoldFactor=10,
-            IOCRTagHeader=0xC000,
-            IOCRMulticastMACAdd="01:0e:cf:00:00:00"
-        )
+            logger.debug(f"Building IOCR blocks (input_len={input_len}, output_len={output_len})...")
+            iocr_input = IOCRBlockReq(
+                IOCRType=IOCRType.INPUT,
+                IOCRReference=0x0001,
+                LT=PROFINET_ETHERTYPE,
+                IOCRProperties=0x00000000,  # RT Class 1
+                DataLength=input_len,
+                FrameID=FRAME_ID_INPUT,
+                SendClockFactor=32,
+                ReductionRatio=32,
+                Phase=1,
+                Sequence=0,
+                FrameSendOffset=0xFFFFFFFF,
+                WatchdogFactor=10,
+                DataHoldFactor=10,
+                IOCRTagHeader=0xC000,
+                IOCRMulticastMACAdd="01:0e:cf:00:00:00"
+            )
+            logger.debug("Input IOCR block built")
 
-        iocr_output = IOCRBlockReq(
-            IOCRType=IOCRType.OUTPUT,
-            IOCRReference=0x0002,
-            LT=PROFINET_ETHERTYPE,
-            IOCRProperties=0x00000000,
-            DataLength=output_len,
-            FrameID=FRAME_ID_OUTPUT,
-            SendClockFactor=32,
-            ReductionRatio=32,
-            Phase=1,
-            Sequence=0,
-            FrameSendOffset=0xFFFFFFFF,
-            WatchdogFactor=10,
-            DataHoldFactor=10,
-            IOCRTagHeader=0xC000,
-            IOCRMulticastMACAdd="01:0e:cf:00:00:00"
-        )
+            iocr_output = IOCRBlockReq(
+                IOCRType=IOCRType.OUTPUT,
+                IOCRReference=0x0002,
+                LT=PROFINET_ETHERTYPE,
+                IOCRProperties=0x00000000,
+                DataLength=output_len,
+                FrameID=FRAME_ID_OUTPUT,
+                SendClockFactor=32,
+                ReductionRatio=32,
+                Phase=1,
+                Sequence=0,
+                FrameSendOffset=0xFFFFFFFF,
+                WatchdogFactor=10,
+                DataHoldFactor=10,
+                IOCRTagHeader=0xC000,
+                IOCRMulticastMACAdd="01:0e:cf:00:00:00"
+            )
+            logger.debug("Output IOCR block built")
 
-        # Build Alarm CR block
-        alarm_cr = AlarmCRBlockReq(
-            AlarmCRType=0x0001,
-            LT=PROFINET_ETHERTYPE,
-            AlarmCRProperties=0x00000000,
-            RTATimeoutFactor=100,
-            RTARetries=3,
-            LocalAlarmReference=0x0001,
-            MaxAlarmDataLength=128
-        )
+            # Build Alarm CR block
+            logger.debug("Building Alarm CR block...")
+            alarm_cr = AlarmCRBlockReq(
+                AlarmCRType=0x0001,
+                LT=PROFINET_ETHERTYPE,
+                AlarmCRProperties=0x00000000,
+                RTATimeoutFactor=100,
+                RTARetries=3,
+                LocalAlarmReference=0x0001,
+                MaxAlarmDataLength=128
+            )
+            logger.debug("Alarm CR block built")
 
-        # Build Expected Submodule block
-        # Convert profile to Scapy format
-        apis = []
-        for slot in profile:
-            submod = {
-                'SubslotNumber': slot.subslot_number,
-                'SubmoduleIdentNumber': slot.submodule_ident,
-                'SubmoduleProperties': 0x0001 if slot.direction == "input" else (0x0002 if slot.direction == "output" else 0x0000),
-                'DataDescription': []
-            }
-            if slot.data_length > 0:
-                dd_type = 1 if slot.direction == "input" else 2
-                submod['DataDescription'].append({
-                    'DataDescription': dd_type,
-                    'SubmoduleDataLength': slot.data_length,
-                    'LengthIOCS': 1,
-                    'LengthIOPS': 1
-                })
+            # Build Expected Submodule block
+            # Use exact format that works in pn_scapy_controller.py
+            logger.debug("Building Expected Submodule block...")
 
-            apis.append({
-                'API': 0,
-                'SlotNumber': slot.slot_number,
-                'ModuleIdentNumber': slot.module_ident,
-                'ModuleProperties': 0,
-                'Submodules': [submod]
-            })
+            # Build APIs list in the exact format Scapy expects
+            apis_list = []
+            for slot in profile:
+                # Build submodule entry
+                submod_entry = {
+                    'SubslotNumber': slot.subslot_number,
+                    'SubmoduleIdentNumber': slot.submodule_ident,
+                    # Note: 0x0002 for input per working code, 0 for no_io
+                    'SubmoduleProperties': 0x0002 if slot.direction == "input" else (0x0001 if slot.direction == "output" else 0),
+                    'DataDescription': []
+                }
 
-        exp_submod = ExpectedSubmoduleBlockReq(
-            NumberOfAPIs=1,
-            APIs=apis
-        )
+                # Add data description if slot has data
+                if slot.data_length > 0:
+                    submod_entry['DataDescription'].append({
+                        'DataDescription': 1 if slot.direction == "input" else 2,
+                        'SubmoduleDataLength': slot.data_length,
+                        'LengthIOCS': 1,
+                        'LengthIOPS': 1
+                    })
 
-        # Assemble PNIO service request
-        pnio = PNIOServiceReqPDU(
-            args_max=16384,
-            blocks=[ar_block, iocr_input, iocr_output, alarm_cr, exp_submod]
-        )
+                # Build module entry
+                module_entry = {
+                    'API': 0,
+                    'SlotNumber': slot.slot_number,
+                    'ModuleIdentNumber': slot.module_ident,
+                    'ModuleProperties': 0,
+                    'Submodules': [submod_entry]
+                }
+                apis_list.append(module_entry)
 
-        # Wrap in DCE/RPC
-        rpc = DceRpc4(
-            type="request",
-            flags1=0x20,  # Idempotent
-            opnum=RpcOpnum.CONNECT,
-            if_id=PNIO_UUID,
-            act_id=self.ar.activity_uuid
-        ) / pnio
+            logger.debug(f"APIs structure: {apis_list}")
 
-        # Send and receive
-        return self._rpc_send_recv(rpc, CONNECT_TIMEOUT_MS)
+            exp_submod = ExpectedSubmoduleBlockReq(
+                NumberOfAPIs=1,
+                APIs=apis_list
+            )
+            logger.debug("Expected Submodule block built")
+
+            # Assemble PNIO service request
+            logger.debug("Assembling PNIO service request...")
+            pnio = PNIOServiceReqPDU(
+                args_max=16384,
+                blocks=[ar_block, iocr_input, iocr_output, alarm_cr, exp_submod]
+            )
+            logger.debug("PNIO service request built")
+
+            # Wrap in DCE/RPC
+            logger.debug("Wrapping in DCE/RPC...")
+            rpc = DceRpc4(
+                type="request",
+                flags1=0x20,  # Idempotent
+                opnum=RpcOpnum.CONNECT,
+                if_id=PNIO_UUID,
+                act_id=self.ar.activity_uuid
+            ) / pnio
+            logger.debug("RPC packet assembled")
+
+            # Send and receive
+            return self._rpc_send_recv(rpc, CONNECT_TIMEOUT_MS)
+
+        except Exception as e:
+            logger.error(f"Failed to build Connect request: {e}", exc_info=True)
+            raise
 
     def _rpc_control(self, command: ControlCommand) -> bool:
         """Send RPC Control request (PrmEnd, ApplicationReady, Release)."""
@@ -1123,9 +1150,15 @@ class ProfinetController:
         sock.settimeout(timeout_ms / 1000.0)
 
         try:
-            pkt_bytes = bytes(rpc_pkt)
-            logger.debug(f"Sending {len(pkt_bytes)} bytes to {self.ar.device_ip}:{RPC_PORT}")
+            logger.info(f"Serializing RPC packet...")
+            try:
+                pkt_bytes = bytes(rpc_pkt)
+            except Exception as e:
+                logger.error(f"Failed to serialize RPC packet: {e}", exc_info=True)
+                raise
+            logger.info(f"Sending {len(pkt_bytes)} bytes to {self.ar.device_ip}:{RPC_PORT}")
             sock.sendto(pkt_bytes, (self.ar.device_ip, RPC_PORT))
+            logger.info("Packet sent, waiting for response...")
 
             resp, addr = sock.recvfrom(4096)
             logger.debug(f"Received {len(resp)} bytes from {addr}")
