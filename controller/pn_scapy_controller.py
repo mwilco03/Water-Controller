@@ -287,167 +287,47 @@ class ProfinetController:
         finally:
             sock.close()
 
-    def wait_for_app_ready(self, timeout: float = 30.0) -> bool:
-        """
-        Wait for ApplicationReady request from device and send response.
-
-        After PrmEnd, the DEVICE sends ApplicationReady to the controller.
-        The controller must receive it and respond with ApplicationReady Response.
-        This is the correct PROFINET handshake sequence.
-        """
+    def application_ready(self) -> bool:
+        """Send ApplicationReady to device"""
         if not self.connected:
             print("[RPC] Not connected")
             return False
 
-        print("[RPC] Waiting for ApplicationReady from device...")
+        print("[RPC] Sending ApplicationReady...")
 
-        # Open UDP socket to receive incoming RPC request from device
+        ctrl = IODControlReq(
+            ARUUID=self.ar_uuid,
+            SessionKey=self.session_key,
+            ControlCommand=0x0002  # ApplicationReady
+        )
+
+        pnio = PNIOServiceReqPDU(args_max=16384, blocks=[ctrl])
+
+        rpc = DceRpc4(
+            type="request",
+            flags1=0x20,
+            opnum=4,  # Control
+            if_id=PNIO_UUID,
+            act_id=uuid4().bytes
+        ) / pnio
+
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        sock.settimeout(timeout)
+        sock.settimeout(5.0)
 
         try:
-            # Bind to RPC port to receive incoming requests
-            sock.bind(("0.0.0.0", RPC_PORT))
-
-            start_time = time.time()
-            while time.time() - start_time < timeout:
-                try:
-                    data, addr = sock.recvfrom(4096)
-                    print(f"[RPC] Received {len(data)} bytes from {addr}")
-
-                    # Check if this is an RPC request with Control opnum
-                    if len(data) < 24:
-                        continue
-
-                    # Check RPC type (byte 2) - 0x00 = request
-                    rpc_type = data[2]
-                    if rpc_type != 0x00:
-                        continue
-
-                    # Check opnum (bytes 22-23, little-endian) - 4 = Control
-                    opnum = struct.unpack("<H", data[22:24])[0]
-                    if opnum != 4:
-                        continue
-
-                    # This looks like a Control request - check for ApplicationReady
-                    # IODControlReq block starts after RPC header + PNIO header
-                    # Look for ControlCommand = 0x0002 (ApplicationReady)
-                    print("[RPC] Received Control request - parsing for ApplicationReady...")
-
-                    # Send ApplicationReady Response
-                    if self._send_app_ready_response(sock, addr, data):
-                        print("[RPC] ApplicationReady handshake SUCCESS!")
-                        return True
-
-                except socket.timeout:
-                    continue
-
-            print("[RPC] Timeout waiting for ApplicationReady from device")
+            sock.sendto(bytes(rpc), (self.device_ip, RPC_PORT))
+            resp, _ = sock.recvfrom(4096)
+            status = resp[80:84] if len(resp) >= 84 else b"\xff\xff\xff\xff"
+            if status == b"\x00\x00\x00\x00":
+                print("[RPC] ApplicationReady SUCCESS!")
+                return True
+            print(f"[RPC] ApplicationReady failed: {status.hex()}")
             return False
-
-        except OSError as e:
-            print(f"[RPC] Socket error: {e}")
+        except socket.timeout:
+            print("[RPC] ApplicationReady timeout")
             return False
         finally:
             sock.close()
-
-    def _send_app_ready_response(self, sock: socket.socket, addr: tuple, request_data: bytes) -> bool:
-        """
-        Send ApplicationReady response to device.
-
-        Build an RPC response with IODControlRes block (0x8110).
-        """
-        print(f"[RPC] Sending ApplicationReady response to {addr}...")
-
-        # Extract activity UUID from request (bytes 40-56)
-        if len(request_data) < 56:
-            print("[RPC] Request too short to extract activity UUID")
-            return False
-
-        activity_uuid = request_data[40:56]
-
-        # Build RPC Response header
-        # DCE/RPC Response with PNIO status = OK
-        rpc_response = bytearray()
-
-        # RPC header (80 bytes)
-        rpc_response.extend([
-            0x04,  # Version
-            0x00,  # Version minor
-            0x02,  # Type = response
-            0x20,  # Flags1
-            0x00, 0x00, 0x00, 0x00,  # Data representation (little-endian)
-            0x00, 0x00,  # Serial high
-            # Object UUID (16 bytes) - copy from request
-        ])
-        rpc_response.extend(request_data[8:24])  # Object UUID
-        # Interface UUID (16 bytes)
-        rpc_response.extend(bytes.fromhex("dea000016c9711d1827100a02442df7d"))
-        # Activity UUID (16 bytes) - from request
-        rpc_response.extend(activity_uuid)
-        # Server boot time, interface version, sequence, opnum, interface hint, activity hint
-        rpc_response.extend([
-            0x00, 0x00, 0x00, 0x00,  # Server boot time
-            0x00, 0x00, 0x00, 0x01,  # Interface version
-            0x00, 0x00, 0x00, 0x00,  # Sequence
-            0x04, 0x00,  # Opnum = 4 (Control)
-            0xFF, 0xFF,  # Interface hint
-            0xFF, 0xFF,  # Activity hint
-            0x00, 0x00,  # Fragment length (fill later)
-            0x00, 0x00,  # Fragment number
-            0x03,  # Flags (no frag, last frag)
-            0x00,  # Serial low
-        ])
-
-        # PNIO response body
-        # Status = OK (0x00000000)
-        # args_max, args_length, max_count, offset, actual_count
-        pnio_body = bytearray()
-        pnio_body.extend([
-            0x00, 0x00, 0x00, 0x00,  # PNIO Status = OK
-            0x00, 0x00, 0x40, 0x00,  # args_max = 16384
-            0x00, 0x00, 0x00, 0x28,  # args_length = 40
-            0x00, 0x00, 0x40, 0x00,  # max_count
-            0x00, 0x00, 0x00, 0x00,  # offset
-            0x00, 0x00, 0x00, 0x28,  # actual_count = 40
-        ])
-
-        # IODControlRes block (0x8110) for ApplicationReady
-        # Block type = 0x8110, length = 28
-        iod_control_res = bytearray([
-            0x81, 0x10,  # Block type (IODControlRes)
-            0x00, 0x1C,  # Block length = 28
-            0x01, 0x00,  # Version 1.0
-        ])
-        # AR UUID
-        iod_control_res.extend(self.ar_uuid)
-        # Session key
-        iod_control_res.extend(struct.pack(">H", self.session_key))
-        # Alarm sequence (2 bytes)
-        iod_control_res.extend([0x00, 0x00])
-        # Control command (2 bytes) - 0x0002 = ApplicationReady
-        iod_control_res.extend([0x00, 0x02])
-        # Control block properties (2 bytes)
-        iod_control_res.extend([0x00, 0x00])
-
-        pnio_body.extend(iod_control_res)
-
-        # Update fragment length in RPC header
-        frag_len = len(pnio_body)
-        rpc_response[74] = frag_len & 0xFF
-        rpc_response[75] = (frag_len >> 8) & 0xFF
-
-        # Combine RPC header and PNIO body
-        full_response = bytes(rpc_response) + bytes(pnio_body)
-
-        try:
-            sock.sendto(full_response, addr)
-            print(f"[RPC] Sent {len(full_response)} byte ApplicationReady response")
-            return True
-        except OSError as e:
-            print(f"[RPC] Failed to send response: {e}")
-            return False
 
 
 def main():
@@ -465,10 +345,9 @@ def main():
 
     # Connect
     if ctrl.connect(device_ip):
-        # Complete handshake: PrmEnd then wait for ApplicationReady from device
+        # Complete handshake: PrmEnd then ApplicationReady
         if ctrl.parameter_end():
-            # Device sends ApplicationReady to us, we respond
-            ctrl.wait_for_app_ready(timeout=30.0)
+            ctrl.application_ready()
 
     return 0
 
