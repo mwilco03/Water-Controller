@@ -10,6 +10,7 @@ Route handlers remain thin and declarative.
 """
 
 import logging
+from datetime import UTC, datetime
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -707,17 +708,20 @@ async def get_rtu_health(
     or database state if controller is not running. Includes packet loss,
     sensor data quality, and connection metrics from the Python PROFINET controller.
     """
-    from datetime import datetime, UTC
-
     rtu = get_rtu_or_404(db, name)
     profinet = get_profinet_client()
 
     # Get live state from controller if available
     controller_state = profinet.get_rtu_state(name)
-    connection_state = controller_state or rtu.state
 
-    # Determine health based on state
-    is_healthy = connection_state == "RUNNING" or connection_state == RtuState.RUNNING
+    # Normalize state to string for consistent comparison
+    if controller_state:
+        connection_state = controller_state
+    else:
+        connection_state = rtu.state.value if isinstance(rtu.state, RtuState) else str(rtu.state)
+
+    # Determine health based on state (compare as strings)
+    is_healthy = str(connection_state).upper() == "RUNNING"
 
     # Get PROFINET status for metrics (if available)
     packet_loss = 0.0
@@ -726,6 +730,7 @@ async def get_rtu_health(
     data_quality = "unknown"
     cycle_time_ms = None
     uptime_seconds = None
+    using_simulated_data = False
 
     if is_healthy:
         # Get sensor data from Python controller
@@ -734,12 +739,23 @@ async def get_rtu_health(
             sensor_count = len(sensors)
             # Check data quality from sensors
             qualities = [s.get("quality", "good") for s in sensors]
-            if all(q == "good" for q in qualities):
-                data_quality = "good"
-            elif any(q == "bad" for q in qualities):
+            is_simulated = [s.get("is_simulated", False) for s in sensors]
+
+            if any(q == "bad" for q in qualities):
                 data_quality = "bad"
-            else:
+            elif any(q == "simulated" for q in qualities) or any(is_simulated):
+                data_quality = "simulated"
+                using_simulated_data = True
+            elif any(q == "uncertain" for q in qualities):
                 data_quality = "uncertain"
+            elif all(q == "good" for q in qualities):
+                data_quality = "good"
+
+        # Get real packet counters
+        packet_counters = profinet.get_packet_counters(name)
+        if packet_counters:
+            packet_loss = packet_counters["loss_percent"]
+            consecutive_failures = packet_counters["timeouts"]
 
         # Get controller status for connection metrics
         status = profinet.get_status()
@@ -748,11 +764,21 @@ async def get_rtu_health(
             for rtu_info in status.get("rtus", []):
                 if rtu_info.get("station_name") == name:
                     if rtu_info.get("connected"):
-                        # Calculate uptime from state_since
+                        # Calculate uptime from state_since with timezone handling
                         if rtu.state_since:
-                            uptime_seconds = int((datetime.now(UTC) - rtu.state_since).total_seconds())
+                            state_since = rtu.state_since
+                            if state_since.tzinfo is None:
+                                state_since = state_since.replace(tzinfo=UTC)
+                            uptime_seconds = int((datetime.now(UTC) - state_since).total_seconds())
                         cycle_time_ms = 100.0  # Python controller uses 100ms cycle
+                        using_simulated_data = rtu_info.get("using_simulated_data", False)
                     break
+
+        # Also check using_simulated_data directly from profinet client
+        if profinet.is_using_simulated_data(name):
+            using_simulated_data = True
+            if data_quality == "good":
+                data_quality = "simulated"
 
     return build_success_response({
         "station_name": rtu.station_name,
@@ -765,6 +791,7 @@ async def get_rtu_health(
         "data_quality": data_quality,
         "cycle_time_ms": cycle_time_ms,
         "uptime_seconds": uptime_seconds,
+        "using_simulated_data": using_simulated_data,
         "last_error": rtu.last_error,
         "state_since": rtu.state_since.isoformat() if rtu.state_since else None,
         "transition_reason": rtu.transition_reason,
