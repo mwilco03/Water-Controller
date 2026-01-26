@@ -60,6 +60,12 @@ SUBMOD_TEMP = 0x00000041
 INPUT_FRAME_ID = 0x8001
 OUTPUT_FRAME_ID = 0x8000
 
+# Data Quality Constants (OPC UA compatible)
+QUALITY_GOOD = 0x00
+QUALITY_UNCERTAIN = 0x40
+QUALITY_BAD = 0x80
+QUALITY_SIMULATED = 0x41  # Uncertain + Simulated bit - safety indicator
+
 
 def build_block_header(block_type: int, length: int) -> bytes:
     """Build PNIO block header: type(2) + length(2) + version(2)"""
@@ -328,7 +334,7 @@ class PNController:
     def __init__(self):
         self.rtus: Dict[str, RTUState] = {}
         self._running = False
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()  # RLock for re-entrant calls
         self._task: Optional[asyncio.Task] = None
         self._io_thread: Optional[threading.Thread] = None
         self._local_mac = self._get_local_mac()
@@ -411,12 +417,11 @@ class PNController:
             if not success:
                 raise Exception("Connect Request failed")
 
-            # Store AR context
-            rtu.ar_context.ar_uuid = ar_uuid
-            rtu.ar_context.activity_uuid = activity_uuid
-            rtu.ar_context.seq_num = 1
-
+            # Store AR context (thread-safe)
             with self._lock:
+                rtu.ar_context.ar_uuid = ar_uuid
+                rtu.ar_context.activity_uuid = activity_uuid
+                rtu.ar_context.seq_num = 1
                 rtu.state = "CONNECTED"
 
             # Step 2: PrmEnd (ParameterEnd)
@@ -523,11 +528,12 @@ class PNController:
                 logger.info(f"[{rtu.station_name}] PrmEnd SUCCESS")
                 return True
 
-            return True  # Accept any response as success for now
+            logger.error(f"[{rtu.station_name}] PrmEnd invalid response type: {data[1] if len(data) >= 2 else 'empty'}")
+            return False  # Invalid response type is a failure
 
         except socket.timeout:
-            logger.warning(f"[{rtu.station_name}] PrmEnd timeout - continuing anyway")
-            return True  # Some devices don't respond to PrmEnd
+            logger.error(f"[{rtu.station_name}] PrmEnd timeout - connection failed")
+            return False  # Timeout is a failure, don't mask it
         finally:
             sock.close()
 
@@ -565,11 +571,12 @@ class PNController:
                 logger.info(f"[{rtu.station_name}] ApplicationReady SUCCESS")
                 return True
 
-            return True  # Accept any response
+            logger.error(f"[{rtu.station_name}] ApplicationReady invalid response type: {data[1] if len(data) >= 2 else 'empty'}")
+            return False  # Invalid response type is a failure
 
         except socket.timeout:
-            logger.warning(f"[{rtu.station_name}] ApplicationReady timeout - continuing anyway")
-            return True  # Some devices don't respond
+            logger.error(f"[{rtu.station_name}] ApplicationReady timeout - connection failed")
+            return False  # Timeout is a failure, don't mask it
         finally:
             sock.close()
 
@@ -606,9 +613,12 @@ class PNController:
         try:
             self._read_via_rpc(rtu)
         except Exception as e:
-            logger.debug(f"RPC read failed for {rtu.station_name}: {e}")
-            # Fallback: simulate sensor data for testing
-            self._simulate_sensor_data(rtu)
+            logger.warning(f"[{rtu.station_name}] Cyclic read failed: {e}")
+            # Mark existing sensor data as BAD quality - never simulate data
+            with self._lock:
+                for slot, reading in rtu.sensors.items():
+                    reading.quality = QUALITY_BAD
+                    logger.info(f"[{rtu.station_name}] Slot {slot} quality set to BAD - network read failed")
 
     def _read_via_rpc(self, rtu: RTUState):
         """Read data via RPC ReadImplicit"""
@@ -634,36 +644,24 @@ class PNController:
         finally:
             sock.close()
 
-    def _simulate_sensor_data(self, rtu: RTUState):
-        """Generate simulated sensor data for testing"""
-        import random
-
-        with self._lock:
-            # Simulate CPU temp in slot 1 (45-65°C range)
-            temp = 50.0 + random.uniform(-5, 15)
-            rtu.sensors[1] = SensorReading(
-                slot=1,
-                value=temp,
-                quality=0,  # Good
-                timestamp=time.time()
-            )
-            rtu.last_update = time.time()
-
     def _build_connect_request(self, ar_uuid: bytes, mac: bytes) -> bytes:
         """Build Connect Request packet"""
         pkt, _ = build_connect_request(ar_uuid, 1, mac)
         return pkt
 
 
-# Singleton instance
+# Singleton instance with thread-safe double-check locking
 _controller: Optional[PNController] = None
+_controller_lock = threading.Lock()
 
 
 def get_controller() -> PNController:
-    """Get or create controller instance"""
+    """Get or create controller instance (thread-safe)"""
     global _controller
     if _controller is None:
-        _controller = PNController()
+        with _controller_lock:
+            if _controller is None:  # Double-check after acquiring lock
+                _controller = PNController()
     return _controller
 
 
