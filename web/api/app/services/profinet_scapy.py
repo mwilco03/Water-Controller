@@ -595,14 +595,13 @@ class ProfinetController:
 
             logger.info(f"[{device_ip}] PrmEnd confirmed")
 
-            # Step 3: Wait for ApplicationReady from device
-            # NOTE: ApplicationReady is sent BY the device, not the controller!
-            # The controller waits for it and responds.
-            logger.info(f"[{device_ip}] Step 3: Waiting for ApplicationReady from device")
+            # Step 3: ApplicationReady
+            # Send ApplicationReady to device (this was the working approach)
+            logger.info(f"[{device_ip}] Step 3: ApplicationReady")
             self._set_state(ARState.READY)
 
-            if not self._wait_for_app_ready(timeout_s=APP_READY_TIMEOUT_MS / 1000.0):
-                raise Exception("ApplicationReady from device not received")
+            if not self._rpc_control(ControlCommand.APP_READY):
+                raise Exception("ApplicationReady failed")
 
             # Connection established
             self._set_state(ARState.RUN)
