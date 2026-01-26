@@ -674,6 +674,107 @@ class ProfinetClient:
             "Start the PROFINET controller or enable demo mode (WTC_DEMO_MODE=1)."
         )
 
+    def get_packet_counters(self, station_name: str) -> dict[str, Any]:
+        """Get packet counters for an RTU.
+
+        Returns packet loss statistics and timeout counts.
+        """
+        # Python controller doesn't track packet counters yet
+        # Return default values
+        return {
+            "tx_count": 0,
+            "rx_count": 0,
+            "timeout_count": 0,
+            "loss_percent": 0.0,
+            "timeouts": 0,
+        }
+
+    def is_using_simulated_data(self, station_name: str) -> bool:
+        """Check if RTU is using simulated data.
+
+        Returns True if the sensor data is simulated (not from real PROFINET I/O).
+        """
+        # Check Python controller
+        if self._use_python_controller and self._python_controller:
+            rtu = self._python_controller.get_rtu_state(station_name)
+            if rtu:
+                # Check if any sensor has SIMULATED quality (0x41)
+                for reading in rtu.sensors.values():
+                    if reading.quality == 0x41:  # QUALITY_SIMULATED
+                        return True
+            return False
+
+        # Demo mode always uses simulated data
+        if self._demo_mode:
+            return True
+
+        return False
+
+    def get_slot_config(self, station_name: str) -> list[dict[str, Any]]:
+        """Get slot configuration for an RTU.
+
+        Returns the configured slots with their module identifiers.
+        """
+        # Python controller uses fixed profile
+        if self._use_python_controller and self._python_controller:
+            # Return CPU temp profile slots
+            return [
+                {
+                    "slot": 0,
+                    "subslot": 1,
+                    "module_ident": 0x00000001,
+                    "submodule_ident": 0x00000001,
+                    "direction": "no_io",
+                    "description": "DAP",
+                },
+                {
+                    "slot": 1,
+                    "subslot": 1,
+                    "module_ident": 0x00000040,
+                    "submodule_ident": 0x00000041,
+                    "direction": "input",
+                    "data_length": 5,
+                    "description": "CPU Temperature",
+                },
+            ]
+
+        # Try demo mode
+        demo = _get_demo_service()
+        if demo and demo.enabled:
+            return demo.get_slot_config(station_name) if hasattr(demo, 'get_slot_config') else []
+
+        return []
+
+    def get_rtus(self) -> list[dict[str, Any]]:
+        """Get all RTUs from controller.
+
+        Returns list of RTU information dictionaries.
+        """
+        # Python controller
+        if self._use_python_controller and self._python_controller:
+            rtus = self._python_controller.get_all_rtus()
+            return [
+                {
+                    "station_name": rtu.station_name,
+                    "ip_address": rtu.ip_address,
+                    "mac_address": rtu.mac_address,
+                    "state": rtu.state,
+                    "connected": rtu.connected,
+                }
+                for rtu in rtus
+            ]
+
+        # C controller via SHM
+        if not self._demo_mode and self._client and self._client.is_connected():
+            return self._client.get_rtus() if hasattr(self._client, 'get_rtus') else []
+
+        # Demo mode
+        demo = _get_demo_service()
+        if demo and demo.enabled:
+            return demo.get_rtus() if hasattr(demo, 'get_rtus') else []
+
+        return []
+
 
 # Global client instance with thread-safe double-check locking
 import threading as _threading

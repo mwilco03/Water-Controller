@@ -4,7 +4,7 @@ Copyright (C) 2024
 SPDX-License-Identifier: GPL-3.0-or-later
 """
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
@@ -30,6 +30,9 @@ from ...schemas.profinet import (
 
 router = APIRouter()
 
+# Constants
+CYCLE_TIME_MS = 100.0  # Python controller cycle time
+
 
 @router.get("/status")
 async def get_profinet_status(
@@ -54,17 +57,43 @@ async def get_profinet_status(
 
     if is_running:
         # Connected - return status from Python controller
-        uptime_seconds = int((now - rtu.state_since).total_seconds()) if rtu.state_since else 0
+        uptime_seconds = 0
+        if rtu.state_since:
+            # Handle timezone-aware comparison
+            state_since = rtu.state_since
+            if state_since.tzinfo is None:
+                state_since = state_since.replace(tzinfo=UTC)
+            uptime_seconds = int((now - state_since).total_seconds())
         session_seconds = uptime_seconds
 
         # Get sensor data to calculate I/O stats
         sensors = profinet.get_sensor_values(name)
         input_bytes = len(sensors) * 5 if sensors else 0  # 5 bytes per sensor (4 value + 1 IOPS)
 
+        # Check if using simulated data
+        using_simulated = profinet.is_using_simulated_data(name)
+
+        # Get real packet counters from Python controller
+        packet_counters = profinet.get_packet_counters(name)
+        if packet_counters:
+            packet_stats = PacketStats(
+                sent=packet_counters["sent"],
+                received=packet_counters["received"],
+                lost=packet_counters["lost"],
+                loss_percent=packet_counters["loss_percent"],
+            )
+        else:
+            # Fallback to estimates if counters not available
+            packet_stats = PacketStats(
+                sent=uptime_seconds * 10,  # ~10 packets per second (estimated)
+                received=uptime_seconds * 10,
+                lost=0,
+                loss_percent=0.0,
+            )
+
         # Get AR context info if available from Python controller
         ar_handle = "0x0001"
         if controller_status.get("python_controller"):
-            # Python controller is active
             for rtu_info in controller_status.get("rtus", []):
                 if rtu_info.get("station_name") == name:
                     if rtu_info.get("connected"):
@@ -75,8 +104,12 @@ async def get_profinet_status(
         data_quality = DataQuality.GOOD
         if sensors:
             qualities = [s.get("quality", "good") for s in sensors]
+            is_simulated_list = [s.get("is_simulated", False) for s in sensors]
+
             if any(q == "bad" for q in qualities):
                 data_quality = DataQuality.BAD
+            elif any(q == "simulated" for q in qualities) or any(is_simulated_list):
+                data_quality = DataQuality.UNCERTAIN  # Simulated data is uncertain
             elif any(q == "uncertain" for q in qualities):
                 data_quality = DataQuality.UNCERTAIN
         elif not sensors and is_running:
@@ -89,17 +122,12 @@ async def get_profinet_status(
             uptime_seconds=uptime_seconds,
             session_seconds=session_seconds,
             cycle_time=CycleTimeStats(
-                target_ms=100.0,  # 100ms cycle time from Python controller
-                actual_ms=100.0,
-                min_ms=95.0,
-                max_ms=105.0,
+                target_ms=CYCLE_TIME_MS,
+                actual_ms=CYCLE_TIME_MS,
+                min_ms=CYCLE_TIME_MS - 5.0,
+                max_ms=CYCLE_TIME_MS + 5.0,
             ),
-            packet_stats=PacketStats(
-                sent=uptime_seconds * 10,  # ~10 packets per second
-                received=uptime_seconds * 10,
-                lost=0,
-                loss_percent=0.0,
-            ),
+            packet_stats=packet_stats,
             jitter_ms=0.5,
             io_status=IoStatus(
                 input_bytes=input_bytes,
@@ -109,6 +137,7 @@ async def get_profinet_status(
             ),
             last_error=rtu.last_error,
             timestamp=now,
+            using_simulated_data=using_simulated,
         )
     else:
         # Not connected - minimal status
@@ -158,71 +187,115 @@ async def get_profinet_slots(
             detail="PROFINET controller not connected."
         )
 
-    # Get sensor data from Python controller
+    # Get dynamic slot configuration from Python controller
+    slot_config = profinet.get_slot_config(name)
     sensors = profinet.get_sensor_values(name)
 
-    # Build slot map - RTU has DAP (slot 0) + CPU Temp (slot 1)
-    slot_count = 2
+    # Build slots list from dynamic configuration
     slots = []
 
-    # Slot 0: DAP (Device Access Point)
-    slots.append({
-        "slot": 0,
-        "subslot": 1,
-        "type": "dap",
-        "module_type": "dap",
-        "module_id": "0x00000001",
-        "submodule_id": "0x00000001",
-        "data": None,
-        "diagnostics": {
-            "status": "good",
-            "quality": "good",
-        }
-    })
-
-    # Slot 1: CPU Temperature sensor
-    sensor_data = None
-    sensor_quality = "good"
-    if sensors:
-        for s in sensors:
-            if s.get("slot") == 1:
-                sensor_data = {
-                    "value": s.get("value"),
-                    "timestamp": s.get("timestamp"),
+    if slot_config:
+        # Use dynamic slot configuration
+        for config in slot_config:
+            slot_data = {
+                "slot": config["slot_number"],
+                "subslot": config["subslot"],
+                "type": config["slot_type"],
+                "module_type": config["description"].lower().replace(" ", "_") if config["description"] else config["slot_type"],
+                "module_id": config["module_id"],
+                "submodule_id": config["submodule_id"],
+                "data": None,
+                "diagnostics": {
+                    "status": "good",
+                    "quality": "good",
                 }
-                sensor_quality = s.get("quality", "good")
-                break
+            }
 
-    slots.append({
-        "slot": 1,
-        "subslot": 1,
-        "type": "input",
-        "module_type": "cpu_temp",
-        "module_id": "0x00000040",
-        "submodule_id": "0x00000041",
-        "data": sensor_data,
-        "diagnostics": {
-            "status": "good" if sensor_data else "no_data",
-            "quality": sensor_quality,
-        }
-    })
+            # Add sensor data if this is an input slot
+            if config["slot_type"] == "input":
+                for s in sensors:
+                    if s.get("slot") == config["slot_number"]:
+                        slot_data["data"] = {
+                            "value": s.get("value"),
+                            "timestamp": s.get("timestamp"),
+                        }
+                        slot_data["diagnostics"] = {
+                            "status": "good" if s.get("value") is not None else "no_data",
+                            "quality": s.get("quality", "good"),
+                            "is_simulated": s.get("is_simulated", False),
+                        }
+                        break
+
+            slots.append(slot_data)
+    else:
+        # Fallback to default configuration (DAP + CPU Temp)
+        slots.append({
+            "slot": 0,
+            "subslot": 1,
+            "type": "dap",
+            "module_type": "dap",
+            "module_id": "0x00000001",
+            "submodule_id": "0x00000001",
+            "data": None,
+            "diagnostics": {
+                "status": "good",
+                "quality": "good",
+            }
+        })
+
+        # Slot 1: CPU Temperature sensor
+        sensor_data = None
+        sensor_quality = "good"
+        is_simulated = False
+        if sensors:
+            for s in sensors:
+                if s.get("slot") == 1:
+                    sensor_data = {
+                        "value": s.get("value"),
+                        "timestamp": s.get("timestamp"),
+                    }
+                    sensor_quality = s.get("quality", "good")
+                    is_simulated = s.get("is_simulated", False)
+                    break
+
+        slots.append({
+            "slot": 1,
+            "subslot": 1,
+            "type": "input",
+            "module_type": "cpu_temp",
+            "module_id": "0x00000040",
+            "submodule_id": "0x00000041",
+            "data": sensor_data,
+            "diagnostics": {
+                "status": "good" if sensor_data else "no_data",
+                "quality": sensor_quality,
+                "is_simulated": is_simulated,
+            }
+        })
 
     # Calculate slot utilization
+    slot_count = len(slots)
     populated = sum(1 for s in slots if s["type"] != "empty")
     input_slots = sum(1 for s in slots if s["type"] == "input")
     output_slots = sum(1 for s in slots if s["type"] == "output")
+
+    # Get packet loss from real counters
+    packet_counters = profinet.get_packet_counters(name)
+    packet_loss_percent = packet_counters["loss_percent"] if packet_counters else 0.0
+    total_cycles = packet_counters["sent"] if packet_counters else 0
 
     return build_success_response({
         "station_name": name,
         "slot_count": slot_count,
         "populated_slots": populated,
-        "empty_slots": 0,
+        "empty_slots": slot_count - populated,
         "input_slots": input_slots,
         "output_slots": output_slots,
         "vendor_id": rtu.vendor_id,
         "device_id": rtu.device_id,
-        "packet_loss_percent": 0.0,
-        "total_cycles": 0,
+        "packet_loss_percent": packet_loss_percent,
+        "total_cycles": total_cycles,
+        "using_simulated_data": profinet.is_using_simulated_data(name),
         "slots": slots,
     })
 
@@ -242,7 +315,6 @@ async def get_profinet_diagnostics(
 
     # Calculate time range
     now = datetime.now(UTC)
-    from datetime import timedelta
     start_time = now - timedelta(hours=hours)
 
     query = db.query(ProfinetDiagnostic).filter(
