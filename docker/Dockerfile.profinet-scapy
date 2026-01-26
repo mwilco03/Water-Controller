@@ -1,0 +1,68 @@
+# Water Treatment Controller - Scapy PROFINET Controller
+# Copyright (C) 2024-2026
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Python-based PROFINET IO Controller using Scapy
+# Lightweight alternative to C controller for testing and development
+
+FROM python:3.11-slim-bookworm
+
+# Install system dependencies for Scapy raw socket support
+RUN apt-get update && apt-get install -y \
+    iproute2 \
+    tcpdump \
+    net-tools \
+    procps \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies
+RUN pip install --no-cache-dir \
+    scapy>=2.5.0
+
+# Create working directory
+WORKDIR /app
+
+# Copy the Scapy PROFINET controller
+COPY controller/profinet_scapy.py /app/
+COPY controller/pn_scapy_controller.py /app/
+COPY controller/pn_debug.py /app/
+
+# Make scripts executable
+RUN chmod +x /app/*.py
+
+# Create entrypoint script
+RUN echo '#!/bin/bash\n\
+set -e\n\
+\n\
+# Auto-detect interface if not specified\n\
+if [ -z "$WTC_INTERFACE" ]; then\n\
+    # Find first non-loopback interface with an IP\n\
+    WTC_INTERFACE=$(ip -4 route show default 2>/dev/null | head -1 | awk '\''{print $5}'\'')\n\
+    if [ -z "$WTC_INTERFACE" ]; then\n\
+        WTC_INTERFACE=$(ip link show | grep -E "^[0-9]+:" | grep -v "lo:" | head -1 | cut -d: -f2 | tr -d " ")\n\
+    fi\n\
+    echo "Auto-detected interface: $WTC_INTERFACE"\n\
+fi\n\
+\n\
+echo "=== PROFINET Scapy Controller ===" \n\
+echo "Interface: ${WTC_INTERFACE:-eth0}"\n\
+echo "Device IP: ${WTC_DEVICE_IP:-auto}"\n\
+echo ""\n\
+\n\
+# Run the controller\n\
+exec python3 /app/profinet_scapy.py "${WTC_INTERFACE:-eth0}" ${WTC_DEVICE_IP:+$WTC_DEVICE_IP} "$@"\n\
+' > /usr/local/bin/entrypoint.sh && chmod +x /usr/local/bin/entrypoint.sh
+
+# Environment variables
+ENV WTC_INTERFACE=""
+ENV WTC_DEVICE_IP=""
+ENV PYTHONUNBUFFERED=1
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD pgrep -f profinet_scapy.py || exit 1
+
+# Run with capabilities for raw sockets
+# docker run --cap-add=NET_ADMIN --cap-add=NET_RAW --network=host
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+CMD []

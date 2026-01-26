@@ -332,6 +332,38 @@ services:
     profiles:
       - openplc
 
+  # PROFINET Scapy Controller - Python-based Testing Tool
+  # Lightweight alternative to C controller for PROFINET protocol testing
+  # Start with: docker compose --profile profinet-scapy up profinet-scapy
+  profinet-scapy:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.profinet-scapy
+    container_name: wtc-profinet-scapy
+    restart: "no"
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    security_opt:
+      - seccomp:unconfined
+    environment:
+      # Network interface - leave unset for auto-detection
+      WTC_INTERFACE: ${WTC_INTERFACE:-}
+      # Device IP to connect to (optional, discovers if not set)
+      WTC_DEVICE_IP: ${WTC_RTU_IP:-}
+      PYTHONUNBUFFERED: "1"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          memory: 64M
+    profiles:
+      - profinet-scapy
+      - testing
+
 volumes:
   db_data:
     name: wtc-db-data
