@@ -711,7 +711,11 @@ class ProfinetController:
                 IOCRType=IOCRType.INPUT,
                 IOCRReference=0x0001,
                 LT=PROFINET_ETHERTYPE,
-                IOCRProperties=0x00000000,  # RT Class 1
+                # IOCRProperties split into bit fields
+                IOCRProperties_RTClass=1,  # RT Class 1
+                IOCRProperties_reserved1=0,
+                IOCRProperties_reserved2=0,
+                IOCRProperties_reserved3=0,
                 DataLength=input_len,
                 FrameID=FRAME_ID_INPUT,
                 SendClockFactor=32,
@@ -721,7 +725,10 @@ class ProfinetController:
                 FrameSendOffset=0xFFFFFFFF,
                 WatchdogFactor=10,
                 DataHoldFactor=10,
-                IOCRTagHeader=0xC000,
+                # IOCRTagHeader split into fields
+                IOCRTagHeader_IOUserPriority=6,
+                IOCRTagHeader_reserved=0,
+                IOCRTagHeader_IOCRVLANID=0,
                 IOCRMulticastMACAdd="01:0e:cf:00:00:00"
             )
             logger.debug("Input IOCR block built")
@@ -730,7 +737,10 @@ class ProfinetController:
                 IOCRType=IOCRType.OUTPUT,
                 IOCRReference=0x0002,
                 LT=PROFINET_ETHERTYPE,
-                IOCRProperties=0x00000000,
+                IOCRProperties_RTClass=1,
+                IOCRProperties_reserved1=0,
+                IOCRProperties_reserved2=0,
+                IOCRProperties_reserved3=0,
                 DataLength=output_len,
                 FrameID=FRAME_ID_OUTPUT,
                 SendClockFactor=32,
@@ -740,7 +750,9 @@ class ProfinetController:
                 FrameSendOffset=0xFFFFFFFF,
                 WatchdogFactor=10,
                 DataHoldFactor=10,
-                IOCRTagHeader=0xC000,
+                IOCRTagHeader_IOUserPriority=6,
+                IOCRTagHeader_reserved=0,
+                IOCRTagHeader_IOCRVLANID=0,
                 IOCRMulticastMACAdd="01:0e:cf:00:00:00"
             )
             logger.debug("Output IOCR block built")
@@ -750,7 +762,11 @@ class ProfinetController:
             alarm_cr = AlarmCRBlockReq(
                 AlarmCRType=0x0001,
                 LT=PROFINET_ETHERTYPE,
-                AlarmCRProperties=0x00000000,
+                # AlarmCRProperties split into bit fields
+                AlarmCRProperties_Priority=0,
+                AlarmCRProperties_Transport=0,
+                AlarmCRProperties_Reserved1=0,
+                AlarmCRProperties_Reserved2=0,
                 RTATimeoutFactor=100,
                 RTARetries=3,
                 LocalAlarmReference=0x0001,
