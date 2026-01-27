@@ -1490,6 +1490,7 @@ class ProfinetController:
             rpc = DceRpc4(
                 ptype="request",
                 flags1=0x22,  # Last Fragment (0x02) + Idempotent (0x20)
+                object=self.ar.ar_uuid,  # AR UUID as object UUID (C: line 238)
                 opnum=RpcOpnum.CONNECT,
                 if_id=PNIO_UUID,
                 act_id=self.ar.activity_uuid
@@ -1539,6 +1540,7 @@ class ProfinetController:
         rpc = DceRpc4(
             ptype="request",
             flags1=0x22,  # Last Fragment (0x02) + Idempotent (0x20)
+            object=self.ar.ar_uuid,  # AR UUID as object UUID
             opnum=RpcOpnum.CONTROL,
             if_id=PNIO_UUID,
             act_id=uuid4().bytes,
@@ -1970,6 +1972,7 @@ class ProfinetController:
         rpc = DceRpc4(
             ptype="request",
             flags1=0x22,  # Last Fragment (0x02) + Idempotent (0x20)
+            object=self.ar.ar_uuid,  # AR UUID as object UUID
             opnum=RpcOpnum.READ,
             if_id=PNIO_UUID,
             act_id=uuid4().bytes,
@@ -2019,6 +2022,7 @@ class ProfinetController:
         rpc = DceRpc4(
             ptype="request",
             flags1=0x22,  # Last Fragment (0x02) + Idempotent (0x20)
+            object=self.ar.ar_uuid,  # AR UUID as object UUID
             opnum=RpcOpnum.WRITE,
             if_id=PNIO_UUID,
             act_id=uuid4().bytes,
