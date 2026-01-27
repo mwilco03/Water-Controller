@@ -407,8 +407,12 @@ def main():
         print("Running fallback mode without Scapy")
         return 1
 
-    iface = sys.argv[1] if len(sys.argv) > 1 else "eth0"
-    device_ip = sys.argv[2] if len(sys.argv) > 2 else "192.168.6.7"
+    if len(sys.argv) < 3:
+        print("Usage: python pn_scapy_controller.py <interface> <device_ip>")
+        print("Get device IP from DCP discovery: POST /api/v1/discover/rtu")
+        return 1
+    iface = sys.argv[1]
+    device_ip = sys.argv[2]
 
     ctrl = ProfinetController(interface=iface)
 

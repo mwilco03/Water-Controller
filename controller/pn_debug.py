@@ -256,7 +256,11 @@ def test_connect(ip: str, with_alarm_tags: bool = True):
 
 
 if __name__ == "__main__":
-    ip = sys.argv[1] if len(sys.argv) > 1 else "192.168.6.7"
+    if len(sys.argv) < 2:
+        print("Usage: python pn_debug.py <device_ip>")
+        print("Get device IP from DCP discovery: POST /api/v1/discover/rtu")
+        sys.exit(1)
+    ip = sys.argv[1]
 
     # Test with tag headers first (BlockLength=22)
     if not test_connect(ip, with_alarm_tags=True):

@@ -339,8 +339,12 @@ def connect(device_ip: str, mac: bytes = None, verbose: bool = True) -> bool:
 
 
 def main():
-    """Command line interface"""
-    ip = sys.argv[1] if len(sys.argv) > 1 else "192.168.6.7"
+    """Test script - requires IP from DCP discovery"""
+    if len(sys.argv) < 2:
+        print("Usage: python pn_controller.py <device_ip>")
+        print("Get device IP from DCP discovery: POST /api/v1/discover/rtu")
+        sys.exit(1)
+    ip = sys.argv[1]
 
     print(f"PROFINET Controller - Connecting to {ip}")
     print("=" * 50)

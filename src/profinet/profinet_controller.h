@@ -157,8 +157,8 @@ wtc_result_t profinet_controller_stop(profinet_controller_t *controller);
 wtc_result_t profinet_controller_process(profinet_controller_t *controller);
 
 /* Connect to device
- * station_name: PROFINET station name for connection
- * device_ip_str: Optional IP address string (e.g., "192.168.6.7") for DCP cache fallback
+ * station_name: PROFINET station name from DCP discovery
+ * device_ip_str: IP address from DCP discovery (e.g., "192.168.x.x")
  * slots: Slot configuration array (NULL to use defaults)
  * slot_count: Number of slots (0 to use defaults)
  */
