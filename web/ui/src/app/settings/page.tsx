@@ -1,41 +1,14 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { configLogger, systemLogger, modbusLogger } from '@/lib/logger';
+import { configLogger, systemLogger } from '@/lib/logger';
 import { ConfirmModal } from '@/components/hmi';
-import { extractArrayData, extractObjectData } from '@/lib/api';
+import { extractObjectData } from '@/lib/api';
 
 const PAGE_TITLE = 'Settings - Water Treatment Controller';
 
 interface ServiceStatus {
   [key: string]: string;
-}
-
-interface ModbusServerConfig {
-  tcp_enabled: boolean;
-  tcp_port: number;
-  tcp_bind_address: string;
-  rtu_enabled: boolean;
-  rtu_device: string;
-  rtu_baud_rate: number;
-  rtu_parity: string;
-  rtu_data_bits: number;
-  rtu_stop_bits: number;
-  rtu_slave_addr: number;
-}
-
-interface ModbusDownstreamDevice {
-  device_id?: number;
-  name: string;
-  transport: string;
-  tcp_host?: string;
-  tcp_port: number;
-  rtu_device?: string;
-  rtu_baud_rate: number;
-  slave_addr: number;
-  poll_interval_ms: number;
-  timeout_ms: number;
-  enabled: boolean;
 }
 
 interface LogForwardingConfig {
@@ -64,10 +37,8 @@ interface LogDestination {
 }
 
 export default function SettingsPage() {
-  const [activeTab, setActiveTab] = useState<'general' | 'backup' | 'modbus' | 'services' | 'logging' | 'simulation'>('general');
+  const [activeTab, setActiveTab] = useState<'general' | 'backup' | 'services' | 'logging' | 'simulation'>('general');
   const [services, setServices] = useState<ServiceStatus>({});
-  const [modbusConfig, setModbusConfig] = useState<ModbusServerConfig | null>(null);
-  const [downstreamDevices, setDownstreamDevices] = useState<ModbusDownstreamDevice[]>([]);
   const [logConfig, setLogConfig] = useState<LogForwardingConfig | null>(null);
   const [logDestinations, setLogDestinations] = useState<LogDestination[]>([]);
   const [loading, setLoading] = useState(false);
@@ -98,7 +69,6 @@ export default function SettingsPage() {
 
   useEffect(() => {
     fetchServices();
-    fetchModbusConfig();
     fetchLogConfig();
     fetchDemoStatus();
     fetchDemoScenarios();
@@ -346,62 +316,6 @@ export default function SettingsPage() {
     }
   };
 
-  // ============== Modbus Functions ==============
-
-  const fetchModbusConfig = async () => {
-    try {
-      const [serverRes, devicesRes] = await Promise.all([
-        fetch('/api/v1/modbus/server/config'),
-        fetch('/api/v1/modbus/devices'),
-      ]);
-
-      if (serverRes.ok) {
-        const json = await serverRes.json();
-        setModbusConfig(extractObjectData<ModbusServerConfig>(json, modbusConfig!));
-      }
-      if (devicesRes.ok) {
-        const json = await devicesRes.json();
-        setDownstreamDevices(extractArrayData<ModbusDownstreamDevice>(json));
-      }
-    } catch (error) {
-      modbusLogger.error('Failed to fetch Modbus config', error);
-    }
-  };
-
-  const saveModbusConfig = async () => {
-    if (!modbusConfig) return;
-
-    setLoading(true);
-    try {
-      const res = await fetch('/api/v1/modbus/server/config', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(modbusConfig),
-      });
-
-      if (res.ok) {
-        showMessage('success', 'Modbus configuration saved');
-      } else {
-        showMessage('error', 'Failed to save Modbus configuration');
-      }
-    } catch (error) {
-      showMessage('error', 'Error saving configuration');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const restartModbus = async () => {
-    try {
-      const res = await fetch('/api/v1/modbus/restart', { method: 'POST' });
-      if (res.ok) {
-        showMessage('success', 'Modbus gateway restarting...');
-      }
-    } catch (error) {
-      showMessage('error', 'Failed to restart Modbus gateway');
-    }
-  };
-
   // ============== Log Forwarding Functions ==============
 
   const fetchLogConfig = async () => {
@@ -513,7 +427,6 @@ export default function SettingsPage() {
         {[
           { id: 'general', label: 'General' },
           { id: 'backup', label: 'Backup & Restore' },
-          { id: 'modbus', label: 'Modbus Gateway' },
           { id: 'logging', label: 'Log Forwarding' },
           { id: 'services', label: 'Services' },
           { id: 'simulation', label: 'Simulation Mode' },
@@ -606,220 +519,6 @@ export default function SettingsPage() {
               />
               {loading ? 'Restoring...' : 'Select Backup File to Restore'}
             </label>
-          </div>
-        </div>
-      )}
-
-      {/* Modbus Tab */}
-      {activeTab === 'modbus' && modbusConfig && (
-        <div className="space-y-6">
-          {/* Server Configuration */}
-          <div className="hmi-card p-6">
-            <div className="flex justify-between items-center mb-4">
-              <h2 className="text-lg font-semibold text-hmi-text">Modbus Server Configuration</h2>
-              <button
-                onClick={restartModbus}
-                className="px-3 py-1 bg-status-warning hover:bg-status-warning/80 rounded text-sm text-white"
-              >
-                Restart Gateway
-              </button>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {/* TCP Settings */}
-              <div className="space-y-4">
-                <h3 className="font-medium text-hmi-text">TCP Server</h3>
-
-                <div className="flex items-center space-x-2">
-                  <input
-                    type="checkbox"
-                    id="tcpEnabled"
-                    checked={modbusConfig.tcp_enabled}
-                    onChange={(e) =>
-                      setModbusConfig({ ...modbusConfig, tcp_enabled: e.target.checked })
-                    }
-                  />
-                  <label htmlFor="tcpEnabled" className="text-sm text-hmi-text">
-                    Enable TCP Server
-                  </label>
-                </div>
-
-                <div>
-                  <label className="block text-sm text-hmi-muted mb-1">Port</label>
-                  <input
-                    type="number"
-                    value={modbusConfig.tcp_port}
-                    onChange={(e) =>
-                      setModbusConfig({ ...modbusConfig, tcp_port: parseInt(e.target.value) })
-                    }
-                    className="w-full px-3 py-2 bg-hmi-panel border border-hmi-border rounded text-hmi-text"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm text-hmi-muted mb-1">Bind Address</label>
-                  <input
-                    type="text"
-                    value={modbusConfig.tcp_bind_address}
-                    onChange={(e) =>
-                      setModbusConfig({ ...modbusConfig, tcp_bind_address: e.target.value })
-                    }
-                    className="w-full px-3 py-2 bg-hmi-panel border border-hmi-border rounded text-hmi-text"
-                  />
-                </div>
-              </div>
-
-              {/* RTU Settings */}
-              <div className="space-y-4">
-                <h3 className="font-medium text-hmi-text">RTU Server (Serial)</h3>
-
-                <div className="flex items-center space-x-2">
-                  <input
-                    type="checkbox"
-                    id="rtuEnabled"
-                    checked={modbusConfig.rtu_enabled}
-                    onChange={(e) =>
-                      setModbusConfig({ ...modbusConfig, rtu_enabled: e.target.checked })
-                    }
-                  />
-                  <label htmlFor="rtuEnabled" className="text-sm text-hmi-text">
-                    Enable RTU Server
-                  </label>
-                </div>
-
-                <div>
-                  <label className="block text-sm text-hmi-muted mb-1">Serial Device</label>
-                  <input
-                    type="text"
-                    value={modbusConfig.rtu_device}
-                    onChange={(e) =>
-                      setModbusConfig({ ...modbusConfig, rtu_device: e.target.value })
-                    }
-                    className="w-full px-3 py-2 bg-hmi-panel border border-hmi-border rounded text-hmi-text"
-                  />
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm text-hmi-muted mb-1">Baud Rate</label>
-                    <select
-                      value={modbusConfig.rtu_baud_rate}
-                      onChange={(e) =>
-                        setModbusConfig({ ...modbusConfig, rtu_baud_rate: parseInt(e.target.value) })
-                      }
-                      className="w-full px-3 py-2 bg-hmi-panel border border-hmi-border rounded text-hmi-text"
-                    >
-                      {[9600, 19200, 38400, 57600, 115200].map((rate) => (
-                        <option key={rate} value={rate}>
-                          {rate}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm text-hmi-muted mb-1">Slave Address</label>
-                    <input
-                      type="number"
-                      value={modbusConfig.rtu_slave_addr}
-                      onChange={(e) =>
-                        setModbusConfig({ ...modbusConfig, rtu_slave_addr: parseInt(e.target.value) })
-                      }
-                      min="1"
-                      max="247"
-                      className="w-full px-3 py-2 bg-hmi-panel border border-hmi-border rounded text-hmi-text"
-                    />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-3 gap-4">
-                  <div>
-                    <label className="block text-sm text-hmi-muted mb-1">Parity</label>
-                    <select
-                      value={modbusConfig.rtu_parity}
-                      onChange={(e) =>
-                        setModbusConfig({ ...modbusConfig, rtu_parity: e.target.value })
-                      }
-                      className="w-full px-3 py-2 bg-hmi-panel border border-hmi-border rounded text-hmi-text"
-                    >
-                      <option value="N">None</option>
-                      <option value="E">Even</option>
-                      <option value="O">Odd</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm text-hmi-muted mb-1">Data Bits</label>
-                    <select
-                      value={modbusConfig.rtu_data_bits}
-                      onChange={(e) =>
-                        setModbusConfig({ ...modbusConfig, rtu_data_bits: parseInt(e.target.value) })
-                      }
-                      className="w-full px-3 py-2 bg-hmi-panel border border-hmi-border rounded text-hmi-text"
-                    >
-                      <option value={7}>7</option>
-                      <option value={8}>8</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm text-hmi-muted mb-1">Stop Bits</label>
-                    <select
-                      value={modbusConfig.rtu_stop_bits}
-                      onChange={(e) =>
-                        setModbusConfig({ ...modbusConfig, rtu_stop_bits: parseInt(e.target.value) })
-                      }
-                      className="w-full px-3 py-2 bg-hmi-panel border border-hmi-border rounded text-hmi-text"
-                    >
-                      <option value={1}>1</option>
-                      <option value={2}>2</option>
-                    </select>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="mt-6">
-              <button
-                onClick={saveModbusConfig}
-                disabled={loading}
-                className="px-4 py-2 bg-status-info hover:bg-status-info/80 rounded text-white disabled:opacity-50"
-              >
-                {loading ? 'Saving...' : 'Save Configuration'}
-              </button>
-            </div>
-          </div>
-
-          {/* Downstream Devices */}
-          <div className="hmi-card p-6">
-            <h2 className="text-lg font-semibold text-hmi-text mb-4">Downstream Modbus Devices</h2>
-
-            {downstreamDevices.length === 0 ? (
-              <p className="text-hmi-muted">No downstream devices configured</p>
-            ) : (
-              <div className="space-y-3">
-                {downstreamDevices.map((device) => (
-                  <div
-                    key={device.device_id}
-                    className="flex items-center justify-between p-4 bg-hmi-panel rounded"
-                  >
-                    <div>
-                      <div className="font-medium text-hmi-text">{device.name}</div>
-                      <div className="text-sm text-hmi-muted">
-                        {device.transport === 'TCP'
-                          ? `${device.tcp_host}:${device.tcp_port}`
-                          : `${device.rtu_device} @ ${device.rtu_baud_rate}`}
-                        {' - '}
-                        Slave {device.slave_addr}
-                      </div>
-                    </div>
-                    <div className={device.enabled ? 'text-status-ok' : 'text-hmi-muted'}>
-                      {device.enabled ? 'Enabled' : 'Disabled'}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
           </div>
         </div>
       )}
