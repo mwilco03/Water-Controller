@@ -47,7 +47,9 @@ try:
     )
     from scapy.contrib.pnio_rpc import (
         Block, ARBlockReq, IOCRBlockReq, AlarmCRBlockReq,
-        ExpectedSubmoduleBlockReq, IODControlReq, IODReadReq, IODWriteReq,
+        ExpectedSubmoduleBlockReq, ExpectedSubmoduleAPI, ExpectedSubmodule,
+        ExpectedSubmoduleDataDescription,
+        IODControlReq, IODReadReq, IODWriteReq,
         PNIOServiceReqPDU, PNIOServiceResPDU
     )
     from scapy.layers.dcerpc import DceRpc4
@@ -775,44 +777,54 @@ class ProfinetController:
             logger.debug("Alarm CR block built")
 
             # Build Expected Submodule block
-            # Use exact format that works in pn_scapy_controller.py
+            # Build Expected Submodule block using Scapy packet classes
             logger.debug("Building Expected Submodule block...")
 
-            # Build APIs list in the exact format Scapy expects
+            # Build APIs list using Scapy packet objects
             apis_list = []
             for slot in profile:
-                # Build submodule entry
-                submod_entry = {
-                    'SubslotNumber': slot.subslot_number,
-                    'SubmoduleIdentNumber': slot.submodule_ident,
-                    # Note: 0x0002 for input per working code, 0 for no_io
-                    'SubmoduleProperties': 0x0002 if slot.direction == "input" else (0x0001 if slot.direction == "output" else 0),
-                    'DataDescription': []
-                }
+                # Map direction to SubmoduleProperties_Type enum
+                # 0=NO_IO, 1=INPUT, 2=OUTPUT, 3=INPUT_OUTPUT
+                submod_type = 1 if slot.direction == "input" else (2 if slot.direction == "output" else 0)
 
-                # Add data description if slot has data
+                # Build data description list
+                data_desc_list = []
                 if slot.data_length > 0:
-                    submod_entry['DataDescription'].append({
-                        'DataDescription': 1 if slot.direction == "input" else 2,
-                        'SubmoduleDataLength': slot.data_length,
-                        'LengthIOCS': 1,
-                        'LengthIOPS': 1
-                    })
+                    data_desc_list.append(ExpectedSubmoduleDataDescription(
+                        DataDescription=1 if slot.direction == "input" else 2,
+                        SubmoduleDataLength=slot.data_length,
+                        LengthIOCS=1,
+                        LengthIOPS=1
+                    ))
 
-                # Build module entry
-                module_entry = {
-                    'API': 0,
-                    'SlotNumber': slot.slot_number,
-                    'ModuleIdentNumber': slot.module_ident,
-                    'ModuleProperties': 0,
-                    'Submodules': [submod_entry]
-                }
-                apis_list.append(module_entry)
+                # Build submodule entry as Scapy packet
+                submod = ExpectedSubmodule(
+                    SubslotNumber=slot.subslot_number,
+                    SubmoduleIdentNumber=slot.submodule_ident,
+                    SubmoduleProperties_Type=submod_type,
+                    SubmoduleProperties_SharedInput=0,
+                    SubmoduleProperties_ReduceInputSubmoduleDataLength=0,
+                    SubmoduleProperties_ReduceOutputSubmoduleDataLength=0,
+                    SubmoduleProperties_DiscardIOXS=0,
+                    SubmoduleProperties_reserved_1=0,
+                    SubmoduleProperties_reserved_2=0,
+                    DataDescription=data_desc_list
+                )
 
-            logger.debug(f"APIs structure: {apis_list}")
+                # Build API entry as Scapy packet
+                api = ExpectedSubmoduleAPI(
+                    API=0,
+                    SlotNumber=slot.slot_number,
+                    ModuleIdentNumber=slot.module_ident,
+                    ModuleProperties=0,
+                    Submodules=[submod]
+                )
+                apis_list.append(api)
+
+            logger.debug(f"Built {len(apis_list)} API entries")
 
             exp_submod = ExpectedSubmoduleBlockReq(
-                NumberOfAPIs=1,
+                NumberOfAPIs=len(apis_list),
                 APIs=apis_list
             )
             logger.debug("Expected Submodule block built")
