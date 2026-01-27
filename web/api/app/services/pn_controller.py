@@ -252,7 +252,9 @@ class PNController:
             return success
 
         except Exception as e:
+            import traceback
             logger.error(f"[{station_name}] Connect exception: {e}")
+            logger.error(f"[{station_name}] Traceback:\n{traceback.format_exc()}")
             with self._lock:
                 rtu.state = "ERROR"
                 rtu.error_message = str(e)
