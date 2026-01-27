@@ -330,8 +330,9 @@ class ProfinetController:
         self.discovered_devices.clear()
 
         # Build DCP Identify request
+        # Note: Scapy auto-calculates block_length, don't set it manually
         if station_name:
-            # Identify specific device
+            # Identify specific device by name
             dcp = (
                 Ether(dst=DCP_MULTICAST, src=self.mac, type=PROFINET_ETHERTYPE) /
                 ProfinetDCP(
@@ -344,12 +345,11 @@ class ProfinetController:
                 DCPNameOfStationBlock(
                     option=0x02,
                     sub_option=0x02,
-                    block_length=len(station_name),
                     name_of_station=station_name.encode()
                 )
             )
         else:
-            # Identify all
+            # Identify all devices
             dcp = (
                 Ether(dst=DCP_MULTICAST, src=self.mac, type=PROFINET_ETHERTYPE) /
                 ProfinetDCP(
@@ -455,7 +455,6 @@ class ProfinetController:
             DCPIPBlock(
                 option=0x01,
                 sub_option=0x02,
-                block_length=14,
                 block_qualifier=block_qualifier,
                 ip=ip,
                 netmask=mask,
@@ -496,7 +495,6 @@ class ProfinetController:
             DCPNameOfStationBlock(
                 option=0x02,
                 sub_option=0x02,
-                block_length=len(name_bytes) + 2,
                 block_qualifier=block_qualifier,
                 name_of_station=name_bytes
             )
@@ -532,7 +530,6 @@ class ProfinetController:
             DCPControlBlock(
                 option=0x05,
                 sub_option=0x03,  # Signal
-                block_length=4,
                 block_qualifier=0x0100,  # Signal On
                 control_signal_value=duration_s
             )
