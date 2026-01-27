@@ -41,6 +41,14 @@ Types: `feat`, `fix`, `docs`, `chore`, `refactor`, `test`, `ci`
 - No stubs, placeholders, TODOs, or demo fallbacks
 - Return HTTP 503/501 when systems unavailable—never fake data
 
+**CRITICAL - NO HARDCODED RTU DATA:**
+- NEVER hardcode RTU IP addresses (e.g., 192.168.x.x)
+- NEVER hardcode RTU station names (e.g., rtu-xxxx)
+- RTUs are discovered via DCP multicast: `POST /api/v1/discover/rtu`
+- RTU station_name comes from the device itself via DCP discovery
+- All RTU configuration flows from discovery, not from code
+- Violation of this rule is grounds for session termination
+
 ## API Pattern
 
 Envelope: `{ data: <payload> }`. Keep flat. Frontend: `response.data || response`

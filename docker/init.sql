@@ -210,49 +210,20 @@ ALTER TABLE pid_loops ADD COLUMN IF NOT EXISTS integral_limit REAL DEFAULT 100.0
 ALTER TABLE pid_loops ADD COLUMN IF NOT EXISTS derivative_filter REAL DEFAULT 0.1;
 ALTER TABLE pid_loops ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
 
--- Insert sample RTU devices
-INSERT INTO rtu_devices (station_name, ip_address, vendor_id, device_id, slot_count, connection_state)
-VALUES
-    ('rtu-tank-1', '192.168.1.100', 1, 1, 16, 'OFFLINE'),
-    ('rtu-pump-station', '192.168.1.101', 1, 1, 16, 'OFFLINE'),
-    ('rtu-filter-1', '192.168.1.102', 1, 1, 16, 'OFFLINE')
-ON CONFLICT (station_name) DO NOTHING;
-
--- Insert sample historian tags
-INSERT INTO historian_tags (rtu_station, slot, tag_name, sample_rate_ms, deadband, compression)
-VALUES
-    ('rtu-tank-1', 1, 'rtu-tank-1.pH', 1000, 0.05, 'SWINGING_DOOR'),
-    ('rtu-tank-1', 2, 'rtu-tank-1.Temperature', 1000, 0.5, 'DEADBAND'),
-    ('rtu-tank-1', 3, 'rtu-tank-1.Turbidity', 1000, 0.1, 'DEADBAND'),
-    ('rtu-tank-1', 7, 'rtu-tank-1.Level', 1000, 0.5, 'SWINGING_DOOR'),
-    ('rtu-tank-1', 8, 'rtu-tank-1.Pressure', 1000, 0.1, 'DEADBAND')
-ON CONFLICT (tag_name) DO NOTHING;
-
--- Insert sample alarm rules
-INSERT INTO alarm_rules (rtu_station, slot, condition, threshold, severity, delay_ms, message)
-VALUES
-    ('rtu-tank-1', 1, 'HIGH', 8.5, 'WARNING', 5000, 'pH High'),
-    ('rtu-tank-1', 1, 'HIGH_HIGH', 9.0, 'CRITICAL', 0, 'pH Very High'),
-    ('rtu-tank-1', 1, 'LOW', 6.5, 'WARNING', 5000, 'pH Low'),
-    ('rtu-tank-1', 1, 'LOW_LOW', 6.0, 'CRITICAL', 0, 'pH Very Low'),
-    ('rtu-tank-1', 7, 'LOW', 10.0, 'WARNING', 3000, 'Tank Level Low'),
-    ('rtu-tank-1', 7, 'LOW_LOW', 5.0, 'CRITICAL', 0, 'Tank Level Critical'),
-    ('rtu-tank-1', 8, 'HIGH', 8.0, 'WARNING', 2000, 'Pressure High'),
-    ('rtu-tank-1', 8, 'HIGH_HIGH', 10.0, 'EMERGENCY', 0, 'Pressure Very High - Emergency');
-
--- Insert sample PID loop
-INSERT INTO pid_loops (name, input_rtu, input_slot, output_rtu, output_slot, kp, ki, kd, setpoint, output_min, output_max, mode)
-VALUES
-    ('pH Control', 'rtu-tank-1', 1, 'rtu-tank-1', 12, 2.0, 0.1, 0.5, 7.0, 0.0, 100.0, 'AUTO'),
-    ('Level Control', 'rtu-tank-1', 7, 'rtu-tank-1', 10, 1.5, 0.05, 0.2, 75.0, 0.0, 100.0, 'AUTO')
-ON CONFLICT (name) DO NOTHING;
-
--- Insert sample interlocks
-INSERT INTO interlocks (name, input_rtu, input_slot, output_rtu, output_slot, condition, threshold, action, delay_ms, latching)
-VALUES
-    ('Low Level Pump Protect', 'rtu-tank-1', 7, 'rtu-pump-station', 9, 'BELOW', 10.0, 'OFF', 0, TRUE),
-    ('High Pressure Relief', 'rtu-tank-1', 8, 'rtu-tank-1', 11, 'ABOVE', 9.0, 'ON', 0, FALSE)
-ON CONFLICT (name) DO NOTHING;
+-- =============================================================================
+-- NO SAMPLE/STUB DATA
+-- =============================================================================
+-- RTU devices, historian tags, alarm rules, PID loops, and interlocks are
+-- populated dynamically through:
+--
+-- 1. RTU Discovery: POST /api/v1/discover/rtu (DCP multicast scan)
+-- 2. RTU Registration: POST /api/v1/rtus (add discovered device)
+-- 3. RTU Self-Registration: POST /api/v1/rtu/register (RTU enrollment)
+-- 4. Template Application: POST /api/v1/templates/{template}/apply/{rtu}
+--
+-- Do NOT add hardcoded RTU names or IP addresses here. Real RTUs are
+-- discovered on the network and registered via the API.
+-- =============================================================================
 
 -- Create continuous aggregate for hourly averages
 CREATE MATERIALIZED VIEW IF NOT EXISTS historian_hourly

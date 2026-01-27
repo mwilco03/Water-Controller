@@ -14,10 +14,11 @@ It matches the capabilities of the C implementation:
 Usage:
     from profinet_scapy import ProfinetController
     ctrl = ProfinetController(interface="eth0")
-    ctrl.discover()
-    ctrl.connect("192.168.6.7")
-    value = ctrl.read_sensor(slot=1)
-    ctrl.disconnect()
+    devices = ctrl.discover()  # DCP multicast discovery
+    if devices:
+        ctrl.connect(devices[0].ip_address)  # Connect to first discovered device
+        value = ctrl.read_sensor(slot=1)
+        ctrl.disconnect()
 
 Copyright (C) 2024-2026
 SPDX-License-Identifier: GPL-3.0-or-later

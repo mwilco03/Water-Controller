@@ -116,12 +116,10 @@ async def lifespan(app: FastAPI):
     pn_ctrl = pn_controller_init()
     logger.info("Python PROFINET controller initialized")
 
-    # Auto-add configured RTUs from environment or database
-    default_rtu_ip = os.environ.get("WTC_RTU_IP", "192.168.6.7")
-    default_rtu_name = os.environ.get("WTC_RTU_NAME", "water-treat-rtu")
-    if default_rtu_ip:
-        pn_ctrl.add_rtu(default_rtu_name, default_rtu_ip)
-        logger.info(f"Added default RTU: {default_rtu_name} at {default_rtu_ip}")
+    # RTUs are added via DCP discovery or API - no hardcoded defaults
+    # Use POST /api/v1/discover/rtu to find devices on network
+    # Use POST /api/v1/rtus/add-by-ip to add discovered devices
+    logger.info("RTU discovery available via /api/v1/discover/rtu")
 
     # Log final startup status
     if startup_result.is_fully_healthy:

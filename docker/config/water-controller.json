@@ -1,114 +1,15 @@
 {
+  "_comment": "RTUs, PID loops, interlocks, and alarm rules are dynamically discovered and configured via the API. Do not hardcode RTU names or IP addresses here.",
   "controller": {
     "interface": "",
     "cycle_time_ms": 1000,
     "discovery_timeout_ms": 5000,
     "connection_timeout_ms": 10000
   },
-  "rtus": [
-    {
-      "station_name": "rtu-tank-1",
-      "ip_address": "192.168.1.100",
-      "vendor_id": 1,
-      "device_id": 1,
-      "slot_count": 16,
-      "slots": [
-        {"slot": 1, "type": "sensor", "name": "pH", "unit": "pH", "scale_min": 0, "scale_max": 14, "deadband": 0.05},
-        {"slot": 2, "type": "sensor", "name": "Temperature", "unit": "C", "scale_min": 0, "scale_max": 100, "deadband": 0.5},
-        {"slot": 3, "type": "sensor", "name": "Turbidity", "unit": "NTU", "scale_min": 0, "scale_max": 1000, "deadband": 1.0},
-        {"slot": 4, "type": "sensor", "name": "TDS", "unit": "ppm", "scale_min": 0, "scale_max": 2000, "deadband": 5.0},
-        {"slot": 5, "type": "sensor", "name": "Dissolved Oxygen", "unit": "mg/L", "scale_min": 0, "scale_max": 20, "deadband": 0.1},
-        {"slot": 6, "type": "sensor", "name": "Flow Rate", "unit": "L/min", "scale_min": 0, "scale_max": 500, "deadband": 1.0},
-        {"slot": 7, "type": "sensor", "name": "Level", "unit": "%", "scale_min": 0, "scale_max": 100, "deadband": 0.5},
-        {"slot": 8, "type": "sensor", "name": "Pressure", "unit": "bar", "scale_min": 0, "scale_max": 10, "deadband": 0.1},
-        {"slot": 9, "type": "actuator", "name": "Main Pump", "has_pwm": false},
-        {"slot": 10, "type": "actuator", "name": "Inlet Valve", "has_pwm": false},
-        {"slot": 11, "type": "actuator", "name": "Outlet Valve", "has_pwm": false},
-        {"slot": 12, "type": "actuator", "name": "Dosing Pump", "has_pwm": true, "pwm_min": 0, "pwm_max": 100},
-        {"slot": 13, "type": "actuator", "name": "Aerator", "has_pwm": false},
-        {"slot": 14, "type": "actuator", "name": "Heater", "has_pwm": true, "pwm_min": 0, "pwm_max": 100},
-        {"slot": 15, "type": "actuator", "name": "Mixer", "has_pwm": false},
-        {"slot": 16, "type": "actuator", "name": "Spare", "has_pwm": false}
-      ]
-    },
-    {
-      "station_name": "rtu-pump-station",
-      "ip_address": "192.168.1.101",
-      "vendor_id": 1,
-      "device_id": 1,
-      "slot_count": 16
-    }
-  ],
-  "pid_loops": [
-    {
-      "name": "pH Control",
-      "enabled": true,
-      "input_rtu": "rtu-tank-1",
-      "input_slot": 1,
-      "output_rtu": "rtu-tank-1",
-      "output_slot": 12,
-      "kp": 2.0,
-      "ki": 0.1,
-      "kd": 0.5,
-      "setpoint": 7.0,
-      "output_min": 0.0,
-      "output_max": 100.0,
-      "mode": "AUTO"
-    },
-    {
-      "name": "Level Control",
-      "enabled": true,
-      "input_rtu": "rtu-tank-1",
-      "input_slot": 7,
-      "output_rtu": "rtu-tank-1",
-      "output_slot": 10,
-      "kp": 1.5,
-      "ki": 0.05,
-      "kd": 0.2,
-      "setpoint": 75.0,
-      "output_min": 0.0,
-      "output_max": 100.0,
-      "mode": "AUTO"
-    }
-  ],
-  "interlocks": [
-    {
-      "name": "Low Level Pump Protect",
-      "enabled": true,
-      "input_rtu": "rtu-tank-1",
-      "input_slot": 7,
-      "output_rtu": "rtu-pump-station",
-      "output_slot": 9,
-      "condition": "BELOW",
-      "threshold": 10.0,
-      "action": "OFF",
-      "delay_ms": 0,
-      "latching": true
-    },
-    {
-      "name": "High Pressure Relief",
-      "enabled": true,
-      "input_rtu": "rtu-tank-1",
-      "input_slot": 8,
-      "output_rtu": "rtu-tank-1",
-      "output_slot": 11,
-      "condition": "ABOVE",
-      "threshold": 9.0,
-      "action": "ON",
-      "delay_ms": 0,
-      "latching": false
-    }
-  ],
-  "alarm_rules": [
-    {"rtu_station": "rtu-tank-1", "slot": 1, "condition": "HIGH", "threshold": 8.5, "severity": "WARNING", "delay_ms": 5000, "message": "pH High"},
-    {"rtu_station": "rtu-tank-1", "slot": 1, "condition": "HIGH_HIGH", "threshold": 9.0, "severity": "CRITICAL", "delay_ms": 0, "message": "pH Very High"},
-    {"rtu_station": "rtu-tank-1", "slot": 1, "condition": "LOW", "threshold": 6.5, "severity": "WARNING", "delay_ms": 5000, "message": "pH Low"},
-    {"rtu_station": "rtu-tank-1", "slot": 1, "condition": "LOW_LOW", "threshold": 6.0, "severity": "CRITICAL", "delay_ms": 0, "message": "pH Very Low"},
-    {"rtu_station": "rtu-tank-1", "slot": 7, "condition": "LOW", "threshold": 10.0, "severity": "WARNING", "delay_ms": 3000, "message": "Tank Level Low"},
-    {"rtu_station": "rtu-tank-1", "slot": 7, "condition": "LOW_LOW", "threshold": 5.0, "severity": "CRITICAL", "delay_ms": 0, "message": "Tank Level Critical"},
-    {"rtu_station": "rtu-tank-1", "slot": 8, "condition": "HIGH", "threshold": 8.0, "severity": "WARNING", "delay_ms": 2000, "message": "Pressure High"},
-    {"rtu_station": "rtu-tank-1", "slot": 8, "condition": "HIGH_HIGH", "threshold": 10.0, "severity": "EMERGENCY", "delay_ms": 0, "message": "Pressure Very High - Emergency"}
-  ],
+  "rtus": [],
+  "pid_loops": [],
+  "interlocks": [],
+  "alarm_rules": [],
   "historian": {
     "sample_rate_ms": 1000,
     "buffer_size": 100000,
