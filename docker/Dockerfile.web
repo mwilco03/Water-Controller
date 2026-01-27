@@ -13,10 +13,12 @@ WORKDIR /app
 # Install build dependencies for posix-ipc and other C extensions
 # python3-dev provides Python.h headers needed for C extension compilation
 # libcap2-bin provides setcap for granting capabilities to Python binary
+# libpcap-dev provides libpcap for Scapy BPF filter compilation (PROFINET DCP discovery)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     python3-dev \
     libcap2-bin \
+    libpcap-dev \
     && rm -rf /var/lib/apt/lists/* \
     && gcc --version \
     && python3 -c "import sysconfig; print(sysconfig.get_config_var('INCLUDEPY'))"
