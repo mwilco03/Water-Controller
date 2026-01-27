@@ -685,7 +685,7 @@ class ProfinetController:
                 ARType=ARType.IOCAR,
                 ARUUID=self.ar.ar_uuid,
                 SessionKey=self.ar.session_key,
-                CMInitiatorMacAdd=self.mac.replace(":", ""),
+                CMInitiatorMacAdd=self.mac,  # Scapy MACField expects colon-separated format
                 CMInitiatorObjectUUID=uuid4().bytes,
                 # ARProperties bit fields (Scapy field names are case-sensitive)
                 ARProperties_ParametrizationServer=0,  # 0 = CM_Initator handles
@@ -923,12 +923,22 @@ class ProfinetController:
             logger.debug("Wrapping in DCE/RPC...")
             rpc = DceRpc4(
                 ptype="request",
-                flags1=0x20,  # Idempotent
+                flags1=0x22,  # Last Fragment (0x02) + Idempotent (0x20)
                 opnum=RpcOpnum.CONNECT,
                 if_id=PNIO_UUID,
                 act_id=self.ar.activity_uuid
             ) / pnio
             logger.debug("RPC packet assembled")
+
+            # Debug: dump packet hex for analysis
+            try:
+                pkt_bytes = bytes(rpc)
+                logger.info(f"Connect request packet size: {len(pkt_bytes)} bytes")
+                # Log first 100 bytes in hex for debugging
+                hex_str = ' '.join(f'{b:02X}' for b in pkt_bytes[:100])
+                logger.debug(f"Connect request hex (first 100): {hex_str}")
+            except Exception as hex_err:
+                logger.debug(f"Could not dump packet hex: {hex_err}")
 
             # Send and receive
             return self._rpc_send_recv(rpc, CONNECT_TIMEOUT_MS)
@@ -963,7 +973,7 @@ class ProfinetController:
 
         rpc = DceRpc4(
             ptype="request",
-            flags1=0x20,
+            flags1=0x22,  # Last Fragment (0x02) + Idempotent (0x20)
             opnum=RpcOpnum.CONTROL,
             if_id=PNIO_UUID,
             act_id=uuid4().bytes,
@@ -1379,7 +1389,7 @@ class ProfinetController:
 
         rpc = DceRpc4(
             ptype="request",
-            flags1=0x20,
+            flags1=0x22,  # Last Fragment (0x02) + Idempotent (0x20)
             opnum=RpcOpnum.READ,
             if_id=PNIO_UUID,
             act_id=uuid4().bytes,
@@ -1428,7 +1438,7 @@ class ProfinetController:
 
         rpc = DceRpc4(
             ptype="request",
-            flags1=0x20,
+            flags1=0x22,  # Last Fragment (0x02) + Idempotent (0x20)
             opnum=RpcOpnum.WRITE,
             if_id=PNIO_UUID,
             act_id=uuid4().bytes,
