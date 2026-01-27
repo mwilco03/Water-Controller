@@ -47,12 +47,14 @@ try:
         DCPControlBlock
     )
     from scapy.contrib.pnio_rpc import (
-        Block, ARBlockReq, IOCRBlockReq, AlarmCRBlockReq,
-        ExpectedSubmoduleBlockReq, ExpectedSubmoduleAPI, ExpectedSubmodule,
+        # Block builders for ExpectedSubmodule (kept for _build_expected_submodule_block_scapy fallback)
+        Block, ExpectedSubmoduleBlockReq, ExpectedSubmoduleAPI, ExpectedSubmodule,
         ExpectedSubmoduleDataDescription,
-        IOCRAPI, IOCRAPIObject,
+        # Control/Read/Write operations (still use Scapy for these simpler packets)
         IODControlReq, IODReadReq, IODWriteReq,
         PNIOServiceReqPDU, PNIOServiceResPDU
+        # NOTE: ARBlockReq, IOCRBlockReq, AlarmCRBlockReq, IOCRAPI, IOCRAPIObject
+        # removed - we build these manually to match C code byte-for-byte
     )
     from scapy.layers.dcerpc import DceRpc4
     SCAPY_AVAILABLE = True
@@ -895,6 +897,237 @@ class ProfinetController:
         # Return as Scapy Raw packet so it can be included in blocks list
         return Raw(load=bytes(block))
 
+    def _build_ar_block_manual(self) -> bytes:
+        """
+        Build AR Block Request MANUALLY matching C code EXACTLY.
+
+        Citation: profinet_rpc.c:402-431
+
+        C format structure:
+        - BlockHeader: type(2) + length(2) + version(2) = 6 bytes
+        - ARType (2) = 0x0001 (IOCAR)
+        - ARUUID (16)
+        - SessionKey (2)
+        - CMInitiatorMacAdd (6)
+        - CMInitiatorObjectUUID (16)
+        - ARProperties (4) = 0x00000001 (State=1=Active)
+        - CMInitiatorActivityTimeoutFactor (2) = 1000 (100s in 100ms units)
+        - CMInitiatorUDPRTPort (2) = 34964
+        - StationNameLength (2)
+        - CMInitiatorStationName (variable)
+
+        Block content = 2+16+2+6+16+4+2+2+2+name_len = 52 + name_len
+        BlockLength = 52 + name_len + 2 (version) = 54 + name_len
+        """
+        if not self.ar:
+            raise ValueError("AR context not initialized")
+
+        # Build block content (after version bytes)
+        data = bytearray()
+
+        # ARType = 0x0001 (IOCAR) - C: line 406
+        data.extend(struct.pack(">H", ARType.IOCAR))
+
+        # ARUUID (16 bytes) - C: line 407-408
+        data.extend(self.ar.ar_uuid)
+
+        # SessionKey (2 bytes) - C: line 409
+        data.extend(struct.pack(">H", self.ar.session_key))
+
+        # CMInitiatorMacAdd (6 bytes) - C: line 410-411
+        # self.mac is string like "00:11:22:33:44:55"
+        mac_bytes = bytes.fromhex(self.mac.replace(':', ''))
+        data.extend(mac_bytes)
+
+        # CMInitiatorObjectUUID (16 bytes) - C: line 412-413
+        # Generate a new UUID for controller object
+        data.extend(uuid4().bytes)
+
+        # ARProperties (4 bytes) - C: line 414
+        # State=1 (Active) in bits 0-2
+        ar_props = 0x00000001  # State = Active
+        data.extend(struct.pack(">I", ar_props))
+
+        # CMInitiatorActivityTimeoutFactor (2 bytes) - C: line 415
+        # Value in 100ms units, 1000 = 100 seconds
+        data.extend(struct.pack(">H", 1000))
+
+        # CMInitiatorUDPRTPort (2 bytes) - C: line 416
+        data.extend(struct.pack(">H", RPC_PORT))
+
+        # StationNameLength (2 bytes) - C: lines 419-420
+        name_bytes = self.station_name.encode('utf-8')
+        data.extend(struct.pack(">H", len(name_bytes)))
+
+        # CMInitiatorStationName (variable) - C: lines 421-422
+        data.extend(name_bytes)
+
+        # Calculate block length (content after type+length, includes version)
+        block_content_len = len(data) + 2  # +2 for version bytes
+
+        # Build complete block with header
+        block = bytearray()
+        # Block type 0x0101 (AR Block Request)
+        block.extend(struct.pack(">H", 0x0101))
+        # Block length
+        block.extend(struct.pack(">H", block_content_len))
+        # Version 1.0
+        block.append(1)
+        block.append(0)
+        # Content
+        block.extend(data)
+
+        logger.debug(f"Built AR block (manual): {len(block)} bytes, station_name={self.station_name}")
+
+        return bytes(block)
+
+    def _build_iocr_block_manual(self, iocr_type: int, profile: List[SlotConfig]) -> bytes:
+        """
+        Build IOCR Block Request MANUALLY matching C code EXACTLY.
+
+        Citation: profinet_rpc.c:433-514
+
+        C format structure:
+        - BlockHeader: type(2) + length(2) + version(2) = 6 bytes
+        - IOCRType (2) - 0x0001=Input, 0x0002=Output
+        - IOCRReference (2) - 0x0001 for Input, 0x0002 for Output
+        - LT (2) = 0x8892 (PROFINET Ethertype)
+        - IOCRProperties (4) = 0x00000001 (RT Class 1)
+        - DataLength (2) - sum of data lengths + IOPS byte
+        - FrameID (2) - 0x8001=Input, 0x8000=Output
+        - SendClockFactor (2) = 32
+        - ReductionRatio (2) = 32
+        - Phase (2) = 1
+        - Sequence (2) = 0 (deprecated)
+        - FrameSendOffset (4) = 0
+        - WatchdogFactor (2) = 10
+        - DataHoldFactor (2) = 3
+        - IOCRTagHeader (2) = 0
+        - IOCRMulticastMACAdd (6) = 00:00:00:00:00:00
+        - NumberOfAPIs (2) = 1
+        - API data:
+          - API (4) = 0
+          - NumberOfIODataObjects (2)
+          - IODataObjects (slot(2) + subslot(2) + frame_offset(2) each)
+          - NumberOfIOCS (2)
+          - IOCSs (slot(2) + subslot(2) + frame_offset(2) each)
+
+        Args:
+            iocr_type: 1=Input, 2=Output
+            profile: List of slot configurations
+        """
+        is_input = (iocr_type == IOCRType.INPUT)
+
+        # Filter slots matching this IOCR type with data_length > 0
+        matching_slots = [
+            s for s in profile
+            if ((s.direction == "input") == is_input) and s.data_length > 0
+        ]
+
+        # Calculate data length: sum of slot data lengths + 1 byte for IOPS
+        data_len = sum(s.data_length for s in matching_slots) + 1
+        if data_len < 4:
+            data_len = 4  # Minimum per PROFINET spec
+
+        # Build block content
+        data = bytearray()
+
+        # IOCRType (2) - C: line 438
+        data.extend(struct.pack(">H", iocr_type))
+
+        # IOCRReference (2) - C: line 439
+        iocr_ref = 0x0001 if is_input else 0x0002
+        data.extend(struct.pack(">H", iocr_ref))
+
+        # LT (2) = 0x8892 - C: line 440
+        data.extend(struct.pack(">H", PROFINET_ETHERTYPE))
+
+        # IOCRProperties (4) = RT Class 1 - C: line 441
+        data.extend(struct.pack(">I", 0x00000001))
+
+        # DataLength (2) - C: line 442
+        data.extend(struct.pack(">H", data_len))
+
+        # FrameID (2) - C: line 443
+        frame_id = FRAME_ID_INPUT if is_input else FRAME_ID_OUTPUT
+        data.extend(struct.pack(">H", frame_id))
+
+        # SendClockFactor (2) = 32 - C: line 444
+        data.extend(struct.pack(">H", 32))
+
+        # ReductionRatio (2) = 32 - C: line 445
+        data.extend(struct.pack(">H", 32))
+
+        # Phase (2) = 1 - C: line 446
+        data.extend(struct.pack(">H", 1))
+
+        # Sequence (2) = 0 (deprecated) - C: line 447
+        data.extend(struct.pack(">H", 0))
+
+        # FrameSendOffset (4) = 0 - C: line 448
+        data.extend(struct.pack(">I", 0))
+
+        # WatchdogFactor (2) = 10 - C: line 449
+        data.extend(struct.pack(">H", 10))
+
+        # DataHoldFactor (2) = 3 - C: line 450
+        data.extend(struct.pack(">H", 3))
+
+        # IOCRTagHeader (2) = 0 - C: line 451
+        data.extend(struct.pack(">H", 0))
+
+        # IOCRMulticastMACAdd (6) = zeros - C: line 452-453
+        data.extend(b'\x00\x00\x00\x00\x00\x00')
+
+        # NumberOfAPIs (2) = 1 - C: line 456
+        data.extend(struct.pack(">H", 1))
+
+        # API 0 - C: line 459
+        data.extend(struct.pack(">I", 0))
+
+        # NumberOfIODataObjects (2) - C: line 474
+        data.extend(struct.pack(">H", len(matching_slots)))
+
+        # IODataObjects - C: lines 476-490
+        frame_offset = 0
+        for slot in matching_slots:
+            data.extend(struct.pack(">H", slot.slot_number))
+            data.extend(struct.pack(">H", slot.subslot_number))
+            data.extend(struct.pack(">H", frame_offset))
+            frame_offset += slot.data_length
+
+        # NumberOfIOCS (2) - C: line 493
+        data.extend(struct.pack(">H", len(matching_slots)))
+
+        # IOCSs - C: lines 495-508
+        iocs_offset = 0
+        for slot in matching_slots:
+            data.extend(struct.pack(">H", slot.slot_number))
+            data.extend(struct.pack(">H", slot.subslot_number))
+            data.extend(struct.pack(">H", iocs_offset))
+            iocs_offset += 1  # IOCS is 1 byte per submodule
+
+        # Calculate block length (content after type+length, includes version)
+        block_content_len = len(data) + 2  # +2 for version bytes
+
+        # Build complete block with header
+        block = bytearray()
+        # Block type 0x0102 (IOCR Block Request)
+        block.extend(struct.pack(">H", 0x0102))
+        # Block length
+        block.extend(struct.pack(">H", block_content_len))
+        # Version 1.0
+        block.append(1)
+        block.append(0)
+        # Content
+        block.extend(data)
+
+        iocr_name = "Input" if is_input else "Output"
+        logger.debug(f"Built {iocr_name} IOCR block (manual): {len(block)} bytes, "
+                     f"{len(matching_slots)} slots, data_len={data_len}")
+
+        return bytes(block)
+
     def _build_alarm_cr_block_c_format(self) -> Block:
         """
         Build Alarm CR block matching C implementation wire format.
@@ -967,96 +1200,89 @@ class ProfinetController:
 
     def _build_expected_submodule_block_manual(self, profile: List[SlotConfig]) -> Block:
         """
-        Build Expected Submodule block MANUALLY because Scapy serializes incorrectly.
+        Build Expected Submodule block MANUALLY matching C code EXACTLY.
 
-        Standard PROFINET format (IEC 61158-6-10):
+        C code format (profinet_rpc.c:554-628):
         - BlockHeader: type(2) + length(2) + version(2) = 6 bytes
-        - NumberOfAPIs (2)
-        - For each API entry:
-            - API (4)
+        - NumberOfAPIs (2) = 1
+        - API 0:
+          - API Number (4) = 0
+          - NumberOfSlots (2)
+          - For each slot:
             - SlotNumber (2)
             - ModuleIdentNumber (4)
-            - ModuleProperties (2)
-            - NumberOfSubmodules (2)
-            - For each Submodule:
-                - SubslotNumber (2)
-                - SubmoduleIdentNumber (4)
-                - SubmoduleProperties (2)
-                - DataDescription array (if Type != NO_IO):
-                    - DataDescription type (2) = 1 for input, 2 for output
-                    - SubmoduleDataLength (2)
-                    - LengthIOCS (1)
-                    - LengthIOPS (1)
+            - NumberOfSubslots (2)   <-- NO ModuleProperties field!
+            - For each subslot:
+              - SubslotNumber (2)
+              - SubmoduleIdentNumber (4)
+              - SubmoduleProperties (2) = 0x0001(input) or 0x0002(output) or 0x0000(no_io)
+              - DataLength (2)       <-- NO DataDescription type field!
+              - LengthIOCS (1) = 1
+              - LengthIOPS (1) = 1
+
+        This differs from standard PROFINET spec which has:
+        - Per-slot API entries (not NumberOfSlots inside single API)
+        - ModuleProperties field (C omits)
+        - DataDescription type field (C omits)
         """
         # Build block content
         data = bytearray()
 
-        # NumberOfAPIs = number of slots (one API entry per slot)
-        data.extend(struct.pack(">H", len(profile)))
+        # NumberOfAPIs = 1 (C: line 558)
+        data.extend(struct.pack(">H", 1))
 
-        for slot in profile:
-            # API = 0 (always 0 for standard PROFINET)
-            data.extend(struct.pack(">I", 0))
+        # API 0 (C: line 561)
+        data.extend(struct.pack(">I", 0))  # API Number
 
-            # SlotNumber
-            data.extend(struct.pack(">H", slot.slot_number))
+        # Group profile by slot (C: lines 564-577 count unique slots)
+        slots_dict = {}
+        for slot_cfg in profile:
+            if slot_cfg.slot_number not in slots_dict:
+                slots_dict[slot_cfg.slot_number] = {
+                    'module_ident': slot_cfg.module_ident,
+                    'submodules': []
+                }
+            slots_dict[slot_cfg.slot_number]['submodules'].append(slot_cfg)
 
-            # ModuleIdentNumber
-            data.extend(struct.pack(">I", slot.module_ident))
+        # NumberOfSlots (C: line 578)
+        data.extend(struct.pack(">H", len(slots_dict)))
 
-            # ModuleProperties = 0
-            data.extend(struct.pack(">H", 0))
+        # Slot data (C: lines 581-622)
+        for slot_num in sorted(slots_dict.keys()):
+            slot_info = slots_dict[slot_num]
 
-            # NumberOfSubmodules = 1 (one submodule per slot in our profile)
-            data.extend(struct.pack(">H", 1))
+            # SlotNumber (C: line 583)
+            data.extend(struct.pack(">H", slot_num))
 
-            # Submodule entry
-            # SubslotNumber
-            data.extend(struct.pack(">H", slot.subslot_number))
+            # ModuleIdentNumber (C: line 593)
+            data.extend(struct.pack(">I", slot_info['module_ident']))
 
-            # SubmoduleIdentNumber
-            data.extend(struct.pack(">I", slot.submodule_ident))
+            # NumberOfSubslots (C: line 602) - NO ModuleProperties before this!
+            data.extend(struct.pack(">H", len(slot_info['submodules'])))
 
-            # SubmoduleProperties: bits 0-1 = Type (0=NO_IO, 1=INPUT, 2=OUTPUT, 3=INPUT_OUTPUT)
-            if slot.direction == "input":
-                submod_type = 1
-            elif slot.direction == "output":
-                submod_type = 2
-            elif slot.direction == "input_output":
-                submod_type = 3
-            else:
-                submod_type = 0  # NO_IO (DAP)
-            data.extend(struct.pack(">H", submod_type))
+            # Subslot data (C: lines 605-622)
+            for submod in slot_info['submodules']:
+                # SubslotNumber (C: line 609)
+                data.extend(struct.pack(">H", submod.subslot_number))
 
-            # DataDescription array (only if Type != NO_IO)
-            if submod_type == 1:  # INPUT
-                # DataDescription type = 1 (Input)
-                data.extend(struct.pack(">H", 1))
-                # SubmoduleDataLength
-                data.extend(struct.pack(">H", slot.data_length))
-                # LengthIOCS = 1, LengthIOPS = 1
+                # SubmoduleIdentNumber (C: line 610)
+                data.extend(struct.pack(">I", submod.submodule_ident))
+
+                # SubmoduleProperties (C: line 613-614)
+                if submod.direction == "input":
+                    props = 0x0001
+                elif submod.direction == "output":
+                    props = 0x0002
+                else:
+                    props = 0x0000  # DAP / no_io
+                data.extend(struct.pack(">H", props))
+
+                # DataLength (C: line 617) - just data_length, NO DataDescription type!
+                data.extend(struct.pack(">H", submod.data_length))
+
+                # LengthIOCS = 1, LengthIOPS = 1 (C: lines 618-621)
                 data.append(1)
                 data.append(1)
-            elif submod_type == 2:  # OUTPUT
-                # DataDescription type = 2 (Output)
-                data.extend(struct.pack(">H", 2))
-                # SubmoduleDataLength
-                data.extend(struct.pack(">H", slot.data_length))
-                # LengthIOCS = 1, LengthIOPS = 1
-                data.append(1)
-                data.append(1)
-            elif submod_type == 3:  # INPUT_OUTPUT
-                # Input DataDescription
-                data.extend(struct.pack(">H", 1))
-                data.extend(struct.pack(">H", slot.data_length))
-                data.append(1)
-                data.append(1)
-                # Output DataDescription
-                data.extend(struct.pack(">H", 2))
-                data.extend(struct.pack(">H", slot.data_length))
-                data.append(1)
-                data.append(1)
-            # NO_IO has no DataDescription
 
         # Calculate block length (content after type+length, includes version)
         block_content_len = len(data) + 2  # +2 for version bytes
@@ -1073,7 +1299,7 @@ class ProfinetController:
         # Content
         block.extend(data)
 
-        logger.debug(f"Built ExpectedSubmodule block manually: {len(block)} bytes, {len(profile)} slots")
+        logger.debug(f"Built ExpectedSubmodule block (C format): {len(block)} bytes, {len(slots_dict)} slots")
 
         # Return as Scapy Raw packet
         return Raw(load=bytes(block))
@@ -1179,194 +1405,103 @@ class ProfinetController:
         )
 
     def _rpc_connect(self, profile: List[SlotConfig]) -> bool:
-        """Send RPC Connect request."""
+        """
+        Send RPC Connect request using ALL manual block builders.
+
+        This method builds all PROFINET blocks manually to match the C code
+        byte-for-byte, avoiding Scapy's broken serialization.
+
+        Citation: profinet_rpc.c:365-670
+        """
         if not self.ar:
             return False
 
         try:
-            logger.debug("Building AR block...")
-            # Build AR block
-            ar_block = ARBlockReq(
-                ARType=ARType.IOCAR,
-                ARUUID=self.ar.ar_uuid,
-                SessionKey=self.ar.session_key,
-                CMInitiatorMacAdd=self.mac,  # Scapy MACField expects colon-separated format
-                CMInitiatorObjectUUID=uuid4().bytes,
-                # ARProperties bit fields (Scapy field names are case-sensitive)
-                ARProperties_ParametrizationServer=0,  # 0 = CM_Initator handles
-                ARProperties_DeviceAccess=0,
-                ARProperties_CompanionAR=0,
-                ARProperties_AcknowledgeCompanionAR=0,
-                ARProperties_reserved_1=0,
-                ARProperties_SupervisorTakeoverAllowed=0,
-                ARProperties_State=1,  # 1 = Active
-                CMInitiatorActivityTimeoutFactor=1000,
-                CMInitiatorUDPRTPort=RPC_PORT,
-                StationNameLength=len(self.station_name),
-                CMInitiatorStationName=self.station_name.encode()
-            )
-            logger.debug("AR block built successfully")
+            # ====== Build ALL blocks MANUALLY (no Scapy packet classes) ======
+            # This avoids Scapy's broken serialization that caused:
+            # - ExpectedSubmoduleBlockReq: API=0x40 instead of 0, wrong slot counts
+            # - Potential issues with AR and IOCR blocks as well
 
-            # Build IOCR blocks
-            # Calculate input data length from profile
-            input_len = sum(s.data_length for s in profile if s.direction == "input") + 1  # +1 for IOPS
-            output_len = sum(s.data_length for s in profile if s.direction == "output") + 1
-            if output_len == 1:
-                output_len = 4  # Minimum
+            # Build AR block manually (C: lines 402-431)
+            logger.debug("Building AR block (manual, matching C code)...")
+            ar_block_bytes = self._build_ar_block_manual()
+            ar_block = Raw(load=ar_block_bytes)
+            logger.debug(f"AR block: {len(ar_block_bytes)} bytes")
 
-            logger.debug(f"Building IOCR blocks (input_len={input_len}, output_len={output_len})...")
+            # Build Input IOCR block manually (C: lines 433-514)
+            logger.debug("Building Input IOCR block (manual, matching C code)...")
+            iocr_input_bytes = self._build_iocr_block_manual(IOCRType.INPUT, profile)
+            iocr_input = Raw(load=iocr_input_bytes)
+            logger.debug(f"Input IOCR block: {len(iocr_input_bytes)} bytes")
 
-            # Build IODataObjects and IOCSs for INPUT IOCR
-            # Filter slots with direction == "input" and data_length > 0
-            input_slots = [s for s in profile if s.direction == "input" and s.data_length > 0]
-            input_io_data = []
-            input_iocs = []
-            data_offset = 0
-            iocs_offset = 0
-            for slot in input_slots:
-                input_io_data.append(IOCRAPIObject(
-                    SlotNumber=slot.slot_number,
-                    SubslotNumber=slot.subslot_number,
-                    FrameOffset=data_offset
-                ))
-                data_offset += slot.data_length
-                input_iocs.append(IOCRAPIObject(
-                    SlotNumber=slot.slot_number,
-                    SubslotNumber=slot.subslot_number,
-                    FrameOffset=iocs_offset
-                ))
-                iocs_offset += 1  # IOCS is 1 byte per submodule
+            # Build Output IOCR block manually (C: lines 433-514)
+            logger.debug("Building Output IOCR block (manual, matching C code)...")
+            iocr_output_bytes = self._build_iocr_block_manual(IOCRType.OUTPUT, profile)
+            iocr_output = Raw(load=iocr_output_bytes)
+            logger.debug(f"Output IOCR block: {len(iocr_output_bytes)} bytes")
 
-            input_api = IOCRAPI(
-                API=0,
-                IODataObjects=input_io_data,
-                IOCSs=input_iocs
-            )
-
-            # IOCR values matched to C implementation (profinet_rpc.c:438-453)
-            iocr_input = IOCRBlockReq(
-                IOCRType=IOCRType.INPUT,
-                IOCRReference=0x0001,
-                LT=PROFINET_ETHERTYPE,
-                # IOCRProperties split into bit fields
-                IOCRProperties_RTClass=1,  # RT Class 1
-                IOCRProperties_reserved1=0,
-                IOCRProperties_reserved2=0,
-                IOCRProperties_reserved3=0,
-                DataLength=input_len,
-                FrameID=FRAME_ID_INPUT,
-                SendClockFactor=32,
-                ReductionRatio=32,
-                Phase=1,
-                Sequence=0,
-                FrameSendOffset=0,          # C uses 0, not 0xFFFFFFFF
-                WatchdogFactor=10,
-                DataHoldFactor=3,           # C uses 3, not 10
-                # IOCRTagHeader - C uses 0 (profinet_rpc.c:451)
-                IOCRTagHeader_IOUserPriority=0,
-                IOCRTagHeader_reserved=0,
-                IOCRTagHeader_IOCRVLANID=0,
-                IOCRMulticastMACAdd="00:00:00:00:00:00",  # C uses zeros
-                # APIs with IODataObjects and IOCSs
-                APIs=[input_api]
-            )
-            logger.debug("Input IOCR block built")
-
-            # Build IODataObjects and IOCSs for OUTPUT IOCR
-            output_slots = [s for s in profile if s.direction == "output" and s.data_length > 0]
-            output_io_data = []
-            output_iocs = []
-            data_offset = 0
-            iocs_offset = 0
-            for slot in output_slots:
-                output_io_data.append(IOCRAPIObject(
-                    SlotNumber=slot.slot_number,
-                    SubslotNumber=slot.subslot_number,
-                    FrameOffset=data_offset
-                ))
-                data_offset += slot.data_length
-                output_iocs.append(IOCRAPIObject(
-                    SlotNumber=slot.slot_number,
-                    SubslotNumber=slot.subslot_number,
-                    FrameOffset=iocs_offset
-                ))
-                iocs_offset += 1
-
-            output_api = IOCRAPI(
-                API=0,
-                IODataObjects=output_io_data,
-                IOCSs=output_iocs
-            )
-
-            # IOCR values matched to C implementation (profinet_rpc.c:438-453)
-            iocr_output = IOCRBlockReq(
-                IOCRType=IOCRType.OUTPUT,
-                IOCRReference=0x0002,
-                LT=PROFINET_ETHERTYPE,
-                IOCRProperties_RTClass=1,
-                IOCRProperties_reserved1=0,
-                IOCRProperties_reserved2=0,
-                IOCRProperties_reserved3=0,
-                DataLength=output_len,
-                FrameID=FRAME_ID_OUTPUT,
-                SendClockFactor=32,
-                ReductionRatio=32,
-                Phase=1,
-                Sequence=0,
-                FrameSendOffset=0,          # C uses 0, not 0xFFFFFFFF
-                WatchdogFactor=10,
-                DataHoldFactor=3,           # C uses 3, not 10
-                # IOCRTagHeader - C uses 0 (profinet_rpc.c:451)
-                IOCRTagHeader_IOUserPriority=0,
-                IOCRTagHeader_reserved=0,
-                IOCRTagHeader_IOCRVLANID=0,
-                IOCRMulticastMACAdd="00:00:00:00:00:00",  # C uses zeros
-                # APIs with IODataObjects and IOCSs
-                APIs=[output_api]
-            )
-            logger.debug("Output IOCR block built")
-
-            # Build Alarm CR block MANUALLY to match C implementation exactly
-            # Citation: profinet_rpc.c:517-540
-            # C code includes TagHeaderHigh=0xC000 and TagHeaderLow=0xA000 which
-            # Scapy's AlarmCRBlockReq may not include
-            logger.debug("Building Alarm CR block (C-compatible format)...")
+            # Build Alarm CR block manually (C: lines 517-540)
+            logger.debug("Building Alarm CR block (manual, matching C code)...")
             alarm_cr = self._build_alarm_cr_block_c_format()
             logger.debug("Alarm CR block built")
 
-            # Build Expected Submodule block MANUALLY
-            # Scapy's ExpectedSubmoduleBlockReq serializes incorrectly (misaligned fields)
-            # causing API=0x40 instead of API=0, and other corruption
-            logger.debug("Building Expected Submodule block (manual format)...")
+            # Build Expected Submodule block manually (C: lines 554-628)
+            logger.debug("Building Expected Submodule block (manual, matching C code)...")
             exp_submod = self._build_expected_submodule_block_manual(profile)
             logger.debug("Expected Submodule block built")
 
-            # Assemble PNIO service request
-            logger.debug("Assembling PNIO service request...")
-            pnio = PNIOServiceReqPDU(
-                args_max=16384,
-                blocks=[ar_block, iocr_input, iocr_output, alarm_cr, exp_submod]
-            )
-            logger.debug("PNIO service request built")
+            # ====== Build NDR header and PNIO payload manually ======
+            # The C code (profinet_rpc.c:380-398) shows NDR header structure:
+            # - ArgsMaximum (4 bytes LE)
+            # - ArgsLength (4 bytes LE)
+            # - MaxCount (4 bytes LE)
+            # - Offset (4 bytes LE) = 0
+            # - ActualCount (4 bytes LE)
 
-            # Wrap in DCE/RPC
-            logger.debug("Wrapping in DCE/RPC...")
+            # Concatenate all PNIO blocks
+            pnio_blocks = (
+                ar_block_bytes +
+                iocr_input_bytes +
+                iocr_output_bytes +
+                bytes(alarm_cr) +
+                bytes(exp_submod)
+            )
+            pnio_len = len(pnio_blocks)
+
+            # Build NDR header (little-endian per DCE/RPC drep)
+            ndr_header = struct.pack("<IIIII",
+                pnio_len,  # ArgsMaximum
+                pnio_len,  # ArgsLength
+                pnio_len,  # MaxCount
+                0,         # Offset (always 0)
+                pnio_len   # ActualCount
+            )
+
+            # Complete PNIO payload
+            pnio_payload = ndr_header + pnio_blocks
+
+            logger.info(f"Connect request: NDR header={len(ndr_header)} bytes, "
+                        f"PNIO blocks={pnio_len} bytes, total payload={len(pnio_payload)} bytes")
+
+            # ====== Build DCE/RPC header manually for full control ======
+            # Or use Scapy's DceRpc4 with Raw payload since header serialization is OK
+
+            # Wrap in DCE/RPC using Scapy (RPC header serialization is reliable)
             rpc = DceRpc4(
                 ptype="request",
                 flags1=0x22,  # Last Fragment (0x02) + Idempotent (0x20)
                 opnum=RpcOpnum.CONNECT,
                 if_id=PNIO_UUID,
                 act_id=self.ar.activity_uuid
-            ) / pnio
-            logger.debug("RPC packet assembled")
+            ) / Raw(load=pnio_payload)
 
             # Debug: dump packet hex for analysis
             try:
                 pkt_bytes = bytes(rpc)
                 logger.info(f"Connect request packet size: {len(pkt_bytes)} bytes")
-                # Log first 100 bytes in hex for debugging
-                hex_str = ' '.join(f'{b:02X}' for b in pkt_bytes[:100])
-                logger.debug(f"Connect request hex (first 100): {hex_str}")
+                # Log first 150 bytes in hex for debugging
+                hex_str = ' '.join(f'{b:02X}' for b in pkt_bytes[:150])
+                logger.debug(f"Connect request hex (first 150): {hex_str}")
             except Exception as hex_err:
                 logger.debug(f"Could not dump packet hex: {hex_err}")
 
