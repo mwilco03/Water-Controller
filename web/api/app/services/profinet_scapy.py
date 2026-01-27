@@ -965,6 +965,119 @@ class ProfinetController:
         # Return as Scapy Raw packet so it can be included in blocks list
         return Raw(load=bytes(block))
 
+    def _build_expected_submodule_block_manual(self, profile: List[SlotConfig]) -> Block:
+        """
+        Build Expected Submodule block MANUALLY because Scapy serializes incorrectly.
+
+        Standard PROFINET format (IEC 61158-6-10):
+        - BlockHeader: type(2) + length(2) + version(2) = 6 bytes
+        - NumberOfAPIs (2)
+        - For each API entry:
+            - API (4)
+            - SlotNumber (2)
+            - ModuleIdentNumber (4)
+            - ModuleProperties (2)
+            - NumberOfSubmodules (2)
+            - For each Submodule:
+                - SubslotNumber (2)
+                - SubmoduleIdentNumber (4)
+                - SubmoduleProperties (2)
+                - DataDescription array (if Type != NO_IO):
+                    - DataDescription type (2) = 1 for input, 2 for output
+                    - SubmoduleDataLength (2)
+                    - LengthIOCS (1)
+                    - LengthIOPS (1)
+        """
+        # Build block content
+        data = bytearray()
+
+        # NumberOfAPIs = number of slots (one API entry per slot)
+        data.extend(struct.pack(">H", len(profile)))
+
+        for slot in profile:
+            # API = 0 (always 0 for standard PROFINET)
+            data.extend(struct.pack(">I", 0))
+
+            # SlotNumber
+            data.extend(struct.pack(">H", slot.slot_number))
+
+            # ModuleIdentNumber
+            data.extend(struct.pack(">I", slot.module_ident))
+
+            # ModuleProperties = 0
+            data.extend(struct.pack(">H", 0))
+
+            # NumberOfSubmodules = 1 (one submodule per slot in our profile)
+            data.extend(struct.pack(">H", 1))
+
+            # Submodule entry
+            # SubslotNumber
+            data.extend(struct.pack(">H", slot.subslot_number))
+
+            # SubmoduleIdentNumber
+            data.extend(struct.pack(">I", slot.submodule_ident))
+
+            # SubmoduleProperties: bits 0-1 = Type (0=NO_IO, 1=INPUT, 2=OUTPUT, 3=INPUT_OUTPUT)
+            if slot.direction == "input":
+                submod_type = 1
+            elif slot.direction == "output":
+                submod_type = 2
+            elif slot.direction == "input_output":
+                submod_type = 3
+            else:
+                submod_type = 0  # NO_IO (DAP)
+            data.extend(struct.pack(">H", submod_type))
+
+            # DataDescription array (only if Type != NO_IO)
+            if submod_type == 1:  # INPUT
+                # DataDescription type = 1 (Input)
+                data.extend(struct.pack(">H", 1))
+                # SubmoduleDataLength
+                data.extend(struct.pack(">H", slot.data_length))
+                # LengthIOCS = 1, LengthIOPS = 1
+                data.append(1)
+                data.append(1)
+            elif submod_type == 2:  # OUTPUT
+                # DataDescription type = 2 (Output)
+                data.extend(struct.pack(">H", 2))
+                # SubmoduleDataLength
+                data.extend(struct.pack(">H", slot.data_length))
+                # LengthIOCS = 1, LengthIOPS = 1
+                data.append(1)
+                data.append(1)
+            elif submod_type == 3:  # INPUT_OUTPUT
+                # Input DataDescription
+                data.extend(struct.pack(">H", 1))
+                data.extend(struct.pack(">H", slot.data_length))
+                data.append(1)
+                data.append(1)
+                # Output DataDescription
+                data.extend(struct.pack(">H", 2))
+                data.extend(struct.pack(">H", slot.data_length))
+                data.append(1)
+                data.append(1)
+            # NO_IO has no DataDescription
+
+        # Calculate block length (content after type+length, includes version)
+        block_content_len = len(data) + 2  # +2 for version bytes
+
+        # Build complete block with header
+        block = bytearray()
+        # Block type 0x0104 (Expected Submodule Block Request)
+        block.extend(struct.pack(">H", 0x0104))
+        # Block length
+        block.extend(struct.pack(">H", block_content_len))
+        # Version 1.0
+        block.append(1)
+        block.append(0)
+        # Content
+        block.extend(data)
+
+        logger.debug(f"Built ExpectedSubmodule block manually: {len(block)} bytes, {len(profile)} slots")
+
+        # Return as Scapy Raw packet
+        return Raw(load=bytes(block))
+
     def _build_expected_submodule_block_scapy(self, profile: List[SlotConfig]) -> Block:
         """
         Build Expected Submodule block using Scapy's spec-compliant format.
@@ -1221,12 +1334,11 @@ class ProfinetController:
             alarm_cr = self._build_alarm_cr_block_c_format()
             logger.debug("Alarm CR block built")
 
-            # Build Expected Submodule block using Scapy's spec-compliant format
-            # NOTE: C code has non-standard format with NumberOfSlots field, but
-            # p-net device likely expects standard PROFINET format (one API per slot)
-            # Wireshark shows NumberOfSlots=2 being misread as SlotNumber=0x0002
-            logger.debug("Building Expected Submodule block (spec-compliant format)...")
-            exp_submod = self._build_expected_submodule_block_scapy(profile)
+            # Build Expected Submodule block MANUALLY
+            # Scapy's ExpectedSubmoduleBlockReq serializes incorrectly (misaligned fields)
+            # causing API=0x40 instead of API=0, and other corruption
+            logger.debug("Building Expected Submodule block (manual format)...")
+            exp_submod = self._build_expected_submodule_block_manual(profile)
             logger.debug("Expected Submodule block built")
 
             # Assemble PNIO service request
