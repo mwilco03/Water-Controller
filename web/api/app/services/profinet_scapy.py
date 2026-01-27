@@ -849,6 +849,106 @@ class ProfinetController:
         # Return as Scapy Raw packet so it can be included in blocks list
         return Raw(load=bytes(block))
 
+    def _build_expected_submodule_block_scapy(self, profile: List[SlotConfig]) -> Block:
+        """
+        Build Expected Submodule block using Scapy's spec-compliant format.
+
+        Standard PROFINET format (IEC 61158-6-10):
+        - NumberOfAPIs
+        - For each API entry (one per API+Slot combination):
+            - API (4)
+            - SlotNumber (2)
+            - ModuleIdentNumber (4)
+            - ModuleProperties (2)
+            - NumberOfSubmodules (2)
+            - For each Submodule:
+                - SubslotNumber (2)
+                - SubmoduleIdentNumber (4)
+                - SubmoduleProperties (2)
+                - DataDescription array (based on Type)
+
+        NOTE: C code has non-standard format with NumberOfSlots field,
+        but p-net device expects standard format.
+        """
+        apis_list = []
+
+        for slot in profile:
+            # Map direction to SubmoduleProperties_Type enum
+            # 0=NO_IO, 1=INPUT, 2=OUTPUT, 3=INPUT_OUTPUT
+            if slot.direction == "input":
+                submod_type = 1
+            elif slot.direction == "output":
+                submod_type = 2
+            elif slot.direction == "input_output":
+                submod_type = 3
+            else:
+                submod_type = 0  # NO_IO
+
+            # Build data description list based on SubmoduleProperties_Type
+            # For INPUT (1) or OUTPUT (2): exactly 1 DataDescription
+            # For INPUT_OUTPUT (3): exactly 2 DataDescriptions
+            # For NO_IO (0): no DataDescriptions
+            data_desc_list = []
+            if submod_type == 1:  # INPUT
+                data_desc_list.append(ExpectedSubmoduleDataDescription(
+                    DataDescription=1,  # Input
+                    SubmoduleDataLength=slot.data_length,
+                    LengthIOCS=1,
+                    LengthIOPS=1
+                ))
+            elif submod_type == 2:  # OUTPUT
+                data_desc_list.append(ExpectedSubmoduleDataDescription(
+                    DataDescription=2,  # Output
+                    SubmoduleDataLength=slot.data_length,
+                    LengthIOCS=1,
+                    LengthIOPS=1
+                ))
+            elif submod_type == 3:  # INPUT_OUTPUT
+                data_desc_list.append(ExpectedSubmoduleDataDescription(
+                    DataDescription=1,  # Input
+                    SubmoduleDataLength=slot.data_length,
+                    LengthIOCS=1,
+                    LengthIOPS=1
+                ))
+                data_desc_list.append(ExpectedSubmoduleDataDescription(
+                    DataDescription=2,  # Output
+                    SubmoduleDataLength=slot.data_length,
+                    LengthIOCS=1,
+                    LengthIOPS=1
+                ))
+            # For NO_IO (0), data_desc_list stays empty
+
+            # Build submodule entry
+            submod = ExpectedSubmodule(
+                SubslotNumber=slot.subslot_number,
+                SubmoduleIdentNumber=slot.submodule_ident,
+                SubmoduleProperties_Type=submod_type,
+                SubmoduleProperties_SharedInput=0,
+                SubmoduleProperties_ReduceInputSubmoduleDataLength=0,
+                SubmoduleProperties_ReduceOutputSubmoduleDataLength=0,
+                SubmoduleProperties_DiscardIOXS=0,
+                SubmoduleProperties_reserved_1=0,
+                SubmoduleProperties_reserved_2=0,
+                DataDescription=data_desc_list
+            )
+
+            # Build API entry (one per slot in spec-compliant format)
+            api = ExpectedSubmoduleAPI(
+                API=0,
+                SlotNumber=slot.slot_number,
+                ModuleIdentNumber=slot.module_ident,
+                ModuleProperties=0,
+                Submodules=[submod]
+            )
+            apis_list.append(api)
+
+        logger.debug(f"Built {len(apis_list)} ExpectedSubmoduleAPI entries")
+
+        return ExpectedSubmoduleBlockReq(
+            NumberOfAPIs=len(apis_list),
+            APIs=apis_list
+        )
+
     def _rpc_connect(self, profile: List[SlotConfig]) -> bool:
         """Send RPC Connect request."""
         if not self.ar:
@@ -1005,11 +1105,12 @@ class ProfinetController:
             alarm_cr = self._build_alarm_cr_block_c_format()
             logger.debug("Alarm CR block built")
 
-            # Build Expected Submodule block MANUALLY to match C wire format exactly
-            # Citation: profinet_rpc.c:554-628
-            # C format differs from Scapy's default structure
-            logger.debug("Building Expected Submodule block (C-compatible format)...")
-            exp_submod = self._build_expected_submodule_block_c_format(profile)
+            # Build Expected Submodule block using Scapy's spec-compliant format
+            # NOTE: C code has non-standard format with NumberOfSlots field, but
+            # p-net device likely expects standard PROFINET format (one API per slot)
+            # Wireshark shows NumberOfSlots=2 being misread as SlotNumber=0x0002
+            logger.debug("Building Expected Submodule block (spec-compliant format)...")
+            exp_submod = self._build_expected_submodule_block_scapy(profile)
             logger.debug("Expected Submodule block built")
 
             # Assemble PNIO service request
