@@ -49,6 +49,7 @@ try:
         Block, ARBlockReq, IOCRBlockReq, AlarmCRBlockReq,
         ExpectedSubmoduleBlockReq, ExpectedSubmoduleAPI, ExpectedSubmodule,
         ExpectedSubmoduleDataDescription,
+        IOCRAPI, IOCRAPIObject,
         IODControlReq, IODReadReq, IODWriteReq,
         PNIOServiceReqPDU, PNIOServiceResPDU
     )
@@ -709,6 +710,34 @@ class ProfinetController:
                 output_len = 4  # Minimum
 
             logger.debug(f"Building IOCR blocks (input_len={input_len}, output_len={output_len})...")
+
+            # Build IODataObjects and IOCSs for INPUT IOCR
+            # Filter slots with direction == "input" and data_length > 0
+            input_slots = [s for s in profile if s.direction == "input" and s.data_length > 0]
+            input_io_data = []
+            input_iocs = []
+            data_offset = 0
+            iocs_offset = 0
+            for slot in input_slots:
+                input_io_data.append(IOCRAPIObject(
+                    SlotNumber=slot.slot_number,
+                    SubslotNumber=slot.subslot_number,
+                    FrameOffset=data_offset
+                ))
+                data_offset += slot.data_length
+                input_iocs.append(IOCRAPIObject(
+                    SlotNumber=slot.slot_number,
+                    SubslotNumber=slot.subslot_number,
+                    FrameOffset=iocs_offset
+                ))
+                iocs_offset += 1  # IOCS is 1 byte per submodule
+
+            input_api = IOCRAPI(
+                API=0,
+                IODataObjects=input_io_data,
+                IOCSs=input_iocs
+            )
+
             iocr_input = IOCRBlockReq(
                 IOCRType=IOCRType.INPUT,
                 IOCRReference=0x0001,
@@ -731,9 +760,37 @@ class ProfinetController:
                 IOCRTagHeader_IOUserPriority=6,
                 IOCRTagHeader_reserved=0,
                 IOCRTagHeader_IOCRVLANID=0,
-                IOCRMulticastMACAdd="01:0e:cf:00:00:00"
+                IOCRMulticastMACAdd="01:0e:cf:00:00:00",
+                # APIs with IODataObjects and IOCSs
+                APIs=[input_api]
             )
             logger.debug("Input IOCR block built")
+
+            # Build IODataObjects and IOCSs for OUTPUT IOCR
+            output_slots = [s for s in profile if s.direction == "output" and s.data_length > 0]
+            output_io_data = []
+            output_iocs = []
+            data_offset = 0
+            iocs_offset = 0
+            for slot in output_slots:
+                output_io_data.append(IOCRAPIObject(
+                    SlotNumber=slot.slot_number,
+                    SubslotNumber=slot.subslot_number,
+                    FrameOffset=data_offset
+                ))
+                data_offset += slot.data_length
+                output_iocs.append(IOCRAPIObject(
+                    SlotNumber=slot.slot_number,
+                    SubslotNumber=slot.subslot_number,
+                    FrameOffset=iocs_offset
+                ))
+                iocs_offset += 1
+
+            output_api = IOCRAPI(
+                API=0,
+                IODataObjects=output_io_data,
+                IOCSs=output_iocs
+            )
 
             iocr_output = IOCRBlockReq(
                 IOCRType=IOCRType.OUTPUT,
@@ -755,7 +812,9 @@ class ProfinetController:
                 IOCRTagHeader_IOUserPriority=6,
                 IOCRTagHeader_reserved=0,
                 IOCRTagHeader_IOCRVLANID=0,
-                IOCRMulticastMACAdd="01:0e:cf:00:00:00"
+                IOCRMulticastMACAdd="01:0e:cf:00:00:00",
+                # APIs with IODataObjects and IOCSs
+                APIs=[output_api]
             )
             logger.debug("Output IOCR block built")
 
@@ -776,7 +835,6 @@ class ProfinetController:
             )
             logger.debug("Alarm CR block built")
 
-            # Build Expected Submodule block
             # Build Expected Submodule block using Scapy packet classes
             logger.debug("Building Expected Submodule block...")
 
@@ -788,14 +846,38 @@ class ProfinetController:
                 submod_type = 1 if slot.direction == "input" else (2 if slot.direction == "output" else 0)
 
                 # Build data description list
+                # For INPUT (1) or OUTPUT (2), exactly 1 DataDescription is required
+                # For INPUT_OUTPUT (3), exactly 2 are required
+                # For NO_IO (0), none are required
                 data_desc_list = []
-                if slot.data_length > 0:
+                if submod_type == 1:  # INPUT
                     data_desc_list.append(ExpectedSubmoduleDataDescription(
-                        DataDescription=1 if slot.direction == "input" else 2,
+                        DataDescription=1,  # Input
                         SubmoduleDataLength=slot.data_length,
                         LengthIOCS=1,
                         LengthIOPS=1
                     ))
+                elif submod_type == 2:  # OUTPUT
+                    data_desc_list.append(ExpectedSubmoduleDataDescription(
+                        DataDescription=2,  # Output
+                        SubmoduleDataLength=slot.data_length,
+                        LengthIOCS=1,
+                        LengthIOPS=1
+                    ))
+                elif submod_type == 3:  # INPUT_OUTPUT
+                    data_desc_list.append(ExpectedSubmoduleDataDescription(
+                        DataDescription=1,  # Input
+                        SubmoduleDataLength=slot.data_length,
+                        LengthIOCS=1,
+                        LengthIOPS=1
+                    ))
+                    data_desc_list.append(ExpectedSubmoduleDataDescription(
+                        DataDescription=2,  # Output
+                        SubmoduleDataLength=slot.data_length,
+                        LengthIOCS=1,
+                        LengthIOPS=1
+                    ))
+                # For NO_IO (0), data_desc_list stays empty
 
                 # Build submodule entry as Scapy packet
                 submod = ExpectedSubmodule(
