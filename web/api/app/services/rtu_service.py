@@ -7,15 +7,34 @@ Business logic for RTU operations, extracted from route handlers.
 This service layer enables testability and reusability across endpoints.
 """
 
+import logging
 import secrets
 from datetime import UTC, datetime
 
 from sqlalchemy.orm import Session
 
+from ..persistence.discovery import get_discovered_device_by_ip
+
+logger = logging.getLogger(__name__)
+
 
 def generate_enrollment_token() -> str:
     """Generate cryptographically secure enrollment token."""
     return f"wtc-enroll-{secrets.token_hex(16)}"
+
+
+def get_station_name_from_discovery(ip_address: str) -> str | None:
+    """
+    Get station_name from DCP discovery cache.
+
+    The RTU reports its own station_name via DCP - we do NOT generate names.
+    Returns None if device not found in discovery cache.
+    """
+    discovered = get_discovered_device_by_ip(ip_address)
+    if discovered and discovered.get("device_name"):
+        return discovered["device_name"]
+    return None
+
 
 from ..core.exceptions import (
     RtuAlreadyExistsError,
@@ -72,10 +91,18 @@ class RtuService:
         if existing_ip:
             raise RtuAlreadyExistsError("ip_address", request.ip_address)
 
-        # Auto-generate station_name from IP if not provided
+        # Get station_name from request or discovery
         station_name = request.station_name
         if not station_name:
-            station_name = f"rtu-{request.ip_address.replace('.', '-')}"
+            # Look up from DCP discovery cache - RTU reports its own name
+            station_name = get_station_name_from_discovery(request.ip_address)
+            if not station_name:
+                raise ValueError(
+                    f"station_name required: device at {request.ip_address} not found in "
+                    "discovery cache. Run DCP discovery first (POST /api/v1/discover/rtu) "
+                    "or use add-by-ip endpoint (POST /api/v1/rtus/add-by-ip?ip_address=...)"
+                )
+            logger.info(f"Using discovered station_name '{station_name}' for {request.ip_address}")
 
         # Check for duplicate station_name
         existing = self.db.query(RTU).filter(RTU.station_name == station_name).first()
