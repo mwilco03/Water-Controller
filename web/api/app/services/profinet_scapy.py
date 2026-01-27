@@ -711,7 +711,11 @@ class ProfinetController:
                 IOCRType=IOCRType.INPUT,
                 IOCRReference=0x0001,
                 LT=PROFINET_ETHERTYPE,
-                IOCRProperties=0x00000000,  # RT Class 1
+                # IOCRProperties split into bit fields
+                IOCRProperties_RTClass=1,  # RT Class 1
+                IOCRProperties_reserved1=0,
+                IOCRProperties_reserved2=0,
+                IOCRProperties_reserved3=0,
                 DataLength=input_len,
                 FrameID=FRAME_ID_INPUT,
                 SendClockFactor=32,
@@ -721,7 +725,10 @@ class ProfinetController:
                 FrameSendOffset=0xFFFFFFFF,
                 WatchdogFactor=10,
                 DataHoldFactor=10,
-                IOCRTagHeader=0xC000,
+                # IOCRTagHeader split into fields
+                IOCRTagHeader_IOUserPriority=6,
+                IOCRTagHeader_reserved=0,
+                IOCRTagHeader_IOCRVLANID=0,
                 IOCRMulticastMACAdd="01:0e:cf:00:00:00"
             )
             logger.debug("Input IOCR block built")
@@ -730,7 +737,10 @@ class ProfinetController:
                 IOCRType=IOCRType.OUTPUT,
                 IOCRReference=0x0002,
                 LT=PROFINET_ETHERTYPE,
-                IOCRProperties=0x00000000,
+                IOCRProperties_RTClass=1,
+                IOCRProperties_reserved1=0,
+                IOCRProperties_reserved2=0,
+                IOCRProperties_reserved3=0,
                 DataLength=output_len,
                 FrameID=FRAME_ID_OUTPUT,
                 SendClockFactor=32,
@@ -740,7 +750,9 @@ class ProfinetController:
                 FrameSendOffset=0xFFFFFFFF,
                 WatchdogFactor=10,
                 DataHoldFactor=10,
-                IOCRTagHeader=0xC000,
+                IOCRTagHeader_IOUserPriority=6,
+                IOCRTagHeader_reserved=0,
+                IOCRTagHeader_IOCRVLANID=0,
                 IOCRMulticastMACAdd="01:0e:cf:00:00:00"
             )
             logger.debug("Output IOCR block built")
@@ -750,7 +762,11 @@ class ProfinetController:
             alarm_cr = AlarmCRBlockReq(
                 AlarmCRType=0x0001,
                 LT=PROFINET_ETHERTYPE,
-                AlarmCRProperties=0x00000000,
+                # AlarmCRProperties split into bit fields
+                AlarmCRProperties_Priority=0,
+                AlarmCRProperties_Transport=0,
+                AlarmCRProperties_Reserved1=0,
+                AlarmCRProperties_Reserved2=0,
                 RTATimeoutFactor=100,
                 RTARetries=3,
                 LocalAlarmReference=0x0001,
@@ -812,7 +828,7 @@ class ProfinetController:
             # Wrap in DCE/RPC
             logger.debug("Wrapping in DCE/RPC...")
             rpc = DceRpc4(
-                type="request",
+                ptype="request",
                 flags1=0x20,  # Idempotent
                 opnum=RpcOpnum.CONNECT,
                 if_id=PNIO_UUID,
@@ -834,21 +850,30 @@ class ProfinetController:
 
         self.ar.seq_num += 1
 
+        # Map ControlCommand enum to Scapy bit fields
         ctrl = IODControlReq(
             ARUUID=self.ar.ar_uuid,
             SessionKey=self.ar.session_key,
-            ControlCommand=command
+            # Individual ControlCommand bit fields
+            ControlCommand_reserved=0,
+            ControlCommand_PrmBegin=1 if command == ControlCommand.PRM_BEGIN else 0,
+            ControlCommand_ReadyForRT_CLASS_3=0,
+            ControlCommand_ReadyForCompanion=1 if command == ControlCommand.READY_FOR_COMPANION else 0,
+            ControlCommand_Done=0,
+            ControlCommand_Release=1 if command == ControlCommand.RELEASE else 0,
+            ControlCommand_ApplicationReady=1 if command == ControlCommand.APP_READY else 0,
+            ControlCommand_PrmEnd=1 if command == ControlCommand.PRM_END else 0,
         )
 
         pnio = PNIOServiceReqPDU(args_max=16384, blocks=[ctrl])
 
         rpc = DceRpc4(
-            type="request",
+            ptype="request",
             flags1=0x20,
             opnum=RpcOpnum.CONTROL,
             if_id=PNIO_UUID,
             act_id=uuid4().bytes,
-            sequence_number=self.ar.seq_num
+            seqnum=self.ar.seq_num
         ) / pnio
 
         return self._rpc_send_recv(rpc, CONTROL_TIMEOUT_MS)
@@ -1259,12 +1284,12 @@ class ProfinetController:
         pnio = PNIOServiceReqPDU(args_max=16384, blocks=[read_req])
 
         rpc = DceRpc4(
-            type="request",
+            ptype="request",
             flags1=0x20,
             opnum=RpcOpnum.READ,
             if_id=PNIO_UUID,
             act_id=uuid4().bytes,
-            sequence_number=self.ar.seq_num
+            seqnum=self.ar.seq_num
         ) / pnio
 
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -1308,12 +1333,12 @@ class ProfinetController:
         pnio = PNIOServiceReqPDU(args_max=16384, blocks=[write_req])
 
         rpc = DceRpc4(
-            type="request",
+            ptype="request",
             flags1=0x20,
             opnum=RpcOpnum.WRITE,
             if_id=PNIO_UUID,
             act_id=uuid4().bytes,
-            sequence_number=self.ar.seq_num
+            seqnum=self.ar.seq_num
         ) / pnio
 
         return self._rpc_send_recv(rpc, CONTROL_TIMEOUT_MS)
