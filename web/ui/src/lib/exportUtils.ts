@@ -2,6 +2,8 @@
  * Export utilities for SCADA HMI data
  */
 
+import { QUALITY_CODES, getQualityLabel } from '@/constants/quality';
+
 export interface ExportOptions {
   filename?: string;
   includeHeaders?: boolean;
@@ -35,14 +37,16 @@ function formatDate(date: Date | string, format: ExportOptions['dateFormat'] = '
 }
 
 /**
- * Quality code to text mapping
+ * Quality code to text mapping using OPC UA quality codes
  */
 function qualityToText(quality: number): string {
-  if (quality === 0) return 'GOOD';
-  if (quality < 64) return 'GOOD';
-  if (quality < 128) return 'UNCERTAIN';
-  if (quality < 192) return 'BAD';
-  return 'NOT_CONNECTED';
+  // Use bitmask to get quality category (top 2 bits)
+  const category = quality & 0xC0;
+  if (category === QUALITY_CODES.GOOD) return 'GOOD';
+  if (category === QUALITY_CODES.UNCERTAIN) return 'UNCERTAIN';
+  if (category === QUALITY_CODES.BAD) return 'BAD';
+  if (category === QUALITY_CODES.NOT_CONNECTED) return 'NOT_CONNECTED';
+  return getQualityLabel(quality).toUpperCase();
 }
 
 /**

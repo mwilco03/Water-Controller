@@ -13,6 +13,7 @@
 
 import Link from 'next/link';
 import type { RTUSensor, RTUControl } from '@/lib/api';
+import { isGoodQuality, isUncertainQuality } from '@/constants/quality';
 import { getStateColor, getRtuStateLabel, isActiveState } from '@/constants';
 
 // Minimal RTU info needed for the card
@@ -37,8 +38,8 @@ export default function RTUCard({ rtu, sensors = [], controls = [], compact = fa
   const isOnline = rtu.state === 'RUNNING';
   const isOffline = rtu.state === 'STOPPED' || rtu.state === 'OFFLINE';
 
-  // Calculate summary stats
-  const activeSensors = Array.isArray(sensors) ? sensors.filter((s) => s.last_quality >= 192).length : 0;
+  // Calculate summary stats - active sensors have good or uncertain quality
+  const activeSensors = Array.isArray(sensors) ? sensors.filter((s) => isGoodQuality(s.last_quality) || isUncertainQuality(s.last_quality)).length : 0;
   const activeControls = Array.isArray(controls) ? controls.filter((c) => isActiveState(c.current_state)).length : 0;
 
   // Get key sensor values for quick display
