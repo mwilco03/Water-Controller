@@ -673,6 +673,182 @@ class ProfinetController:
         logger.info("Disconnected")
         return True
 
+    def _build_expected_submodule_block_c_format(self, profile: List[SlotConfig]) -> Block:
+        """
+        Build Expected Submodule block matching C implementation wire format.
+
+        Citation: profinet_rpc.c:554-628
+
+        C format structure:
+        - BlockHeader: type(2) + length(2) + version(2) = 6 bytes
+        - NumberOfAPIs(2) = 1
+        - API(4) = 0
+        - NumberOfSlots(2)
+        - For each slot:
+            - SlotNumber(2)
+            - ModuleIdentNumber(4)
+            - NumberOfSubmodules(2)
+            - For each submodule:
+                - SubslotNumber(2)
+                - SubmoduleIdentNumber(4)
+                - SubmoduleProperties(2) = 0x0001(input) or 0x0002(output)
+                - DataLength(2)
+                - LengthIOCS(1) = 1
+                - LengthIOPS(1) = 1
+
+        This differs from Scapy's ExpectedSubmoduleBlockReq which has:
+        - Multiple API entries (one per slot)
+        - DataDescription type field (2 bytes extra per submodule)
+        """
+        # Build block content manually
+        data = bytearray()
+
+        # NumberOfAPIs = 1 (big-endian)
+        data.extend(struct.pack(">H", 1))
+
+        # API = 0 (big-endian)
+        data.extend(struct.pack(">I", 0))
+
+        # Group profile by slot
+        slots_dict = {}
+        for slot_cfg in profile:
+            if slot_cfg.slot_number not in slots_dict:
+                slots_dict[slot_cfg.slot_number] = {
+                    'module_ident': slot_cfg.module_ident,
+                    'submodules': []
+                }
+            slots_dict[slot_cfg.slot_number]['submodules'].append(slot_cfg)
+
+        # NumberOfSlots
+        data.extend(struct.pack(">H", len(slots_dict)))
+
+        # Slot data
+        for slot_num in sorted(slots_dict.keys()):
+            slot_info = slots_dict[slot_num]
+
+            # SlotNumber
+            data.extend(struct.pack(">H", slot_num))
+
+            # ModuleIdentNumber
+            data.extend(struct.pack(">I", slot_info['module_ident']))
+
+            # NumberOfSubmodules
+            data.extend(struct.pack(">H", len(slot_info['submodules'])))
+
+            # Submodule data
+            for submod in slot_info['submodules']:
+                # SubslotNumber
+                data.extend(struct.pack(">H", submod.subslot_number))
+
+                # SubmoduleIdentNumber
+                data.extend(struct.pack(">I", submod.submodule_ident))
+
+                # SubmoduleProperties: 0x0001=input, 0x0002=output, 0x0000=no_io
+                if submod.direction == "input":
+                    props = 0x0001
+                elif submod.direction == "output":
+                    props = 0x0002
+                else:
+                    props = 0x0000
+                data.extend(struct.pack(">H", props))
+
+                # DataLength (C writes data_length directly, no DataDescription type)
+                data.extend(struct.pack(">H", submod.data_length))
+
+                # LengthIOCS = 1, LengthIOPS = 1
+                data.append(1)
+                data.append(1)
+
+        # Calculate block length (content after type+length, includes version)
+        block_content_len = len(data) + 2  # +2 for version bytes
+
+        # Build complete block with header
+        block = bytearray()
+        # Block type 0x0104 (Expected Submodule Block)
+        block.extend(struct.pack(">H", 0x0104))
+        # Block length
+        block.extend(struct.pack(">H", block_content_len))
+        # Version 1.0
+        block.append(1)
+        block.append(0)
+        # Content
+        block.extend(data)
+
+        logger.debug(f"Built ExpectedSubmodule block: {len(block)} bytes, {len(slots_dict)} slots")
+
+        # Return as Scapy Raw packet so it can be included in blocks list
+        return Raw(load=bytes(block))
+
+    def _build_alarm_cr_block_c_format(self) -> Block:
+        """
+        Build Alarm CR block matching C implementation wire format.
+
+        Citation: profinet_rpc.c:517-540
+
+        C format structure:
+        - BlockHeader: type(2) + length(2) + version(2) = 6 bytes
+        - AlarmCRType(2) = 1
+        - LT(2) = 0x8892
+        - AlarmCRProperties(4) = 0
+        - RTATimeoutFactor(2) = 100
+        - RTARetries(2) = 3
+        - LocalAlarmReference(2) = 0x0001
+        - MaxAlarmDataLength(2) = 200
+        - AlarmCRTagHeaderHigh(2) = 0xC000  (priority 6)
+        - AlarmCRTagHeaderLow(2) = 0xA000   (priority 5)
+
+        Total content: 20 bytes + 2 version = 22 bytes
+        """
+        # Build block content
+        data = bytearray()
+
+        # AlarmCRType = 1
+        data.extend(struct.pack(">H", 0x0001))
+
+        # LT = 0x8892 (PROFINET Ethertype)
+        data.extend(struct.pack(">H", PROFINET_ETHERTYPE))
+
+        # AlarmCRProperties = 0 (4 bytes)
+        data.extend(struct.pack(">I", 0))
+
+        # RTATimeoutFactor = 100
+        data.extend(struct.pack(">H", 100))
+
+        # RTARetries = 3
+        data.extend(struct.pack(">H", 3))
+
+        # LocalAlarmReference = 0x0001
+        data.extend(struct.pack(">H", 0x0001))
+
+        # MaxAlarmDataLength = 200 (matches C default)
+        data.extend(struct.pack(">H", 200))
+
+        # AlarmCRTagHeaderHigh = 0xC000 (priority 6)
+        data.extend(struct.pack(">H", 0xC000))
+
+        # AlarmCRTagHeaderLow = 0xA000 (priority 5)
+        data.extend(struct.pack(">H", 0xA000))
+
+        # Calculate block length (content after type+length, includes version)
+        block_content_len = len(data) + 2  # +2 for version bytes
+
+        # Build complete block with header
+        block = bytearray()
+        # Block type 0x0103 (Alarm CR Block Request)
+        block.extend(struct.pack(">H", 0x0103))
+        # Block length
+        block.extend(struct.pack(">H", block_content_len))
+        # Version 1.0
+        block.append(1)
+        block.append(0)
+        # Content
+        block.extend(data)
+
+        logger.debug(f"Built AlarmCR block: {len(block)} bytes (BlockLength={block_content_len})")
+
+        # Return as Scapy Raw packet so it can be included in blocks list
+        return Raw(load=bytes(block))
+
     def _rpc_connect(self, profile: List[SlotConfig]) -> bool:
         """Send RPC Connect request."""
         if not self.ar:
@@ -738,6 +914,7 @@ class ProfinetController:
                 IOCSs=input_iocs
             )
 
+            # IOCR values matched to C implementation (profinet_rpc.c:438-453)
             iocr_input = IOCRBlockReq(
                 IOCRType=IOCRType.INPUT,
                 IOCRReference=0x0001,
@@ -753,14 +930,14 @@ class ProfinetController:
                 ReductionRatio=32,
                 Phase=1,
                 Sequence=0,
-                FrameSendOffset=0xFFFFFFFF,
+                FrameSendOffset=0,          # C uses 0, not 0xFFFFFFFF
                 WatchdogFactor=10,
-                DataHoldFactor=10,
-                # IOCRTagHeader split into fields
-                IOCRTagHeader_IOUserPriority=6,
+                DataHoldFactor=3,           # C uses 3, not 10
+                # IOCRTagHeader - C uses 0 (profinet_rpc.c:451)
+                IOCRTagHeader_IOUserPriority=0,
                 IOCRTagHeader_reserved=0,
                 IOCRTagHeader_IOCRVLANID=0,
-                IOCRMulticastMACAdd="01:0e:cf:00:00:00",
+                IOCRMulticastMACAdd="00:00:00:00:00:00",  # C uses zeros
                 # APIs with IODataObjects and IOCSs
                 APIs=[input_api]
             )
@@ -792,6 +969,7 @@ class ProfinetController:
                 IOCSs=output_iocs
             )
 
+            # IOCR values matched to C implementation (profinet_rpc.c:438-453)
             iocr_output = IOCRBlockReq(
                 IOCRType=IOCRType.OUTPUT,
                 IOCRReference=0x0002,
@@ -806,109 +984,32 @@ class ProfinetController:
                 ReductionRatio=32,
                 Phase=1,
                 Sequence=0,
-                FrameSendOffset=0xFFFFFFFF,
+                FrameSendOffset=0,          # C uses 0, not 0xFFFFFFFF
                 WatchdogFactor=10,
-                DataHoldFactor=10,
-                IOCRTagHeader_IOUserPriority=6,
+                DataHoldFactor=3,           # C uses 3, not 10
+                # IOCRTagHeader - C uses 0 (profinet_rpc.c:451)
+                IOCRTagHeader_IOUserPriority=0,
                 IOCRTagHeader_reserved=0,
                 IOCRTagHeader_IOCRVLANID=0,
-                IOCRMulticastMACAdd="01:0e:cf:00:00:00",
+                IOCRMulticastMACAdd="00:00:00:00:00:00",  # C uses zeros
                 # APIs with IODataObjects and IOCSs
                 APIs=[output_api]
             )
             logger.debug("Output IOCR block built")
 
-            # Build Alarm CR block
-            logger.debug("Building Alarm CR block...")
-            alarm_cr = AlarmCRBlockReq(
-                AlarmCRType=0x0001,
-                LT=PROFINET_ETHERTYPE,
-                # AlarmCRProperties split into bit fields
-                AlarmCRProperties_Priority=0,
-                AlarmCRProperties_Transport=0,
-                AlarmCRProperties_Reserved1=0,
-                AlarmCRProperties_Reserved2=0,
-                RTATimeoutFactor=100,
-                RTARetries=3,
-                LocalAlarmReference=0x0001,
-                MaxAlarmDataLength=128
-            )
+            # Build Alarm CR block MANUALLY to match C implementation exactly
+            # Citation: profinet_rpc.c:517-540
+            # C code includes TagHeaderHigh=0xC000 and TagHeaderLow=0xA000 which
+            # Scapy's AlarmCRBlockReq may not include
+            logger.debug("Building Alarm CR block (C-compatible format)...")
+            alarm_cr = self._build_alarm_cr_block_c_format()
             logger.debug("Alarm CR block built")
 
-            # Build Expected Submodule block using Scapy packet classes
-            logger.debug("Building Expected Submodule block...")
-
-            # Build APIs list using Scapy packet objects
-            apis_list = []
-            for slot in profile:
-                # Map direction to SubmoduleProperties_Type enum
-                # 0=NO_IO, 1=INPUT, 2=OUTPUT, 3=INPUT_OUTPUT
-                submod_type = 1 if slot.direction == "input" else (2 if slot.direction == "output" else 0)
-
-                # Build data description list
-                # For INPUT (1) or OUTPUT (2), exactly 1 DataDescription is required
-                # For INPUT_OUTPUT (3), exactly 2 are required
-                # For NO_IO (0), none are required
-                data_desc_list = []
-                if submod_type == 1:  # INPUT
-                    data_desc_list.append(ExpectedSubmoduleDataDescription(
-                        DataDescription=1,  # Input
-                        SubmoduleDataLength=slot.data_length,
-                        LengthIOCS=1,
-                        LengthIOPS=1
-                    ))
-                elif submod_type == 2:  # OUTPUT
-                    data_desc_list.append(ExpectedSubmoduleDataDescription(
-                        DataDescription=2,  # Output
-                        SubmoduleDataLength=slot.data_length,
-                        LengthIOCS=1,
-                        LengthIOPS=1
-                    ))
-                elif submod_type == 3:  # INPUT_OUTPUT
-                    data_desc_list.append(ExpectedSubmoduleDataDescription(
-                        DataDescription=1,  # Input
-                        SubmoduleDataLength=slot.data_length,
-                        LengthIOCS=1,
-                        LengthIOPS=1
-                    ))
-                    data_desc_list.append(ExpectedSubmoduleDataDescription(
-                        DataDescription=2,  # Output
-                        SubmoduleDataLength=slot.data_length,
-                        LengthIOCS=1,
-                        LengthIOPS=1
-                    ))
-                # For NO_IO (0), data_desc_list stays empty
-
-                # Build submodule entry as Scapy packet
-                submod = ExpectedSubmodule(
-                    SubslotNumber=slot.subslot_number,
-                    SubmoduleIdentNumber=slot.submodule_ident,
-                    SubmoduleProperties_Type=submod_type,
-                    SubmoduleProperties_SharedInput=0,
-                    SubmoduleProperties_ReduceInputSubmoduleDataLength=0,
-                    SubmoduleProperties_ReduceOutputSubmoduleDataLength=0,
-                    SubmoduleProperties_DiscardIOXS=0,
-                    SubmoduleProperties_reserved_1=0,
-                    SubmoduleProperties_reserved_2=0,
-                    DataDescription=data_desc_list
-                )
-
-                # Build API entry as Scapy packet
-                api = ExpectedSubmoduleAPI(
-                    API=0,
-                    SlotNumber=slot.slot_number,
-                    ModuleIdentNumber=slot.module_ident,
-                    ModuleProperties=0,
-                    Submodules=[submod]
-                )
-                apis_list.append(api)
-
-            logger.debug(f"Built {len(apis_list)} API entries")
-
-            exp_submod = ExpectedSubmoduleBlockReq(
-                NumberOfAPIs=len(apis_list),
-                APIs=apis_list
-            )
+            # Build Expected Submodule block MANUALLY to match C wire format exactly
+            # Citation: profinet_rpc.c:554-628
+            # C format differs from Scapy's default structure
+            logger.debug("Building Expected Submodule block (C-compatible format)...")
+            exp_submod = self._build_expected_submodule_block_c_format(profile)
             logger.debug("Expected Submodule block built")
 
             # Assemble PNIO service request
