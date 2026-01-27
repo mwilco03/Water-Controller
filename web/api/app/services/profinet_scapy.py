@@ -776,7 +776,6 @@ class ProfinetController:
             )
             logger.debug("Alarm CR block built")
 
-            # Build Expected Submodule block
             # Build Expected Submodule block using Scapy packet classes
             logger.debug("Building Expected Submodule block...")
 
@@ -788,14 +787,38 @@ class ProfinetController:
                 submod_type = 1 if slot.direction == "input" else (2 if slot.direction == "output" else 0)
 
                 # Build data description list
+                # For INPUT (1) or OUTPUT (2), exactly 1 DataDescription is required
+                # For INPUT_OUTPUT (3), exactly 2 are required
+                # For NO_IO (0), none are required
                 data_desc_list = []
-                if slot.data_length > 0:
+                if submod_type == 1:  # INPUT
                     data_desc_list.append(ExpectedSubmoduleDataDescription(
-                        DataDescription=1 if slot.direction == "input" else 2,
+                        DataDescription=1,  # Input
                         SubmoduleDataLength=slot.data_length,
                         LengthIOCS=1,
                         LengthIOPS=1
                     ))
+                elif submod_type == 2:  # OUTPUT
+                    data_desc_list.append(ExpectedSubmoduleDataDescription(
+                        DataDescription=2,  # Output
+                        SubmoduleDataLength=slot.data_length,
+                        LengthIOCS=1,
+                        LengthIOPS=1
+                    ))
+                elif submod_type == 3:  # INPUT_OUTPUT
+                    data_desc_list.append(ExpectedSubmoduleDataDescription(
+                        DataDescription=1,  # Input
+                        SubmoduleDataLength=slot.data_length,
+                        LengthIOCS=1,
+                        LengthIOPS=1
+                    ))
+                    data_desc_list.append(ExpectedSubmoduleDataDescription(
+                        DataDescription=2,  # Output
+                        SubmoduleDataLength=slot.data_length,
+                        LengthIOCS=1,
+                        LengthIOPS=1
+                    ))
+                # For NO_IO (0), data_desc_list stays empty
 
                 # Build submodule entry as Scapy packet
                 submod = ExpectedSubmodule(
