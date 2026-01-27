@@ -21,6 +21,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
+from ..core.network import get_profinet_interface
+
 logger = logging.getLogger(__name__)
 
 # Try to import the Scapy-based controller
@@ -93,10 +95,13 @@ class PNController:
         self._running = False
         self._lock = threading.RLock()
 
-        # Get interface from environment or auto-detect
-        self._interface = os.environ.get("WTC_INTERFACE", "")
-        if not self._interface:
-            self._interface = self._auto_detect_interface()
+        # Get interface using the same detection as DCP discovery
+        try:
+            self._interface = get_profinet_interface()
+            logger.info(f"Using network interface: {self._interface}")
+        except RuntimeError as e:
+            logger.warning(f"Interface detection failed: {e}, falling back to eth0")
+            self._interface = "eth0"
 
         # Create Scapy controller if available
         self._scapy_ctrl: Optional[ScapyController] = None
@@ -115,25 +120,6 @@ class PNController:
                 self._scapy_ctrl = None
         else:
             logger.warning("Scapy not available - PROFINET operations will fail")
-
-    def _auto_detect_interface(self) -> str:
-        """Auto-detect network interface."""
-        try:
-            import subprocess
-            result = subprocess.run(
-                ["ip", "-4", "route", "show", "default"],
-                capture_output=True, text=True
-            )
-            if result.returncode == 0 and result.stdout:
-                # Parse: "default via X.X.X.X dev ethX ..."
-                parts = result.stdout.split()
-                if "dev" in parts:
-                    idx = parts.index("dev")
-                    if idx + 1 < len(parts):
-                        return parts[idx + 1]
-        except Exception:
-            pass
-        return "eth0"
 
     def _on_sensor_data(self, slot: int, value: float, quality: int):
         """Callback when sensor data received from Scapy controller."""
@@ -266,7 +252,9 @@ class PNController:
             return success
 
         except Exception as e:
+            import traceback
             logger.error(f"[{station_name}] Connect exception: {e}")
+            logger.error(f"[{station_name}] Traceback:\n{traceback.format_exc()}")
             with self._lock:
                 rtu.state = "ERROR"
                 rtu.error_message = str(e)

@@ -69,7 +69,13 @@ except ImportError:
         3: "RUNNING", 4: "ERROR", 5: "OFFLINE"
     }
     SENSOR_STATUS_NAMES = {0: "good", 1: "bad", 2: "uncertain"}
-    QUALITY_NAMES = {0: "good", 0x40: "uncertain", 0x80: "bad", 0xC0: "not_connected"}
+    QUALITY_NAMES = {
+        0x00: "good",
+        0x40: "uncertain",
+        0x41: "simulated",  # Simulated/test data
+        0x80: "bad",
+        0xC0: "not_connected"
+    }
     CONN_STATE_RUNNING = 3
     CONN_STATE_OFFLINE = 5
     logger.info("Shared memory client not available - using direct network operations")
