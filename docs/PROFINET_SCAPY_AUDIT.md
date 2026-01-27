@@ -402,7 +402,16 @@ data_length(2) + IOCS_len(1) + IOPS_len(1) = 4 bytes
 DataDescription_type(2) + SubmoduleDataLength(2) + LengthIOCS(1) + LengthIOPS(1) = 6 bytes
 ```
 
-**Confidence Current Code Works**: 25%
+**CRITICAL DISCOVERY (2026-01-27 Wireshark capture)**:
+
+The C code has a **NON-STANDARD** format with `NumberOfSlots` field at the API level.
+The p-net based device likely expects **STANDARD PROFINET** format (one API entry per slot).
+
+Wireshark showed `SlotNumber=0x0002` which was actually `NumberOfSlots=2` being misread!
+
+**Fix**: Use Scapy's spec-compliant format with multiple API entries (one per slot).
+
+**Confidence After Fix**: 70%
 
 ---
 

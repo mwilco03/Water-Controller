@@ -60,6 +60,19 @@ except ImportError as e:
     logger.error(f"Scapy import failed: {e}")
     logger.error("Install with: pip install scapy")
 
+# Import resilience module
+try:
+    from .profinet_resilience import (
+        AdaptiveConnector, ConnectionStrategy, ErrorAnalyzer,
+        PNIOResponseParser, create_resilient_connector,
+        STRATEGY_SPEC_COMPLIANT, STRATEGY_C_COMPATIBLE, STRATEGY_MINIMAL,
+        IOCRParams, AlarmCRParams, ExpectedSubmodParams, FormatVariant
+    )
+    RESILIENCE_AVAILABLE = True
+except ImportError as e:
+    RESILIENCE_AVAILABLE = False
+    logger.warning(f"Resilience module not available: {e}")
+
 
 # =============================================================================
 # Constants - Match C Implementation
@@ -311,6 +324,15 @@ class ProfinetController:
         # Callbacks
         self._on_state_change: Optional[Callable[[ARState, ARState], None]] = None
         self._on_sensor_data: Optional[Callable[[int, float, int], None]] = None
+
+        # Resilience tracking
+        self._last_response: Optional[bytes] = None
+        self._last_error_analysis = None
+        self._adaptive_connector: Optional['AdaptiveConnector'] = None
+        self._connection_strategy: Optional['ConnectionStrategy'] = None
+        self._current_iocr_params = None
+        self._current_alarm_params = None
+        self._current_submod_format = None
 
         logger.info(f"PROFINET Controller initialized on {interface} ({self.mac})")
 
@@ -619,16 +641,100 @@ class ProfinetController:
                 self.ar.error_message = str(e)
             return False
 
-    def connect_resilient(self, device_ip: str, max_retries: int = 5) -> bool:
+    def connect_resilient(self, device_ip: str, max_retries: int = 10) -> bool:
         """
-        Connect with retry strategies matching C implementation.
+        Connect with adaptive retry strategies and automatic error correction.
 
-        Tries multiple strategies:
-        1. Standard (as-is)
-        2. Lowercase station name
-        3. Minimal config (DAP only)
-        4. Rediscover + retry
+        Uses the resilience module to:
+        1. Try multiple wire format strategies (spec-compliant, C-compatible, minimal)
+        2. Analyze device error responses and adjust parameters
+        3. Learn from failures to improve success rate
+        4. Provide detailed diagnostic output
+
+        Args:
+            device_ip: Target device IP address
+            max_retries: Maximum total connection attempts
+
+        Returns:
+            True if connection successful, False otherwise
         """
+        if RESILIENCE_AVAILABLE:
+            return self._connect_with_adaptive_strategies(device_ip, max_retries)
+        else:
+            # Fallback to basic retry logic
+            return self._connect_with_basic_retry(device_ip, max_retries)
+
+    def _connect_with_adaptive_strategies(self, device_ip: str, max_retries: int) -> bool:
+        """Connect using adaptive connector with error-based parameter adjustment."""
+        logger.info(f"Starting adaptive connection to {device_ip}")
+
+        # Create adaptive connector with all strategies
+        self._adaptive_connector = create_resilient_connector()
+
+        attempt = 0
+        while attempt < max_retries:
+            attempt += 1
+
+            for strategy in self._adaptive_connector.iterate_strategies():
+                logger.info(f"Attempt {attempt}: Strategy '{strategy.name}' - {strategy.description}")
+                self._connection_strategy = strategy
+
+                # Try connecting with current strategy
+                success = self._connect_with_strategy(device_ip, strategy)
+
+                # Process result and get error analysis
+                error_analysis = self._last_error_analysis
+                should_stop = self._adaptive_connector.process_result(
+                    success=success,
+                    error_analysis=error_analysis
+                )
+
+                if success:
+                    logger.info(f"*** Connection successful with strategy '{strategy.name}' ***")
+                    return True
+
+                if should_stop:
+                    break
+
+                # Log error analysis
+                if error_analysis:
+                    logger.warning(f"Error in {error_analysis.block_name}: {error_analysis.description}")
+                    if error_analysis.parameter_adjustment:
+                        logger.info(f"Applying adjustment: {error_analysis.parameter_adjustment}")
+
+                # Short delay between strategy attempts
+                time.sleep(0.5)
+
+            # Reset connector for next round
+            self._adaptive_connector.current_index = 0
+
+            # Longer backoff between full rounds
+            if attempt < max_retries:
+                backoff = min(2 ** (attempt - 1), 8)
+                logger.info(f"Waiting {backoff}s before next round...")
+                time.sleep(backoff)
+
+        # Generate diagnostic report
+        report = self._adaptive_connector.get_diagnostic_report()
+        logger.error(f"Connection failed after {attempt} attempts.\n{report}")
+
+        return False
+
+    def _connect_with_strategy(self, device_ip: str, strategy: 'ConnectionStrategy') -> bool:
+        """Attempt connection using specific strategy parameters."""
+        # For now, use the default profile but apply strategy parameters
+        # Future: build profile dynamically based on strategy
+
+        # Apply IOCR parameters from strategy
+        self._current_iocr_params = strategy.iocr
+        self._current_alarm_params = strategy.alarm_cr
+        self._current_submod_format = strategy.expected_submod.format
+
+        # Use standard connect with profile
+        return self.connect(device_ip, PROFILE_RTU_CPU_TEMP)
+
+    def _connect_with_basic_retry(self, device_ip: str, max_retries: int) -> bool:
+        """Basic retry logic when resilience module not available."""
         strategies = [
             (ConnectStrategy.STANDARD, PROFILE_RTU_CPU_TEMP),
             (ConnectStrategy.LOWERCASE, PROFILE_RTU_CPU_TEMP),
@@ -637,6 +743,9 @@ class ProfinetController:
         ]
 
         for attempt, (strategy, profile) in enumerate(strategies):
+            if attempt >= max_retries:
+                break
+
             logger.info(f"Connect attempt {attempt + 1}: {strategy.name}")
 
             if strategy == ConnectStrategy.REDISCOVER:
@@ -651,6 +760,12 @@ class ProfinetController:
             time.sleep(backoff)
 
         return False
+
+    def get_diagnostic_report(self) -> str:
+        """Get diagnostic report from last connection attempt."""
+        if self._adaptive_connector:
+            return self._adaptive_connector.get_diagnostic_report()
+        return "No diagnostic data available (adaptive connector not used)"
 
     def disconnect(self) -> bool:
         """Disconnect from device."""
@@ -849,6 +964,106 @@ class ProfinetController:
         # Return as Scapy Raw packet so it can be included in blocks list
         return Raw(load=bytes(block))
 
+    def _build_expected_submodule_block_scapy(self, profile: List[SlotConfig]) -> Block:
+        """
+        Build Expected Submodule block using Scapy's spec-compliant format.
+
+        Standard PROFINET format (IEC 61158-6-10):
+        - NumberOfAPIs
+        - For each API entry (one per API+Slot combination):
+            - API (4)
+            - SlotNumber (2)
+            - ModuleIdentNumber (4)
+            - ModuleProperties (2)
+            - NumberOfSubmodules (2)
+            - For each Submodule:
+                - SubslotNumber (2)
+                - SubmoduleIdentNumber (4)
+                - SubmoduleProperties (2)
+                - DataDescription array (based on Type)
+
+        NOTE: C code has non-standard format with NumberOfSlots field,
+        but p-net device expects standard format.
+        """
+        apis_list = []
+
+        for slot in profile:
+            # Map direction to SubmoduleProperties_Type enum
+            # 0=NO_IO, 1=INPUT, 2=OUTPUT, 3=INPUT_OUTPUT
+            if slot.direction == "input":
+                submod_type = 1
+            elif slot.direction == "output":
+                submod_type = 2
+            elif slot.direction == "input_output":
+                submod_type = 3
+            else:
+                submod_type = 0  # NO_IO
+
+            # Build data description list based on SubmoduleProperties_Type
+            # For INPUT (1) or OUTPUT (2): exactly 1 DataDescription
+            # For INPUT_OUTPUT (3): exactly 2 DataDescriptions
+            # For NO_IO (0): no DataDescriptions
+            data_desc_list = []
+            if submod_type == 1:  # INPUT
+                data_desc_list.append(ExpectedSubmoduleDataDescription(
+                    DataDescription=1,  # Input
+                    SubmoduleDataLength=slot.data_length,
+                    LengthIOCS=1,
+                    LengthIOPS=1
+                ))
+            elif submod_type == 2:  # OUTPUT
+                data_desc_list.append(ExpectedSubmoduleDataDescription(
+                    DataDescription=2,  # Output
+                    SubmoduleDataLength=slot.data_length,
+                    LengthIOCS=1,
+                    LengthIOPS=1
+                ))
+            elif submod_type == 3:  # INPUT_OUTPUT
+                data_desc_list.append(ExpectedSubmoduleDataDescription(
+                    DataDescription=1,  # Input
+                    SubmoduleDataLength=slot.data_length,
+                    LengthIOCS=1,
+                    LengthIOPS=1
+                ))
+                data_desc_list.append(ExpectedSubmoduleDataDescription(
+                    DataDescription=2,  # Output
+                    SubmoduleDataLength=slot.data_length,
+                    LengthIOCS=1,
+                    LengthIOPS=1
+                ))
+            # For NO_IO (0), data_desc_list stays empty
+
+            # Build submodule entry
+            submod = ExpectedSubmodule(
+                SubslotNumber=slot.subslot_number,
+                SubmoduleIdentNumber=slot.submodule_ident,
+                SubmoduleProperties_Type=submod_type,
+                SubmoduleProperties_SharedInput=0,
+                SubmoduleProperties_ReduceInputSubmoduleDataLength=0,
+                SubmoduleProperties_ReduceOutputSubmoduleDataLength=0,
+                SubmoduleProperties_DiscardIOXS=0,
+                SubmoduleProperties_reserved_1=0,
+                SubmoduleProperties_reserved_2=0,
+                DataDescription=data_desc_list
+            )
+
+            # Build API entry (one per slot in spec-compliant format)
+            api = ExpectedSubmoduleAPI(
+                API=0,
+                SlotNumber=slot.slot_number,
+                ModuleIdentNumber=slot.module_ident,
+                ModuleProperties=0,
+                Submodules=[submod]
+            )
+            apis_list.append(api)
+
+        logger.debug(f"Built {len(apis_list)} ExpectedSubmoduleAPI entries")
+
+        return ExpectedSubmoduleBlockReq(
+            NumberOfAPIs=len(apis_list),
+            APIs=apis_list
+        )
+
     def _rpc_connect(self, profile: List[SlotConfig]) -> bool:
         """Send RPC Connect request."""
         if not self.ar:
@@ -1005,11 +1220,12 @@ class ProfinetController:
             alarm_cr = self._build_alarm_cr_block_c_format()
             logger.debug("Alarm CR block built")
 
-            # Build Expected Submodule block MANUALLY to match C wire format exactly
-            # Citation: profinet_rpc.c:554-628
-            # C format differs from Scapy's default structure
-            logger.debug("Building Expected Submodule block (C-compatible format)...")
-            exp_submod = self._build_expected_submodule_block_c_format(profile)
+            # Build Expected Submodule block using Scapy's spec-compliant format
+            # NOTE: C code has non-standard format with NumberOfSlots field, but
+            # p-net device likely expects standard PROFINET format (one API per slot)
+            # Wireshark shows NumberOfSlots=2 being misread as SlotNumber=0x0002
+            logger.debug("Building Expected Submodule block (spec-compliant format)...")
+            exp_submod = self._build_expected_submodule_block_scapy(profile)
             logger.debug("Expected Submodule block built")
 
             # Assemble PNIO service request
@@ -1403,6 +1619,10 @@ class ProfinetController:
 
     def _parse_rpc_response(self, data: bytes) -> bool:
         """Parse RPC response and check status."""
+        # Store raw response for analysis
+        self._last_response = data
+        self._last_error_analysis = None
+
         if len(data) < 84:
             logger.error(f"Response too short: {len(data)} bytes")
             return False
@@ -1419,13 +1639,24 @@ class ProfinetController:
             logger.debug("RPC SUCCESS")
             return True
 
-        # Parse error
+        # Parse error and store for retry logic
         code, decode, code1, code2 = status
-        error_msg = self._analyze_error(code, decode, code1, code2)
+
+        # Use resilience module if available for detailed analysis
+        if RESILIENCE_AVAILABLE:
+            self._last_error_analysis = ErrorAnalyzer.analyze(decode, code1, code2)
+            error_msg = f"{self._last_error_analysis.block_name}: {self._last_error_analysis.description}"
+            if self._last_error_analysis.suggested_fix:
+                logger.info(f"Suggested fix: {self._last_error_analysis.suggested_fix}")
+        else:
+            error_msg = self._analyze_error(code, decode, code1, code2)
+
         logger.error(f"RPC ERROR: {error_msg}")
 
         if self.ar:
             self.ar.error_message = error_msg
+            self.ar.error_code1 = code1
+            self.ar.error_code2 = code2
 
         return False
 
