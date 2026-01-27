@@ -82,8 +82,11 @@ except ImportError as e:
 # =============================================================================
 
 # PROFINET UUIDs
-PNIO_UUID = "dea00001-6c97-11d1-8271-00a02442df7d"
-PNIO_CONTROLLER_UUID = "dea00002-6c97-11d1-8271-00a02442df7d"
+PNIO_UUID = "dea00001-6c97-11d1-8271-00a02442df7d"  # Device Interface
+PNIO_CONTROLLER_UUID = "dea00002-6c97-11d1-8271-00a02442df7d"  # Controller Interface
+# PNIO Object UUID base - last 6 bytes should be replaced with instance-specific data
+PNIO_OBJECT_UUID_BASE = bytes([0x00, 0x00, 0xA0, 0xDE, 0x97, 0x6C, 0xD1, 0x11,
+                               0x82, 0x71, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00])
 
 # Network
 RPC_PORT = 34964
@@ -1483,14 +1486,19 @@ class ProfinetController:
             logger.info(f"Connect request: NDR header={len(ndr_header)} bytes, "
                         f"PNIO blocks={pnio_len} bytes, total payload={len(pnio_payload)} bytes")
 
-            # ====== Build DCE/RPC header manually for full control ======
-            # Or use Scapy's DceRpc4 with Raw payload since header serialization is OK
+            # ====== Build DCE/RPC Object UUID ======
+            # PCAP analysis shows Object UUID uses PNIO Object format (DEA00000-...)
+            # with last 6 bytes derived from controller MAC or instance ID
+            # Format: DEA00000-6C97-11D1-8271-<mac_bytes>
+            mac_bytes = bytes.fromhex(self.mac.replace(':', ''))
+            pnio_object_uuid = bytearray(PNIO_OBJECT_UUID_BASE)
+            pnio_object_uuid[10:16] = mac_bytes  # Replace last 6 bytes with MAC
 
             # Wrap in DCE/RPC using Scapy (RPC header serialization is reliable)
             rpc = DceRpc4(
                 ptype="request",
                 flags1=0x22,  # Last Fragment (0x02) + Idempotent (0x20)
-                object=self.ar.ar_uuid,  # AR UUID as object UUID (C: line 238)
+                object=bytes(pnio_object_uuid),  # PNIO Object UUID (from PCAP analysis)
                 opnum=RpcOpnum.CONNECT,
                 if_id=PNIO_UUID,
                 act_id=self.ar.activity_uuid
