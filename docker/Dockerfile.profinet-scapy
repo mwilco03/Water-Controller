@@ -8,11 +8,13 @@
 FROM python:3.11-slim-bookworm
 
 # Install system dependencies for Scapy raw socket support
+# libpcap-dev provides libpcap.so for BPF filter compilation
 RUN apt-get update && apt-get install -y \
     iproute2 \
     tcpdump \
     net-tools \
     procps \
+    libpcap-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies
