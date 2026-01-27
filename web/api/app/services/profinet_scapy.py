@@ -1448,10 +1448,13 @@ class ProfinetController:
             alarm_cr = self._build_alarm_cr_block_c_format()
             logger.debug("Alarm CR block built")
 
-            # Build Expected Submodule block manually (C: lines 554-628)
-            logger.debug("Building Expected Submodule block (manual, matching C code)...")
-            exp_submod = self._build_expected_submodule_block_manual(profile)
-            logger.debug("Expected Submodule block built")
+            # Build Expected Submodule block using SPEC-COMPLIANT format
+            # NOTE: C code uses non-standard format with NumberOfSlots field inside single API.
+            # The p-net device expects STANDARD PROFINET format (one API entry per slot).
+            # Citation: PROFINET_SCAPY_AUDIT.md - 2026-01-27 Wireshark capture analysis
+            logger.debug("Building Expected Submodule block (spec-compliant, multiple APIs)...")
+            exp_submod = self._build_expected_submodule_block_scapy(profile)
+            logger.debug("Expected Submodule block built (spec-compliant format)")
 
             # ====== Build NDR header and PNIO payload manually ======
             # The C code (profinet_rpc.c:380-398) shows NDR header structure:
