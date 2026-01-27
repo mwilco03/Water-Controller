@@ -684,16 +684,16 @@ class ProfinetController:
                 SessionKey=self.ar.session_key,
                 CMInitiatorMacAdd=self.mac.replace(":", ""),
                 CMInitiatorObjectUUID=uuid4().bytes,
-                ARProperties_ParameterizationServer=0,
+                # ARProperties bit fields (Scapy field names are case-sensitive)
+                ARProperties_ParametrizationServer=0,  # 0 = CM_Initator handles
                 ARProperties_DeviceAccess=0,
                 ARProperties_CompanionAR=0,
                 ARProperties_AcknowledgeCompanionAR=0,
-                ARProperties_Reserved1=0,
-                ARProperties_CMInitiator=1,
+                ARProperties_reserved_1=0,
                 ARProperties_SupervisorTakeoverAllowed=0,
-                ARProperties_State=1,
+                ARProperties_State=1,  # 1 = Active
                 CMInitiatorActivityTimeoutFactor=1000,
-                CMInitiatorUDPRTPort=PROFINET_ETHERTYPE,
+                CMInitiatorUDPRTPort=RPC_PORT,
                 StationNameLength=len(self.station_name),
                 CMInitiatorStationName=self.station_name.encode()
             )
