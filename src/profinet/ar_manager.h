@@ -125,6 +125,24 @@ void ar_manager_set_state_callback(ar_manager_t *manager,
                                     ar_state_change_callback_t callback,
                                     void *ctx);
 
+/* Forward declare DCP discovery type */
+struct dcp_discovery;
+typedef struct dcp_discovery dcp_discovery_t;
+
+/**
+ * @brief Set DCP discovery context for AR manager.
+ *
+ * When set, the AR manager can trigger DCP rediscovery during resilient
+ * connection attempts to refresh device IP addresses.
+ *
+ * @param[in] manager    AR manager instance
+ * @param[in] dcp        DCP discovery context (can be NULL to disable)
+ *
+ * @note Thread safety: Must hold manager lock
+ * @note Memory: NO_ALLOC - stores pointer only
+ */
+void ar_manager_set_dcp_context(ar_manager_t *manager, dcp_discovery_t *dcp);
+
 /* ============== Resilient Connection API ============== */
 
 /**

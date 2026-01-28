@@ -6,6 +6,7 @@
 
 #include "ar_manager.h"
 #include "cyclic_exchange.h"
+#include "dcp_discovery.h"
 #include "profinet_frame.h"
 #include "profinet_rpc.h"
 #include "gsdml_modules.h"
@@ -53,6 +54,9 @@ struct ar_manager {
     /* State change notification */
     ar_state_change_callback_t state_callback;
     void *state_callback_ctx;
+
+    /* DCP discovery context for rediscovery during resilient connect */
+    dcp_discovery_t *dcp;
 };
 
 /* Notify state change if callback is registered */
@@ -1047,6 +1051,16 @@ void ar_manager_set_state_callback(ar_manager_t *manager,
     }
 }
 
+void ar_manager_set_dcp_context(ar_manager_t *manager, dcp_discovery_t *dcp) {
+    if (manager) {
+        pthread_mutex_lock(&manager->lock);
+        manager->dcp = dcp;
+        pthread_mutex_unlock(&manager->lock);
+        LOG_INFO("AR manager DCP context %s",
+                 dcp ? "set" : "cleared");
+    }
+}
+
 /* ============== Resilient Connection Implementation ============== */
 
 /**
@@ -1451,11 +1465,65 @@ wtc_result_t ar_connect_resilient(ar_manager_t *manager,
 
         /* Optional: Try DCP rediscovery between rounds */
         if (opts->try_rediscovery && round < opts->max_attempts - 1) {
-            LOG_INFO("Round %d failed, would trigger DCP rediscovery", round + 1);
-            /*
-             * TODO: Trigger DCP rediscovery here if we have access to the
-             * discovery context. For now, just continue to next round.
-             */
+            if (manager->dcp != NULL) {
+                LOG_INFO("Round %d failed, triggering DCP rediscovery for %s",
+                         round + 1, ar->device_station_name);
+
+                /* Send targeted DCP identify request */
+                wtc_result_t dcp_res = dcp_discovery_identify_name(
+                    manager->dcp, ar->device_station_name
+                );
+
+                if (dcp_res == WTC_OK) {
+                    /*
+                     * Wait for DCP response. The discovery timeout is typically
+                     * 1280ms (DCP response_delay 0x80 * 10ms).
+                     * We wait a bit longer to allow device to respond.
+                     */
+                    uint32_t dcp_timeout = dcp_get_discovery_timeout(manager->dcp);
+                    LOG_DEBUG("Waiting %u ms for DCP response", dcp_timeout + 200);
+                    sleep_ms(dcp_timeout + 200);
+
+                    /*
+                     * Check if device was rediscovered with new IP.
+                     * The DCP discovery callback should have updated the device
+                     * info. We retrieve devices and look for our station.
+                     */
+                    dcp_device_info_t devices[16];
+                    int device_count = 0;
+                    dcp_res = dcp_get_devices(manager->dcp, devices,
+                                               &device_count, 16);
+
+                    if (dcp_res == WTC_OK) {
+                        for (int i = 0; i < device_count; i++) {
+                            if (strcmp(devices[i].station_name,
+                                       ar->device_station_name) == 0 &&
+                                devices[i].ip_set) {
+
+                                /* Device found - check if IP changed */
+                                if (devices[i].ip_address != ar->device_ip) {
+                                    char old_ip[16], new_ip[16];
+                                    ip_to_string(ar->device_ip, old_ip, sizeof(old_ip));
+                                    ip_to_string(devices[i].ip_address, new_ip, sizeof(new_ip));
+
+                                    LOG_INFO("DCP rediscovery: %s IP changed %s -> %s",
+                                             ar->device_station_name, old_ip, new_ip);
+
+                                    /* Update AR with new device info */
+                                    ar->device_ip = devices[i].ip_address;
+                                    memcpy(ar->device_mac, devices[i].mac_address, 6);
+                                }
+                                break;
+                            }
+                        }
+                    }
+                } else {
+                    LOG_WARN("DCP rediscovery request failed: %d", dcp_res);
+                }
+            } else {
+                LOG_DEBUG("Round %d failed, DCP rediscovery not available (no context)",
+                          round + 1);
+            }
         }
     }
 
