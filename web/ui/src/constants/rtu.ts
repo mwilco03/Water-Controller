@@ -4,11 +4,13 @@
  */
 
 export const RTU_STATES = {
-  RUNNING: 'RUNNING',
-  CONNECTING: 'CONNECTING',
-  DISCOVERY: 'DISCOVERY',
   OFFLINE: 'OFFLINE',
+  DISCOVERY: 'DISCOVERY',
+  CONNECTING: 'CONNECTING',
+  CONNECTED: 'CONNECTED',
+  RUNNING: 'RUNNING',
   ERROR: 'ERROR',
+  DISCONNECT: 'DISCONNECT',
 } as const;
 
 export type RtuState = typeof RTU_STATES[keyof typeof RTU_STATES];
@@ -62,16 +64,20 @@ export function isErrorState(state: string | undefined): boolean {
  */
 export function getRtuStateLabel(state: string | undefined): string {
   switch (state?.toUpperCase()) {
-    case RTU_STATES.RUNNING:
-      return 'Running';
-    case RTU_STATES.CONNECTING:
-      return 'Connecting';
-    case RTU_STATES.DISCOVERY:
-      return 'Discovery';
     case RTU_STATES.OFFLINE:
       return 'Offline';
+    case RTU_STATES.DISCOVERY:
+      return 'Discovery';
+    case RTU_STATES.CONNECTING:
+      return 'Connecting';
+    case RTU_STATES.CONNECTED:
+      return 'Connected';
+    case RTU_STATES.RUNNING:
+      return 'Running';
     case RTU_STATES.ERROR:
       return 'Error';
+    case RTU_STATES.DISCONNECT:
+      return 'Disconnecting';
     default:
       return 'Unknown';
   }
