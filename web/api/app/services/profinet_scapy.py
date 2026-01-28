@@ -246,6 +246,9 @@ class ARContext:
     last_activity: float = 0.0
     watchdog_ms: int = WATCHDOG_TIMEOUT_MS
     error_message: str = ""
+    error_code1: int = 0
+    error_code2: int = 0
+    profile: list = field(default_factory=list)  # SlotConfig list for cyclic I/O
 
 
 @dataclass
@@ -594,12 +597,13 @@ class ProfinetController:
         logger.info(f"Connecting to {device_ip}")
 
         with self._lock:
-            # Create AR context
+            # Create AR context with profile for cyclic I/O
             self.ar = ARContext(
                 ar_uuid=uuid4().bytes,
                 activity_uuid=uuid4().bytes,
                 session_key=1,
                 device_ip=device_ip,
+                profile=profile,
             )
             self._set_state(ARState.INIT)
 
@@ -623,13 +627,14 @@ class ProfinetController:
 
             logger.info(f"[{device_ip}] PrmEnd confirmed")
 
-            # Step 3: ApplicationReady
-            # Send ApplicationReady to device (this was the working approach)
-            logger.info(f"[{device_ip}] Step 3: ApplicationReady")
+            # Step 3: Wait for ApplicationReady from device
+            # Standard PROFINET: After PrmEnd, DEVICE sends ApplicationReady to controller
+            # Controller must receive it and send response back
+            logger.info(f"[{device_ip}] Step 3: Waiting for ApplicationReady from device...")
             self._set_state(ARState.READY)
 
-            if not self._rpc_control(ControlCommand.APP_READY):
-                raise Exception("ApplicationReady failed")
+            if not self._wait_for_app_ready(timeout_s=30.0):
+                raise Exception("ApplicationReady not received from device")
 
             # Connection established
             self._set_state(ARState.RUN)
@@ -1448,10 +1453,13 @@ class ProfinetController:
             alarm_cr = self._build_alarm_cr_block_c_format()
             logger.debug("Alarm CR block built")
 
-            # Build Expected Submodule block manually (C: lines 554-628)
-            logger.debug("Building Expected Submodule block (manual, matching C code)...")
-            exp_submod = self._build_expected_submodule_block_manual(profile)
-            logger.debug("Expected Submodule block built")
+            # Build Expected Submodule block using SPEC-COMPLIANT format
+            # NOTE: C code uses non-standard format with NumberOfSlots field inside single API.
+            # The p-net device expects STANDARD PROFINET format (one API entry per slot).
+            # Citation: PROFINET_SCAPY_AUDIT.md - 2026-01-27 Wireshark capture analysis
+            logger.debug("Building Expected Submodule block (spec-compliant, multiple APIs)...")
+            exp_submod = self._build_expected_submodule_block_scapy(profile)
+            logger.debug("Expected Submodule block built (spec-compliant format)")
 
             # ====== Build NDR header and PNIO payload manually ======
             # The C code (profinet_rpc.c:380-398) shows NDR header structure:
@@ -2128,16 +2136,34 @@ class ProfinetController:
 
         self._cycle_counter = (self._cycle_counter + 1) & 0xFFFF
 
-        # Build RT payload
-        # Structure: I/O Data + IOCS + CycleCounter(2) + DataStatus(1) + TransferStatus(1)
-        io_data = b'\x00\x00\x00'  # Output data (commands)
-        iocs = b'\x80'  # IO Consumer Status: Good
+        # Build RT payload based on profile configuration
+        # Output CR structure:
+        #   - Output data for OUTPUT submodules (controller → device commands)
+        #   - IOCS for INPUT submodules (acknowledge received data quality)
+        #   - CycleCounter(2) + DataStatus(1) + TransferStatus(1)
 
-        cycle_bytes = struct.pack(">H", self._cycle_counter)
-        data_status = 0x35  # Run, StationOK, ProviderRun
+        rt_data = bytearray()
+
+        # Get output and input slots from profile
+        output_slots = [s for s in self.ar.profile if s.direction == "output" and s.data_length > 0]
+        input_slots = [s for s in self.ar.profile if s.direction == "input" and s.data_length > 0]
+
+        # Add output data (commands to device)
+        for slot in output_slots:
+            # Output data - actual commands would come from actuator state
+            rt_data.extend(b'\x00' * slot.data_length)
+
+        # Add IOCS for each input slot (1 byte per input submodule)
+        # 0x80 = Good quality acknowledgment
+        for _ in input_slots:
+            rt_data.append(0x80)
+
+        # Ensure minimum frame size (PROFINET requires at least 4 bytes of data)
+        while len(rt_data) < 4:
+            rt_data.append(0x00)
+
+        data_status = 0x35  # Run(0x01) + StationOK(0x04) + ProviderRun(0x10) + StationProblemIndicator(0x20)
         transfer_status = 0x00
-
-        rt_data = io_data + iocs
 
         # Build frame
         frame = (
