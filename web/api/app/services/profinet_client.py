@@ -25,8 +25,10 @@ class ControllerNotConnectedError(Exception):
     """Raised when an operation requires controller connection but none is available."""
     pass
 
-# Python controller mode
-_USE_PYTHON_CONTROLLER = os.environ.get("WTC_USE_PYTHON_CONTROLLER", "1").lower() in ("1", "true", "yes")
+# Python controller mode - now disabled by default since pn_controller uses C controller via IPC
+# Set WTC_USE_PYTHON_CONTROLLER=1 to use pn_controller.py wrapper (still goes to C controller)
+# Set WTC_USE_PYTHON_CONTROLLER=0 (default) to use shm_client directly for C controller
+_USE_PYTHON_CONTROLLER = os.environ.get("WTC_USE_PYTHON_CONTROLLER", "0").lower() in ("1", "true", "yes")
 PYTHON_CONTROLLER_ENABLED = _USE_PYTHON_CONTROLLER
 
 # Demo mode only when explicitly requested
