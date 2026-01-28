@@ -541,15 +541,11 @@ show_disk_space() {
 
     # Get Docker reclaimable space if available
     local docker_reclaimable=""
-    local docker_total=""
     if command -v docker &>/dev/null && docker info &>/dev/null 2>&1; then
-        local docker_df
-        docker_df=$(docker system df --format "{{.Type}}\t{{.Size}}\t{{.Reclaimable}}" 2>/dev/null)
-        if [[ -n "$docker_df" ]]; then
-            # Sum up reclaimable space (extract numeric values)
-            docker_total=$(docker system df --format "{{.Size}}" 2>/dev/null | paste -sd+ | bc 2>/dev/null || echo "")
-            docker_reclaimable=$(docker system df --format "{{.Reclaimable}}" 2>/dev/null | grep -oP '[\d.]+[KMGT]?B' | head -1 || echo "")
-        fi
+        # Get first reclaimable value (Images row) - use awk for portability (no bc/grep -P)
+        docker_reclaimable=$(docker system df 2>/dev/null | awk '/Images/ {print $NF}' | head -1) || true
+        # Fallback: if awk extraction failed, leave empty
+        [[ "$docker_reclaimable" == "RECLAIMABLE" ]] && docker_reclaimable=""
     fi
 
     if [[ "$VERBOSE_MODE" == "true" ]]; then
