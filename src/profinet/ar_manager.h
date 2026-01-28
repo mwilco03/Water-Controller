@@ -89,9 +89,11 @@ wtc_result_t ar_send_connect_request(ar_manager_t *manager,
 wtc_result_t ar_send_parameter_end(ar_manager_t *manager,
                                     profinet_ar_t *ar);
 
-/* Send application ready */
-wtc_result_t ar_send_application_ready(ar_manager_t *manager,
-                                        profinet_ar_t *ar);
+/*
+ * NOTE: ar_send_application_ready() was REMOVED.
+ * Per IEC 61158-6-10, the Device sends ApplicationReady TO the Controller.
+ * The Controller receives it in ar_manager_process() and responds.
+ */
 
 /* Send release request */
 wtc_result_t ar_send_release_request(ar_manager_t *manager,

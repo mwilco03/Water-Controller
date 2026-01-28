@@ -870,40 +870,17 @@ wtc_result_t ar_send_parameter_end(ar_manager_t *manager,
     return WTC_OK;
 }
 
-wtc_result_t ar_send_application_ready(ar_manager_t *manager,
-                                        profinet_ar_t *ar) {
-    if (!manager || !ar) {
-        return WTC_ERROR_INVALID_PARAM;
-    }
-
-    if (!manager->rpc_initialized) {
-        LOG_ERROR("RPC not initialized for application ready");
-        return WTC_ERROR_NOT_INITIALIZED;
-    }
-
-    LOG_INFO("Sending RPC ApplicationReady to %s", ar->device_station_name);
-
-    wtc_result_t res = rpc_application_ready(&manager->rpc_ctx,
-                                              ar->device_ip,
-                                              (const uint8_t *)ar->ar_uuid,
-                                              ar->session_key);
-    if (res != WTC_OK) {
-        LOG_ERROR("RPC ApplicationReady failed for %s: error %d",
-                  ar->device_station_name, res);
-        ar->state = AR_STATE_ABORT;
-        ar->last_activity_ms = time_get_ms();
-        return res;
-    }
-
-    ar_state_t old_state = ar->state;
-    ar->state = AR_STATE_RUN;
-    ar->last_activity_ms = time_get_ms();
-
-    LOG_INFO("RPC ApplicationReady successful for %s - AR now RUNNING",
-             ar->device_station_name);
-    notify_state_change(manager, ar, old_state, AR_STATE_RUN);
-    return WTC_OK;
-}
+/*
+ * NOTE: ar_send_application_ready() was REMOVED.
+ *
+ * Per IEC 61158-6-10, the IO DEVICE sends ApplicationReady to the
+ * IO CONTROLLER after PrmEnd - NOT the other way around.
+ *
+ * The Controller RECEIVES ApplicationReady in ar_manager_process()
+ * and RESPONDS to it. See lines 434-485.
+ *
+ * The old function had the direction backwards and violated the spec.
+ */
 
 wtc_result_t ar_send_release_request(ar_manager_t *manager,
                                       profinet_ar_t *ar) {
