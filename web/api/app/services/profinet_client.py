@@ -31,8 +31,8 @@ class ControllerNotConnectedError(Exception):
 _USE_PYTHON_CONTROLLER = os.environ.get("WTC_USE_PYTHON_CONTROLLER", "0").lower() in ("1", "true", "yes")
 PYTHON_CONTROLLER_ENABLED = _USE_PYTHON_CONTROLLER
 
-# Demo mode only when explicitly requested
-_DEMO_MODE_ENV = os.environ.get("WTC_DEMO_MODE", "").lower() in ("1", "true", "yes")
+# Demo mode only when explicitly requested - disabled by default
+_DEMO_MODE_ENV = os.environ.get("WTC_DEMO_MODE", "0").lower() in ("1", "true", "yes")
 DEMO_ENABLED = _DEMO_MODE_ENV
 
 if PYTHON_CONTROLLER_ENABLED:
