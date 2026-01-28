@@ -69,13 +69,15 @@ class RtuStateMachine:
         rtu_sm.connect()  # Raises: Can't trigger connect from RUNNING
     """
 
-    # Define states
+    # Define states - must match C enum profinet_state_t order
     states = [
         RtuState.OFFLINE,
-        RtuState.CONNECTING,
         RtuState.DISCOVERY,
+        RtuState.CONNECTING,
+        RtuState.CONNECTED,
         RtuState.RUNNING,
         RtuState.ERROR,
+        RtuState.DISCONNECT,
     ]
 
     # Define transitions

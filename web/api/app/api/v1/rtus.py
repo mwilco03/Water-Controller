@@ -280,15 +280,18 @@ async def list_rtus(
 
         # Update DB state if controller reports different state
         if live_state and live_state != rtu.state:
-            if live_state == "RUNNING":
-                rtu.update_state(RtuState.RUNNING)
-            elif live_state == "CONNECTING":
-                rtu.update_state(RtuState.CONNECTING)
-            elif live_state == "ERROR":
-                rtu.update_state(RtuState.ERROR)
-            elif live_state == "OFFLINE":
-                rtu.update_state(RtuState.OFFLINE)
-            db.commit()
+            state_map = {
+                "OFFLINE": RtuState.OFFLINE,
+                "DISCOVERY": RtuState.DISCOVERY,
+                "CONNECTING": RtuState.CONNECTING,
+                "CONNECTED": RtuState.CONNECTED,
+                "RUNNING": RtuState.RUNNING,
+                "ERROR": RtuState.ERROR,
+                "DISCONNECT": RtuState.DISCONNECT,
+            }
+            if live_state in state_map:
+                rtu.update_state(state_map[live_state])
+                db.commit()
 
         item = RtuResponse(
             id=rtu.id,

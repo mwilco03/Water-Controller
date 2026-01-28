@@ -276,7 +276,7 @@ if(BUILD_TESTS)
     enable_testing()
 
     add_executable(test_profinet tests/test_profinet.c)
-    target_link_libraries(test_profinet wtc_profinet wtc_core)
+    target_link_libraries(test_profinet wtc_profinet wtc_registry wtc_core)
     add_test(NAME test_profinet COMMAND test_profinet)
 
     add_executable(test_control tests/test_control.c)

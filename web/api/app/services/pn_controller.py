@@ -38,12 +38,13 @@ try:
     from shm_client import (
         WtcShmClient,
         get_client,
-        CONN_STATE_IDLE,
+        CONN_STATE_OFFLINE,
+        CONN_STATE_DISCOVERY,
         CONN_STATE_CONNECTING,
         CONN_STATE_CONNECTED,
         CONN_STATE_RUNNING,
         CONN_STATE_ERROR,
-        CONN_STATE_OFFLINE,
+        CONN_STATE_DISCONNECT,
         CONNECTION_STATE_NAMES,
         QUALITY_GOOD,
         QUALITY_UNCERTAIN,
@@ -53,16 +54,17 @@ try:
 except ImportError as e:
     SHM_CLIENT_AVAILABLE = False
     logger.warning(f"Shared memory client not available: {e}")
-    # Fallback constants
-    CONN_STATE_IDLE = 0
-    CONN_STATE_CONNECTING = 1
-    CONN_STATE_CONNECTED = 2
-    CONN_STATE_RUNNING = 3
-    CONN_STATE_ERROR = 4
-    CONN_STATE_OFFLINE = 5
+    # Fallback constants - must match C enum profinet_state_t
+    CONN_STATE_OFFLINE = 0
+    CONN_STATE_DISCOVERY = 1
+    CONN_STATE_CONNECTING = 2
+    CONN_STATE_CONNECTED = 3
+    CONN_STATE_RUNNING = 4
+    CONN_STATE_ERROR = 5
+    CONN_STATE_DISCONNECT = 6
     CONNECTION_STATE_NAMES = {
-        0: "IDLE", 1: "CONNECTING", 2: "CONNECTED",
-        3: "RUNNING", 4: "ERROR", 5: "OFFLINE"
+        0: "OFFLINE", 1: "DISCOVERY", 2: "CONNECTING",
+        3: "CONNECTED", 4: "RUNNING", 5: "ERROR", 6: "DISCONNECT"
     }
     QUALITY_GOOD = 0x00
     QUALITY_UNCERTAIN = 0x40

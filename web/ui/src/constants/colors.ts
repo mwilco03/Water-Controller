@@ -74,6 +74,7 @@ export function getStateColor(state: string | undefined): string {
     case 'CONNECTING':
     case 'STARTING':
     case 'STOPPING':
+    case 'DISCONNECT':
       return ISA101_COLORS.states.connecting;
     case 'DISCOVERY':
     case 'SCANNING':

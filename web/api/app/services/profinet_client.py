@@ -66,9 +66,10 @@ try:
     logger.info("Shared memory client available for C controller integration")
 except ImportError:
     SHM_AVAILABLE = False
+    # Fallback constants - must match C enum profinet_state_t
     CONNECTION_STATE_NAMES = {
-        0: "IDLE", 1: "CONNECTING", 2: "CONNECTED",
-        3: "RUNNING", 4: "ERROR", 5: "OFFLINE"
+        0: "OFFLINE", 1: "DISCOVERY", 2: "CONNECTING",
+        3: "CONNECTED", 4: "RUNNING", 5: "ERROR", 6: "DISCONNECT"
     }
     SENSOR_STATUS_NAMES = {0: "good", 1: "bad", 2: "uncertain"}
     QUALITY_NAMES = {
@@ -78,8 +79,8 @@ except ImportError:
         0x80: "bad",
         0xC0: "not_connected"
     }
-    CONN_STATE_RUNNING = 3
-    CONN_STATE_OFFLINE = 5
+    CONN_STATE_RUNNING = 4
+    CONN_STATE_OFFLINE = 0
     logger.info("Shared memory client not available - using direct network operations")
 
 
