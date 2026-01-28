@@ -561,6 +561,9 @@ static wtc_result_t initialize_components(void) {
             LOG_ERROR("Failed to initialize PROFINET controller");
             return res;
         }
+        /* Set registry so sensor data from PROFINET input frames
+         * is automatically pushed to the RTU registry for IPC/API access */
+        profinet_controller_set_registry(g_profinet, g_registry);
     }
 
     /* Initialize control engine */

@@ -215,6 +215,14 @@ wtc_result_t profinet_controller_write_record(profinet_controller_t *controller,
 wtc_result_t profinet_controller_get_stats(profinet_controller_t *controller,
                                             cycle_stats_t *stats);
 
+/* Set RTU registry for sensor data updates
+ * When set, the controller will automatically update the registry
+ * with sensor readings from PROFINET input frames during cyclic processing.
+ */
+struct rtu_registry;
+wtc_result_t profinet_controller_set_registry(profinet_controller_t *controller,
+                                               struct rtu_registry *registry);
+
 /* ============== Authority Handoff API ============== */
 
 /* Request control authority over a device
