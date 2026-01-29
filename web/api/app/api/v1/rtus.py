@@ -10,7 +10,6 @@ Route handlers remain thin and declarative.
 """
 
 import logging
-from datetime import UTC, datetime
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -81,8 +80,7 @@ async def create_rtu(
                 rtu.ip_address,
                 vendor_int,
                 device_int,
-                rtu.slot_count or 8,
-                mac_address=rtu.mac_address or ""
+                rtu.slot_count or 8
             )
             if controller_registered:
                 logger.info(f"RTU {rtu.station_name} registered with PROFINET controller")
@@ -213,8 +211,7 @@ async def add_rtu_by_ip(
                 ip_address,
                 vendor_id or 0,
                 device_id or 0,
-                8,  # Default slot count
-                mac_address=""  # MAC unknown from HTTP API, will be set via DCP
+                8  # Default slot count
             )
             logger.info(f"RTU {station_name} registered with PROFINET controller")
     except Exception as e:
@@ -255,8 +252,6 @@ async def list_rtus(
 ) -> dict[str, Any]:
     """
     List all configured RTUs with pagination.
-
-    Returns live state from Python PROFINET controller when available.
     """
     query = db.query(RTU)
 
@@ -269,35 +264,13 @@ async def list_rtus(
     # Apply pagination
     rtus = query.order_by(RTU.station_name).offset(offset).limit(limit).all()
 
-    # Get live state from Python controller
-    profinet = get_profinet_client()
-
     result = []
     for rtu in rtus:
-        # Check Python controller for live state
-        live_state = profinet.get_rtu_state(rtu.station_name)
-        current_state = live_state if live_state else rtu.state
-
-        # Update DB state if controller reports different state
-        if live_state and live_state != rtu.state:
-            state_map = {
-                "OFFLINE": RtuState.OFFLINE,
-                "DISCOVERY": RtuState.DISCOVERY,
-                "CONNECTING": RtuState.CONNECTING,
-                "CONNECTED": RtuState.CONNECTED,
-                "RUNNING": RtuState.RUNNING,
-                "ERROR": RtuState.ERROR,
-                "DISCONNECT": RtuState.DISCONNECT,
-            }
-            if live_state in state_map:
-                rtu.update_state(state_map[live_state])
-                db.commit()
-
         item = RtuResponse(
             id=rtu.id,
             station_name=rtu.station_name,
             ip_address=rtu.ip_address,
-            state=current_state,
+            state=rtu.state,
             state_since=rtu.state_since,
             stats=build_rtu_stats(db, rtu) if include_stats else None,
         )
@@ -426,8 +399,7 @@ async def connect_rtu(
                 rtu.ip_address,
                 vendor_int,
                 device_int,
-                rtu.slot_count or 8,
-                mac_address=rtu.mac_address or ""
+                rtu.slot_count or 8
             )
             logger.debug(f"Ensured RTU {name} is registered with controller")
     except Exception as e:
@@ -535,45 +507,43 @@ async def discover_modules(
     """
     Discover modules in RTU slots via PROFINET.
 
-    RTU must be RUNNING. Queries the PROFINET controller for slot module
-    information (sensors and actuators).
+    RTU must be RUNNING. Queries the PROFINET controller via shared memory IPC
+    for slot module information (sensors and actuators).
 
     Returns 503 if controller is not connected.
     """
+    from ...services.shm_client import get_shm_client
+
     rtu = get_rtu_or_404(db, name)
 
     if rtu.state != RtuState.RUNNING:
         raise RtuNotConnectedError(name, rtu.state)
 
-    profinet = get_profinet_client()
-
-    if not profinet.is_connected():
+    # Get PROFINET discovery via shared memory IPC
+    shm = get_shm_client()
+    if not shm.is_connected():
         raise HTTPException(
             status_code=503,
-            detail="PROFINET controller not connected. Start the controller process."
+            detail="PROFINET controller not connected. Start the C controller process."
         )
 
-    # Get sensor values from controller
-    sensors = profinet.get_sensor_values(name)
-    actuators = profinet.get_actuator_states(name)
-
-    if not sensors and not actuators:
+    shm_rtu = shm.get_rtu(name)
+    if not shm_rtu:
         raise HTTPException(
             status_code=503,
-            detail=f"RTU '{name}' not found in controller. "
-                   "Ensure the RTU is configured and connected."
+            detail=f"RTU '{name}' not found in controller shared memory. "
+                   "Ensure the RTU is configured and connected in the PROFINET controller."
         )
 
     discovered = []
 
-    # Convert sensor readings to discovery format
-    for sensor in sensors:
-        slot = sensor.get("slot", 0)
+    # Get sensors from shared memory
+    for sensor in shm_rtu.get("sensors", []):
         discovered.append({
-            "slot_number": slot,
-            "tag": f"AI_{slot:02d}",
+            "slot_number": sensor["slot"],
+            "tag": f"AI_{sensor['slot']:02d}",
             "type": "sensor",
-            "description": f"Analog Input Slot {slot}",
+            "description": f"Analog Input Slot {sensor['slot']}",
             "data_type": "float32",
             "unit": "",
             "scale_min": 0.0,
@@ -583,14 +553,13 @@ async def discover_modules(
             "quality": sensor.get("quality"),
         })
 
-    # Convert actuator states to discovery format
-    for actuator in actuators:
-        slot = actuator.get("slot", 0)
+    # Get actuators from shared memory
+    for actuator in shm_rtu.get("actuators", []):
         discovered.append({
-            "slot_number": slot,
-            "tag": f"DO_{slot:02d}",
+            "slot_number": actuator["slot"],
+            "tag": f"DO_{actuator['slot']:02d}",
             "type": "control",
-            "description": f"Digital Output Slot {slot}",
+            "description": f"Digital Output Slot {actuator['slot']}",
             "data_type": "uint16",
             "unit": "",
             "current_command": actuator.get("command"),
@@ -602,6 +571,8 @@ async def discover_modules(
         "discovered": discovered,
         "count": len(discovered),
         "source": "profinet",
+        "vendor_id": shm_rtu.get("vendor_id"),
+        "device_id": shm_rtu.get("device_id"),
     })
 
 
@@ -711,80 +682,30 @@ async def get_rtu_health(
     Get RTU health status.
 
     Returns live connection state from PROFINET controller if available,
-    or database state if controller is not running. Includes packet loss,
-    sensor data quality, and connection metrics from the Python PROFINET controller.
+    or database state if controller is not running. Includes packet loss
+    and failure metrics when available from real PROFINET connection.
     """
     rtu = get_rtu_or_404(db, name)
     profinet = get_profinet_client()
 
     # Get live state from controller if available
     controller_state = profinet.get_rtu_state(name)
+    connection_state = controller_state or rtu.state
 
-    # Normalize state to string for consistent comparison
-    if controller_state:
-        connection_state = controller_state
-    else:
-        connection_state = rtu.state.value if isinstance(rtu.state, RtuState) else str(rtu.state)
-
-    # Determine health based on state (compare as strings)
-    is_healthy = str(connection_state).upper() == "RUNNING"
+    # Determine health based on state
+    is_healthy = connection_state == RtuState.RUNNING
 
     # Get PROFINET status for metrics (if available)
     packet_loss = 0.0
     consecutive_failures = 0
-    sensor_count = 0
-    data_quality = "unknown"
-    cycle_time_ms = None
-    uptime_seconds = None
-    using_simulated_data = False
 
-    if is_healthy:
-        # Get sensor data from Python controller
-        sensors = profinet.get_sensor_values(name)
-        if sensors:
-            sensor_count = len(sensors)
-            # Check data quality from sensors
-            qualities = [s.get("quality", "good") for s in sensors]
-            is_simulated = [s.get("is_simulated", False) for s in sensors]
-
-            if any(q == "bad" for q in qualities):
-                data_quality = "bad"
-            elif any(q == "simulated" for q in qualities) or any(is_simulated):
-                data_quality = "simulated"
-                using_simulated_data = True
-            elif any(q == "uncertain" for q in qualities):
-                data_quality = "uncertain"
-            elif all(q == "good" for q in qualities):
-                data_quality = "good"
-
-        # Get real packet counters
-        packet_counters = profinet.get_packet_counters(name)
-        if packet_counters:
-            packet_loss = packet_counters["loss_percent"]
-            consecutive_failures = packet_counters["timeouts"]
-
-        # Get controller status for connection metrics
+    if is_healthy and profinet.is_controller_running():
+        # Get detailed stats from controller
         status = profinet.get_status()
-        if status.get("python_controller"):
-            # Python controller is active - get per-RTU info
-            for rtu_info in status.get("rtus", []):
-                if rtu_info.get("station_name") == name:
-                    if rtu_info.get("connected"):
-                        # Calculate uptime from state_since with timezone handling
-                        if rtu.state_since:
-                            state_since = rtu.state_since
-                            if state_since.tzinfo is None:
-                                state_since = state_since.replace(tzinfo=UTC)
-                            uptime_seconds = int((datetime.now(UTC) - state_since).total_seconds())
-                        cycle_time_ms = 100.0  # Python controller uses 100ms cycle
-                        using_simulated_data = rtu_info.get("using_simulated_data", False)
-                    break
-
-        # Also check using_simulated_data directly from profinet client
-        if profinet.is_using_simulated_data(name):
-            using_simulated_data = True
-            if data_quality == "good":
-                data_quality = "simulated"
+        if status.get("connected"):
+            # In real implementation, these would come from shared memory
+            # For now, use simulation defaults
+            packet_loss = status.get("packet_loss_percent", 0.0)
 
     return build_success_response({
         "station_name": rtu.station_name,
@@ -793,11 +714,6 @@ async def get_rtu_health(
         "packet_loss_percent": packet_loss,
         "consecutive_failures": consecutive_failures,
         "in_failover": False,
-        "sensor_count": sensor_count,
-        "data_quality": data_quality,
-        "cycle_time_ms": cycle_time_ms,
-        "uptime_seconds": uptime_seconds,
-        "using_simulated_data": using_simulated_data,
         "last_error": rtu.last_error,
         "state_since": rtu.state_since.isoformat() if rtu.state_since else None,
         "transition_reason": rtu.transition_reason,
@@ -810,97 +726,62 @@ async def get_rtu_inventory(
     db: Session = Depends(get_db)
 ) -> dict[str, Any]:
     """
-    Get RTU inventory with real-time sensor/control values.
+    Get RTU slot/module inventory.
 
-    Returns configured sensors and controls with live values from PROFINET.
-    Frontend expects: { rtu_station, sensors[], controls[], last_refresh }
+    Returns configured sensors and controls as inventory items.
+    Note: Slots are PROFINET frame positions, not database entities.
+    The inventory is derived from configured sensors/controls.
     """
     from ...models.rtu import Sensor, Control
 
     rtu = get_rtu_or_404(db, name)
 
-    # Get configured sensors and controls from database
-    db_sensors = db.query(Sensor).filter(Sensor.rtu_id == rtu.id).order_by(Sensor.tag).all()
-    db_controls = db.query(Control).filter(Control.rtu_id == rtu.id).order_by(Control.tag).all()
+    # Get sensors and controls as inventory items
+    sensors = db.query(Sensor).filter(Sensor.rtu_id == rtu.id).all()
+    controls = db.query(Control).filter(Control.rtu_id == rtu.id).all()
 
-    # Get real-time values from PROFINET controller
-    profinet = get_profinet_client()
-    live_sensor_values = {}
-    live_actuator_states = {}
+    slots = []
 
-    if rtu.state == RtuState.RUNNING:
-        try:
-            sensor_readings = profinet.get_sensor_values(name)
-            for reading in sensor_readings:
-                slot = reading.get("slot")
-                if slot is not None:
-                    live_sensor_values[slot] = reading
-
-            actuator_readings = profinet.get_actuator_states(name)
-            for reading in actuator_readings:
-                slot = reading.get("slot")
-                if slot is not None:
-                    live_actuator_states[slot] = reading
-        except Exception as e:
-            logger.warning(f"Could not get live values for {name}: {e}")
-
-    # Build sensor response with live values merged
-    sensors = []
-    for sensor in db_sensors:
-        live = live_sensor_values.get(sensor.slot_number, {})
-        sensors.append({
-            "id": sensor.id,
-            "rtu_station": name,
-            "sensor_id": sensor.tag,
+    # Add sensors as input slots
+    for sensor in sensors:
+        slots.append({
+            "slot": sensor.slot_number,
+            "subslot": 0,
+            "type": "input",
+            "module_type": "analog_input",
+            "tag": sensor.tag,
             "sensor_type": sensor.sensor_type,
-            "name": sensor.tag,
             "unit": sensor.unit,
-            "register_address": sensor.slot_number or 0,
-            "data_type": "float32",
-            "scale_min": sensor.scale_min,
-            "scale_max": sensor.scale_max,
-            "slot_number": sensor.slot_number,
             "channel": sensor.channel,
-            # Real-time values from PROFINET
-            "last_value": live.get("value"),
-            "last_quality": live.get("quality_code", 0x00 if live.get("value") is not None else 0xC0),
-            "last_updated": live.get("timestamp") or (
-                sensor.updated_at.isoformat() if sensor.updated_at else None
-            ),
         })
 
-    # Build control response with live states merged
-    controls = []
-    for control in db_controls:
-        live = live_actuator_states.get(control.slot_number, {})
-        controls.append({
-            "id": control.id,
-            "rtu_station": name,
-            "control_id": control.tag,
-            "control_type": control.control_type,
-            "name": control.tag,
+    # Add controls as output slots
+    for control in controls:
+        slots.append({
+            "slot": control.slot_number,
+            "subslot": 0,
+            "type": "output",
+            "module_type": control.control_type,
+            "tag": control.tag,
             "equipment_type": control.equipment_type,
-            "command_type": "on_off" if control.control_type == "discrete" else "analog",
-            "range_min": control.min_value,
-            "range_max": control.max_value,
             "unit": control.unit,
-            "slot_number": control.slot_number,
             "channel": control.channel,
-            # Real-time state from PROFINET
-            "current_state": live.get("state", "UNKNOWN"),
-            "commanded_value": live.get("commanded_value"),
-            "feedback_value": live.get("feedback_value"),
-            "interlock_active": live.get("interlock_active", False),
-            "last_updated": live.get("timestamp") or (
-                control.updated_at.isoformat() if control.updated_at else None
-            ),
         })
+
+    # Sort by slot number (None values at end)
+    slots.sort(key=lambda x: (x.get("slot") is None, x.get("slot") or 0))
+
+    # Calculate slot usage
+    populated_slots = sum(1 for s in slots if s.get("slot") is not None)
+    total_slots = rtu.slot_count or 0
 
     return build_success_response({
-        "rtu_station": name,
-        "sensors": sensors,
-        "controls": controls,
-        "last_refresh": rtu.updated_at.isoformat() if rtu.updated_at else None,
+        "station_name": rtu.station_name,
+        "slot_count": total_slots,
+        "populated_slots": populated_slots,
+        "empty_slots": max(0, total_slots - populated_slots),
+        "slots": slots,
+        "last_updated": rtu.updated_at.isoformat() if rtu.updated_at else None,
     })
 
 
@@ -935,8 +816,7 @@ async def refresh_rtu_inventory(
                     rtu.ip_address,
                     vendor_int,
                     device_int,
-                    rtu.slot_count or 8,
-                    mac_address=rtu.mac_address or ""
+                    rtu.slot_count or 8
                 )
         except Exception as e:
             logger.warning(f"Could not ensure RTU {name} is registered: {e}")
@@ -977,8 +857,10 @@ async def refresh_rtu_inventory(
     if rtu.state != RtuState.RUNNING:
         raise RtuNotConnectedError(name, rtu.state)
 
-    # PROFINET module discovery happens via the Python controller
-    # which populates sensor data during cyclic I/O reads
+    # In a real implementation, this would trigger PROFINET module discovery
+    # For now, just return current inventory
+    # TODO: Implement actual PROFINET module discovery via IPC
+
     return await get_rtu_inventory(name, db)
 
 

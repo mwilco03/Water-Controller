@@ -87,8 +87,8 @@ services:
       API_HOST: 0.0.0.0
       WTC_API_PORT: ${WTC_API_PORT:-8000}
       WTC_UI_PORT: ${WTC_UI_PORT:-8080}
-      # Production mode - strict validation (industrial SCADA default)
-      WTC_STARTUP_MODE: ${WTC_STARTUP_MODE:-production}
+      # Production mode - strict validation
+      WTC_STARTUP_MODE: ${WTC_STARTUP_MODE:-development}
       # Real operations - NOT simulation
       WTC_SIMULATION_MODE: "false"
       WTC_DEMO_MODE: "false"
@@ -97,20 +97,13 @@ services:
       # Network interface for DCP discovery (same as controller)
       # Leave unset for auto-detection, or set WTC_INTERFACE in environment
       WTC_INTERFACE: ${WTC_INTERFACE:-}
-      # Python PROFINET controller (replaces C controller + shared memory)
-      # Set to 0 to use C controller via shared memory instead
-      WTC_USE_PYTHON_CONTROLLER: ${WTC_USE_PYTHON_CONTROLLER:-1}
-      # RTUs discovered via DCP - no hardcoded defaults
-      # Use POST /api/v1/discover/rtu to find devices on network
-      # Shared memory name for POSIX IPC with controller (fallback if Python controller disabled)
+      # Shared memory name for POSIX IPC with controller (must match C code)
       WTC_SHM_NAME: /wtc_shared_memory
     depends_on:
       database:
         condition: service_healthy
-      # C controller is optional when Python controller is enabled
-      # Uncomment to require C controller:
-      # controller:
-      #   condition: service_healthy
+      controller:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/health').raise_for_status()"]
       interval: 30s
@@ -132,10 +125,6 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile.controller
-      args:
-        # Git version info for build identification (passed at build time)
-        GIT_COMMIT: ${GIT_COMMIT:-unknown}
-        GIT_DATE: ${GIT_DATE:-unknown}
     container_name: wtc-controller
     restart: unless-stopped
     network_mode: host
@@ -330,38 +319,6 @@ services:
           memory: 64M
     profiles:
       - openplc
-
-  # PROFINET Scapy Controller - Python-based Testing Tool
-  # Lightweight alternative to C controller for PROFINET protocol testing
-  # Start with: docker compose --profile profinet-scapy up profinet-scapy
-  profinet-scapy:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile.profinet-scapy
-    container_name: wtc-profinet-scapy
-    restart: "no"
-    network_mode: host
-    cap_add:
-      - NET_ADMIN
-      - NET_RAW
-    security_opt:
-      - seccomp:unconfined
-    environment:
-      # Network interface - leave unset for auto-detection
-      WTC_INTERFACE: ${WTC_INTERFACE:-}
-      # Device IP to connect to (optional, discovers if not set)
-      WTC_DEVICE_IP: ${WTC_RTU_IP:-}
-      PYTHONUNBUFFERED: "1"
-    deploy:
-      resources:
-        limits:
-          cpus: '0.5'
-          memory: 256M
-        reservations:
-          memory: 64M
-    profiles:
-      - profinet-scapy
-      - testing
 
 volumes:
   db_data:

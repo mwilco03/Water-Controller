@@ -104,10 +104,8 @@ _early_log_error() { _early_log "ERROR" "$@"; }
 # Load all library modules
 load_modules() {
     local modules=(
-        "common.sh"
         "detection.sh"
         "dependencies.sh"
-        "database.sh"
         "pnet.sh"
         "build.sh"
         "install-files.sh"
@@ -560,7 +558,6 @@ do_install() {
     # Run all installation steps
     step_detect_system || return 1
     step_install_dependencies || return 1
-    step_setup_database || return 1
     step_install_pnet || return 1
     step_build || return 1
     step_install_files || return 1

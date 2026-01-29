@@ -6,7 +6,6 @@ import { useWebSocket } from '@/hooks/useWebSocket';
 import { useHMIToast } from '@/components/hmi';
 import { useCommandMode } from '@/contexts/CommandModeContext';
 import { logger } from '@/lib/logger';
-import CoupledActionsPanel from '@/components/control/CoupledActionsPanel';
 
 const PAGE_TITLE = 'Control - Water Treatment Controller';
 const POLL_INTERVAL_MS = 2000;
@@ -524,13 +523,6 @@ export default function ControlPage() {
           </tbody>
         </table>
       </div>
-
-      {/* Coupled Actions Panel */}
-      {selectedRtu && (
-        <div className="px-3 sm:px-4 py-3 border-t bg-gray-50">
-          <CoupledActionsPanel rtuStation={selectedRtu} />
-        </div>
-      )}
 
       {/* Footer - keyboard hints (desktop only) */}
       <div className="hidden sm:flex px-4 py-1.5 bg-gray-50 border-t text-xs text-gray-500 justify-between flex-shrink-0">

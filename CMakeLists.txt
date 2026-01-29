@@ -11,38 +11,6 @@ include(${CMAKE_SOURCE_DIR}/cmake/board-detect.cmake)
 # Configure board-specific settings
 configure_board_settings()
 
-# Get git version info for build identification
-# These can be passed via -DGIT_COMMIT_SHORT=xxx for Docker builds
-if(NOT DEFINED GIT_COMMIT_SHORT OR GIT_COMMIT_SHORT STREQUAL "unknown")
-    execute_process(
-        COMMAND git rev-parse --short=7 HEAD
-        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-        OUTPUT_VARIABLE GIT_COMMIT_SHORT
-        OUTPUT_STRIP_TRAILING_WHITESPACE
-        ERROR_QUIET
-    )
-endif()
-if(NOT DEFINED GIT_COMMIT_DATE OR GIT_COMMIT_DATE STREQUAL "unknown")
-    execute_process(
-        COMMAND git log -1 --format=%ci
-        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-        OUTPUT_VARIABLE GIT_COMMIT_DATE
-        OUTPUT_STRIP_TRAILING_WHITESPACE
-        ERROR_QUIET
-    )
-endif()
-if(NOT GIT_COMMIT_SHORT)
-    set(GIT_COMMIT_SHORT "unknown")
-endif()
-if(NOT GIT_COMMIT_DATE)
-    set(GIT_COMMIT_DATE "unknown")
-endif()
-
-# Pass version info to compiler
-add_definitions(-DWTC_BUILD_COMMIT="${GIT_COMMIT_SHORT}")
-add_definitions(-DWTC_BUILD_DATE="${GIT_COMMIT_DATE}")
-add_definitions(-DWTC_VERSION="${PROJECT_VERSION}")
-
 # Build options
 option(BUILD_TESTS "Build test suite" ON)
 option(BUILD_SHARED_LIBS "Build shared libraries" ON)
@@ -276,7 +244,7 @@ if(BUILD_TESTS)
     enable_testing()
 
     add_executable(test_profinet tests/test_profinet.c)
-    target_link_libraries(test_profinet wtc_profinet wtc_registry wtc_core)
+    target_link_libraries(test_profinet wtc_profinet wtc_core)
     add_test(NAME test_profinet COMMAND test_profinet)
 
     add_executable(test_control tests/test_control.c)

@@ -20,24 +20,6 @@
 #include <errno.h>
 #include <unistd.h>
 
-/* For htole16/htole32 (host to little-endian) - portable byte order conversion */
-#ifdef __linux__
-#include <endian.h>
-#elif defined(__APPLE__)
-#include <libkern/OSByteOrder.h>
-#define htole16(x) OSSwapHostToLittleInt16(x)
-#define htole32(x) OSSwapHostToLittleInt32(x)
-#elif defined(_WIN32)
-/* Windows is always little-endian on supported architectures */
-#define htole16(x) (x)
-#define htole32(x) (x)
-#else
-/* Fallback: assume little-endian, but warn at compile time */
-#warning "Unknown platform - assuming little-endian byte order"
-#define htole16(x) (x)
-#define htole32(x) (x)
-#endif
-
 /* ============== Constants ============== */
 
 /* RPC timeouts */
@@ -52,33 +34,16 @@
 #define BLOCK_VERSION_HIGH          1
 #define BLOCK_VERSION_LOW           0
 
-/*
- * PROFINET IO Device Interface UUID: DEA00001-6C97-11D1-8271-00A02442DF7D
- *
- * Wire format with drep=0x10 (little-endian):
- * - data1 (uint32): 0xDEA00001 → LE bytes: 01 00 A0 DE
- * - data2 (uint16): 0x6C97 → LE bytes: 97 6C
- * - data3 (uint16): 0x11D1 → LE bytes: D1 11
- * - data4 (8 bytes): unchanged (not affected by endianness)
- *
- * Reference: p-net pf_cmrpc.c uuid_io_device_interface
- */
+/* PROFINET IO Device Interface UUID */
 const uint8_t PNIO_DEVICE_INTERFACE_UUID[16] = {
-    0x01, 0x00, 0xA0, 0xDE,  /* data1: 0xDEA00001 LE */
-    0x97, 0x6C,              /* data2: 0x6C97 LE */
-    0xD1, 0x11,              /* data3: 0x11D1 LE */
-    0x82, 0x71, 0x00, 0xA0, 0x24, 0x42, 0xDF, 0x7D  /* data4: unchanged */
+    0xDE, 0xA0, 0x00, 0x01, 0x6C, 0x97, 0x11, 0xD1,
+    0x82, 0x71, 0x00, 0xA0, 0x24, 0x42, 0xDF, 0x7D
 };
 
-/*
- * PROFINET IO Controller Interface UUID: DEA00002-6C97-11D1-8271-00A02442DF7D
- * Same format as above but with data1 = 0xDEA00002
- */
+/* PROFINET IO Controller Interface UUID */
 const uint8_t PNIO_CONTROLLER_INTERFACE_UUID[16] = {
-    0x02, 0x00, 0xA0, 0xDE,  /* data1: 0xDEA00002 LE */
-    0x97, 0x6C,              /* data2: 0x6C97 LE */
-    0xD1, 0x11,              /* data3: 0x11D1 LE */
-    0x82, 0x71, 0x00, 0xA0, 0x24, 0x42, 0xDF, 0x7D  /* data4: unchanged */
+    0xDE, 0xA0, 0x00, 0x02, 0x6C, 0x97, 0x11, 0xD1,
+    0x82, 0x71, 0x00, 0xA0, 0x24, 0x42, 0xDF, 0x7D
 };
 
 /* ============== Internal Helpers ============== */
@@ -101,7 +66,7 @@ static void write_u16_be(uint8_t *buf, uint16_t val, size_t *pos)
 }
 
 /**
- * @brief Write uint32 in network byte order (big-endian) to buffer.
+ * @brief Write uint32 in network byte order to buffer.
  *
  * @param[out] buf   Destination buffer
  * @param[in]  val   Value to write
@@ -115,75 +80,6 @@ static void write_u32_be(uint8_t *buf, uint32_t val, size_t *pos)
     uint32_t be = htonl(val);
     memcpy(buf + *pos, &be, 4);
     *pos += 4;
-}
-
-/**
- * @brief Write uint32 in little-endian byte order to buffer.
- *
- * Used for NDR header fields when drep=little-endian.
- *
- * @param[out] buf   Destination buffer
- * @param[in]  val   Value to write
- * @param[in,out] pos Current position, incremented by 4
- *
- * @note Thread safety: SAFE
- * @note Memory: NO_ALLOC
- */
-static void write_u32_le(uint8_t *buf, uint32_t val, size_t *pos)
-{
-    uint32_t le = htole32(val);
-    memcpy(buf + *pos, &le, 4);
-    *pos += 4;
-}
-
-/**
- * @brief Write UUID in big-endian format to buffer (for PNIO blocks).
- *
- * PNIO blocks are always big-endian after NDR header parsing.
- * UUID structure: data1(4) + data2(2) + data3(2) + data4(8) = 16 bytes
- *
- * @param[out] buf   Destination buffer
- * @param[in]  uuid  UUID bytes in native format (typically from rpc_generate_uuid)
- * @param[in,out] pos Current position, incremented by 16
- *
- * @note Thread safety: SAFE
- * @note Memory: NO_ALLOC
- */
-static void write_uuid_be(uint8_t *buf, const uint8_t *uuid, size_t *pos)
-{
-    /*
-     * UUID wire format for PNIO blocks (big-endian):
-     * - data1 (4 bytes): needs BE conversion from native
-     * - data2 (2 bytes): needs BE conversion from native
-     * - data3 (2 bytes): needs BE conversion from native
-     * - data4 (8 bytes): copied as-is (already bytes)
-     *
-     * Input UUID is in native byte order (from rpc_generate_uuid).
-     * On little-endian hosts (x86, ARM), we need to swap data1/2/3.
-     */
-    uint32_t data1;
-    uint16_t data2, data3;
-
-    /* Read native-order values from input UUID */
-    memcpy(&data1, uuid + 0, 4);
-    memcpy(&data2, uuid + 4, 2);
-    memcpy(&data3, uuid + 6, 2);
-
-    /* Write as big-endian */
-    uint32_t data1_be = htonl(data1);
-    uint16_t data2_be = htons(data2);
-    uint16_t data3_be = htons(data3);
-
-    memcpy(buf + *pos, &data1_be, 4);
-    *pos += 4;
-    memcpy(buf + *pos, &data2_be, 2);
-    *pos += 2;
-    memcpy(buf + *pos, &data3_be, 2);
-    *pos += 2;
-
-    /* data4 is already bytes, copy as-is */
-    memcpy(buf + *pos, uuid + 8, 8);
-    *pos += 8;
 }
 
 /**
@@ -204,6 +100,23 @@ static uint16_t read_u16_be(const uint8_t *buf, size_t *pos)
     return ntohs(be);
 }
 
+/**
+ * @brief Read uint32 from buffer in network byte order.
+ *
+ * @param[in]  buf   Source buffer
+ * @param[in,out] pos Current position, incremented by 4
+ * @return Host byte order value
+ *
+ * @note Thread safety: SAFE
+ * @note Memory: NO_ALLOC
+ */
+static uint32_t read_u32_be(const uint8_t *buf, size_t *pos)
+{
+    uint32_t be;
+    memcpy(&be, buf + *pos, 4);
+    *pos += 4;
+    return ntohl(be);
+}
 
 /**
  * @brief Pad position to 4-byte alignment.
@@ -279,20 +192,14 @@ static wtc_result_t build_rpc_header(uint8_t *buf,
     memcpy(hdr->activity_uuid, ctx->activity_uuid, 16);
 
     hdr->server_boot = 0;
-    /*
-     * drep[0] = RPC_DREP_LITTLE_ENDIAN means all multi-byte fields must be
-     * little-endian on the wire. Use htole16/htole32 for portability:
-     * - On little-endian (x86, most ARM): no-op
-     * - On big-endian (some ARM, PowerPC): byte-swap
-     */
-    hdr->interface_version = htole32(1);
-    hdr->sequence_number = htole32(ctx->sequence_number);
+    hdr->interface_version = htonl(1);
+    hdr->sequence_number = htonl(ctx->sequence_number);
     ctx->sequence_number++;
 
-    hdr->opnum = htole16(opnum);
-    hdr->interface_hint = htole16(0xFFFF);
-    hdr->activity_hint = htole16(0xFFFF);
-    hdr->fragment_length = htole16(fragment_length);
+    hdr->opnum = htons(opnum);
+    hdr->interface_hint = 0xFFFF;
+    hdr->activity_hint = 0xFFFF;
+    hdr->fragment_length = htons(fragment_length);
     hdr->fragment_number = 0;
     hdr->auth_protocol = 0;
     hdr->serial_low = 0;
@@ -411,41 +318,28 @@ wtc_result_t rpc_build_connect_request(rpc_context_t *ctx,
     }
 
     size_t pos = sizeof(profinet_rpc_header_t);  /* Skip header, fill later */
+    size_t ar_args_start = pos;
 
     /*
-     * Connect Request structure (per IEC 61158-6-10 / p-net pf_block_reader.c):
-     * - NDR Header (20 bytes, little-endian per drep)
-     *   - args_maximum (4 bytes)
-     *   - args_length (4 bytes)
-     *   - maximum_count (4 bytes)
-     *   - offset (4 bytes) - always 0
-     *   - actual_count (4 bytes)
-     * - PNIO Blocks (big-endian per PROFINET spec):
-     *   - AR Block Request
-     *   - IOCR Block Request(s)
-     *   - Alarm CR Block Request
-     *   - Expected Submodule Block(s)
+     * Connect Request structure (per IEC 61158-6):
+     * - AR Block Request
+     * - IOCR Block Request(s)
+     * - Alarm CR Block Request
+     * - Expected Submodule Block(s)
      */
-
-    /* Reserve space for NDR header - fill in after we know block lengths */
-    size_t ndr_header_pos = pos;
-    pos += 20;  /* 5 x uint32 = 20 bytes */
-
-    /* Track start of PNIO blocks for length calculation */
-    size_t pnio_blocks_start = pos;
 
     /* ============== AR Block Request ============== */
     size_t ar_block_start = pos;
     pos += 6;  /* Skip block header, fill later */
 
     write_u16_be(buffer, (uint16_t)params->ar_type, &pos);
-    /* AR UUID - must be big-endian in PNIO blocks */
-    write_uuid_be(buffer, params->ar_uuid, &pos);
+    memcpy(buffer + pos, params->ar_uuid, 16);
+    pos += 16;
     write_u16_be(buffer, params->session_key, &pos);
     memcpy(buffer + pos, params->controller_mac, 6);
     pos += 6;
-    /* Initiator Object UUID (Controller UUID) - must be big-endian in PNIO blocks */
-    write_uuid_be(buffer, params->controller_uuid, &pos);
+    memcpy(buffer + pos, params->controller_uuid, 16);
+    pos += 16;
     write_u32_be(buffer, params->ar_properties, &pos);
     write_u16_be(buffer, params->activity_timeout, &pos);
     write_u16_be(buffer, ctx->controller_port, &pos);
@@ -455,12 +349,10 @@ wtc_result_t rpc_build_connect_request(rpc_context_t *ctx,
     write_u16_be(buffer, (uint16_t)name_len, &pos);
     memcpy(buffer + pos, params->station_name, name_len);
     pos += name_len;
+    align_to_4(&pos);
 
-    /* Calculate block length: 54 + station_name_length
-     * = 2 (version) + 52 (fixed fields) + name_len */
+    /* Fill AR block header */
     size_t ar_block_len = pos - ar_block_start - 4;  /* Exclude type + length */
-
-    /* Fill AR block header - NO padding between blocks, they must be contiguous */
     size_t save_pos = ar_block_start;
     write_block_header(buffer, BLOCK_TYPE_AR_BLOCK_REQ,
                         (uint16_t)ar_block_len, &save_pos);
@@ -478,7 +370,7 @@ wtc_result_t rpc_build_connect_request(rpc_context_t *ctx,
         write_u16_be(buffer, params->iocr[i].frame_id, &pos);
         write_u16_be(buffer, params->iocr[i].send_clock_factor, &pos);
         write_u16_be(buffer, params->iocr[i].reduction_ratio, &pos);
-        write_u16_be(buffer, 1, &pos);  /* Phase: must be >= 1 and <= reduction_ratio */
+        write_u16_be(buffer, 0, &pos);  /* Phase */
         write_u16_be(buffer, 0, &pos);  /* Sequence (deprecated) */
         write_u32_be(buffer, 0, &pos);  /* Frame send offset */
         write_u16_be(buffer, params->iocr[i].watchdog_factor, &pos);
@@ -487,59 +379,39 @@ wtc_result_t rpc_build_connect_request(rpc_context_t *ctx,
         memset(buffer + pos, 0, 6);     /* Multicast MAC (not used) */
         pos += 6;
 
-        /* API section - structure per PROFINET spec / p-net pf_get_iocr_api_entry() */
+        /* API section */
         write_u16_be(buffer, 1, &pos);  /* Number of APIs */
 
         /* API 0 */
         write_u32_be(buffer, 0, &pos);  /* API number */
 
-        /*
-         * Count IODataObjects for this IOCR type.
-         * Skip entries with data_length == 0 (e.g., DAP slot 0) - they don't
-         * have cyclic I/O data and shouldn't be in the IOCR data mapping.
-         */
-        int io_data_count = 0;
+        /* Count slots for this IOCR type */
+        int slot_count = 0;
         for (int j = 0; j < params->expected_count; j++) {
             bool is_input_iocr = (params->iocr[i].type == IOCR_TYPE_INPUT);
-            if (params->expected_config[j].is_input == is_input_iocr &&
-                params->expected_config[j].data_length > 0) {
-                io_data_count++;
+            if (params->expected_config[j].is_input == is_input_iocr) {
+                slot_count++;
             }
         }
-        write_u16_be(buffer, (uint16_t)io_data_count, &pos);  /* NumberOfIODataObjects */
+        write_u16_be(buffer, (uint16_t)slot_count, &pos);
 
-        /* IODataObjects - each has slot, subslot, frame_offset */
-        uint16_t frame_offset = 0;
+        /* Slot data */
         for (int j = 0; j < params->expected_count; j++) {
             bool is_input_iocr = (params->iocr[i].type == IOCR_TYPE_INPUT);
-            /* Skip non-matching direction and zero-length entries (DAP) */
-            if (params->expected_config[j].is_input != is_input_iocr ||
-                params->expected_config[j].data_length == 0) {
+            if (params->expected_config[j].is_input != is_input_iocr) {
                 continue;
             }
 
             write_u16_be(buffer, params->expected_config[j].slot, &pos);
+            write_u16_be(buffer, 1, &pos);  /* Subslot count */
             write_u16_be(buffer, params->expected_config[j].subslot, &pos);
-            write_u16_be(buffer, frame_offset, &pos);  /* IODataObjectFrameOffset */
-            frame_offset += params->expected_config[j].data_length;
-        }
+            write_u16_be(buffer, params->expected_config[j].data_length, &pos);
 
-        /* IOCS section - same slots but for consumer status */
-        write_u16_be(buffer, (uint16_t)io_data_count, &pos);  /* NumberOfIOCS */
-
-        frame_offset = 0;
-        for (int j = 0; j < params->expected_count; j++) {
-            bool is_input_iocr = (params->iocr[i].type == IOCR_TYPE_INPUT);
-            /* Skip non-matching direction and zero-length entries (DAP) */
-            if (params->expected_config[j].is_input != is_input_iocr ||
-                params->expected_config[j].data_length == 0) {
-                continue;
-            }
-
-            write_u16_be(buffer, params->expected_config[j].slot, &pos);
-            write_u16_be(buffer, params->expected_config[j].subslot, &pos);
-            write_u16_be(buffer, frame_offset, &pos);  /* IOCS FrameOffset */
-            frame_offset += 1;  /* IOCS is 1 byte per submodule */
+            /* IOCS/IOPS length (consumer status) */
+            write_u8(buffer + pos, 1);  /* 1 byte status */
+            pos++;
+            write_u8(buffer + pos, 1);
+            pos++;
         }
 
         /* Fill IOCR block header */
@@ -560,31 +432,13 @@ wtc_result_t rpc_build_connect_request(rpc_context_t *ctx,
     write_u16_be(buffer, 3, &pos);    /* RTA retries */
     write_u16_be(buffer, 0x0001, &pos);  /* Local alarm reference */
     write_u16_be(buffer, params->max_alarm_data_length, &pos);
-    /*
-     * Alarm CR Tag Headers (VLAN priority for alarm frames):
-     * Format: Priority (3 bits) << 13 | DEI (1 bit) << 12 | VLAN_ID (12 bits)
-     * High priority = 6 (0xC000), Low priority = 5 (0xA000)
-     * Included per IEC 61158-6-10, BlockLength=22
-     */
-    write_u16_be(buffer, 0xC000, &pos);  /* Tag header high: priority 6 */
-    write_u16_be(buffer, 0xA000, &pos);  /* Tag header low: priority 5 */
+    write_u16_be(buffer, 0, &pos);  /* Tag header high */
+    write_u16_be(buffer, 0, &pos);  /* Tag header low */
 
     size_t alarm_block_len = pos - alarm_block_start - 4;
     save_pos = alarm_block_start;
     write_block_header(buffer, BLOCK_TYPE_ALARM_CR_BLOCK_REQ,
                         (uint16_t)alarm_block_len, &save_pos);
-
-    /* Debug: dump AlarmCRBlockReq hex */
-    LOG_INFO("AlarmCRBlockReq: BlockLength=%zu (0x%04zX), total=%zu bytes",
-             alarm_block_len, alarm_block_len, pos - alarm_block_start);
-    {
-        char hex[256];
-        size_t hex_pos = 0;
-        for (size_t i = alarm_block_start; i < pos && hex_pos < 250; i++) {
-            hex_pos += snprintf(hex + hex_pos, sizeof(hex) - hex_pos, "%02X ", buffer[i]);
-        }
-        LOG_INFO("AlarmCRBlockReq hex: %s", hex);
-    }
 
     /* ============== Expected Submodule Block ============== */
     size_t exp_block_start = pos;
@@ -662,28 +516,6 @@ wtc_result_t rpc_build_connect_request(rpc_context_t *ctx,
     write_block_header(buffer, BLOCK_TYPE_EXPECTED_SUBMOD_BLOCK,
                         (uint16_t)exp_block_len, &save_pos);
 
-    /* ============== Fill NDR Header ============== */
-
-    /*
-     * NDR header fields (little-endian per drep):
-     * - args_maximum: max buffer size for response (use same as args_length)
-     * - args_length: length of PNIO blocks that follow
-     * - maximum_count: NDR array max (same as args_length for conformant array)
-     * - offset: always 0
-     * - actual_count: actual length (same as args_length)
-     *
-     * Reference: p-net pf_block_reader.c:836-880 pf_get_ndr_data_req()
-     */
-    uint32_t pnio_blocks_len = (uint32_t)(pos - pnio_blocks_start);
-    size_t ndr_pos = ndr_header_pos;
-    write_u32_le(buffer, pnio_blocks_len, &ndr_pos);  /* args_maximum */
-    write_u32_le(buffer, pnio_blocks_len, &ndr_pos);  /* args_length */
-    write_u32_le(buffer, pnio_blocks_len, &ndr_pos);  /* maximum_count */
-    write_u32_le(buffer, 0, &ndr_pos);                /* offset - always 0 */
-    write_u32_le(buffer, pnio_blocks_len, &ndr_pos);  /* actual_count */
-
-    LOG_DEBUG("NDR header: args_len=%u bytes of PNIO blocks", pnio_blocks_len);
-
     /* ============== Finalize RPC Header ============== */
 
     /* Verify we didn't exceed buffer size */
@@ -734,108 +566,48 @@ wtc_result_t rpc_parse_connect_response(const uint8_t *buffer,
 
     size_t pos = sizeof(profinet_rpc_header_t);
 
-    LOG_INFO("Connect response: total_len=%zu bytes (RPC hdr=%zu, need NDR=%zu)",
-             buf_len, pos, pos + 20);
-
     /*
-     * PNIO Connect Response NDR format (after RPC header):
-     * - PNIO Status (4 bytes) - ErrorCode, ErrorDecode, ErrorCode1, ErrorCode2
+     * PNIO Connect Response format (after RPC header):
      * - ArgsMaximum (4 bytes, always 0)
-     * - ArgsLength (4 bytes) - length of PNIO data
+     * - ErrorStatus1 (4 bytes) - PNIO error code
+     * - ErrorStatus2 (4 bytes) - Additional error info
      * - MaxCount (4 bytes) - NDR array max
      * - Offset (4 bytes) - NDR array offset (always 0)
      * - ActualCount (4 bytes) - NDR array actual count
      * - Then the PNIO blocks (ARBlockRes, IOCRBlockRes, etc.)
-     *
-     * Note: Error responses may be shorter - parse PNIO Status first.
      */
-
-    /* Minimum: 4 bytes for PNIO Status */
-    if (pos + 4 > buf_len) {
-        LOG_ERROR("Connect response too short for PNIO Status: got %zu bytes, need %zu",
-                  buf_len, pos + 4);
+    if (pos + 24 > buf_len) {
+        LOG_ERROR("Connect response too short for NDR header");
         return WTC_ERROR_PROTOCOL;
     }
 
-    /* Debug: dump first 40 bytes of response after RPC header */
-    LOG_INFO("Connect Response NDR data (pos=%zu, len=%zu):", pos, buf_len);
-    {
-        char hex[256];
-        size_t hex_pos = 0;
-        size_t dump_len = (buf_len - pos) < 40 ? (buf_len - pos) : 40;
-        for (size_t i = 0; i < dump_len && hex_pos < 250; i++) {
-            hex_pos += snprintf(hex + hex_pos, sizeof(hex) - hex_pos, "%02X ", buffer[pos + i]);
-        }
-        LOG_INFO("Response hex: %s", hex);
-    }
-
-    /* Parse PNIO Status (4 bytes) - this comes FIRST */
-    response->error_code = buffer[pos];
-    response->error_decode = buffer[pos + 1];
-    response->error_code1 = buffer[pos + 2];
-    response->error_code2 = buffer[pos + 3];
-    pos += 4;
-
-    LOG_INFO("PNIO Status: ErrorCode=0x%02X, ErrorDecode=0x%02X, "
-             "ErrorCode1=0x%02X, ErrorCode2=0x%02X",
-             response->error_code, response->error_decode,
-             response->error_code1, response->error_code2);
-
-    /* Check for error in PNIO Status */
-    if (response->error_decode == PNIO_ERR_DECODE_PNIOCM ||
-        response->error_code != 0) {
-        /* Connection Manager error or general error - extract details */
-        const char *block_name = "Unknown";
-        const char *error_desc = "Unknown error";
-
-        switch (response->error_code1) {
-        case PNIO_CM_ERR1_AR_BLOCK:       block_name = "ARBlockReq"; break;
-        case PNIO_CM_ERR1_IOCR_BLOCK:     block_name = "IOCRBlockReq"; break;
-        case PNIO_CM_ERR1_ALARM_CR_BLOCK: block_name = "AlarmCRBlockReq"; break;
-        case PNIO_CM_ERR1_EXPECTED_SUBMOD: block_name = "ExpectedSubmoduleBlock"; break;
-        }
-
-        /* Map ErrorCode2 to description */
-        if (response->error_code1 == PNIO_CM_ERR1_ALARM_CR_BLOCK) {
-            switch (response->error_code2) {
-            case 0x00: error_desc = "Invalid AlarmCR type"; break;
-            case 0x01: error_desc = "Invalid block length"; break;
-            case 0x02: error_desc = "Invalid LT field"; break;
-            case 0x03: error_desc = "Invalid AlarmCR properties"; break;
-            case 0x04: error_desc = "Invalid RTA timeout"; break;
-            case 0x05: error_desc = "Invalid RTA retries"; break;
-            case 0x06: error_desc = "Invalid local alarm ref"; break;
-            case 0x07: error_desc = "Invalid max alarm data length"; break;
-            case 0x08: error_desc = "Invalid tag header high"; break;
-            case 0x09: error_desc = "Invalid tag header low"; break;
-            default: error_desc = "Unspecified AlarmCR error"; break;
-            }
-        }
-
-        LOG_ERROR("PNIO-CM Error in %s: %s (ErrorCode2=0x%02X)",
-                  block_name, error_desc, response->error_code2);
-
-        response->success = false;
-        return WTC_ERROR_PROTOCOL;
-    }
-
-    /* Check we have enough data for full NDR header (20 more bytes) */
-    if (pos + 20 > buf_len) {
-        LOG_ERROR("Connect response too short for NDR header: got %zu bytes, need %zu",
-                  buf_len, pos + 20);
-        return WTC_ERROR_PROTOCOL;
-    }
-
-    /* Parse NDR header - values are little-endian */
+    /* Parse NDR/PNIO header - values are little-endian */
     uint32_t args_maximum = buffer[pos] | (buffer[pos+1] << 8) |
                             (buffer[pos+2] << 16) | (buffer[pos+3] << 24);
     pos += 4;
     (void)args_maximum;
 
-    uint32_t args_length = buffer[pos] | (buffer[pos+1] << 8) |
-                           (buffer[pos+2] << 16) | (buffer[pos+3] << 24);
+    uint32_t error_status1 = buffer[pos] | (buffer[pos+1] << 8) |
+                             (buffer[pos+2] << 16) | (buffer[pos+3] << 24);
     pos += 4;
 
+    uint32_t error_status2 = buffer[pos] | (buffer[pos+1] << 8) |
+                             (buffer[pos+2] << 16) | (buffer[pos+3] << 24);
+    pos += 4;
+
+    LOG_DEBUG("Connect response NDR: error1=0x%08X, error2=0x%08X",
+              error_status1, error_status2);
+
+    /* Check for PNIO-level errors */
+    if (error_status1 != 0 || error_status2 != 0) {
+        LOG_ERROR("Connect response PNIO error: status1=0x%08X, status2=0x%08X",
+                  error_status1, error_status2);
+        response->success = false;
+        response->error_code = (uint8_t)(error_status2 & 0xFF);
+        return WTC_ERROR_PROTOCOL;
+    }
+
+    /* Skip NDR array conformance header */
     uint32_t max_count = buffer[pos] | (buffer[pos+1] << 8) |
                          (buffer[pos+2] << 16) | (buffer[pos+3] << 24);
     pos += 4;
@@ -846,15 +618,10 @@ wtc_result_t rpc_parse_connect_response(const uint8_t *buffer,
                             (buffer[pos+2] << 16) | (buffer[pos+3] << 24);
     pos += 4;
 
-    LOG_DEBUG("Connect response NDR: args_len=%u, max=%u, actual=%u",
-              args_length, max_count, actual_count);
+    LOG_DEBUG("Connect response NDR array: max=%u, actual=%u", max_count, actual_count);
 
-    if (actual_count == 0 || args_length == 0) {
-        /* This shouldn't happen if PNIO Status was OK */
-        LOG_ERROR("Connect response: empty PNIO data (args_len=%u, actual=%u)",
-                  args_length, actual_count);
-        response->success = false;
-        response->error_code = PNIO_ERR_CODE_CONNECT;
+    if (actual_count == 0) {
+        LOG_ERROR("Connect response: no PNIO data in response");
         return WTC_ERROR_PROTOCOL;
     }
 
@@ -972,26 +739,13 @@ wtc_result_t rpc_build_control_request(rpc_context_t *ctx,
 
     size_t pos = sizeof(profinet_rpc_header_t);
 
-    /*
-     * Control Request structure (per IEC 61158-6-10):
-     * - NDR Header (20 bytes, little-endian per drep)
-     * - IODControlReq Block (big-endian)
-     */
-
-    /* Reserve space for NDR header */
-    size_t ndr_header_pos = pos;
-    pos += 20;
-
-    /* Track start of PNIO blocks */
-    size_t pnio_blocks_start = pos;
-
     /* IOD Control Request Block */
     size_t block_start = pos;
     pos += 6;  /* Skip header */
 
     write_u16_be(buffer, 0, &pos);  /* Reserved */
-    /* AR UUID - must be big-endian in PNIO blocks */
-    write_uuid_be(buffer, ar_uuid, &pos);
+    memcpy(buffer + pos, ar_uuid, 16);
+    pos += 16;
     write_u16_be(buffer, session_key, &pos);
     write_u16_be(buffer, 0, &pos);  /* Reserved */
     write_u16_be(buffer, control_command, &pos);
@@ -1001,15 +755,6 @@ wtc_result_t rpc_build_control_request(rpc_context_t *ctx,
     size_t save_pos = block_start;
     write_block_header(buffer, BLOCK_TYPE_IOD_CONTROL_REQ,
                         (uint16_t)block_len, &save_pos);
-
-    /* Fill NDR header (little-endian per drep) */
-    uint32_t pnio_blocks_len = (uint32_t)(pos - pnio_blocks_start);
-    size_t ndr_pos = ndr_header_pos;
-    write_u32_le(buffer, pnio_blocks_len, &ndr_pos);  /* args_maximum */
-    write_u32_le(buffer, pnio_blocks_len, &ndr_pos);  /* args_length */
-    write_u32_le(buffer, pnio_blocks_len, &ndr_pos);  /* maximum_count */
-    write_u32_le(buffer, 0, &ndr_pos);                /* offset */
-    write_u32_le(buffer, pnio_blocks_len, &ndr_pos);  /* actual_count */
 
     /* Build RPC header */
     uint16_t fragment_length = (uint16_t)(pos - sizeof(profinet_rpc_header_t));
@@ -1163,12 +908,7 @@ wtc_result_t rpc_send_and_receive(rpc_context_t *ctx,
     }
 
     *resp_len = (size_t)received;
-    LOG_INFO("RPC response received: %zd bytes from %d.%d.%d.%d",
-             received,
-             ntohl(addr.sin_addr.s_addr) >> 24,
-             (ntohl(addr.sin_addr.s_addr) >> 16) & 0xFF,
-             (ntohl(addr.sin_addr.s_addr) >> 8) & 0xFF,
-             ntohl(addr.sin_addr.s_addr) & 0xFF);
+    LOG_DEBUG("RPC response received: %zd bytes", received);
     return WTC_OK;
 }
 
@@ -1433,20 +1173,6 @@ wtc_result_t rpc_parse_incoming_control_request(const uint8_t *buffer,
     /* Parse the IOD Control Request block */
     size_t pos = sizeof(profinet_rpc_header_t);
 
-    /*
-     * Skip NDR header (20 bytes) - same structure as outgoing requests:
-     * - ArgsMaximum (4 bytes LE)
-     * - ArgsLength (4 bytes LE)
-     * - MaxCount (4 bytes LE)
-     * - Offset (4 bytes LE)
-     * - ActualCount (4 bytes LE)
-     */
-    if (pos + 20 > buf_len) {
-        LOG_ERROR("Incoming control request too short for NDR header");
-        return WTC_ERROR_PROTOCOL;
-    }
-    pos += 20;  /* Skip NDR header */
-
     if (pos + 6 > buf_len) {
         LOG_ERROR("Incoming control request too short for block header");
         return WTC_ERROR_PROTOCOL;
@@ -1537,36 +1263,21 @@ wtc_result_t rpc_build_control_response(rpc_context_t *ctx,
     memcpy(hdr->activity_uuid, request->activity_uuid, 16);
 
     hdr->server_boot = 0;
-    /* RPC header fields use little-endian per drep */
-    hdr->interface_version = htole32(1);
-    hdr->sequence_number = htole32(request->sequence_number);
+    hdr->interface_version = htonl(1);
+    hdr->sequence_number = htonl(request->sequence_number);
 
-    hdr->opnum = htole16(RPC_OPNUM_CONTROL);
-    hdr->interface_hint = htole16(0xFFFF);
-    hdr->activity_hint = htole16(0xFFFF);
-
-    size_t pos = sizeof(profinet_rpc_header_t);
-
-    /*
-     * Control Response structure (per IEC 61158-6-10):
-     * - NDR Header (20 bytes, little-endian per drep)
-     * - IODControlRes Block (big-endian)
-     */
-
-    /* Reserve space for NDR header */
-    size_t ndr_header_pos = pos;
-    pos += 20;
-
-    /* Track start of PNIO blocks */
-    size_t pnio_blocks_start = pos;
+    hdr->opnum = htons(RPC_OPNUM_CONTROL);
+    hdr->interface_hint = 0xFFFF;
+    hdr->activity_hint = 0xFFFF;
 
     /* Build IOD Control Response block */
+    size_t pos = sizeof(profinet_rpc_header_t);
     size_t block_start = pos;
     pos += 6;  /* Skip header, fill later */
 
     write_u16_be(buffer, 0, &pos);  /* Reserved */
-    /* AR UUID - must be big-endian in PNIO blocks */
-    write_uuid_be(buffer, request->ar_uuid, &pos);
+    memcpy(buffer + pos, request->ar_uuid, 16);
+    pos += 16;
     write_u16_be(buffer, request->session_key, &pos);
     write_u16_be(buffer, 0, &pos);  /* Reserved */
     write_u16_be(buffer, request->control_command, &pos);  /* Echo command */
@@ -1578,18 +1289,9 @@ wtc_result_t rpc_build_control_response(rpc_context_t *ctx,
     write_block_header(buffer, BLOCK_TYPE_IOD_CONTROL_RES,
                         (uint16_t)block_len, &save_pos);
 
-    /* Fill NDR header (little-endian per drep) */
-    uint32_t pnio_blocks_len = (uint32_t)(pos - pnio_blocks_start);
-    size_t ndr_pos = ndr_header_pos;
-    write_u32_le(buffer, pnio_blocks_len, &ndr_pos);  /* args_maximum */
-    write_u32_le(buffer, pnio_blocks_len, &ndr_pos);  /* args_length */
-    write_u32_le(buffer, pnio_blocks_len, &ndr_pos);  /* maximum_count */
-    write_u32_le(buffer, 0, &ndr_pos);                /* offset */
-    write_u32_le(buffer, pnio_blocks_len, &ndr_pos);  /* actual_count */
-
     /* Update fragment length in RPC header */
     uint16_t fragment_length = (uint16_t)(pos - sizeof(profinet_rpc_header_t));
-    hdr->fragment_length = htole16(fragment_length);
+    hdr->fragment_length = htons(fragment_length);
     hdr->fragment_number = 0;
     hdr->auth_protocol = 0;
     hdr->serial_low = 0;
@@ -1638,146 +1340,4 @@ wtc_result_t rpc_send_response(rpc_context_t *ctx,
               dest_port);
 
     return WTC_OK;
-}
-
-/* ============== Error Analysis Implementation ============== */
-
-/**
- * @brief Map block error code1 to block type.
- */
-static uint16_t error_code1_to_block_type(uint8_t err_code1) {
-    switch (err_code1) {
-    case PNIO_CM_ERR1_AR_BLOCK:       return BLOCK_TYPE_AR_BLOCK_REQ;
-    case PNIO_CM_ERR1_IOCR_BLOCK:     return BLOCK_TYPE_IOCR_BLOCK_REQ;
-    case PNIO_CM_ERR1_ALARM_CR_BLOCK: return BLOCK_TYPE_ALARM_CR_BLOCK_REQ;
-    case PNIO_CM_ERR1_EXPECTED_SUBMOD: return BLOCK_TYPE_EXPECTED_SUBMOD_BLOCK;
-    default: return 0;
-    }
-}
-
-/**
- * @brief Get human-readable description for IOCR error.
- */
-static const char *get_iocr_error_desc(uint8_t err_code2) {
-    switch (err_code2) {
-    case PNIO_IOCR_ERR2_TYPE:        return "Invalid IOCR type";
-    case PNIO_IOCR_ERR2_LT_FIELD:    return "Invalid LT field (must be 0x8892)";
-    case PNIO_IOCR_ERR2_RT_CLASS:    return "Invalid RT class";
-    case PNIO_IOCR_ERR2_RESERVED:    return "Reserved bits not zero";
-    case PNIO_IOCR_ERR2_CSDU_LENGTH: return "C_SDU length out of range";
-    case PNIO_IOCR_ERR2_FRAME_ID:    return "Invalid frame ID for IOCR type";
-    case PNIO_IOCR_ERR2_SEND_CLOCK:  return "Invalid send clock factor";
-    case PNIO_IOCR_ERR2_REDUCTION:   return "Invalid reduction ratio";
-    case PNIO_IOCR_ERR2_PHASE:       return "Invalid phase (must be >= 1)";
-    case PNIO_IOCR_ERR2_DATA_LENGTH: return "Data length too large";
-    case PNIO_IOCR_ERR2_FRAME_OFFSET: return "Invalid frame send offset";
-    case PNIO_IOCR_ERR2_WATCHDOG:    return "Invalid watchdog factor";
-    case PNIO_IOCR_ERR2_DATA_HOLD:   return "Invalid data hold factor";
-    default: return "Unknown IOCR error";
-    }
-}
-
-void rpc_analyze_error(const connect_response_t *response,
-                       error_analysis_t *analysis) {
-    if (!response || !analysis) {
-        return;
-    }
-
-    memset(analysis, 0, sizeof(error_analysis_t));
-    analysis->err_decode = response->error_decode;
-    analysis->err_code1 = response->error_code1 & 0xFF;
-    analysis->err_code2 = response->error_code2 & 0xFF;
-
-    /* If no error info, check if response indicates general failure */
-    if (response->error_code == PNIO_ERR_CODE_OK && response->success) {
-        analysis->action = RECOVERY_NONE;
-        analysis->description = "No error";
-        return;
-    }
-
-    /* Check for PNIO-CM errors (connection manager) */
-    if (response->error_decode == PNIO_ERR_DECODE_PNIOCM) {
-        analysis->is_block_error = true;
-        analysis->problem_block = error_code1_to_block_type(analysis->err_code1);
-
-        switch (analysis->err_code1) {
-        case PNIO_CM_ERR1_CONNECT:
-            /* General connect error */
-            switch (analysis->err_code2) {
-            case PNIO_CM_ERR2_UNKNOWN_BLOCK:
-                analysis->action = RECOVERY_TRY_MINIMAL;
-                analysis->description = "Unknown block type - try minimal config";
-                break;
-            case PNIO_CM_ERR2_INVALID_LENGTH:
-                analysis->action = RECOVERY_FIX_BLOCK_LENGTH;
-                analysis->description = "Invalid block length";
-                break;
-            case PNIO_CM_ERR2_RESOURCE:
-                analysis->action = RECOVERY_WAIT_AND_RETRY;
-                analysis->description = "Device out of resources";
-                break;
-            default:
-                analysis->action = RECOVERY_RETRY_SAME;
-                analysis->description = "General connect error";
-            }
-            break;
-
-        case PNIO_CM_ERR1_AR_BLOCK:
-            /* AR Block error - often station name mismatch */
-            analysis->action = RECOVERY_TRY_LOWERCASE;
-            analysis->description = "AR block error - check station name";
-            break;
-
-        case PNIO_CM_ERR1_IOCR_BLOCK:
-            /* IOCR Block error */
-            analysis->description = get_iocr_error_desc(analysis->err_code2);
-            switch (analysis->err_code2) {
-            case PNIO_IOCR_ERR2_PHASE:
-                analysis->action = RECOVERY_FIX_PHASE;
-                break;
-            case PNIO_IOCR_ERR2_SEND_CLOCK:
-            case PNIO_IOCR_ERR2_REDUCTION:
-            case PNIO_IOCR_ERR2_WATCHDOG:
-            case PNIO_IOCR_ERR2_DATA_HOLD:
-                analysis->action = RECOVERY_FIX_TIMING;
-                break;
-            default:
-                analysis->action = RECOVERY_TRY_MINIMAL;
-            }
-            break;
-
-        case PNIO_CM_ERR1_ALARM_CR_BLOCK:
-            /* Alarm CR error */
-            if (analysis->err_code2 == PNIO_ALARM_ERR2_LENGTH) {
-                analysis->action = RECOVERY_FIX_BLOCK_LENGTH;
-                analysis->description = "Invalid AlarmCR block length";
-            } else {
-                analysis->action = RECOVERY_TRY_MINIMAL;
-                analysis->description = "AlarmCR block error";
-            }
-            break;
-
-        case PNIO_CM_ERR1_EXPECTED_SUBMOD:
-            /* Expected submodule config mismatch */
-            analysis->action = RECOVERY_TRY_MINIMAL;
-            analysis->description = "Expected submodule mismatch - try minimal config";
-            break;
-
-        default:
-            analysis->action = RECOVERY_RETRY_SAME;
-            analysis->description = "Unknown PNIO-CM error";
-        }
-    } else if (response->error_code == PNIO_ERR_CODE_CONNECT) {
-        /* Generic connect failure */
-        analysis->action = RECOVERY_REDISCOVER;
-        analysis->description = "Connect failed - try rediscovery";
-    } else {
-        /* Unknown error type */
-        analysis->action = RECOVERY_WAIT_AND_RETRY;
-        analysis->description = "Unknown error type";
-    }
-
-    LOG_INFO("Error analysis: decode=0x%02X code1=0x%02X code2=0x%02X -> %s (action=%d)",
-             analysis->err_decode, analysis->err_code1, analysis->err_code2,
-             analysis->description, analysis->action);
 }

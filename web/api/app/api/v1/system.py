@@ -35,10 +35,7 @@ logger = logging.getLogger(__name__)
 SERVER_START_TIME = datetime.now(UTC)
 
 # Controller version for version negotiation
-CONTROLLER_VERSION = "1.2.1"
-
-# Path to version file written by bootstrap.sh
-VERSION_FILE_PATH = "/opt/water-controller/.version"
+CONTROLLER_VERSION = "1.2.0"
 
 
 class RtuSummary(BaseModel):
@@ -522,41 +519,15 @@ async def health_functional(db: Session = Depends(get_db)) -> Response:
 @router.get("/version")
 async def get_version() -> dict[str, Any]:
     """
-    Get controller version information including build details.
+    Get controller version information.
 
     Used for version negotiation with RTUs per HARMONIOUS_SYSTEM_DESIGN.md
     Field Deployment Reality section.
-
-    Returns:
-        version: Software version (e.g., "1.2.1")
-        api_version: API version (e.g., "v1")
-        started_at: Server start timestamp
-        build: Build info from installation (commit, date, etc.) if available
     """
-    import json
-    import os
-
-    build_info = None
-    if os.path.exists(VERSION_FILE_PATH):
-        try:
-            with open(VERSION_FILE_PATH, "r") as f:
-                version_data = json.load(f)
-                build_info = {
-                    "commit": version_data.get("commit_short", ""),
-                    "commit_full": version_data.get("commit_sha", ""),
-                    "commit_date": version_data.get("commit_date", ""),
-                    "commit_message": version_data.get("commit_subject", ""),
-                    "branch": version_data.get("branch", ""),
-                    "installed_at": version_data.get("installed_at_local", ""),
-                }
-        except Exception as e:
-            logger.warning(f"Failed to read version file: {e}")
-
     return build_success_response({
         "version": CONTROLLER_VERSION,
         "api_version": "v1",
         "started_at": SERVER_START_TIME.isoformat(),
-        "build": build_info,
     })
 
 

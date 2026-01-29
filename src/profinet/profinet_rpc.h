@@ -135,71 +135,6 @@ extern "C" {
 #define PNIO_ERR_CODE_WRITE             0xC3
 #define PNIO_ERR_CODE_CONTROL           0xC4
 
-/* Error Decode values (which subsystem reported error) */
-#define PNIO_ERR_DECODE_PNIORW          0x80  /* PNIO Read/Write */
-#define PNIO_ERR_DECODE_PNIOCM          0x81  /* PNIO Connection Manager */
-#define PNIO_ERR_DECODE_RTA             0x82  /* RTA Error */
-
-/* ErrorCode1 for PNIOCM - indicates which block/operation failed */
-#define PNIO_CM_ERR1_CONNECT            0x00  /* Connect operation */
-#define PNIO_CM_ERR1_AR_BLOCK           0x01  /* ARBlockReq error */
-#define PNIO_CM_ERR1_IOCR_BLOCK         0x02  /* IOCRBlockReq error */
-#define PNIO_CM_ERR1_ALARM_CR_BLOCK     0x03  /* AlarmCRBlockReq error */
-#define PNIO_CM_ERR1_EXPECTED_SUBMOD    0x04  /* ExpectedSubmoduleBlock error */
-#define PNIO_CM_ERR1_PRM_SERVER         0x05  /* PrmServerBlock error */
-#define PNIO_CM_ERR1_MCR_BLOCK          0x06  /* MCRBlock error */
-#define PNIO_CM_ERR1_AR_RPC_BLOCK       0x07  /* ARRPCBlock error */
-#define PNIO_CM_ERR1_IR_INFO_BLOCK      0x08  /* IRInfoBlock error */
-
-/* ErrorCode2 for PNIOCM blocks - specific error within block */
-#define PNIO_CM_ERR2_INVALID_TYPE       0x00  /* Invalid block type */
-#define PNIO_CM_ERR2_INVALID_LENGTH     0x01  /* Invalid block length */
-#define PNIO_CM_ERR2_UNKNOWN_BLOCK      0x02  /* Unknown block type */
-#define PNIO_CM_ERR2_RESOURCE           0x03  /* Out of resources */
-
-/* ErrorCode2 for IOCR validation (when ErrorCode1 = 0x02) */
-#define PNIO_IOCR_ERR2_TYPE             0x04  /* Invalid IOCR type */
-#define PNIO_IOCR_ERR2_LT_FIELD         0x05  /* Invalid LT field */
-#define PNIO_IOCR_ERR2_RT_CLASS         0x06  /* Invalid RT class */
-#define PNIO_IOCR_ERR2_RESERVED         0x07  /* Reserved bits not zero */
-#define PNIO_IOCR_ERR2_CSDU_LENGTH      0x08  /* C_SDU length out of range */
-#define PNIO_IOCR_ERR2_FRAME_ID         0x09  /* Invalid frame ID */
-#define PNIO_IOCR_ERR2_SEND_CLOCK       0x0A  /* Invalid send clock factor */
-#define PNIO_IOCR_ERR2_REDUCTION        0x0B  /* Invalid reduction ratio */
-#define PNIO_IOCR_ERR2_PHASE            0x0C  /* Invalid phase (must be >= 1) */
-#define PNIO_IOCR_ERR2_DATA_LENGTH      0x0D  /* Data length too large */
-#define PNIO_IOCR_ERR2_FRAME_OFFSET     0x0E  /* Invalid frame send offset */
-#define PNIO_IOCR_ERR2_WATCHDOG         0x0F  /* Invalid watchdog factor */
-#define PNIO_IOCR_ERR2_DATA_HOLD        0x10  /* Invalid data hold factor */
-
-/* ErrorCode2 for AlarmCR validation (when ErrorCode1 = 0x03) */
-#define PNIO_ALARM_ERR2_TYPE            0x00  /* Invalid alarm CR type */
-#define PNIO_ALARM_ERR2_LENGTH          0x01  /* Invalid block length */
-
-/* Error recovery actions */
-typedef enum {
-    RECOVERY_NONE,              /* Fatal error, don't retry */
-    RECOVERY_RETRY_SAME,        /* Retry with same parameters */
-    RECOVERY_TRY_LOWERCASE,     /* Try lowercase station name */
-    RECOVERY_TRY_MINIMAL,       /* Try minimal config (DAP only) */
-    RECOVERY_FIX_BLOCK_LENGTH,  /* Block length issue - try adjusted calculation */
-    RECOVERY_FIX_PHASE,         /* Fix IOCR phase (must be >= 1) */
-    RECOVERY_FIX_TIMING,        /* Adjust timing parameters */
-    RECOVERY_REDISCOVER,        /* Re-run DCP discovery */
-    RECOVERY_WAIT_AND_RETRY,    /* Wait longer then retry */
-} recovery_action_t;
-
-/* Error analysis result */
-typedef struct {
-    recovery_action_t action;   /* Recommended recovery action */
-    const char *description;    /* Human-readable error description */
-    uint8_t err_decode;         /* Original error decode */
-    uint8_t err_code1;          /* Original error code 1 */
-    uint8_t err_code2;          /* Original error code 2 */
-    bool is_block_error;        /* True if specific block had issue */
-    uint16_t problem_block;     /* Block type that failed (if is_block_error) */
-} error_analysis_t;
-
 /* ============== UUIDs ============== */
 
 /* PROFINET IO Device Interface UUID */
@@ -445,15 +380,6 @@ typedef struct {
     uint16_t error_code1;
     uint16_t error_code2;
 } connect_response_t;
-
-/**
- * @brief Analyze PROFINET error response and determine recovery action.
- *
- * @param[in]  response  Connect response with error info
- * @param[out] analysis  Analysis result with recovery recommendation
- */
-void rpc_analyze_error(const connect_response_t *response,
-                       error_analysis_t *analysis);
 
 /* ============== Function Prototypes ============== */
 

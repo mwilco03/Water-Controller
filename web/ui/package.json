@@ -1,6 +1,6 @@
 {
   "name": "water-treatment-hmi",
-  "version": "1.2.1",
+  "version": "1.2.0",
   "description": "Water Treatment Controller HMI - React Frontend",
   "private": true,
   "scripts": {

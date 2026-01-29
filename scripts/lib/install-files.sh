@@ -889,9 +889,6 @@ YAML
         cp "$ports_env_src" "$ports_env_file" || {
             log_warn "Failed to copy ports.env"
         }
-        # Set production defaults for bare-metal install
-        sed -i 's/^WTC_SIMULATION_MODE=.*/WTC_SIMULATION_MODE=false/' "$ports_env_file" 2>/dev/null || true
-        sed -i 's/^WTC_STARTUP_MODE=.*/WTC_STARTUP_MODE=production/' "$ports_env_file" 2>/dev/null || true
         chown root:"$SERVICE_GROUP" "$ports_env_file"
         chmod 640 "$ports_env_file"
     elif [ ! -f "$ports_env_file" ]; then
@@ -917,34 +914,9 @@ WTC_MODBUS_TCP_PORT=1502
 
 # Database port
 WTC_DB_PORT=5432
-
-# Production mode for bare-metal
-WTC_STARTUP_MODE=production
-WTC_SIMULATION_MODE=false
 ENV
         chown root:"$SERVICE_GROUP" "$ports_env_file"
         chmod 640 "$ports_env_file"
-    fi
-
-    # Also install to /opt/water-controller/config for systemd compatibility
-    local install_config_dir="${INSTALL_BASE:-/opt/water-controller}/config"
-    mkdir -p "$install_config_dir" || log_warn "Could not create $install_config_dir"
-    if [ -f "$ports_env_file" ] && [ -d "$install_config_dir" ]; then
-        cp "$ports_env_file" "$install_config_dir/ports.env" 2>/dev/null || true
-        chown root:"$SERVICE_GROUP" "$install_config_dir/ports.env" 2>/dev/null || true
-        chmod 640 "$install_config_dir/ports.env" 2>/dev/null || true
-    fi
-
-    # Copy init.sql for database initialization (used by database.sh)
-    if [ -n "$SOURCE_DIR" ] && [ -f "$SOURCE_DIR/docker/init.sql" ]; then
-        local docker_dir="${INSTALL_BASE:-/opt/water-controller}/docker"
-        mkdir -p "$docker_dir" || log_warn "Could not create $docker_dir"
-        cp "$SOURCE_DIR/docker/init.sql" "$docker_dir/init.sql" 2>/dev/null || {
-            log_warn "Failed to copy init.sql"
-        }
-        chown root:"$SERVICE_GROUP" "$docker_dir/init.sql" 2>/dev/null || true
-        chmod 640 "$docker_dir/init.sql" 2>/dev/null || true
-        log_debug "Installed init.sql for database initialization"
     fi
 
     log_info "Configuration files installed"

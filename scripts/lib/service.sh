@@ -155,11 +155,10 @@ generate_service_unit() {
 # Platform: ${platform}
 
 [Unit]
-Description=Water-Controller SCADA System (API)
+Description=Water-Controller SCADA System
 Documentation=https://github.com/mwilco03/Water-Controller
-After=network.target postgresql.service
-Wants=network-online.target postgresql.service
-Requires=postgresql.service
+After=network-online.target
+Wants=network-online.target
 StartLimitIntervalSec=300
 StartLimitBurst=5
 
@@ -175,8 +174,6 @@ Environment="PYTHONDONTWRITEBYTECODE=1"
 Environment="CONFIG_PATH=${CONFIG_DIR}/config.yaml"
 Environment="DATA_DIR=${DATA_DIR}"
 Environment="LOG_DIR=${LOG_DIR}"
-# Database connection (hardcoded credentials per CLAUDE.md)
-Environment="DATABASE_URL=postgresql://wtc:wtc_password@127.0.0.1:5432/water_treatment"
 EnvironmentFile=-${CONFIG_DIR}/ports.env
 EnvironmentFile=-${CONFIG_DIR}/environment
 
