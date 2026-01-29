@@ -1390,6 +1390,20 @@ wtc_result_t rpc_parse_incoming_control_request(const uint8_t *buffer,
     /* Parse the IOD Control Request block */
     size_t pos = sizeof(profinet_rpc_header_t);
 
+    /*
+     * Skip NDR header (20 bytes) - same structure as outgoing requests:
+     * - ArgsMaximum (4 bytes LE)
+     * - ArgsLength (4 bytes LE)
+     * - MaxCount (4 bytes LE)
+     * - Offset (4 bytes LE)
+     * - ActualCount (4 bytes LE)
+     */
+    if (pos + 20 > buf_len) {
+        LOG_ERROR("Incoming control request too short for NDR header");
+        return WTC_ERROR_PROTOCOL;
+    }
+    pos += 20;  /* Skip NDR header */
+
     if (pos + 6 > buf_len) {
         LOG_ERROR("Incoming control request too short for block header");
         return WTC_ERROR_PROTOCOL;

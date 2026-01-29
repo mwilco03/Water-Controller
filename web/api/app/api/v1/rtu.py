@@ -237,14 +237,47 @@ async def get_rtu_config(
             detail=f"RTU {station_name} not approved. Contact administrator."
         )
 
-    # Build config response
-    # In full implementation, this would include sensor/actuator configs
+    # Build sensor config list from database relationships
+    sensor_configs = []
+    for sensor in rtu.sensors:
+        sensor_configs.append({
+            "slot_number": sensor.slot_number,
+            "tag": sensor.tag,
+            "channel": sensor.channel,
+            "sensor_type": sensor.sensor_type,
+            "unit": sensor.unit,
+            "scaling": {
+                "raw_min": sensor.scale_min,
+                "raw_max": sensor.scale_max,
+                "eng_min": sensor.eng_min,
+                "eng_max": sensor.eng_max,
+            },
+        })
+
+    # Build actuator config list from database relationships
+    actuator_configs = []
+    for control in rtu.controls:
+        actuator_config = {
+            "slot_number": control.slot_number,
+            "tag": control.tag,
+            "channel": control.channel,
+            "control_type": control.control_type,
+            "equipment_type": control.equipment_type,
+        }
+        if control.control_type == "analog":
+            actuator_config["range"] = {
+                "min": control.min_value,
+                "max": control.max_value,
+                "unit": control.unit,
+            }
+        actuator_configs.append(actuator_config)
+
     config = {
         "station_name": rtu.station_name,
         "config_version": CONFIG_VERSION,
         "slot_count": rtu.slot_count,
-        "sensors": [],  # TODO: Add sensor configs from 0xF842
-        "actuators": [],  # TODO: Add actuator configs from 0xF843
+        "sensors": sensor_configs,
+        "actuators": actuator_configs,
         "authority_mode": "SUPERVISED",
         "watchdog_ms": 3000,
     }

@@ -55,6 +55,49 @@ Envelope: `{ data: <payload> }`. Keep flat. Frontend: `response.data || response
 
 ## Architecture Decisions
 
+## PROFINET Connection Sequence (IEC 61158-6-10)
+
+The PROFINET AR (Application Relationship) lifecycle per the specification:
+
+```
+IO Controller                                    IO Device (RTU)
+     │                                                │
+     │─── 1. DCP Identify Request (multicast) ───────►│
+     │◄────────── DCP Identify Response ──────────────│
+     │                                                │
+     │─── 2. DCP Set (assign IP address) ────────────►│
+     │◄─────────── DCP Set Response ──────────────────│
+     │                                                │
+     │═══ 3. RPC Connect Request ════════════════════►│
+     │◄══════════ Connect Response ═══════════════════│
+     │         (includes Module-Diff-Block if         │
+     │          expected ≠ actual submodules)         │
+     │                                                │
+     │═══ 4. RPC Write (parameters) ═════════════════►│
+     │◄═════════ Write Response ══════════════════════│
+     │                                                │
+     │═══ 5. RPC PrmEnd (IODControlReq) ═════════════►│
+     │◄════════ PrmEnd Response ══════════════════════│
+     │                                                │
+     │◄══ 6. RPC ApplicationReady (IODControlReq) ════│  ← DEVICE initiates!
+     │═══════ ApplicationReady Response ═════════════►│
+     │                                                │
+     │◄══════════ Cyclic Input Data ══════════════════│
+     │═══════════ Cyclic Output Data ════════════════►│
+     │              (RT frames, 1ms cycle)            │
+```
+
+**Key points:**
+- **Controller initiates** steps 1-5 (discovery, connect, parameterization)
+- **Device initiates** step 6 (ApplicationReady) - signals readiness for I/O
+- ApplicationReady timeout: up to 300 seconds per spec
+- Cyclic watchdog: 3 seconds default
+
+**References:**
+- [IEC 61158-6-10:2023](https://webstore.iec.ch/publication/83457) - PROFINET Protocol
+- [CODESYS PROFINET Connection](https://content.helpme-codesys.com/en/CODESYS%20PROFINET/_pnio_protocol_connection.html)
+- [Felser PROFINET Manual](https://www.felser.ch/profinet-manual/pn_kommunikationsbeziehung.html)
+
 ## Docker Deployment Architecture
 
 **CRITICAL: Bootstrap uses Docker mode by default. There is NO build directory on the host.**
