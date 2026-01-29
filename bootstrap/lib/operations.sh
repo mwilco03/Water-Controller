@@ -76,7 +76,6 @@ do_install() {
         write_version_file "$staging_dir"
         log_info "Installation completed successfully!"
         log_info "Run 'systemctl status water-controller' to check service status"
-        show_completion_summary "Installation" "$staging_dir"
     else
         log_error "Installation failed with exit code: $result"
     fi
@@ -201,7 +200,6 @@ do_upgrade() {
                 log_info "Run: $INSTALL_DIR/scripts/fix-database-auth.sh"
             fi
         fi
-        show_completion_summary "Upgrade" "$staging_dir"
     else
         log_error "Upgrade failed with exit code: $result"
         if [[ -n "$backup_dir" ]] && [[ -d "$backup_dir" ]]; then
@@ -332,110 +330,32 @@ do_wipe() {
     log_step "Starting complete system wipe..."
     show_disk_space "Before Wipe"
 
-    # ==========================================================================
-    # Phase 0: Kill ALL orphan processes FIRST (before systemd/docker)
-    # ==========================================================================
-    log_info "Terminating orphan processes..."
-    local killed_procs=0
-
-    # Kill controller processes (may be running outside systemd)
-    if pgrep -f "water_treat_controller" >/dev/null 2>&1; then
-        log_verbose "Killing water_treat_controller processes..."
-        pkill -TERM -f "water_treat_controller" 2>/dev/null || true
-        sleep 1
-        pkill -KILL -f "water_treat_controller" 2>/dev/null || true
-        ((killed_procs++))
-    fi
-
-    # Kill uvicorn/API processes
-    if pgrep -f "uvicorn.*water" >/dev/null 2>&1; then
-        log_verbose "Killing uvicorn processes..."
-        pkill -TERM -f "uvicorn.*water" 2>/dev/null || true
-        sleep 1
-        pkill -KILL -f "uvicorn.*water" 2>/dev/null || true
-        ((killed_procs++))
-    fi
-
-    # Kill node/UI processes from our install path
-    if pgrep -f "node.*/opt/water-controller" >/dev/null 2>&1; then
-        log_verbose "Killing node processes..."
-        pkill -TERM -f "node.*/opt/water-controller" 2>/dev/null || true
-        sleep 1
-        pkill -KILL -f "node.*/opt/water-controller" 2>/dev/null || true
-        ((killed_procs++))
-    fi
-
-    if [[ $killed_procs -gt 0 ]]; then
-        log_info "Terminated $killed_procs orphan process group(s)"
-    fi
-
-    # ==========================================================================
-    # Phase 1: Clean up shared memory / IPC
-    # ==========================================================================
-    log_info "Cleaning up shared memory and IPC..."
-    if [[ -e "/dev/shm/wtc_shared_memory" ]]; then
-        rm -f /dev/shm/wtc_shared_memory 2>/dev/null || true
-        log_verbose "Removed /dev/shm/wtc_shared_memory"
-    fi
-    # Clean any other wtc-related shared memory
-    rm -f /dev/shm/wtc_* 2>/dev/null || true
-
-    # ==========================================================================
-    # Phase 2: Stop Docker containers (with broken Docker recovery)
-    # ==========================================================================
-    if command -v docker &>/dev/null; then
-        # Check if Docker is working - if not, reset it completely
-        if ! docker info &>/dev/null 2>&1; then
-            log_warn "Docker daemon is broken - resetting Docker and containerd state..."
-
-            # Stop services
-            systemctl stop docker.socket docker containerd 2>/dev/null || true
-
-            # Clear corrupted state
-            rm -rf /var/lib/docker/* 2>/dev/null || true
-            rm -rf /var/lib/containerd/* 2>/dev/null || true
-
-            # Restart services
-            systemctl start containerd 2>/dev/null || true
-            systemctl start docker 2>/dev/null || true
-
-            # Verify recovery
-            if docker info &>/dev/null 2>&1; then
-                log_info "Docker recovered successfully"
+    # Stop all containers first
+    if command -v docker &>/dev/null && docker info &>/dev/null; then
+        # Stop containers by name pattern
+        local containers
+        containers=$(docker ps -aq --filter "name=wtc-" 2>/dev/null || true)
+        local container_count=0
+        if [[ -n "$containers" ]]; then
+            container_count=$(echo "$containers" | wc -w)
+            log_info "Stopping $container_count container(s)..."
+            if [[ "$VERBOSE_MODE" == "true" ]]; then
+                docker stop $containers 2>&1 || true
+                docker rm -f $containers 2>&1 || true
             else
-                log_warn "Docker still not responding - continuing anyway"
+                docker stop $containers >/dev/null 2>&1 || true
+                docker rm -f $containers >/dev/null 2>&1 || true
             fi
         fi
 
-        # Now try to stop containers (Docker may or may not be working)
-        if docker info &>/dev/null 2>&1; then
-            # Stop containers by name pattern
-            local containers
-            containers=$(docker ps -aq --filter "name=wtc-" 2>/dev/null || true)
-            local container_count=0
-            if [[ -n "$containers" ]]; then
-                container_count=$(echo "$containers" | wc -w)
-                log_info "Stopping $container_count container(s)..."
-                if [[ "$VERBOSE_MODE" == "true" ]]; then
-                    docker stop $containers 2>&1 || true
-                    docker rm -f $containers 2>&1 || true
-                else
-                    docker stop $containers >/dev/null 2>&1 || true
-                    docker rm -f $containers >/dev/null 2>&1 || true
-                fi
-            fi
-
-            # Stop docker compose stack if compose file exists
-            if [[ -f "/opt/water-controller/docker/docker-compose.yml" ]]; then
-                log_verbose "Stopping docker compose stack..."
-                (cd /opt/water-controller/docker && docker compose down -v --remove-orphans 2>/dev/null) || true
-            fi
+        # Stop docker compose stack if compose file exists
+        if [[ -f "/opt/water-controller/docker/docker-compose.yml" ]]; then
+            log_verbose "Stopping docker compose stack..."
+            (cd /opt/water-controller/docker && docker compose down -v --remove-orphans 2>/dev/null) || true
         fi
     fi
 
-    # ==========================================================================
-    # Phase 3: Stop and disable systemd services
-    # ==========================================================================
+    # Stop and disable systemd services
     local services=(
         "water-controller"
         "water-controller-api"
@@ -459,59 +379,70 @@ do_wipe() {
     fi
     run_privileged systemctl daemon-reload 2>/dev/null || true
 
-    # ==========================================================================
-    # Phase 4: Remove Docker resources for this project (wtc-* and water-*)
-    # ==========================================================================
-    if command -v docker &>/dev/null && docker info &>/dev/null 2>&1; then
-        log_info "Removing project Docker resources..."
+    # Remove Docker resources for this project
+    if command -v docker &>/dev/null && docker info &>/dev/null; then
+        # Count resources before removal
+        local image_count=0 volume_count=0 network_count=0
 
-        # Remove project containers (wtc-* names)
-        local containers
-        containers=$(docker ps -aq --filter "name=wtc-" 2>/dev/null || true)
-        if [[ -n "$containers" ]]; then
-            log_verbose "Removing wtc-* containers..."
-            docker rm -f $containers >/dev/null 2>&1 || true
-        fi
-
-        # Remove project images (docker-* from our compose, wtc-*, water-*)
+        # Remove project images
         local images
-        images=$(docker images --format '{{.Repository}}:{{.Tag}} {{.ID}}' 2>/dev/null | \
-            grep -E '^(docker-(api|ui|controller)|wtc-|water-)' | \
-            awk '{print $2}' || true)
+        images=$(docker images --filter "reference=*water*" -q 2>/dev/null || true)
+        images="$images $(docker images --filter "reference=*wtc*" -q 2>/dev/null || true)"
+        images=$(echo "$images" | xargs -n1 2>/dev/null | sort -u | xargs 2>/dev/null || true)
         if [[ -n "$images" ]]; then
-            log_verbose "Removing project images..."
-            docker rmi -f $images >/dev/null 2>&1 || true
+            image_count=$(echo "$images" | wc -w)
+            if [[ "$VERBOSE_MODE" == "true" ]]; then
+                docker rmi -f $images 2>&1 || true
+            else
+                docker rmi -f $images >/dev/null 2>&1 || true
+            fi
         fi
 
-        # Remove project volumes (wtc-* names)
+        # Remove project volumes
         local volumes
-        volumes=$(docker volume ls -q --filter "name=wtc-" 2>/dev/null || true)
+        volumes=$(docker volume ls -q --filter "name=wtc" 2>/dev/null || true)
+        volumes="$volumes $(docker volume ls -q --filter "name=water" 2>/dev/null || true)"
+        volumes=$(echo "$volumes" | xargs -n1 2>/dev/null | sort -u | xargs 2>/dev/null || true)
         if [[ -n "$volumes" ]]; then
-            log_verbose "Removing wtc-* volumes..."
-            docker volume rm -f $volumes >/dev/null 2>&1 || true
+            volume_count=$(echo "$volumes" | wc -w)
+            if [[ "$VERBOSE_MODE" == "true" ]]; then
+                docker volume rm -f $volumes 2>&1 || true
+            else
+                docker volume rm -f $volumes >/dev/null 2>&1 || true
+            fi
         fi
 
-        # Remove project networks (wtc-* or docker_* from compose)
+        # Remove project networks
         local networks
         networks=$(docker network ls -q --filter "name=wtc" 2>/dev/null || true)
-        networks="$networks $(docker network ls -q --filter "name=docker_" 2>/dev/null || true)"
+        networks="$networks $(docker network ls -q --filter "name=water" 2>/dev/null || true)"
         networks=$(echo "$networks" | xargs -n1 2>/dev/null | sort -u | xargs 2>/dev/null || true)
         if [[ -n "$networks" ]]; then
-            log_verbose "Removing project networks..."
-            docker network rm $networks >/dev/null 2>&1 || true
+            network_count=$(echo "$networks" | wc -w)
+            if [[ "$VERBOSE_MODE" == "true" ]]; then
+                docker network rm $networks 2>&1 || true
+            else
+                docker network rm $networks >/dev/null 2>&1 || true
+            fi
         fi
 
-        # Prune dangling resources and build cache
-        log_verbose "Pruning Docker build cache..."
-        docker builder prune -af >/dev/null 2>&1 || true
-        docker image prune -f >/dev/null 2>&1 || true
+        # Summary of Docker cleanup
+        if [[ $image_count -gt 0 ]] || [[ $volume_count -gt 0 ]] || [[ $network_count -gt 0 ]]; then
+            log_info "Removed Docker resources: ${image_count} image(s), ${volume_count} volume(s), ${network_count} network(s)"
+        fi
 
-        log_info "Project Docker resources cleared"
+        # Prune build cache (silent unless verbose)
+        log_verbose "Pruning Docker build cache..."
+        if [[ "$VERBOSE_MODE" == "true" ]]; then
+            docker builder prune -af 2>&1 || true
+            docker system prune -f 2>&1 || true
+        else
+            docker builder prune -af >/dev/null 2>&1 || true
+            docker system prune -f >/dev/null 2>&1 || true
+        fi
     fi
 
-    # ==========================================================================
-    # Phase 5: Remove installation directories
-    # ==========================================================================
+    # Remove all directories (consolidated log message)
     log_info "Removing installation directories..."
     log_verbose "/opt/water-controller"
     run_privileged rm -rf /opt/water-controller 2>/dev/null || true
@@ -524,58 +455,12 @@ do_wipe() {
     log_verbose "/var/backups/water-controller"
     run_privileged rm -rf /var/backups/water-controller 2>/dev/null || true
 
-    # ==========================================================================
-    # Phase 6: Remove bare-metal binaries and libraries
-    # ==========================================================================
-    log_info "Removing binaries and libraries..."
-
-    # Remove controller binary (bare-metal install location)
-    if [[ -f "/usr/local/bin/water_treat_controller" ]]; then
-        run_privileged rm -f /usr/local/bin/water_treat_controller 2>/dev/null || true
-        log_verbose "Removed /usr/local/bin/water_treat_controller"
-    fi
-
-    # Remove P-Net PROFINET library (installed by bare-metal)
-    local pnet_removed=0
-    if ls /usr/local/lib/libpnet* >/dev/null 2>&1; then
-        run_privileged rm -f /usr/local/lib/libpnet* 2>/dev/null || true
-        ((pnet_removed++))
-    fi
-    if [[ -d "/usr/local/include/pnet" ]]; then
-        run_privileged rm -rf /usr/local/include/pnet 2>/dev/null || true
-        ((pnet_removed++))
-    fi
-    if ls /usr/local/lib/cmake/pnet* >/dev/null 2>&1; then
-        run_privileged rm -rf /usr/local/lib/cmake/pnet* 2>/dev/null || true
-        ((pnet_removed++))
-    fi
-    if [[ $pnet_removed -gt 0 ]]; then
-        log_verbose "Removed P-Net PROFINET library files"
-        # Refresh library cache
-        run_privileged ldconfig 2>/dev/null || true
-    fi
-
-    # ==========================================================================
-    # Phase 7: Cleanup credentials and temp files
-    # ==========================================================================
-    log_info "Cleaning up credentials and temp files..."
+    # Remove credentials files
     run_privileged rm -f /root/.water-controller-credentials 2>/dev/null || true
 
     # Clean up temp files
     run_privileged rm -rf /tmp/water-controller-* 2>/dev/null || true
     run_privileged rm -rf /var/tmp/water-controller-* 2>/dev/null || true
-    run_privileged rm -rf /tmp/wtc-* 2>/dev/null || true
-    run_privileged rm -rf /tmp/pnet-* 2>/dev/null || true
-
-    # ==========================================================================
-    # Phase 8: Final verification
-    # ==========================================================================
-    # Double-check no processes are still running
-    if pgrep -f "water_treat_controller|uvicorn.*water" >/dev/null 2>&1; then
-        log_warn "Some processes may still be running - forcing termination..."
-        pkill -KILL -f "water_treat_controller" 2>/dev/null || true
-        pkill -KILL -f "uvicorn.*water" 2>/dev/null || true
-    fi
 
     show_disk_space "After Wipe"
     log_info "System wipe completed"
@@ -626,7 +511,6 @@ do_fresh() {
 
     if [[ $result -eq 0 ]]; then
         log_info "Fresh install completed successfully!"
-        show_completion_summary "Fresh Install"
     else
         log_error "Fresh install failed"
     fi
@@ -703,7 +587,6 @@ do_reinstall() {
 
     if [[ $result -eq 0 ]]; then
         log_info "Reinstall completed successfully!"
-        show_completion_summary "Reinstall"
     else
         log_error "Reinstall failed"
     fi

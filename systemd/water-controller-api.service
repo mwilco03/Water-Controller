@@ -1,9 +1,8 @@
 [Unit]
 Description=Water Treatment Controller API (FastAPI)
 Documentation=https://github.com/mwilco03/Water-Controller
-After=network.target postgresql.service water-controller.service
-Wants=network-online.target postgresql.service
-Requires=postgresql.service
+After=network.target
+Wants=network-online.target
 
 # Readiness gate: Ensure critical dependencies are available
 # Anti-pattern addressed: "Process-alive ≠ System-ready"
@@ -57,9 +56,7 @@ Environment=CONFIG_PATH=/etc/water-controller/config.yaml
 Environment=DATA_DIR=/var/lib/water-controller
 Environment=LOG_DIR=/var/log/water-controller
 Environment=WTC_STARTUP_MODE=production
-# Database connection (hardcoded credentials per CLAUDE.md)
-Environment=DATABASE_URL=postgresql://wtc:wtc_password@127.0.0.1:5432/water_treatment
-# Load centralized port configuration first (can override DATABASE_URL)
+# Load centralized port configuration first
 EnvironmentFile=-/opt/water-controller/config/ports.env
 EnvironmentFile=-/etc/water-controller/environment
 

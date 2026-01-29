@@ -6,7 +6,6 @@
 
 #include "ar_manager.h"
 #include "cyclic_exchange.h"
-#include "dcp_discovery.h"
 #include "profinet_frame.h"
 #include "profinet_rpc.h"
 #include "gsdml_modules.h"
@@ -19,8 +18,6 @@
 #include <sys/socket.h>
 #include <linux/if_packet.h>
 #include <arpa/inet.h>
-#include <time.h>
-#include <ctype.h>
 
 /* Maximum ARs */
 #define MAX_ARS 64
@@ -54,9 +51,6 @@ struct ar_manager {
     /* State change notification */
     ar_state_change_callback_t state_callback;
     void *state_callback_ctx;
-
-    /* DCP discovery context for rediscovery during resilient connect */
-    dcp_discovery_t *dcp;
 };
 
 /* Notify state change if callback is registered */
@@ -308,10 +302,7 @@ wtc_result_t ar_manager_create_ar(ar_manager_t *manager,
         return res;
     }
 
-    /* Store device profile if provided */
-    new_ar->device_profile = config->profile;
-
-    /* Store slot configuration for GSDML module identification (legacy) */
+    /* Store slot configuration for GSDML module identification */
     new_ar->slot_count = 0;
     for (int i = 0; i < config->slot_count && new_ar->slot_count < WTC_MAX_SLOTS; i++) {
         ar_slot_info_t *info = &new_ar->slot_info[new_ar->slot_count];
@@ -656,101 +647,55 @@ static void build_connect_params(ar_manager_t *manager,
     /*
      * Expected configuration using GSDML-defined module identifiers.
      * Module identifiers must match the Water-Treat RTU GSDML exactly.
-     *
-     * If a device profile is set, use it directly.
-     * Otherwise, fall back to legacy slot_info array.
      */
     params->expected_count = 0;
 
-    if (ar->device_profile) {
-        /* Use device profile for expected configuration */
-        const device_profile_t *profile = (const device_profile_t *)ar->device_profile;
-        LOG_INFO("Using device profile: %s (%d slots)", profile->name, profile->slot_count);
+    /* Add DAP slot 0 (Device Access Point - always present) */
+    params->expected_config[params->expected_count].slot = 0;
+    params->expected_config[params->expected_count].module_ident = GSDML_MOD_DAP;
+    params->expected_config[params->expected_count].subslot = 1;
+    params->expected_config[params->expected_count].submodule_ident = GSDML_SUBMOD_DAP;
+    params->expected_config[params->expected_count].data_length = 0;
+    params->expected_config[params->expected_count].is_input = true;
+    params->expected_count++;
 
-        for (int i = 0; i < profile->slot_count && params->expected_count < WTC_MAX_SLOTS; i++) {
-            params->expected_config[params->expected_count].slot = profile->slots[i].slot;
-            params->expected_config[params->expected_count].subslot = profile->slots[i].subslot;
-            params->expected_config[params->expected_count].module_ident = profile->slots[i].module_ident;
-            params->expected_config[params->expected_count].submodule_ident = profile->slots[i].submodule_ident;
-            params->expected_config[params->expected_count].data_length =
-                profile->slots[i].direction == 1 ? profile->slots[i].input_len :
-                profile->slots[i].direction == 2 ? profile->slots[i].output_len : 0;
-            params->expected_config[params->expected_count].is_input =
-                (profile->slots[i].direction == 1 || profile->slots[i].direction == 3);
-            params->expected_count++;
+    /* Add slots from stored slot configuration with GSDML module IDs */
+    for (int i = 0; i < ar->slot_count && params->expected_count < WTC_MAX_SLOTS; i++) {
+        ar_slot_info_t *slot = &ar->slot_info[i];
+        uint32_t mod_ident, submod_ident;
+        uint16_t data_length;
+        bool is_input;
 
-            LOG_DEBUG("Profile slot %d/%d: mod=0x%08X submod=0x%08X dir=%d",
-                      profile->slots[i].slot, profile->slots[i].subslot,
-                      profile->slots[i].module_ident, profile->slots[i].submodule_ident,
-                      profile->slots[i].direction);
+        if (slot->type == SLOT_TYPE_SENSOR) {
+            /* Input module - use measurement type for GSDML ID */
+            mod_ident = gsdml_get_input_module_ident(slot->measurement_type);
+            submod_ident = gsdml_get_input_submodule_ident(slot->measurement_type);
+            data_length = GSDML_INPUT_DATA_SIZE;  /* 5 bytes: 4B float + 1B quality */
+            is_input = true;
+        } else if (slot->type == SLOT_TYPE_ACTUATOR) {
+            /* Output module - use actuator type for GSDML ID */
+            mod_ident = gsdml_get_output_module_ident(slot->actuator_type);
+            submod_ident = gsdml_get_output_submodule_ident(slot->actuator_type);
+            data_length = GSDML_OUTPUT_DATA_SIZE;  /* 4 bytes: 1B cmd + 1B duty + 2B reserved */
+            is_input = false;
+        } else {
+            continue;  /* Skip unknown slot types */
         }
-    } else {
-        /* Legacy: build from slot_info array */
 
-        /* Add DAP slot 0 (Device Access Point - always present) */
-        params->expected_config[params->expected_count].slot = 0;
-        params->expected_config[params->expected_count].module_ident = GSDML_MOD_DAP;
-        params->expected_config[params->expected_count].subslot = 1;
-        params->expected_config[params->expected_count].submodule_ident = GSDML_SUBMOD_DAP;
-        params->expected_config[params->expected_count].data_length = 0;
-        params->expected_config[params->expected_count].is_input = true;
+        params->expected_config[params->expected_count].slot = slot->slot;
+        params->expected_config[params->expected_count].module_ident = mod_ident;
+        params->expected_config[params->expected_count].subslot = slot->subslot > 0 ? slot->subslot : 1;
+        params->expected_config[params->expected_count].submodule_ident = submod_ident;
+        params->expected_config[params->expected_count].data_length = data_length;
+        params->expected_config[params->expected_count].is_input = is_input;
         params->expected_count++;
 
-        /* Add slots from stored slot configuration with GSDML module IDs */
-        for (int i = 0; i < ar->slot_count && params->expected_count < WTC_MAX_SLOTS; i++) {
-            ar_slot_info_t *slot = &ar->slot_info[i];
-            uint32_t mod_ident, submod_ident;
-            uint16_t data_length;
-            bool is_input;
-
-            if (slot->type == SLOT_TYPE_SENSOR) {
-                /* Input module - use measurement type for GSDML ID */
-                mod_ident = gsdml_get_input_module_ident(slot->measurement_type);
-                submod_ident = gsdml_get_input_submodule_ident(slot->measurement_type);
-                data_length = GSDML_INPUT_DATA_SIZE;  /* 5 bytes: 4B float + 1B quality */
-                is_input = true;
-            } else if (slot->type == SLOT_TYPE_ACTUATOR) {
-                /* Output module - use actuator type for GSDML ID */
-                mod_ident = gsdml_get_output_module_ident(slot->actuator_type);
-                submod_ident = gsdml_get_output_submodule_ident(slot->actuator_type);
-                data_length = GSDML_OUTPUT_DATA_SIZE;  /* 4 bytes: 1B cmd + 1B duty + 2B reserved */
-                is_input = false;
-            } else {
-                continue;  /* Skip unknown slot types */
-            }
-
-            params->expected_config[params->expected_count].slot = slot->slot;
-            params->expected_config[params->expected_count].module_ident = mod_ident;
-            params->expected_config[params->expected_count].subslot = slot->subslot > 0 ? slot->subslot : 1;
-            params->expected_config[params->expected_count].submodule_ident = submod_ident;
-            params->expected_config[params->expected_count].data_length = data_length;
-            params->expected_config[params->expected_count].is_input = is_input;
-            params->expected_count++;
-
-            LOG_DEBUG("Slot %d: type=%s mod=0x%08X submod=0x%08X len=%u",
-                      slot->slot, is_input ? "INPUT" : "OUTPUT",
-                      mod_ident, submod_ident, data_length);
-        }
+        LOG_DEBUG("Slot %d: type=%s mod=0x%08X submod=0x%08X len=%u",
+                  slot->slot, is_input ? "INPUT" : "OUTPUT",
+                  mod_ident, submod_ident, data_length);
     }
 
     params->max_alarm_data_length = 200;
-
-    /* Summary log for debugging Connect Request configuration */
-    LOG_INFO("=== Connect Request Configuration ===");
-    LOG_INFO("  Profile: %s", ar->device_profile ?
-             ((const device_profile_t *)ar->device_profile)->name : "(legacy slots)");
-    LOG_INFO("  Expected slots: %d", params->expected_count);
-    for (int i = 0; i < params->expected_count; i++) {
-        LOG_INFO("    [%d] slot=%u subslot=%u mod=0x%08X submod=0x%08X len=%u %s",
-                 i,
-                 params->expected_config[i].slot,
-                 params->expected_config[i].subslot,
-                 params->expected_config[i].module_ident,
-                 params->expected_config[i].submodule_ident,
-                 params->expected_config[i].data_length,
-                 params->expected_config[i].is_input ? "INPUT" : "OUTPUT");
-    }
-    LOG_INFO("=====================================");
 }
 
 wtc_result_t ar_send_connect_request(ar_manager_t *manager,
@@ -870,17 +815,40 @@ wtc_result_t ar_send_parameter_end(ar_manager_t *manager,
     return WTC_OK;
 }
 
-/*
- * NOTE: ar_send_application_ready() was REMOVED.
- *
- * Per IEC 61158-6-10, the IO DEVICE sends ApplicationReady to the
- * IO CONTROLLER after PrmEnd - NOT the other way around.
- *
- * The Controller RECEIVES ApplicationReady in ar_manager_process()
- * and RESPONDS to it. See lines 434-485.
- *
- * The old function had the direction backwards and violated the spec.
- */
+wtc_result_t ar_send_application_ready(ar_manager_t *manager,
+                                        profinet_ar_t *ar) {
+    if (!manager || !ar) {
+        return WTC_ERROR_INVALID_PARAM;
+    }
+
+    if (!manager->rpc_initialized) {
+        LOG_ERROR("RPC not initialized for application ready");
+        return WTC_ERROR_NOT_INITIALIZED;
+    }
+
+    LOG_INFO("Sending RPC ApplicationReady to %s", ar->device_station_name);
+
+    wtc_result_t res = rpc_application_ready(&manager->rpc_ctx,
+                                              ar->device_ip,
+                                              (const uint8_t *)ar->ar_uuid,
+                                              ar->session_key);
+    if (res != WTC_OK) {
+        LOG_ERROR("RPC ApplicationReady failed for %s: error %d",
+                  ar->device_station_name, res);
+        ar->state = AR_STATE_ABORT;
+        ar->last_activity_ms = time_get_ms();
+        return res;
+    }
+
+    ar_state_t old_state = ar->state;
+    ar->state = AR_STATE_RUN;
+    ar->last_activity_ms = time_get_ms();
+
+    LOG_INFO("RPC ApplicationReady successful for %s - AR now RUNNING",
+             ar->device_station_name);
+    notify_state_change(manager, ar, old_state, AR_STATE_RUN);
+    return WTC_OK;
+}
 
 wtc_result_t ar_send_release_request(ar_manager_t *manager,
                                       profinet_ar_t *ar) {
@@ -1026,489 +994,4 @@ void ar_manager_set_state_callback(ar_manager_t *manager,
         manager->state_callback = callback;
         manager->state_callback_ctx = ctx;
     }
-}
-
-void ar_manager_set_dcp_context(ar_manager_t *manager, dcp_discovery_t *dcp) {
-    if (manager) {
-        pthread_mutex_lock(&manager->lock);
-        manager->dcp = dcp;
-        pthread_mutex_unlock(&manager->lock);
-        LOG_INFO("AR manager DCP context %s",
-                 dcp ? "set" : "cleared");
-    }
-}
-
-/* ============== Resilient Connection Implementation ============== */
-
-/**
- * @brief Convert string to lowercase in place.
- */
-static void str_to_lower(char *str) {
-    for (; *str; str++) {
-        if (*str >= 'A' && *str <= 'Z') {
-            *str = *str + ('a' - 'A');
-        }
-    }
-}
-
-/**
- * @brief Convert string to uppercase in place.
- */
-static void str_to_upper(char *str) {
-    for (; *str; str++) {
-        if (*str >= 'a' && *str <= 'z') {
-            *str = *str - ('a' - 'A');
-        }
-    }
-}
-
-/**
- * @brief Remove dashes from string in place.
- */
-static void str_remove_dashes(char *str) {
-    char *src = str, *dst = str;
-    while (*src) {
-        if (*src != '-') {
-            *dst++ = *src;
-        }
-        src++;
-    }
-    *dst = '\0';
-}
-
-bool ar_generate_name_variation(const char *original,
-                                 connect_strategy_t strategy,
-                                 char *output,
-                                 size_t output_len) {
-    if (!original || !output || output_len == 0) {
-        return false;
-    }
-
-    /* Copy original */
-    strncpy(output, original, output_len - 1);
-    output[output_len - 1] = '\0';
-
-    switch (strategy) {
-    case CONNECT_STRATEGY_STANDARD:
-        /* Use as-is */
-        return true;
-
-    case CONNECT_STRATEGY_LOWERCASE:
-        str_to_lower(output);
-        return true;
-
-    case CONNECT_STRATEGY_UPPERCASE:
-        str_to_upper(output);
-        return true;
-
-    case CONNECT_STRATEGY_NO_DASH:
-        str_remove_dashes(output);
-        return true;
-
-    case CONNECT_STRATEGY_MINIMAL_CONFIG:
-    case CONNECT_STRATEGY_REDISCOVER:
-        /* These don't modify the name */
-        return true;
-
-    default:
-        return false;
-    }
-}
-
-/**
- * @brief Get strategy name for logging.
- */
-static const char *strategy_name(connect_strategy_t strategy) {
-    switch (strategy) {
-    case CONNECT_STRATEGY_STANDARD:       return "standard";
-    case CONNECT_STRATEGY_LOWERCASE:      return "lowercase";
-    case CONNECT_STRATEGY_UPPERCASE:      return "uppercase";
-    case CONNECT_STRATEGY_NO_DASH:        return "no-dash";
-    case CONNECT_STRATEGY_MINIMAL_CONFIG: return "minimal-config";
-    case CONNECT_STRATEGY_REDISCOVER:     return "rediscover";
-    default:                              return "unknown";
-    }
-}
-
-/**
- * @brief Build connect parameters with strategy-specific modifications.
- */
-static void build_connect_params_with_strategy(ar_manager_t *manager,
-                                                profinet_ar_t *ar,
-                                                connect_strategy_t strategy,
-                                                connect_request_params_t *params) {
-    /* Start with standard params */
-    build_connect_params(manager, ar, params);
-
-    /* Apply strategy-specific modifications */
-    switch (strategy) {
-    case CONNECT_STRATEGY_LOWERCASE:
-    case CONNECT_STRATEGY_UPPERCASE:
-    case CONNECT_STRATEGY_NO_DASH: {
-        char modified_name[64];
-        if (ar_generate_name_variation(ar->device_station_name, strategy,
-                                        modified_name, sizeof(modified_name))) {
-            strncpy(params->station_name, modified_name,
-                    sizeof(params->station_name) - 1);
-            params->station_name[sizeof(params->station_name) - 1] = '\0';
-        }
-        break;
-    }
-
-    case CONNECT_STRATEGY_MINIMAL_CONFIG:
-        /*
-         * Minimal configuration: only DAP slot.
-         * This tests if the device accepts connection at all.
-         * If successful, we can probe for actual modules later.
-         */
-        params->expected_count = 1;  /* Only DAP */
-        params->expected_config[0].slot = 0;
-        params->expected_config[0].subslot = 1;
-        params->expected_config[0].module_ident = GSDML_MOD_DAP;
-        params->expected_config[0].submodule_ident = GSDML_SUBMOD_DAP;
-        params->expected_config[0].data_length = 0;
-        params->expected_config[0].is_input = true;
-        params->iocr[0].data_length = 0;
-        params->iocr[1].data_length = 0;
-        LOG_INFO("Using minimal config: only DAP slot 0");
-        break;
-
-    case CONNECT_STRATEGY_DAP_ONLY:
-        /*
-         * DAP-only connection for basic connectivity testing.
-         * Same as minimal, but explicitly named for clarity.
-         */
-        params->expected_count = 1;  /* Only DAP */
-        params->expected_config[0].slot = 0;
-        params->expected_config[0].subslot = 1;
-        params->expected_config[0].module_ident = GSDML_MOD_DAP;
-        params->expected_config[0].submodule_ident = GSDML_SUBMOD_DAP;
-        params->expected_config[0].data_length = 0;
-        params->expected_config[0].is_input = true;
-        params->iocr_count = 0;  /* No IOCRs for DAP-only */
-        LOG_INFO("Using DAP-only config for connectivity test");
-        break;
-
-    case CONNECT_STRATEGY_STANDARD:
-    case CONNECT_STRATEGY_REDISCOVER:
-    default:
-        /* No modifications needed */
-        break;
-    }
-}
-
-/**
- * @brief Calculate delay with exponential backoff.
- */
-static uint32_t calculate_backoff_delay(int attempt, int base_ms, int max_ms) {
-    /* Exponential backoff: base * 2^attempt, capped at max */
-    uint32_t delay = base_ms * (1 << attempt);
-    if (delay > (uint32_t)max_ms) {
-        delay = max_ms;
-    }
-    /* Add small jitter (0-10% of delay) to avoid thundering herd */
-    delay += (rand() % (delay / 10 + 1));
-    return delay;
-}
-
-/**
- * @brief Sleep for specified milliseconds.
- */
-static void sleep_ms(uint32_t ms) {
-    struct timespec ts;
-    ts.tv_sec = ms / 1000;
-    ts.tv_nsec = (ms % 1000) * 1000000;
-    nanosleep(&ts, NULL);
-}
-
-wtc_result_t ar_connect_resilient(ar_manager_t *manager,
-                                   profinet_ar_t *ar,
-                                   const resilient_connect_opts_t *opts) {
-    if (!manager || !ar) {
-        return WTC_ERROR_INVALID_PARAM;
-    }
-
-    /* Use defaults if not specified */
-    resilient_connect_opts_t default_opts = RESILIENT_CONNECT_OPTS_DEFAULT;
-    if (!opts) {
-        opts = &default_opts;
-    }
-
-    LOG_INFO("Starting resilient connection to %s (max_attempts=%d)",
-             ar->device_station_name, opts->max_attempts);
-
-    /* Build list of strategies to try */
-    connect_strategy_t strategies[CONNECT_STRATEGY_COUNT];
-    int strategy_count = 0;
-
-    /* Always try standard first */
-    strategies[strategy_count++] = CONNECT_STRATEGY_STANDARD;
-
-    /* Add name variations if enabled */
-    if (opts->try_name_variations) {
-        strategies[strategy_count++] = CONNECT_STRATEGY_LOWERCASE;
-        strategies[strategy_count++] = CONNECT_STRATEGY_UPPERCASE;
-        strategies[strategy_count++] = CONNECT_STRATEGY_NO_DASH;
-    }
-
-    /* Add minimal config if enabled */
-    if (opts->try_minimal_config) {
-        strategies[strategy_count++] = CONNECT_STRATEGY_MINIMAL_CONFIG;
-    }
-
-    wtc_result_t last_error = WTC_ERROR_PROTOCOL;
-    int total_attempts = 0;
-
-    for (int round = 0; round < opts->max_attempts && total_attempts < opts->max_attempts; round++) {
-        LOG_DEBUG("Connection round %d/%d", round + 1, opts->max_attempts);
-
-        /* Try each strategy in this round */
-        for (int s = 0; s < strategy_count && total_attempts < opts->max_attempts; s++) {
-            connect_strategy_t strategy = strategies[s];
-            total_attempts++;
-
-            LOG_INFO("Attempt %d/%d: strategy=%s for %s",
-                     total_attempts, opts->max_attempts,
-                     strategy_name(strategy), ar->device_station_name);
-
-            /* Reset AR state for new attempt */
-            ar->state = AR_STATE_INIT;
-            ar->retry_count++;
-
-            /* Set controller IP if not already set */
-            if (manager->controller_ip == 0 && ar->device_ip != 0) {
-                manager->controller_ip = (ar->device_ip & 0xFFFFFF00) | 0x00000001;
-                LOG_DEBUG("Auto-configured controller IP: %d.%d.%d.%d",
-                          (manager->controller_ip >> 24) & 0xFF,
-                          (manager->controller_ip >> 16) & 0xFF,
-                          (manager->controller_ip >> 8) & 0xFF,
-                          manager->controller_ip & 0xFF);
-            }
-
-            /* Ensure RPC context is initialized */
-            wtc_result_t res = ensure_rpc_initialized(manager);
-            if (res != WTC_OK) {
-                LOG_ERROR("Failed to initialize RPC context");
-                last_error = res;
-                continue;
-            }
-
-            /* Build parameters with strategy */
-            connect_request_params_t params;
-            build_connect_params_with_strategy(manager, ar, strategy, &params);
-
-            LOG_DEBUG("Sending Connect Request with station_name='%s'",
-                      params.station_name);
-
-            /* Update AR state */
-            ar->state = AR_STATE_CONNECT_REQ;
-            ar->last_activity_ms = time_get_ms();
-
-            /* Send connect and wait for response */
-            connect_response_t response;
-            res = rpc_connect(&manager->rpc_ctx, ar->device_ip, &params, &response);
-
-            if (res == WTC_OK && response.success) {
-                /* Success! Update AR with response data */
-                memcpy(ar->device_mac, response.device_mac, 6);
-
-                /* Update frame IDs from response */
-                for (int i = 0; i < response.frame_id_count && i < ar->iocr_count; i++) {
-                    if (ar->iocr[i].frame_id != response.frame_ids[i].assigned) {
-                        LOG_DEBUG("Frame ID updated for IOCR %d: 0x%04X -> 0x%04X",
-                                  i, ar->iocr[i].frame_id, response.frame_ids[i].assigned);
-                        ar->iocr[i].frame_id = response.frame_ids[i].assigned;
-                    }
-                }
-
-                /* If we used a modified name, update the AR's stored name */
-                if (strategy != CONNECT_STRATEGY_STANDARD &&
-                    strategy != CONNECT_STRATEGY_MINIMAL_CONFIG &&
-                    strategy != CONNECT_STRATEGY_REDISCOVER) {
-                    strncpy(ar->device_station_name, params.station_name,
-                            sizeof(ar->device_station_name) - 1);
-                    ar->device_station_name[sizeof(ar->device_station_name) - 1] = '\0';
-                    LOG_INFO("Updated station name to '%s' (strategy=%s)",
-                             ar->device_station_name, strategy_name(strategy));
-                }
-
-                if (response.has_diff) {
-                    LOG_WARN("Device reported module differences");
-                }
-
-                ar->state = AR_STATE_CONNECT_CNF;
-                ar->last_activity_ms = time_get_ms();
-
-                LOG_INFO("Resilient connect SUCCEEDED on attempt %d (strategy=%s)",
-                         total_attempts, strategy_name(strategy));
-                return WTC_OK;
-            }
-
-            /* Connection failed - analyze error and adapt strategy */
-            if (res != WTC_OK) {
-                LOG_WARN("Attempt %d failed: RPC error %d", total_attempts, res);
-                last_error = res;
-
-                /* RPC-level failure (timeout, network) - just retry with backoff */
-                if (res == WTC_ERROR_TIMEOUT) {
-                    LOG_INFO("Timeout detected - will retry with longer delay");
-                }
-            } else if (!response.success) {
-                LOG_WARN("Attempt %d rejected: error_code=0x%02X decode=0x%02X",
-                         total_attempts, response.error_code, response.error_decode);
-                last_error = WTC_ERROR_PROTOCOL;
-
-                /* Analyze error and potentially adjust next strategy */
-                error_analysis_t analysis;
-                rpc_analyze_error(&response, &analysis);
-
-                LOG_INFO("Error analysis: %s (recommended action=%d)",
-                         analysis.description, analysis.action);
-
-                /* Dynamically adjust strategy order based on error */
-                switch (analysis.action) {
-                case RECOVERY_TRY_LOWERCASE:
-                    /* Move lowercase to front of strategy list */
-                    if (s < strategy_count - 1 &&
-                        strategies[s + 1] != CONNECT_STRATEGY_LOWERCASE) {
-                        for (int i = s + 1; i < strategy_count; i++) {
-                            if (strategies[i] == CONNECT_STRATEGY_LOWERCASE) {
-                                /* Swap to next position */
-                                connect_strategy_t tmp = strategies[s + 1];
-                                strategies[s + 1] = CONNECT_STRATEGY_LOWERCASE;
-                                strategies[i] = tmp;
-                                LOG_DEBUG("Promoting LOWERCASE strategy due to error");
-                                break;
-                            }
-                        }
-                    }
-                    break;
-
-                case RECOVERY_TRY_MINIMAL:
-                    /* Move minimal config to next position */
-                    if (s < strategy_count - 1 &&
-                        strategies[s + 1] != CONNECT_STRATEGY_MINIMAL_CONFIG) {
-                        for (int i = s + 1; i < strategy_count; i++) {
-                            if (strategies[i] == CONNECT_STRATEGY_MINIMAL_CONFIG) {
-                                connect_strategy_t tmp = strategies[s + 1];
-                                strategies[s + 1] = CONNECT_STRATEGY_MINIMAL_CONFIG;
-                                strategies[i] = tmp;
-                                LOG_DEBUG("Promoting MINIMAL_CONFIG strategy due to error");
-                                break;
-                            }
-                        }
-                    }
-                    break;
-
-                case RECOVERY_WAIT_AND_RETRY:
-                    /* Double the backoff for next attempt */
-                    LOG_DEBUG("Will use extended delay due to resource error");
-                    break;
-
-                case RECOVERY_NONE:
-                    /* Fatal error - skip remaining attempts */
-                    LOG_ERROR("Fatal error - aborting connection attempts");
-                    total_attempts = opts->max_attempts;
-                    break;
-
-                default:
-                    break;
-                }
-            }
-
-            ar->state = AR_STATE_INIT;  /* Reset for next attempt */
-
-            /* Calculate delay - extend if error suggests waiting */
-            uint32_t delay = calculate_backoff_delay(total_attempts - 1,
-                                                      opts->base_delay_ms,
-                                                      opts->max_delay_ms);
-
-            /* Extend delay for timeout or resource errors */
-            if (res == WTC_ERROR_TIMEOUT ||
-                (response.error_decode == PNIO_ERR_DECODE_PNIOCM &&
-                 (response.error_code1 & 0xFF) == PNIO_CM_ERR2_RESOURCE)) {
-                delay = delay * 2;
-                if (delay > (uint32_t)opts->max_delay_ms * 2) {
-                    delay = opts->max_delay_ms * 2;
-                }
-            }
-
-            /* Delay before next attempt (skip if last attempt) */
-            if (total_attempts < opts->max_attempts) {
-                LOG_DEBUG("Waiting %u ms before next attempt", delay);
-                sleep_ms(delay);
-            }
-        }
-
-        /* Optional: Try DCP rediscovery between rounds */
-        if (opts->try_rediscovery && round < opts->max_attempts - 1) {
-            if (manager->dcp != NULL) {
-                LOG_INFO("Round %d failed, triggering DCP rediscovery for %s",
-                         round + 1, ar->device_station_name);
-
-                /* Send targeted DCP identify request */
-                wtc_result_t dcp_res = dcp_discovery_identify_name(
-                    manager->dcp, ar->device_station_name
-                );
-
-                if (dcp_res == WTC_OK) {
-                    /*
-                     * Wait for DCP response. The discovery timeout is typically
-                     * 1280ms (DCP response_delay 0x80 * 10ms).
-                     * We wait a bit longer to allow device to respond.
-                     */
-                    uint32_t dcp_timeout = dcp_get_discovery_timeout(manager->dcp);
-                    LOG_DEBUG("Waiting %u ms for DCP response", dcp_timeout + 200);
-                    sleep_ms(dcp_timeout + 200);
-
-                    /*
-                     * Check if device was rediscovered with new IP.
-                     * The DCP discovery callback should have updated the device
-                     * info. We retrieve devices and look for our station.
-                     */
-                    dcp_device_info_t devices[16];
-                    int device_count = 0;
-                    dcp_res = dcp_get_devices(manager->dcp, devices,
-                                               &device_count, 16);
-
-                    if (dcp_res == WTC_OK) {
-                        for (int i = 0; i < device_count; i++) {
-                            if (strcmp(devices[i].station_name,
-                                       ar->device_station_name) == 0 &&
-                                devices[i].ip_set) {
-
-                                /* Device found - check if IP changed */
-                                if (devices[i].ip_address != ar->device_ip) {
-                                    char old_ip[16], new_ip[16];
-                                    ip_to_string(ar->device_ip, old_ip, sizeof(old_ip));
-                                    ip_to_string(devices[i].ip_address, new_ip, sizeof(new_ip));
-
-                                    LOG_INFO("DCP rediscovery: %s IP changed %s -> %s",
-                                             ar->device_station_name, old_ip, new_ip);
-
-                                    /* Update AR with new device info */
-                                    ar->device_ip = devices[i].ip_address;
-                                    memcpy(ar->device_mac, devices[i].mac_address, 6);
-                                }
-                                break;
-                            }
-                        }
-                    }
-                } else {
-                    LOG_WARN("DCP rediscovery request failed: %d", dcp_res);
-                }
-            } else {
-                LOG_DEBUG("Round %d failed, DCP rediscovery not available (no context)",
-                          round + 1);
-            }
-        }
-    }
-
-    /* All attempts failed */
-    ar->state = AR_STATE_ABORT;
-    ar->last_activity_ms = time_get_ms();
-
-    LOG_ERROR("Resilient connect FAILED after %d attempts for %s",
-              total_attempts, ar->device_station_name);
-    return last_error;
 }

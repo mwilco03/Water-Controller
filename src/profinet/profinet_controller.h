@@ -119,16 +119,9 @@ typedef struct {
     ar_slot_info_t slot_info[WTC_MAX_SLOTS];
     int slot_count;
 
-    /* Device profile - if set, used instead of slot_info for module idents */
-    const void *device_profile;  /* Pointer to device_profile_t (forward declared) */
-
     /* Timing */
     uint64_t last_activity_ms;
     uint32_t watchdog_ms;
-
-    /* Resilient connection tracking */
-    int retry_count;                /* Number of connection retry attempts */
-    uint64_t last_connect_attempt_ms;  /* Time of last connection attempt */
 
     /* Authority handoff - who has control of this device */
     authority_context_t authority;
@@ -157,8 +150,8 @@ wtc_result_t profinet_controller_stop(profinet_controller_t *controller);
 wtc_result_t profinet_controller_process(profinet_controller_t *controller);
 
 /* Connect to device
- * station_name: PROFINET station name from DCP discovery
- * device_ip_str: IP address from DCP discovery (e.g., "192.168.x.x")
+ * station_name: PROFINET station name for connection
+ * device_ip_str: Optional IP address string (e.g., "192.168.6.7") for DCP cache fallback
  * slots: Slot configuration array (NULL to use defaults)
  * slot_count: Number of slots (0 to use defaults)
  */
@@ -214,14 +207,6 @@ wtc_result_t profinet_controller_write_record(profinet_controller_t *controller,
 /* Get controller statistics */
 wtc_result_t profinet_controller_get_stats(profinet_controller_t *controller,
                                             cycle_stats_t *stats);
-
-/* Set RTU registry for sensor data updates
- * When set, the controller will automatically update the registry
- * with sensor readings from PROFINET input frames during cyclic processing.
- */
-struct rtu_registry;
-wtc_result_t profinet_controller_set_registry(profinet_controller_t *controller,
-                                               struct rtu_registry *registry);
 
 /* ============== Authority Handoff API ============== */
 

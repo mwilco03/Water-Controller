@@ -1,8 +1,8 @@
 [Unit]
 Description=Water Treatment Controller Web UI (Next.js)
 Documentation=https://github.com/mwilco03/Water-Controller
-After=network.target water-controller-api.service
-Wants=water-controller-api.service
+After=network.target water-controller.service
+Wants=water-controller.service
 
 # Readiness gate: Ensure UI has been built
 # Anti-pattern addressed: "UI treated as optional"

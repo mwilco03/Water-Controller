@@ -3,7 +3,7 @@
 import { useState, useCallback } from 'react';
 import { ISA101_COLORS } from '@/constants';
 
-export type RtuState = 'OFFLINE' | 'DISCOVERY' | 'CONNECTING' | 'CONNECTED' | 'RUNNING' | 'ERROR' | 'DISCONNECT';
+export type RtuState = 'OFFLINE' | 'CONNECTING' | 'DISCOVERY' | 'RUNNING' | 'ERROR';
 
 interface RtuStateConfig {
   color: string;
@@ -31,14 +31,6 @@ const STATE_CONFIG: Record<RtuState, RtuStateConfig> = {
     icon: 'circle',
     glowColor: withOpacity(ISA101_COLORS.states.offline, 0.3),
   },
-  DISCOVERY: {
-    color: ISA101_COLORS.states.discovery,
-    bgColor: withOpacity(ISA101_COLORS.states.discovery, 0.2),
-    borderColor: withOpacity(ISA101_COLORS.states.discovery, 0.4),
-    label: 'Discovering',
-    icon: 'pulse',
-    glowColor: withOpacity(ISA101_COLORS.states.discovery, 0.4),
-  },
   CONNECTING: {
     color: ISA101_COLORS.states.connecting,
     bgColor: withOpacity(ISA101_COLORS.states.connecting, 0.2),
@@ -47,11 +39,11 @@ const STATE_CONFIG: Record<RtuState, RtuStateConfig> = {
     icon: 'pulse',
     glowColor: withOpacity(ISA101_COLORS.states.connecting, 0.4),
   },
-  CONNECTED: {
-    color: ISA101_COLORS.states.discovery,  // Blue - connected, waiting for data
+  DISCOVERY: {
+    color: ISA101_COLORS.states.discovery,
     bgColor: withOpacity(ISA101_COLORS.states.discovery, 0.2),
     borderColor: withOpacity(ISA101_COLORS.states.discovery, 0.4),
-    label: 'Connected',
+    label: 'Discovering',
     icon: 'pulse',
     glowColor: withOpacity(ISA101_COLORS.states.discovery, 0.4),
   },
@@ -71,14 +63,6 @@ const STATE_CONFIG: Record<RtuState, RtuStateConfig> = {
     icon: 'error',
     glowColor: withOpacity(ISA101_COLORS.states.error, 0.4),
   },
-  DISCONNECT: {
-    color: ISA101_COLORS.states.connecting,  // Amber - disconnecting/transitioning
-    bgColor: withOpacity(ISA101_COLORS.states.connecting, 0.2),
-    borderColor: withOpacity(ISA101_COLORS.states.connecting, 0.4),
-    label: 'Disconnecting',
-    icon: 'pulse',
-    glowColor: withOpacity(ISA101_COLORS.states.connecting, 0.4),
-  },
 };
 
 interface ActionConfig {
@@ -95,9 +79,8 @@ function getAvailableActions(state: RtuState): ActionConfig[] {
         { label: 'Edit', variant: 'secondary', action: 'edit' },
         { label: 'Delete', variant: 'danger', action: 'delete' },
       ];
-    case 'DISCOVERY':
     case 'CONNECTING':
-    case 'CONNECTED':
+    case 'DISCOVERY':
       return [
         { label: 'Cancel', variant: 'warning', action: 'cancel' },
       ];
@@ -113,8 +96,6 @@ function getAvailableActions(state: RtuState): ActionConfig[] {
         { label: 'View Error', variant: 'secondary', action: 'view' },
         { label: 'Disconnect', variant: 'warning', action: 'disconnect' },
       ];
-    case 'DISCONNECT':
-      return [];  // No actions during disconnect
     default:
       return [];
   }

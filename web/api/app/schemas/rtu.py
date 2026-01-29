@@ -15,15 +15,13 @@ from pydantic import BaseModel, Field, field_validator
 
 
 class RtuState(str, Enum):
-    """RTU connection states - must match C enum profinet_state_t."""
+    """RTU connection states."""
 
-    OFFLINE = "OFFLINE"  # Not connected / no communication
-    DISCOVERY = "DISCOVERY"  # DCP discovery in progress
-    CONNECTING = "CONNECTING"  # Establishing PROFINET AR
-    CONNECTED = "CONNECTED"  # AR established, waiting for data
-    RUNNING = "RUNNING"  # Cyclic data exchange active
-    ERROR = "ERROR"  # Communication error
-    DISCONNECT = "DISCONNECT"  # Graceful disconnect in progress
+    OFFLINE = "OFFLINE"  # Not connected
+    CONNECTING = "CONNECTING"  # Connection in progress
+    DISCOVERY = "DISCOVERY"  # Discovering modules
+    RUNNING = "RUNNING"  # Connected and operational
+    ERROR = "ERROR"  # Connection error
 
 
 # Validation patterns

@@ -79,12 +79,10 @@ class RtuState:
     """
 
     OFFLINE = "OFFLINE"
-    DISCOVERY = "DISCOVERY"
     CONNECTING = "CONNECTING"
-    CONNECTED = "CONNECTED"
+    DISCOVERY = "DISCOVERY"
     RUNNING = "RUNNING"
     ERROR = "ERROR"
-    DISCONNECT = "DISCONNECT"
 
     @classmethod
     def can_connect(cls, current_state: str) -> bool:

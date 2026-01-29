@@ -8,8 +8,6 @@
 #include "dcp_discovery.h"
 #include "profinet_frame.h"
 #include "ar_manager.h"
-#include "cyclic_exchange.h"
-#include "registry/rtu_registry.h"
 #include "utils/logger.h"
 #include "utils/time_utils.h"
 
@@ -41,9 +39,6 @@ struct profinet_controller {
 
     /* AR manager */
     ar_manager_t *ar_manager;
-
-    /* RTU registry for sensor updates */
-    struct rtu_registry *registry;
 
     /* Thread management */
     pthread_t recv_thread;
@@ -314,50 +309,6 @@ static void *recv_thread_func(void *arg) {
     return NULL;
 }
 
-/* Update RTU registry with sensor data from PROFINET input frames
- * This extracts the 5-byte sensor data (Float32 + Quality) from IOCR buffers
- * and pushes it to the RTU registry for consumption by IPC/API layer.
- */
-static void update_sensors_from_ar(profinet_controller_t *ctrl, profinet_ar_t *ar) {
-    if (!ctrl->registry || !ar || ar->state != AR_STATE_RUN) {
-        return;
-    }
-
-    /* Find input IOCR */
-    int input_iocr = -1;
-    for (int i = 0; i < ar->iocr_count; i++) {
-        if (ar->iocr[i].type == IOCR_TYPE_INPUT) {
-            input_iocr = i;
-            break;
-        }
-    }
-
-    if (input_iocr < 0 || !ar->iocr[input_iocr].data_buffer) {
-        return;
-    }
-
-    /* Calculate number of sensor slots (5 bytes per sensor) */
-    int slot_count = ar->iocr[input_iocr].data_length / 5;
-
-    /* Extract and update each sensor slot */
-    for (int slot = 0; slot < slot_count; slot++) {
-        float value = 0.0f;
-        iops_t status = IOPS_BAD;
-        data_quality_t quality = QUALITY_NOT_CONNECTED;
-
-        wtc_result_t res = get_slot_input_float(ar, slot, &value, &status, &quality);
-        if (res == WTC_OK) {
-            /* Update the RTU registry with this sensor reading */
-            rtu_registry_update_sensor(ctrl->registry,
-                                       ar->device_station_name,
-                                       slot,
-                                       value,
-                                       status,
-                                       quality);
-        }
-    }
-}
-
 /* Cyclic thread function */
 static void *cyclic_thread_func(void *arg) {
     profinet_controller_t *ctrl = (profinet_controller_t *)arg;
@@ -381,18 +332,14 @@ static void *cyclic_thread_func(void *arg) {
         /* Check AR health (watchdog) */
         ar_manager_check_health(ctrl->ar_manager);
 
-        /* Process all running ARs: send outputs and extract sensor data */
+        /* Send output data for all running ARs */
         profinet_ar_t *ars[WTC_MAX_RTUS];
         int ar_count = 0;
         ar_manager_get_all(ctrl->ar_manager, ars, &ar_count, WTC_MAX_RTUS);
 
         for (int i = 0; i < ar_count; i++) {
             if (ars[i]->state == AR_STATE_RUN) {
-                /* Send output data to RTU */
                 ar_send_output_data(ctrl->ar_manager, ars[i]);
-
-                /* Extract sensor data from input frames and update registry */
-                update_sensors_from_ar(ctrl, ars[i]);
             }
         }
 
@@ -526,9 +473,6 @@ wtc_result_t profinet_controller_init(profinet_controller_t **controller,
 
     /* Register AR state change callback for config sync and notifications */
     ar_manager_set_state_callback(ctrl->ar_manager, ar_state_change_callback, ctrl);
-
-    /* Wire up DCP discovery context for resilient reconnection */
-    ar_manager_set_dcp_context(ctrl->ar_manager, ctrl->dcp);
 
     /* Set controller IP for RPC communication
      * Priority: config->ip_address > auto-detected from interface > .1 heuristic (in ar_manager)
@@ -701,16 +645,35 @@ wtc_result_t profinet_controller_connect(profinet_controller_t *controller,
     }
 
     /*
-     * Default: Use RTU_CPU_TEMP profile which matches the RTU's guaranteed
-     * default configuration (DAP + CPU temperature sensor at slot 1).
+     * Default slot configuration for Water-Treat RTU (GSDML V2.4):
+     * - Slots 1-8: Input modules (sensors) - 5 bytes each
+     * - Slots 9-15: Output modules (actuators) - 4 bytes each
      *
-     * This ensures the controller requests only modules the RTU has plugged.
+     * Used when no explicit slot configuration is provided.
      */
-    const device_profile_t *default_profile = NULL;
+    slot_config_t default_slots[15];
     if (!slots || slot_count <= 0) {
-        default_profile = device_config_get_profile(DEVICE_PROFILE_TYPE_RTU_CPU_TEMP);
-        LOG_INFO("Using RTU_CPU_TEMP profile: %s (%d slots)",
-                 default_profile->name, default_profile->slot_count);
+        memset(default_slots, 0, sizeof(default_slots));
+
+        /* Input slots 1-8: Generic sensors (MEASUREMENT_CUSTOM for flexibility) */
+        for (int i = 0; i < 8; i++) {
+            default_slots[i].slot = i + 1;
+            default_slots[i].subslot = 1;
+            default_slots[i].type = SLOT_TYPE_SENSOR;
+            default_slots[i].measurement_type = MEASUREMENT_CUSTOM;
+        }
+
+        /* Output slots 9-15: Generic actuators (ACTUATOR_RELAY as default) */
+        for (int i = 0; i < 7; i++) {
+            default_slots[8 + i].slot = 9 + i;
+            default_slots[8 + i].subslot = 1;
+            default_slots[8 + i].type = SLOT_TYPE_ACTUATOR;
+            default_slots[8 + i].actuator_type = ACTUATOR_RELAY;
+        }
+
+        slots = default_slots;
+        slot_count = 15;
+        LOG_INFO("Using default slot configuration (8 inputs, 7 outputs)");
     }
 
     pthread_mutex_lock(&controller->lock);
@@ -810,15 +773,8 @@ wtc_result_t profinet_controller_connect(profinet_controller_t *controller,
     ar_config.vendor_id = device->vendor_id;
     ar_config.device_id = device->device_id;
 
-    /* Use profile if available, otherwise legacy slots */
-    if (default_profile) {
-        ar_config.profile = default_profile;
-        ar_config.slot_count = 0;  /* Profile takes precedence */
-    } else if (slots && slot_count > 0) {
-        memcpy(ar_config.slots, slots, slot_count * sizeof(slot_config_t));
-        ar_config.slot_count = slot_count;
-        ar_config.profile = NULL;
-    }
+    memcpy(ar_config.slots, slots, slot_count * sizeof(slot_config_t));
+    ar_config.slot_count = slot_count;
 
     ar_config.cycle_time_us = controller->config.cycle_time_us;
     ar_config.reduction_ratio = controller->config.reduction_ratio;
@@ -979,15 +935,10 @@ wtc_result_t profinet_controller_write_output(profinet_controller_t *controller,
 #define RPC_OPNUM_WRITE         1
 #define RPC_TIMEOUT_MS          5000
 
-/*
- * PROFINET IO Device Interface UUID: DEA00001-6C97-11D1-8271-00A02442DF7D
- * DCE-RPC wire format with drep=little-endian (first 3 fields are LE)
- */
+/* PROFINET IO Device Interface UUID */
 static const uint8_t PNIO_DEVICE_INTERFACE_UUID[16] = {
-    0x01, 0x00, 0xA0, 0xDE,  /* data1: 0xDEA00001 LE */
-    0x97, 0x6C,              /* data2: 0x6C97 LE */
-    0xD1, 0x11,              /* data3: 0x11D1 LE */
-    0x82, 0x71, 0x00, 0xA0, 0x24, 0x42, 0xDF, 0x7D  /* data4: unchanged */
+    0xDE, 0xA0, 0x00, 0x01, 0x6C, 0x97, 0x11, 0xD1,
+    0x82, 0x71, 0x00, 0xA0, 0x24, 0x42, 0xDF, 0x7D
 };
 
 /* Build RPC read/write request */
@@ -1311,19 +1262,5 @@ wtc_result_t profinet_controller_get_stats(profinet_controller_t *controller,
     memcpy(stats, &controller->stats, sizeof(cycle_stats_t));
     pthread_mutex_unlock(&controller->lock);
 
-    return WTC_OK;
-}
-
-wtc_result_t profinet_controller_set_registry(profinet_controller_t *controller,
-                                               struct rtu_registry *registry) {
-    if (!controller) {
-        return WTC_ERROR_INVALID_PARAM;
-    }
-
-    pthread_mutex_lock(&controller->lock);
-    controller->registry = registry;
-    pthread_mutex_unlock(&controller->lock);
-
-    LOG_INFO("PROFINET controller registry set");
     return WTC_OK;
 }

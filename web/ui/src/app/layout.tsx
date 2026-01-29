@@ -53,38 +53,14 @@ export default function RootLayout({
   );
 }
 
-interface VersionInfo {
-  version: string;
-  build?: {
-    commit?: string;
-    date?: string;
-    message?: string;
-  };
-}
-
 function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [showShortcutsHelp, setShowShortcutsHelp] = useState(false);
   const [isApiConnected, setIsApiConnected] = useState(true);
-  const [versionInfo, setVersionInfo] = useState<VersionInfo | null>(null);
   const lastUpdateRef = useRef<Date>(new Date());
   const { isAuthenticated, exitCommandMode } = useCommandMode();
-
-  // Fetch version info on mount
-  useEffect(() => {
-    fetch('/api/v1/system/version')
-      .then(res => res.json())
-      .then(response => {
-        const data = response.data || response;
-        setVersionInfo(data);
-      })
-      .catch(() => {
-        // Fallback if API unavailable
-        setVersionInfo({ version: '1.2.1' });
-      });
-  }, []);
 
   // Global keyboard shortcuts
   const shortcuts = useMemo(() => [
@@ -256,12 +232,7 @@ function AppShell({ children }: { children: React.ReactNode }) {
         {/* Footer - minimal, desktop only */}
         <footer className="hidden lg:block border-t border-hmi-border py-2">
           <div className="hmi-container flex items-center justify-between text-xs text-hmi-muted">
-            <span>
-              Water Treatment Controller v{versionInfo?.version || '1.2.1'}
-              {versionInfo?.build?.commit && (
-                <span className="ml-1 opacity-70">({versionInfo.build.commit.slice(0, 7)})</span>
-              )}
-            </span>
+            <span>Water Treatment Controller v1.0</span>
             <button
               onClick={() => setShowShortcutsHelp(true)}
               className="hover:text-hmi-text transition-colors flex items-center gap-1"

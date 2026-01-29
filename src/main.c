@@ -300,7 +300,7 @@ static wtc_result_t save_config_to_database(void) {
 /* Print usage */
 static void print_usage(const char *program) {
     printf("Water Treatment Controller - PROFINET IO Controller\n");
-    printf("Version %s (build %s)\n\n", WTC_VERSION, WTC_BUILD_COMMIT);
+    printf("Version %s\n\n", WTC_VERSION_STRING);
     printf("Usage: %s [options]\n\n", program);
     printf("Options:\n");
     printf("  -i, --interface <name>   Network interface (default: auto-detect)\n");
@@ -561,9 +561,6 @@ static wtc_result_t initialize_components(void) {
             LOG_ERROR("Failed to initialize PROFINET controller");
             return res;
         }
-        /* Set registry so sensor data from PROFINET input frames
-         * is automatically pushed to the RTU registry for IPC/API access */
-        profinet_controller_set_registry(g_profinet, g_registry);
     }
 
     /* Initialize control engine */
@@ -868,9 +865,7 @@ int main(int argc, char *argv[]) {
     };
     logger_init(&log_config);
 
-    LOG_INFO("Starting Water Treatment Controller v%s (build %s)",
-             WTC_VERSION, WTC_BUILD_COMMIT);
-    LOG_INFO("Build date: %s", WTC_BUILD_DATE);
+    LOG_INFO("Starting Water Treatment Controller v%s", WTC_VERSION_STRING);
     LOG_INFO("Interface: %s, Cycle time: %u ms", g_config.interface, g_config.cycle_time_ms);
 
     /* Set up signal handlers */
