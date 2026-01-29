@@ -76,6 +76,7 @@ do_install() {
         write_version_file "$staging_dir"
         log_info "Installation completed successfully!"
         log_info "Run 'systemctl status water-controller' to check service status"
+        show_completion_summary "Installation" "$staging_dir"
     else
         log_error "Installation failed with exit code: $result"
     fi
@@ -200,6 +201,7 @@ do_upgrade() {
                 log_info "Run: $INSTALL_DIR/scripts/fix-database-auth.sh"
             fi
         fi
+        show_completion_summary "Upgrade" "$staging_dir"
     else
         log_error "Upgrade failed with exit code: $result"
         if [[ -n "$backup_dir" ]] && [[ -d "$backup_dir" ]]; then
@@ -613,6 +615,7 @@ do_fresh() {
 
     if [[ $result -eq 0 ]]; then
         log_info "Fresh install completed successfully!"
+        show_completion_summary "Fresh Install"
     else
         log_error "Fresh install failed"
     fi
@@ -689,6 +692,7 @@ do_reinstall() {
 
     if [[ $result -eq 0 ]]; then
         log_info "Reinstall completed successfully!"
+        show_completion_summary "Reinstall"
     else
         log_error "Reinstall failed"
     fi
