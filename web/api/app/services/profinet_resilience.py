@@ -15,7 +15,7 @@ import struct
 import logging
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Optional, List, Dict, Callable, Any, Tuple
+from typing import Optional, List, Dict, Callable, Any, Tuple, TYPE_CHECKING
 from copy import deepcopy
 
 logger = logging.getLogger(__name__)
@@ -640,6 +640,424 @@ def create_resilient_connector(
 
 
 # ============================================================================
+# GSDML Parsing
+# ============================================================================
+
+@dataclass
+class GsdmlModule:
+    """Parsed module information from GSDML."""
+    module_id: str
+    module_ident_number: int
+    name: str
+    submodules: List['GsdmlSubmodule'] = field(default_factory=list)
+    is_input: bool = False
+    is_output: bool = False
+    input_length: int = 0
+    output_length: int = 0
+
+
+@dataclass
+class GsdmlSubmodule:
+    """Parsed submodule information from GSDML."""
+    submodule_id: str
+    submodule_ident_number: int
+    name: str
+    input_length: int = 0
+    output_length: int = 0
+
+
+@dataclass
+class GsdmlDeviceInfo:
+    """Complete parsed GSDML device information."""
+    vendor_id: int
+    device_id: int
+    vendor_name: str
+    device_name: str
+    min_device_interval: int
+    max_input_length: int
+    max_output_length: int
+    modules: List[GsdmlModule] = field(default_factory=list)
+    dap_module_ident: int = 0x00000001
+    dap_submodule_ident: int = 0x00000001
+
+
+def _parse_hex_int(value: str) -> int:
+    """Parse hex string (0x...) or decimal string to int."""
+    if value is None:
+        return 0
+    value = value.strip()
+    if value.startswith('0x') or value.startswith('0X'):
+        return int(value, 16)
+    return int(value)
+
+
+def _calculate_io_length(io_data_element) -> Tuple[int, int]:
+    """
+    Calculate input and output lengths from IOData element.
+
+    Returns (input_length, output_length) in bytes.
+    """
+    input_len = 0
+    output_len = 0
+
+    if io_data_element is None:
+        return input_len, output_len
+
+    # Find Input and Output elements
+    for child in io_data_element:
+        tag_name = child.tag.split('}')[-1] if '}' in child.tag else child.tag
+
+        if tag_name == 'Input':
+            # Sum up all DataItem lengths
+            for data_item in child:
+                item_tag = data_item.tag.split('}')[-1] if '}' in data_item.tag else data_item.tag
+                if item_tag == 'DataItem':
+                    data_type = data_item.get('DataType', '')
+                    input_len += _get_data_type_size(data_type)
+
+        elif tag_name == 'Output':
+            for data_item in child:
+                item_tag = data_item.tag.split('}')[-1] if '}' in data_item.tag else data_item.tag
+                if item_tag == 'DataItem':
+                    data_type = data_item.get('DataType', '')
+                    output_len += _get_data_type_size(data_type)
+
+    return input_len, output_len
+
+
+def _get_data_type_size(data_type: str) -> int:
+    """Get size in bytes for a GSDML data type."""
+    type_sizes = {
+        'Boolean': 1,
+        'Integer8': 1,
+        'Integer16': 2,
+        'Integer32': 4,
+        'Integer64': 8,
+        'Unsigned8': 1,
+        'Unsigned16': 2,
+        'Unsigned32': 4,
+        'Unsigned64': 8,
+        'Float32': 4,
+        'Float64': 8,
+        'OctetString': 1,  # Per-character
+        'VisibleString': 1,  # Per-character
+    }
+    return type_sizes.get(data_type, 1)
+
+
+def parse_gsdml_file(gsdml_path: str) -> Optional[GsdmlDeviceInfo]:
+    """
+    Parse a GSDML XML file and extract device/module information.
+
+    GSDML (General Station Description Markup Language) files describe
+    PROFINET devices according to IEC 61158/61784.
+
+    Args:
+        gsdml_path: Path to the GSDML XML file
+
+    Returns:
+        GsdmlDeviceInfo with parsed module identifiers, or None on failure
+    """
+    import xml.etree.ElementTree as ET
+    from pathlib import Path
+
+    path = Path(gsdml_path)
+    if not path.exists():
+        logger.warning(f"GSDML file not found: {gsdml_path}")
+        return None
+
+    try:
+        tree = ET.parse(gsdml_path)
+        root = tree.getroot()
+    except ET.ParseError as e:
+        logger.error(f"Failed to parse GSDML XML: {e}")
+        return None
+
+    # Handle namespace - GSDML uses ISO15745Profile namespace
+    ns = {'gsdml': 'http://www.profibus.com/GSDML/2003/11/DeviceProfile'}
+
+    # Try to find elements with or without namespace
+    def find_element(parent, path_variants):
+        """Find element trying multiple path variants."""
+        for path in path_variants:
+            elem = parent.find(path, ns)
+            if elem is not None:
+                return elem
+            # Try without namespace
+            elem = parent.find(path.replace('gsdml:', ''))
+            if elem is not None:
+                return elem
+        return None
+
+    def find_all_elements(parent, path_variants):
+        """Find all elements trying multiple path variants."""
+        for path in path_variants:
+            elems = parent.findall(path, ns)
+            if elems:
+                return elems
+            # Try without namespace
+            elems = parent.findall(path.replace('gsdml:', ''))
+            if elems:
+                return elems
+        return []
+
+    # Parse DeviceIdentity
+    device_identity = find_element(root, ['.//gsdml:DeviceIdentity', './/DeviceIdentity'])
+    if device_identity is None:
+        # Try direct children of ProfileBody
+        for child in root.iter():
+            if child.tag.endswith('DeviceIdentity'):
+                device_identity = child
+                break
+
+    vendor_id = 0
+    device_id = 0
+    vendor_name = "Unknown"
+
+    if device_identity is not None:
+        vendor_id = _parse_hex_int(device_identity.get('VendorID', '0'))
+        device_id = _parse_hex_int(device_identity.get('DeviceID', '0'))
+
+        # Find VendorName
+        for child in device_identity:
+            tag_name = child.tag.split('}')[-1] if '}' in child.tag else child.tag
+            if tag_name == 'VendorName':
+                vendor_name = child.get('Value', 'Unknown')
+
+    # Parse DeviceAccessPointItem for timing and IO config
+    dap_item = None
+    for elem in root.iter():
+        tag_name = elem.tag.split('}')[-1] if '}' in elem.tag else elem.tag
+        if tag_name == 'DeviceAccessPointItem':
+            dap_item = elem
+            break
+
+    min_device_interval = 32
+    max_input_length = 256
+    max_output_length = 256
+    device_name = "PROFINET Device"
+    dap_module_ident = 0x00000001
+    dap_submodule_ident = 0x00000001
+
+    if dap_item is not None:
+        min_device_interval = int(dap_item.get('MinDeviceInterval', '32'))
+        device_name = dap_item.get('DNS_CompatibleName', 'profinet-device')
+
+        # Find IOConfigData
+        for child in dap_item.iter():
+            tag_name = child.tag.split('}')[-1] if '}' in child.tag else child.tag
+            if tag_name == 'IOConfigData':
+                max_input_length = int(child.get('MaxInputLength', '256'))
+                max_output_length = int(child.get('MaxOutputLength', '256'))
+
+        # Find DAP submodule ident from VirtualSubmoduleList
+        for child in dap_item.iter():
+            tag_name = child.tag.split('}')[-1] if '}' in child.tag else child.tag
+            if tag_name == 'VirtualSubmoduleItem':
+                submod_id = child.get('ID', '')
+                if 'DAP' in submod_id.upper():
+                    dap_submodule_ident = _parse_hex_int(
+                        child.get('SubmoduleIdentNumber', '0x00000001')
+                    )
+                    break
+
+    # Parse ModuleList for all modules
+    modules = []
+    for elem in root.iter():
+        tag_name = elem.tag.split('}')[-1] if '}' in elem.tag else elem.tag
+        if tag_name == 'ModuleItem':
+            module_id = elem.get('ID', '')
+            module_ident = _parse_hex_int(elem.get('ModuleIdentNumber', '0'))
+
+            # Get module name from ModuleInfo/Name
+            module_name = module_id
+            for info in elem.iter():
+                info_tag = info.tag.split('}')[-1] if '}' in info.tag else info.tag
+                if info_tag == 'ModuleInfo':
+                    for name_elem in info:
+                        name_tag = name_elem.tag.split('}')[-1] if '}' in name_elem.tag else name_elem.tag
+                        if name_tag == 'Name':
+                            module_name = name_elem.get('TextId', module_id)
+                            break
+
+            gsdml_module = GsdmlModule(
+                module_id=module_id,
+                module_ident_number=module_ident,
+                name=module_name,
+            )
+
+            # Parse submodules
+            for submod in elem.iter():
+                submod_tag = submod.tag.split('}')[-1] if '}' in submod.tag else submod.tag
+                if submod_tag == 'VirtualSubmoduleItem':
+                    submod_id = submod.get('ID', '')
+                    submod_ident = _parse_hex_int(
+                        submod.get('SubmoduleIdentNumber', '0')
+                    )
+
+                    # Get submodule name
+                    submod_name = submod_id
+                    for info in submod.iter():
+                        info_tag = info.tag.split('}')[-1] if '}' in info.tag else info.tag
+                        if info_tag == 'ModuleInfo':
+                            for name_elem in info:
+                                name_tag = name_elem.tag.split('}')[-1] if '}' in name_elem.tag else name_elem.tag
+                                if name_tag == 'Name':
+                                    submod_name = name_elem.get('TextId', submod_id)
+                                    break
+
+                    # Find IOData for this submodule
+                    io_data = None
+                    for io_elem in submod:
+                        io_tag = io_elem.tag.split('}')[-1] if '}' in io_elem.tag else io_elem.tag
+                        if io_tag == 'IOData':
+                            io_data = io_elem
+                            break
+
+                    input_len, output_len = _calculate_io_length(io_data)
+
+                    gsdml_submodule = GsdmlSubmodule(
+                        submodule_id=submod_id,
+                        submodule_ident_number=submod_ident,
+                        name=submod_name,
+                        input_length=input_len,
+                        output_length=output_len,
+                    )
+                    gsdml_module.submodules.append(gsdml_submodule)
+
+                    # Track module I/O direction
+                    if input_len > 0:
+                        gsdml_module.is_input = True
+                        gsdml_module.input_length += input_len
+                    if output_len > 0:
+                        gsdml_module.is_output = True
+                        gsdml_module.output_length += output_len
+
+            modules.append(gsdml_module)
+
+    logger.info(
+        f"Parsed GSDML: {vendor_name} ({device_name}) - "
+        f"vendor=0x{vendor_id:04X}, device=0x{device_id:04X}, "
+        f"{len(modules)} modules"
+    )
+
+    return GsdmlDeviceInfo(
+        vendor_id=vendor_id,
+        device_id=device_id,
+        vendor_name=vendor_name,
+        device_name=device_name,
+        min_device_interval=min_device_interval,
+        max_input_length=max_input_length,
+        max_output_length=max_output_length,
+        modules=modules,
+        dap_module_ident=dap_module_ident,
+        dap_submodule_ident=dap_submodule_ident,
+    )
+
+
+def get_module_by_type(gsdml_info: GsdmlDeviceInfo, module_type: str) -> Optional[GsdmlModule]:
+    """
+    Find a module by type name (e.g., 'pH', 'Pump', 'Valve').
+
+    Args:
+        gsdml_info: Parsed GSDML device info
+        module_type: Type name to search for (case-insensitive)
+
+    Returns:
+        Matching GsdmlModule or None
+    """
+    type_lower = module_type.lower()
+    for module in gsdml_info.modules:
+        if type_lower in module.module_id.lower() or type_lower in module.name.lower():
+            return module
+    return None
+
+
+def get_module_idents_by_measurement(
+    gsdml_info: GsdmlDeviceInfo,
+    measurement_type: str
+) -> Tuple[int, int]:
+    """
+    Get module and submodule identifiers for a measurement type.
+
+    Maps measurement type names to GSDML module identifiers.
+
+    Args:
+        gsdml_info: Parsed GSDML device info
+        measurement_type: Measurement type (pH, TDS, Temperature, etc.)
+
+    Returns:
+        (module_ident, submodule_ident) tuple, or (0, 0) if not found
+    """
+    # Map measurement types to GSDML module name patterns
+    type_to_pattern = {
+        'ph': ['ph'],
+        'tds': ['tds'],
+        'turbidity': ['turb'],
+        'temperature': ['temp'],
+        'flow': ['flow'],
+        'flow_rate': ['flow'],
+        'level': ['level'],
+        'dissolved_oxygen': ['generic', 'ai'],
+        'pressure': ['generic', 'ai'],
+        'conductivity': ['generic', 'ai'],
+        'orp': ['generic', 'ai'],
+        'chlorine': ['generic', 'ai'],
+    }
+
+    patterns = type_to_pattern.get(measurement_type.lower(), ['generic'])
+
+    for pattern in patterns:
+        for module in gsdml_info.modules:
+            if pattern in module.module_id.lower():
+                if module.submodules:
+                    return (module.module_ident_number,
+                            module.submodules[0].submodule_ident_number)
+                return (module.module_ident_number, module.module_ident_number + 1)
+
+    return (0, 0)
+
+
+def get_module_idents_by_actuator(
+    gsdml_info: GsdmlDeviceInfo,
+    actuator_type: str
+) -> Tuple[int, int]:
+    """
+    Get module and submodule identifiers for an actuator type.
+
+    Maps actuator type names to GSDML module identifiers.
+
+    Args:
+        gsdml_info: Parsed GSDML device info
+        actuator_type: Actuator type (Pump, Valve, etc.)
+
+    Returns:
+        (module_ident, submodule_ident) tuple, or (0, 0) if not found
+    """
+    # Map actuator types to GSDML module name patterns
+    type_to_pattern = {
+        'pump': ['pump'],
+        'valve': ['valve'],
+        'relay': ['generic', 'do'],
+        'pwm': ['generic', 'do'],
+        'latching': ['generic', 'do'],
+        'momentary': ['generic', 'do'],
+    }
+
+    patterns = type_to_pattern.get(actuator_type.lower(), ['generic'])
+
+    for pattern in patterns:
+        for module in gsdml_info.modules:
+            if pattern in module.module_id.lower():
+                if module.submodules:
+                    return (module.module_ident_number,
+                            module.submodules[0].submodule_ident_number)
+                return (module.module_ident_number, module.module_ident_number + 1)
+
+    return (0, 0)
+
+
+# ============================================================================
 # Utility: Generate strategy from GSDML
 # ============================================================================
 
@@ -654,7 +1072,27 @@ def strategy_from_gsdml(gsdml_path: str) -> Optional[ConnectionStrategy]:
 
     Returns None if GSDML parsing fails.
     """
-    # TODO: Implement GSDML parsing
-    # For now, return None to use defaults
-    logger.debug(f"GSDML parsing not yet implemented for: {gsdml_path}")
-    return None
+    try:
+        gsdml_info = parse_gsdml_file(gsdml_path)
+        if gsdml_info is None:
+            return None
+
+        # Create strategy with GSDML-derived timing parameters
+        strategy = STRATEGY_SPEC_COMPLIANT.clone(name=f"gsdml_{gsdml_info.device_id}")
+        strategy.description = f"Strategy from {gsdml_info.vendor_name} GSDML"
+
+        # Apply timing constraints from GSDML
+        if gsdml_info.min_device_interval > 0:
+            # MinDeviceInterval is in 31.25μs units, SendClockFactor is in same units
+            strategy.iocr.send_clock_factor = gsdml_info.min_device_interval
+
+        logger.info(
+            f"Generated strategy from GSDML: {gsdml_info.vendor_name} "
+            f"(vendor_id=0x{gsdml_info.vendor_id:04X}, device_id=0x{gsdml_info.device_id:04X}, "
+            f"{len(gsdml_info.modules)} modules)"
+        )
+        return strategy
+
+    except Exception as e:
+        logger.warning(f"Failed to parse GSDML {gsdml_path}: {e}")
+        return None

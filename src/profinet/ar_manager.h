@@ -89,9 +89,11 @@ wtc_result_t ar_send_connect_request(ar_manager_t *manager,
 wtc_result_t ar_send_parameter_end(ar_manager_t *manager,
                                     profinet_ar_t *ar);
 
-/* Send application ready */
-wtc_result_t ar_send_application_ready(ar_manager_t *manager,
-                                        profinet_ar_t *ar);
+/*
+ * NOTE: ar_send_application_ready() was REMOVED.
+ * Per IEC 61158-6-10, the Device sends ApplicationReady TO the Controller.
+ * The Controller receives it in ar_manager_process() and responds.
+ */
 
 /* Send release request */
 wtc_result_t ar_send_release_request(ar_manager_t *manager,
@@ -124,6 +126,24 @@ wtc_result_t ar_manager_check_health(ar_manager_t *manager);
 void ar_manager_set_state_callback(ar_manager_t *manager,
                                     ar_state_change_callback_t callback,
                                     void *ctx);
+
+/* Forward declare DCP discovery type */
+struct dcp_discovery;
+typedef struct dcp_discovery dcp_discovery_t;
+
+/**
+ * @brief Set DCP discovery context for AR manager.
+ *
+ * When set, the AR manager can trigger DCP rediscovery during resilient
+ * connection attempts to refresh device IP addresses.
+ *
+ * @param[in] manager    AR manager instance
+ * @param[in] dcp        DCP discovery context (can be NULL to disable)
+ *
+ * @note Thread safety: Must hold manager lock
+ * @note Memory: NO_ALLOC - stores pointer only
+ */
+void ar_manager_set_dcp_context(ar_manager_t *manager, dcp_discovery_t *dcp);
 
 /* ============== Resilient Connection API ============== */
 

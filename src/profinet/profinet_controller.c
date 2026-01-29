@@ -527,6 +527,9 @@ wtc_result_t profinet_controller_init(profinet_controller_t **controller,
     /* Register AR state change callback for config sync and notifications */
     ar_manager_set_state_callback(ctrl->ar_manager, ar_state_change_callback, ctrl);
 
+    /* Wire up DCP discovery context for resilient reconnection */
+    ar_manager_set_dcp_context(ctrl->ar_manager, ctrl->dcp);
+
     /* Set controller IP for RPC communication
      * Priority: config->ip_address > auto-detected from interface > .1 heuristic (in ar_manager)
      */
