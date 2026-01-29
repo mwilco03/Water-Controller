@@ -381,29 +381,55 @@ do_wipe() {
     rm -f /dev/shm/wtc_* 2>/dev/null || true
 
     # ==========================================================================
-    # Phase 2: Stop Docker containers
+    # Phase 2: Stop Docker containers (with broken Docker recovery)
     # ==========================================================================
-    if command -v docker &>/dev/null && docker info &>/dev/null; then
-        # Stop containers by name pattern
-        local containers
-        containers=$(docker ps -aq --filter "name=wtc-" 2>/dev/null || true)
-        local container_count=0
-        if [[ -n "$containers" ]]; then
-            container_count=$(echo "$containers" | wc -w)
-            log_info "Stopping $container_count container(s)..."
-            if [[ "$VERBOSE_MODE" == "true" ]]; then
-                docker stop $containers 2>&1 || true
-                docker rm -f $containers 2>&1 || true
+    if command -v docker &>/dev/null; then
+        # Check if Docker is working - if not, reset it completely
+        if ! docker info &>/dev/null 2>&1; then
+            log_warn "Docker daemon is broken - resetting Docker and containerd state..."
+
+            # Stop services
+            systemctl stop docker.socket docker containerd 2>/dev/null || true
+
+            # Clear corrupted state
+            rm -rf /var/lib/docker/* 2>/dev/null || true
+            rm -rf /var/lib/containerd/* 2>/dev/null || true
+
+            # Restart services
+            systemctl start containerd 2>/dev/null || true
+            systemctl start docker 2>/dev/null || true
+
+            # Verify recovery
+            if docker info &>/dev/null 2>&1; then
+                log_info "Docker recovered successfully"
             else
-                docker stop $containers >/dev/null 2>&1 || true
-                docker rm -f $containers >/dev/null 2>&1 || true
+                log_warn "Docker still not responding - continuing anyway"
             fi
         fi
 
-        # Stop docker compose stack if compose file exists
-        if [[ -f "/opt/water-controller/docker/docker-compose.yml" ]]; then
-            log_verbose "Stopping docker compose stack..."
-            (cd /opt/water-controller/docker && docker compose down -v --remove-orphans 2>/dev/null) || true
+        # Now try to stop containers (Docker may or may not be working)
+        if docker info &>/dev/null 2>&1; then
+            # Stop containers by name pattern
+            local containers
+            containers=$(docker ps -aq --filter "name=wtc-" 2>/dev/null || true)
+            local container_count=0
+            if [[ -n "$containers" ]]; then
+                container_count=$(echo "$containers" | wc -w)
+                log_info "Stopping $container_count container(s)..."
+                if [[ "$VERBOSE_MODE" == "true" ]]; then
+                    docker stop $containers 2>&1 || true
+                    docker rm -f $containers 2>&1 || true
+                else
+                    docker stop $containers >/dev/null 2>&1 || true
+                    docker rm -f $containers >/dev/null 2>&1 || true
+                fi
+            fi
+
+            # Stop docker compose stack if compose file exists
+            if [[ -f "/opt/water-controller/docker/docker-compose.yml" ]]; then
+                log_verbose "Stopping docker compose stack..."
+                (cd /opt/water-controller/docker && docker compose down -v --remove-orphans 2>/dev/null) || true
+            fi
         fi
     fi
 
@@ -434,68 +460,53 @@ do_wipe() {
     run_privileged systemctl daemon-reload 2>/dev/null || true
 
     # ==========================================================================
-    # Phase 4: Remove Docker resources for this project
+    # Phase 4: Remove Docker resources for this project (wtc-* and water-*)
     # ==========================================================================
-    if command -v docker &>/dev/null && docker info &>/dev/null; then
-        # Count resources before removal
-        local image_count=0 volume_count=0 network_count=0
+    if command -v docker &>/dev/null && docker info &>/dev/null 2>&1; then
+        log_info "Removing project Docker resources..."
 
-        # Remove project images
+        # Remove project containers (wtc-* names)
+        local containers
+        containers=$(docker ps -aq --filter "name=wtc-" 2>/dev/null || true)
+        if [[ -n "$containers" ]]; then
+            log_verbose "Removing wtc-* containers..."
+            docker rm -f $containers >/dev/null 2>&1 || true
+        fi
+
+        # Remove project images (docker-* from our compose, wtc-*, water-*)
         local images
-        images=$(docker images --filter "reference=*water*" -q 2>/dev/null || true)
-        images="$images $(docker images --filter "reference=*wtc*" -q 2>/dev/null || true)"
-        images=$(echo "$images" | xargs -n1 2>/dev/null | sort -u | xargs 2>/dev/null || true)
+        images=$(docker images --format '{{.Repository}}:{{.Tag}} {{.ID}}' 2>/dev/null | \
+            grep -E '^(docker-(api|ui|controller)|wtc-|water-)' | \
+            awk '{print $2}' || true)
         if [[ -n "$images" ]]; then
-            image_count=$(echo "$images" | wc -w)
-            if [[ "$VERBOSE_MODE" == "true" ]]; then
-                docker rmi -f $images 2>&1 || true
-            else
-                docker rmi -f $images >/dev/null 2>&1 || true
-            fi
+            log_verbose "Removing project images..."
+            docker rmi -f $images >/dev/null 2>&1 || true
         fi
 
-        # Remove project volumes
+        # Remove project volumes (wtc-* names)
         local volumes
-        volumes=$(docker volume ls -q --filter "name=wtc" 2>/dev/null || true)
-        volumes="$volumes $(docker volume ls -q --filter "name=water" 2>/dev/null || true)"
-        volumes=$(echo "$volumes" | xargs -n1 2>/dev/null | sort -u | xargs 2>/dev/null || true)
+        volumes=$(docker volume ls -q --filter "name=wtc-" 2>/dev/null || true)
         if [[ -n "$volumes" ]]; then
-            volume_count=$(echo "$volumes" | wc -w)
-            if [[ "$VERBOSE_MODE" == "true" ]]; then
-                docker volume rm -f $volumes 2>&1 || true
-            else
-                docker volume rm -f $volumes >/dev/null 2>&1 || true
-            fi
+            log_verbose "Removing wtc-* volumes..."
+            docker volume rm -f $volumes >/dev/null 2>&1 || true
         fi
 
-        # Remove project networks
+        # Remove project networks (wtc-* or docker_* from compose)
         local networks
         networks=$(docker network ls -q --filter "name=wtc" 2>/dev/null || true)
-        networks="$networks $(docker network ls -q --filter "name=water" 2>/dev/null || true)"
+        networks="$networks $(docker network ls -q --filter "name=docker_" 2>/dev/null || true)"
         networks=$(echo "$networks" | xargs -n1 2>/dev/null | sort -u | xargs 2>/dev/null || true)
         if [[ -n "$networks" ]]; then
-            network_count=$(echo "$networks" | wc -w)
-            if [[ "$VERBOSE_MODE" == "true" ]]; then
-                docker network rm $networks 2>&1 || true
-            else
-                docker network rm $networks >/dev/null 2>&1 || true
-            fi
+            log_verbose "Removing project networks..."
+            docker network rm $networks >/dev/null 2>&1 || true
         fi
 
-        # Summary of Docker cleanup
-        if [[ $image_count -gt 0 ]] || [[ $volume_count -gt 0 ]] || [[ $network_count -gt 0 ]]; then
-            log_info "Removed Docker resources: ${image_count} image(s), ${volume_count} volume(s), ${network_count} network(s)"
-        fi
-
-        # Prune build cache (silent unless verbose)
+        # Prune dangling resources and build cache
         log_verbose "Pruning Docker build cache..."
-        if [[ "$VERBOSE_MODE" == "true" ]]; then
-            docker builder prune -af 2>&1 || true
-            docker system prune -f 2>&1 || true
-        else
-            docker builder prune -af >/dev/null 2>&1 || true
-            docker system prune -f >/dev/null 2>&1 || true
-        fi
+        docker builder prune -af >/dev/null 2>&1 || true
+        docker image prune -f >/dev/null 2>&1 || true
+
+        log_info "Project Docker resources cleared"
     fi
 
     # ==========================================================================
