@@ -229,16 +229,17 @@ VALUES
 ON CONFLICT (tag_name) DO NOTHING;
 
 -- Insert sample alarm rules
-INSERT INTO alarm_rules (rtu_station, slot, condition, threshold, severity, delay_ms, message)
+INSERT INTO alarm_rules (name, rtu_station, slot, condition, threshold, severity, delay_ms, message)
 VALUES
-    ('rtu-tank-1', 1, 'HIGH', 8.5, 'WARNING', 5000, 'pH High'),
-    ('rtu-tank-1', 1, 'HIGH_HIGH', 9.0, 'CRITICAL', 0, 'pH Very High'),
-    ('rtu-tank-1', 1, 'LOW', 6.5, 'WARNING', 5000, 'pH Low'),
-    ('rtu-tank-1', 1, 'LOW_LOW', 6.0, 'CRITICAL', 0, 'pH Very Low'),
-    ('rtu-tank-1', 7, 'LOW', 10.0, 'WARNING', 3000, 'Tank Level Low'),
-    ('rtu-tank-1', 7, 'LOW_LOW', 5.0, 'CRITICAL', 0, 'Tank Level Critical'),
-    ('rtu-tank-1', 8, 'HIGH', 8.0, 'WARNING', 2000, 'Pressure High'),
-    ('rtu-tank-1', 8, 'HIGH_HIGH', 10.0, 'EMERGENCY', 0, 'Pressure Very High - Emergency');
+    ('pH High Alarm', 'rtu-tank-1', 1, 'HIGH', 8.5, 'WARNING', 5000, 'pH High'),
+    ('pH Very High Alarm', 'rtu-tank-1', 1, 'HIGH_HIGH', 9.0, 'CRITICAL', 0, 'pH Very High'),
+    ('pH Low Alarm', 'rtu-tank-1', 1, 'LOW', 6.5, 'WARNING', 5000, 'pH Low'),
+    ('pH Very Low Alarm', 'rtu-tank-1', 1, 'LOW_LOW', 6.0, 'CRITICAL', 0, 'pH Very Low'),
+    ('Tank Level Low', 'rtu-tank-1', 7, 'LOW', 10.0, 'WARNING', 3000, 'Tank Level Low'),
+    ('Tank Level Critical', 'rtu-tank-1', 7, 'LOW_LOW', 5.0, 'CRITICAL', 0, 'Tank Level Critical'),
+    ('Pressure High', 'rtu-tank-1', 8, 'HIGH', 8.0, 'WARNING', 2000, 'Pressure High'),
+    ('Pressure Emergency', 'rtu-tank-1', 8, 'HIGH_HIGH', 10.0, 'EMERGENCY', 0, 'Pressure Very High - Emergency')
+ON CONFLICT (name) DO NOTHING;
 
 -- Insert sample PID loop
 INSERT INTO pid_loops (name, input_rtu, input_slot, output_rtu, output_slot, kp, ki, kd, setpoint, output_min, output_max, mode)
