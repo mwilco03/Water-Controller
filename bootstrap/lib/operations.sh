@@ -330,7 +330,57 @@ do_wipe() {
     log_step "Starting complete system wipe..."
     show_disk_space "Before Wipe"
 
-    # Stop all containers first
+    # ==========================================================================
+    # Phase 0: Kill ALL orphan processes FIRST (before systemd/docker)
+    # ==========================================================================
+    log_info "Terminating orphan processes..."
+    local killed_procs=0
+
+    # Kill controller processes (may be running outside systemd)
+    if pgrep -f "water_treat_controller" >/dev/null 2>&1; then
+        log_verbose "Killing water_treat_controller processes..."
+        pkill -TERM -f "water_treat_controller" 2>/dev/null || true
+        sleep 1
+        pkill -KILL -f "water_treat_controller" 2>/dev/null || true
+        ((killed_procs++))
+    fi
+
+    # Kill uvicorn/API processes
+    if pgrep -f "uvicorn.*water" >/dev/null 2>&1; then
+        log_verbose "Killing uvicorn processes..."
+        pkill -TERM -f "uvicorn.*water" 2>/dev/null || true
+        sleep 1
+        pkill -KILL -f "uvicorn.*water" 2>/dev/null || true
+        ((killed_procs++))
+    fi
+
+    # Kill node/UI processes from our install path
+    if pgrep -f "node.*/opt/water-controller" >/dev/null 2>&1; then
+        log_verbose "Killing node processes..."
+        pkill -TERM -f "node.*/opt/water-controller" 2>/dev/null || true
+        sleep 1
+        pkill -KILL -f "node.*/opt/water-controller" 2>/dev/null || true
+        ((killed_procs++))
+    fi
+
+    if [[ $killed_procs -gt 0 ]]; then
+        log_info "Terminated $killed_procs orphan process group(s)"
+    fi
+
+    # ==========================================================================
+    # Phase 1: Clean up shared memory / IPC
+    # ==========================================================================
+    log_info "Cleaning up shared memory and IPC..."
+    if [[ -e "/dev/shm/wtc_shared_memory" ]]; then
+        rm -f /dev/shm/wtc_shared_memory 2>/dev/null || true
+        log_verbose "Removed /dev/shm/wtc_shared_memory"
+    fi
+    # Clean any other wtc-related shared memory
+    rm -f /dev/shm/wtc_* 2>/dev/null || true
+
+    # ==========================================================================
+    # Phase 2: Stop Docker containers
+    # ==========================================================================
     if command -v docker &>/dev/null && docker info &>/dev/null; then
         # Stop containers by name pattern
         local containers
@@ -355,7 +405,9 @@ do_wipe() {
         fi
     fi
 
-    # Stop and disable systemd services
+    # ==========================================================================
+    # Phase 3: Stop and disable systemd services
+    # ==========================================================================
     local services=(
         "water-controller"
         "water-controller-api"
@@ -379,7 +431,9 @@ do_wipe() {
     fi
     run_privileged systemctl daemon-reload 2>/dev/null || true
 
-    # Remove Docker resources for this project
+    # ==========================================================================
+    # Phase 4: Remove Docker resources for this project
+    # ==========================================================================
     if command -v docker &>/dev/null && docker info &>/dev/null; then
         # Count resources before removal
         local image_count=0 volume_count=0 network_count=0
@@ -442,7 +496,9 @@ do_wipe() {
         fi
     fi
 
-    # Remove all directories (consolidated log message)
+    # ==========================================================================
+    # Phase 5: Remove installation directories
+    # ==========================================================================
     log_info "Removing installation directories..."
     log_verbose "/opt/water-controller"
     run_privileged rm -rf /opt/water-controller 2>/dev/null || true
@@ -455,12 +511,58 @@ do_wipe() {
     log_verbose "/var/backups/water-controller"
     run_privileged rm -rf /var/backups/water-controller 2>/dev/null || true
 
-    # Remove credentials files
+    # ==========================================================================
+    # Phase 6: Remove bare-metal binaries and libraries
+    # ==========================================================================
+    log_info "Removing binaries and libraries..."
+
+    # Remove controller binary (bare-metal install location)
+    if [[ -f "/usr/local/bin/water_treat_controller" ]]; then
+        run_privileged rm -f /usr/local/bin/water_treat_controller 2>/dev/null || true
+        log_verbose "Removed /usr/local/bin/water_treat_controller"
+    fi
+
+    # Remove P-Net PROFINET library (installed by bare-metal)
+    local pnet_removed=0
+    if ls /usr/local/lib/libpnet* >/dev/null 2>&1; then
+        run_privileged rm -f /usr/local/lib/libpnet* 2>/dev/null || true
+        ((pnet_removed++))
+    fi
+    if [[ -d "/usr/local/include/pnet" ]]; then
+        run_privileged rm -rf /usr/local/include/pnet 2>/dev/null || true
+        ((pnet_removed++))
+    fi
+    if ls /usr/local/lib/cmake/pnet* >/dev/null 2>&1; then
+        run_privileged rm -rf /usr/local/lib/cmake/pnet* 2>/dev/null || true
+        ((pnet_removed++))
+    fi
+    if [[ $pnet_removed -gt 0 ]]; then
+        log_verbose "Removed P-Net PROFINET library files"
+        # Refresh library cache
+        run_privileged ldconfig 2>/dev/null || true
+    fi
+
+    # ==========================================================================
+    # Phase 7: Cleanup credentials and temp files
+    # ==========================================================================
+    log_info "Cleaning up credentials and temp files..."
     run_privileged rm -f /root/.water-controller-credentials 2>/dev/null || true
 
     # Clean up temp files
     run_privileged rm -rf /tmp/water-controller-* 2>/dev/null || true
     run_privileged rm -rf /var/tmp/water-controller-* 2>/dev/null || true
+    run_privileged rm -rf /tmp/wtc-* 2>/dev/null || true
+    run_privileged rm -rf /tmp/pnet-* 2>/dev/null || true
+
+    # ==========================================================================
+    # Phase 8: Final verification
+    # ==========================================================================
+    # Double-check no processes are still running
+    if pgrep -f "water_treat_controller|uvicorn.*water" >/dev/null 2>&1; then
+        log_warn "Some processes may still be running - forcing termination..."
+        pkill -KILL -f "water_treat_controller" 2>/dev/null || true
+        pkill -KILL -f "uvicorn.*water" 2>/dev/null || true
+    fi
 
     show_disk_space "After Wipe"
     log_info "System wipe completed"
