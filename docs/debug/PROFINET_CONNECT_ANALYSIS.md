@@ -17,21 +17,31 @@ stopped receiving responses from the RTU.
 
 ## Key Differences Found
 
-### 1. Interface UUID Encoding
+### 1. Interface UUID Encoding (CONFIRMED ROOT CAUSE)
 
 **Working (before 741b5c3):**
 ```
-dea000016c9711d1827100a02442df7d (Big-endian)
+Wire bytes: DE A0 00 01 6C 97 11 D1 82 71 00 A0 24 42 DF 7D
+Format: BIG-ENDIAN (despite drep=0x10 claiming little-endian)
+Decodes as BE: data1=0xDEA00001, data2=0x6C97, data3=0x11D1 ✓ MATCH
 ```
 
 **Current (after 741b5c3):**
 ```
-0100a0de976cd111827100a02442df7d (Little-endian per DCE-RPC drep)
+Wire bytes: 01 00 A0 DE 97 6C D1 11 82 71 00 A0 24 42 DF 7D
+Format: LITTLE-ENDIAN (correct per drep=0x10)
+Decodes as LE: data1=0xDEA00001, data2=0x6C97, data3=0x11D1 ✓ MATCH
 ```
 
-The change was made to follow DCE-RPC convention where drep=0x10 indicates
-little-endian data representation. However, the RTU responded to big-endian
-encoding in the working capture.
+**The paradox:**
+- Working pcap: drep=LE, UUID wire format=BE (VIOLATES DCE-RPC SPEC)
+- Current pcap: drep=LE, UUID wire format=LE (CORRECT per DCE-RPC spec)
+- RTU accepts: The WRONG format and rejects the CORRECT format
+
+**Root cause:** The RTU's p-net firmware appears to ignore the drep byte order
+flag and always expects UUIDs in big-endian wire format. This is either a bug
+in the RTU firmware or intentional behavior for compatibility with controllers
+that send big-endian UUIDs.
 
 ### 2. NDR Header
 
@@ -86,28 +96,47 @@ p-net's pf_get_ndr_data_req() expects 20-byte NDR header before PNIO blocks
 
 **NOTE:** The working pcap shows successful communication WITHOUT NDR header.
 
-## Potential Remediation
+## Recommended Fix
 
-### Option A: Revert Protocol Changes
-Revert commits 741b5c3 and 315e1d2 to restore working protocol format:
-- Big-endian UUID encoding
-- No NDR header
+### Primary Fix: Revert UUID Encoding to Big-Endian
 
-### Option B: Use Full Slot Configuration
-Change default profile from `DEVICE_PROFILE_TYPE_RTU_CPU_TEMP` to
-`DEVICE_PROFILE_TYPE_WATER_TREAT` to match working configuration:
+The RTU firmware expects big-endian UUIDs regardless of drep setting. Change
+the UUID constants in `src/profinet/profinet_rpc.c` back to big-endian:
+
+```c
+// BEFORE (current - spec-compliant but RTU-incompatible):
+const uint8_t PNIO_DEVICE_INTERFACE_UUID[16] = {
+    0x01, 0x00, 0xA0, 0xDE,  /* data1 LE */
+    0x97, 0x6C,              /* data2 LE */
+    0xD1, 0x11,              /* data3 LE */
+    0x82, 0x71, 0x00, 0xA0, 0x24, 0x42, 0xDF, 0x7D
+};
+
+// AFTER (revert to RTU-compatible big-endian):
+const uint8_t PNIO_DEVICE_INTERFACE_UUID[16] = {
+    0xDE, 0xA0, 0x00, 0x01,  /* data1 BE */
+    0x6C, 0x97,              /* data2 BE */
+    0x11, 0xD1,              /* data3 BE */
+    0x82, 0x71, 0x00, 0xA0, 0x24, 0x42, 0xDF, 0x7D
+};
+```
+
+Apply same change to `PNIO_CONTROLLER_INTERFACE_UUID`.
+
+### Secondary Fix: Investigate NDR Header
+
+The working capture had no NDR header. Consider:
+1. Removing the 20-byte NDR header from Connect/Control requests
+2. OR verifying the RTU actually parses the NDR header correctly
+
+### Additional Fix: Use Full Slot Configuration
+
+Change default profile to match working configuration:
 
 ```c
 // In profinet_controller.c:711
 default_profile = device_config_get_profile(DEVICE_PROFILE_TYPE_WATER_TREAT);
 ```
-
-### Option C: Investigate RTU Expectations
-The RTU firmware (p-net based) may have specific expectations that differ from:
-- Standard DCE-RPC UUID encoding
-- Standard NDR header format
-
-Need to verify what the actual RTU firmware expects.
 
 ## Files to Investigate
 
