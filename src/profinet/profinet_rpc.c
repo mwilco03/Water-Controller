@@ -137,6 +137,56 @@ static void write_u32_le(uint8_t *buf, uint32_t val, size_t *pos)
 }
 
 /**
+ * @brief Write UUID in big-endian format to buffer (for PNIO blocks).
+ *
+ * PNIO blocks are always big-endian after NDR header parsing.
+ * UUID structure: data1(4) + data2(2) + data3(2) + data4(8) = 16 bytes
+ *
+ * @param[out] buf   Destination buffer
+ * @param[in]  uuid  UUID bytes in native format (typically from rpc_generate_uuid)
+ * @param[in,out] pos Current position, incremented by 16
+ *
+ * @note Thread safety: SAFE
+ * @note Memory: NO_ALLOC
+ */
+static void write_uuid_be(uint8_t *buf, const uint8_t *uuid, size_t *pos)
+{
+    /*
+     * UUID wire format for PNIO blocks (big-endian):
+     * - data1 (4 bytes): needs BE conversion from native
+     * - data2 (2 bytes): needs BE conversion from native
+     * - data3 (2 bytes): needs BE conversion from native
+     * - data4 (8 bytes): copied as-is (already bytes)
+     *
+     * Input UUID is in native byte order (from rpc_generate_uuid).
+     * On little-endian hosts (x86, ARM), we need to swap data1/2/3.
+     */
+    uint32_t data1;
+    uint16_t data2, data3;
+
+    /* Read native-order values from input UUID */
+    memcpy(&data1, uuid + 0, 4);
+    memcpy(&data2, uuid + 4, 2);
+    memcpy(&data3, uuid + 6, 2);
+
+    /* Write as big-endian */
+    uint32_t data1_be = htonl(data1);
+    uint16_t data2_be = htons(data2);
+    uint16_t data3_be = htons(data3);
+
+    memcpy(buf + *pos, &data1_be, 4);
+    *pos += 4;
+    memcpy(buf + *pos, &data2_be, 2);
+    *pos += 2;
+    memcpy(buf + *pos, &data3_be, 2);
+    *pos += 2;
+
+    /* data4 is already bytes, copy as-is */
+    memcpy(buf + *pos, uuid + 8, 8);
+    *pos += 8;
+}
+
+/**
  * @brief Read uint16 from buffer in network byte order.
  *
  * @param[in]  buf   Source buffer
@@ -389,13 +439,13 @@ wtc_result_t rpc_build_connect_request(rpc_context_t *ctx,
     pos += 6;  /* Skip block header, fill later */
 
     write_u16_be(buffer, (uint16_t)params->ar_type, &pos);
-    memcpy(buffer + pos, params->ar_uuid, 16);
-    pos += 16;
+    /* AR UUID - must be big-endian in PNIO blocks */
+    write_uuid_be(buffer, params->ar_uuid, &pos);
     write_u16_be(buffer, params->session_key, &pos);
     memcpy(buffer + pos, params->controller_mac, 6);
     pos += 6;
-    memcpy(buffer + pos, params->controller_uuid, 16);
-    pos += 16;
+    /* Initiator Object UUID (Controller UUID) - must be big-endian in PNIO blocks */
+    write_uuid_be(buffer, params->controller_uuid, &pos);
     write_u32_be(buffer, params->ar_properties, &pos);
     write_u16_be(buffer, params->activity_timeout, &pos);
     write_u16_be(buffer, ctx->controller_port, &pos);
@@ -940,8 +990,8 @@ wtc_result_t rpc_build_control_request(rpc_context_t *ctx,
     pos += 6;  /* Skip header */
 
     write_u16_be(buffer, 0, &pos);  /* Reserved */
-    memcpy(buffer + pos, ar_uuid, 16);
-    pos += 16;
+    /* AR UUID - must be big-endian in PNIO blocks */
+    write_uuid_be(buffer, ar_uuid, &pos);
     write_u16_be(buffer, session_key, &pos);
     write_u16_be(buffer, 0, &pos);  /* Reserved */
     write_u16_be(buffer, control_command, &pos);
@@ -1515,8 +1565,8 @@ wtc_result_t rpc_build_control_response(rpc_context_t *ctx,
     pos += 6;  /* Skip header, fill later */
 
     write_u16_be(buffer, 0, &pos);  /* Reserved */
-    memcpy(buffer + pos, request->ar_uuid, 16);
-    pos += 16;
+    /* AR UUID - must be big-endian in PNIO blocks */
+    write_uuid_be(buffer, request->ar_uuid, &pos);
     write_u16_be(buffer, request->session_key, &pos);
     write_u16_be(buffer, 0, &pos);  /* Reserved */
     write_u16_be(buffer, request->control_command, &pos);  /* Echo command */
