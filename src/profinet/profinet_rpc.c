@@ -55,18 +55,18 @@
 /*
  * PROFINET IO Device Interface UUID: DEA00001-6C97-11D1-8271-00A02442DF7D
  *
- * Wire format with drep=0x10 (little-endian):
- * - data1 (uint32): 0xDEA00001 → LE bytes: 01 00 A0 DE
- * - data2 (uint16): 0x6C97 → LE bytes: 97 6C
- * - data3 (uint16): 0x11D1 → LE bytes: D1 11
- * - data4 (8 bytes): unchanged (not affected by endianness)
+ * Wire format: Big-endian byte order.
  *
- * Reference: p-net pf_cmrpc.c uuid_io_device_interface
+ * NOTE: This technically violates DCE-RPC spec (drep=0x10 says LE), but the
+ * working capture from the RTU shows BE UUIDs are expected. The RTU accepts
+ * this format despite the spec violation.
+ *
+ * See: profi.pcapng from 2026-01-23 (bytes 24-39: de a0 00 01 6c 97 11 d1...)
  */
 const uint8_t PNIO_DEVICE_INTERFACE_UUID[16] = {
-    0x01, 0x00, 0xA0, 0xDE,  /* data1: 0xDEA00001 LE */
-    0x97, 0x6C,              /* data2: 0x6C97 LE */
-    0xD1, 0x11,              /* data3: 0x11D1 LE */
+    0xDE, 0xA0, 0x00, 0x01,  /* data1: 0xDEA00001 BE */
+    0x6C, 0x97,              /* data2: 0x6C97 BE */
+    0x11, 0xD1,              /* data3: 0x11D1 BE */
     0x82, 0x71, 0x00, 0xA0, 0x24, 0x42, 0xDF, 0x7D  /* data4: unchanged */
 };
 
@@ -75,9 +75,9 @@ const uint8_t PNIO_DEVICE_INTERFACE_UUID[16] = {
  * Same format as above but with data1 = 0xDEA00002
  */
 const uint8_t PNIO_CONTROLLER_INTERFACE_UUID[16] = {
-    0x02, 0x00, 0xA0, 0xDE,  /* data1: 0xDEA00002 LE */
-    0x97, 0x6C,              /* data2: 0x6C97 LE */
-    0xD1, 0x11,              /* data3: 0x11D1 LE */
+    0xDE, 0xA0, 0x00, 0x02,  /* data1: 0xDEA00002 BE */
+    0x6C, 0x97,              /* data2: 0x6C97 BE */
+    0x11, 0xD1,              /* data3: 0x11D1 BE */
     0x82, 0x71, 0x00, 0xA0, 0x24, 0x42, 0xDF, 0x7D  /* data4: unchanged */
 };
 
@@ -114,25 +114,6 @@ static void write_u32_be(uint8_t *buf, uint32_t val, size_t *pos)
 {
     uint32_t be = htonl(val);
     memcpy(buf + *pos, &be, 4);
-    *pos += 4;
-}
-
-/**
- * @brief Write uint32 in little-endian byte order to buffer.
- *
- * Used for NDR header fields when drep=little-endian.
- *
- * @param[out] buf   Destination buffer
- * @param[in]  val   Value to write
- * @param[in,out] pos Current position, incremented by 4
- *
- * @note Thread safety: SAFE
- * @note Memory: NO_ALLOC
- */
-static void write_u32_le(uint8_t *buf, uint32_t val, size_t *pos)
-{
-    uint32_t le = htole32(val);
-    memcpy(buf + *pos, &le, 4);
     *pos += 4;
 }
 
@@ -413,26 +394,17 @@ wtc_result_t rpc_build_connect_request(rpc_context_t *ctx,
     size_t pos = sizeof(profinet_rpc_header_t);  /* Skip header, fill later */
 
     /*
-     * Connect Request structure (per IEC 61158-6-10 / p-net pf_block_reader.c):
-     * - NDR Header (20 bytes, little-endian per drep)
-     *   - args_maximum (4 bytes)
-     *   - args_length (4 bytes)
-     *   - maximum_count (4 bytes)
-     *   - offset (4 bytes) - always 0
-     *   - actual_count (4 bytes)
+     * Connect Request structure (per working capture profi.pcapng 2026-01-23):
+     * - NO NDR Header (PNIO blocks start directly after RPC header)
      * - PNIO Blocks (big-endian per PROFINET spec):
-     *   - AR Block Request
-     *   - IOCR Block Request(s)
-     *   - Alarm CR Block Request
-     *   - Expected Submodule Block(s)
+     *   - AR Block Request (0x0101)
+     *   - IOCR Block Request(s) (0x0102)
+     *   - Alarm CR Block Request (0x0103)
+     *   - Expected Submodule Block(s) (0x0104)
+     *
+     * NOTE: This contradicts IEC 61158-6-10 which specifies NDR header,
+     * but the working capture shows no NDR header is expected by p-net.
      */
-
-    /* Reserve space for NDR header - fill in after we know block lengths */
-    size_t ndr_header_pos = pos;
-    pos += 20;  /* 5 x uint32 = 20 bytes */
-
-    /* Track start of PNIO blocks for length calculation */
-    size_t pnio_blocks_start = pos;
 
     /* ============== AR Block Request ============== */
     size_t ar_block_start = pos;
@@ -661,28 +633,6 @@ wtc_result_t rpc_build_connect_request(rpc_context_t *ctx,
     save_pos = exp_block_start;
     write_block_header(buffer, BLOCK_TYPE_EXPECTED_SUBMOD_BLOCK,
                         (uint16_t)exp_block_len, &save_pos);
-
-    /* ============== Fill NDR Header ============== */
-
-    /*
-     * NDR header fields (little-endian per drep):
-     * - args_maximum: max buffer size for response (use same as args_length)
-     * - args_length: length of PNIO blocks that follow
-     * - maximum_count: NDR array max (same as args_length for conformant array)
-     * - offset: always 0
-     * - actual_count: actual length (same as args_length)
-     *
-     * Reference: p-net pf_block_reader.c:836-880 pf_get_ndr_data_req()
-     */
-    uint32_t pnio_blocks_len = (uint32_t)(pos - pnio_blocks_start);
-    size_t ndr_pos = ndr_header_pos;
-    write_u32_le(buffer, pnio_blocks_len, &ndr_pos);  /* args_maximum */
-    write_u32_le(buffer, pnio_blocks_len, &ndr_pos);  /* args_length */
-    write_u32_le(buffer, pnio_blocks_len, &ndr_pos);  /* maximum_count */
-    write_u32_le(buffer, 0, &ndr_pos);                /* offset - always 0 */
-    write_u32_le(buffer, pnio_blocks_len, &ndr_pos);  /* actual_count */
-
-    LOG_DEBUG("NDR header: args_len=%u bytes of PNIO blocks", pnio_blocks_len);
 
     /* ============== Finalize RPC Header ============== */
 
@@ -973,17 +923,13 @@ wtc_result_t rpc_build_control_request(rpc_context_t *ctx,
     size_t pos = sizeof(profinet_rpc_header_t);
 
     /*
-     * Control Request structure (per IEC 61158-6-10):
-     * - NDR Header (20 bytes, little-endian per drep)
+     * Control Request structure (per working capture profi.pcapng):
+     * - NO NDR Header (PNIO blocks start directly after RPC header)
      * - IODControlReq Block (big-endian)
+     *
+     * NOTE: This contradicts IEC 61158-6-10 which specifies NDR header,
+     * but the working capture shows no NDR header is expected by p-net.
      */
-
-    /* Reserve space for NDR header */
-    size_t ndr_header_pos = pos;
-    pos += 20;
-
-    /* Track start of PNIO blocks */
-    size_t pnio_blocks_start = pos;
 
     /* IOD Control Request Block */
     size_t block_start = pos;
@@ -1001,15 +947,6 @@ wtc_result_t rpc_build_control_request(rpc_context_t *ctx,
     size_t save_pos = block_start;
     write_block_header(buffer, BLOCK_TYPE_IOD_CONTROL_REQ,
                         (uint16_t)block_len, &save_pos);
-
-    /* Fill NDR header (little-endian per drep) */
-    uint32_t pnio_blocks_len = (uint32_t)(pos - pnio_blocks_start);
-    size_t ndr_pos = ndr_header_pos;
-    write_u32_le(buffer, pnio_blocks_len, &ndr_pos);  /* args_maximum */
-    write_u32_le(buffer, pnio_blocks_len, &ndr_pos);  /* args_length */
-    write_u32_le(buffer, pnio_blocks_len, &ndr_pos);  /* maximum_count */
-    write_u32_le(buffer, 0, &ndr_pos);                /* offset */
-    write_u32_le(buffer, pnio_blocks_len, &ndr_pos);  /* actual_count */
 
     /* Build RPC header */
     uint16_t fragment_length = (uint16_t)(pos - sizeof(profinet_rpc_header_t));
@@ -1434,18 +1371,9 @@ wtc_result_t rpc_parse_incoming_control_request(const uint8_t *buffer,
     size_t pos = sizeof(profinet_rpc_header_t);
 
     /*
-     * Skip NDR header (20 bytes) - same structure as outgoing requests:
-     * - ArgsMaximum (4 bytes LE)
-     * - ArgsLength (4 bytes LE)
-     * - MaxCount (4 bytes LE)
-     * - Offset (4 bytes LE)
-     * - ActualCount (4 bytes LE)
+     * Per working capture (profi.pcapng), p-net sends control requests
+     * WITHOUT NDR header - PNIO blocks start directly after RPC header.
      */
-    if (pos + 20 > buf_len) {
-        LOG_ERROR("Incoming control request too short for NDR header");
-        return WTC_ERROR_PROTOCOL;
-    }
-    pos += 20;  /* Skip NDR header */
 
     if (pos + 6 > buf_len) {
         LOG_ERROR("Incoming control request too short for block header");
@@ -1548,17 +1476,13 @@ wtc_result_t rpc_build_control_response(rpc_context_t *ctx,
     size_t pos = sizeof(profinet_rpc_header_t);
 
     /*
-     * Control Response structure (per IEC 61158-6-10):
-     * - NDR Header (20 bytes, little-endian per drep)
+     * Control Response structure (per working capture profi.pcapng):
+     * - NO NDR Header (PNIO blocks start directly after RPC header)
      * - IODControlRes Block (big-endian)
+     *
+     * NOTE: This contradicts IEC 61158-6-10 which specifies NDR header,
+     * but the working capture shows no NDR header is expected by p-net.
      */
-
-    /* Reserve space for NDR header */
-    size_t ndr_header_pos = pos;
-    pos += 20;
-
-    /* Track start of PNIO blocks */
-    size_t pnio_blocks_start = pos;
 
     /* Build IOD Control Response block */
     size_t block_start = pos;
@@ -1577,15 +1501,6 @@ wtc_result_t rpc_build_control_response(rpc_context_t *ctx,
     size_t save_pos = block_start;
     write_block_header(buffer, BLOCK_TYPE_IOD_CONTROL_RES,
                         (uint16_t)block_len, &save_pos);
-
-    /* Fill NDR header (little-endian per drep) */
-    uint32_t pnio_blocks_len = (uint32_t)(pos - pnio_blocks_start);
-    size_t ndr_pos = ndr_header_pos;
-    write_u32_le(buffer, pnio_blocks_len, &ndr_pos);  /* args_maximum */
-    write_u32_le(buffer, pnio_blocks_len, &ndr_pos);  /* args_length */
-    write_u32_le(buffer, pnio_blocks_len, &ndr_pos);  /* maximum_count */
-    write_u32_le(buffer, 0, &ndr_pos);                /* offset */
-    write_u32_le(buffer, pnio_blocks_len, &ndr_pos);  /* actual_count */
 
     /* Update fragment length in RPC header */
     uint16_t fragment_length = (uint16_t)(pos - sizeof(profinet_rpc_header_t));
