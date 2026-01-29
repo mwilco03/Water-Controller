@@ -422,6 +422,16 @@ do_docker_install() {
         export GRAFANA_PASSWORD="$GRAFANA_PASSWORD"
         export DB_PASSWORD="$DB_PASSWORD"
 
+        # Get git version info for build identification
+        if [[ -d "../.git" ]]; then
+            export GIT_COMMIT=$(git -C .. rev-parse --short=7 HEAD 2>/dev/null || echo "unknown")
+            export GIT_DATE=$(git -C .. log -1 --format=%ci 2>/dev/null || echo "unknown")
+            log_info "Building commit: $GIT_COMMIT ($GIT_DATE)"
+        else
+            export GIT_COMMIT="unknown"
+            export GIT_DATE="unknown"
+        fi
+
         docker compose build --no-cache --progress=plain 2>&1 | while IFS= read -r line; do
             # Show build step numbers only (e.g., "#7" from "#7 [api 1/8] FROM docker...")
             if echo "$line" | grep -qE "^#[0-9]+ \["; then
@@ -544,6 +554,28 @@ do_docker_install() {
     log_info "  3. Configure firewall if accessing remotely"
     log_info "  4. Change default admin password (admin/admin)"
     log_info ""
+
+    # Write version file for docker installs
+    # The staging_dir may have been cleaned up, so get version from installed repo
+    local version_staging_dir
+    version_staging_dir=$(mktemp -d)
+    if [[ -d "/opt/water-controller/.git" ]]; then
+        local commit_sha commit_date commit_subject
+        commit_sha=$(cd /opt/water-controller && git rev-parse HEAD 2>/dev/null || echo "unknown")
+        commit_date=$(cd /opt/water-controller && git log -1 --format=%ci HEAD 2>/dev/null || echo "unknown")
+        commit_subject=$(cd /opt/water-controller && git log -1 --format=%s HEAD 2>/dev/null || echo "")
+        echo "$commit_sha" > "$version_staging_dir/.commit_sha"
+        echo "main" > "$version_staging_dir/.branch"
+        echo "$commit_date" > "$version_staging_dir/.commit_date"
+        echo "$commit_subject" > "$version_staging_dir/.commit_subject"
+        mkdir -p "$version_staging_dir/repo"
+        [[ -f "/opt/water-controller/package.json" ]] && cp /opt/water-controller/package.json "$version_staging_dir/repo/"
+        write_version_file "$version_staging_dir"
+        show_completion_summary "Docker Installation" "$version_staging_dir"
+        rm -rf "$version_staging_dir"
+    else
+        show_completion_summary "Docker Installation"
+    fi
 
     return 0
 }

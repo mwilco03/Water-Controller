@@ -87,8 +87,8 @@ services:
       API_HOST: 0.0.0.0
       WTC_API_PORT: ${WTC_API_PORT:-8000}
       WTC_UI_PORT: ${WTC_UI_PORT:-8080}
-      # Production mode - strict validation
-      WTC_STARTUP_MODE: ${WTC_STARTUP_MODE:-development}
+      # Production mode - strict validation (industrial SCADA default)
+      WTC_STARTUP_MODE: ${WTC_STARTUP_MODE:-production}
       # Real operations - NOT simulation
       WTC_SIMULATION_MODE: "false"
       WTC_DEMO_MODE: "false"
@@ -125,6 +125,10 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile.controller
+      args:
+        # Git version info for build identification (passed at build time)
+        GIT_COMMIT: ${GIT_COMMIT:-unknown}
+        GIT_DATE: ${GIT_DATE:-unknown}
     container_name: wtc-controller
     restart: unless-stopped
     network_mode: host
