@@ -52,89 +52,66 @@ static const timing_params_t timing_profiles[TIMING_PROFILE_COUNT] = {
     },
 };
 
+/* ============== OpNum Wire Values ============== */
+
+/* Map opnum_variant_t → RPC OpNum for the wire header. */
+static const uint16_t opnum_wire_values[OPNUM_VARIANT_COUNT] = {
+    [OPNUM_STANDARD] = 0,   /* RPC_OPNUM_CONNECT */
+    [OPNUM_WRITE]    = 3,   /* RPC_OPNUM_WRITE   */
+};
+
 /* ============== Strategy Table ============== */
 
 /*
- * 24-entry strategy table: 8 wire formats × 3 timing profiles.
+ * 48-entry strategy table:
+ *   5 dimensions: UUID(2) × NDR(2) × Slot(2) × Timing(3) × OpNum(2) = 48
  *
  * Layout:
- *   [0 ..  7]  DEFAULT      timing with all 8 wire format combos
- *   [8 .. 15]  AGGRESSIVE   timing with all 8 wire format combos
- *   [16 .. 23] CONSERVATIVE timing with all 8 wire format combos
+ *   [ 0 .. 23]  OPNUM_STANDARD (OpNum=0, Connect)
+ *     [ 0 ..  7]  DEFAULT timing, 8 wire-format combos
+ *     [ 8 .. 15]  AGGRESSIVE timing
+ *     [16 .. 23]  CONSERVATIVE timing
+ *   [24 .. 47]  OPNUM_WRITE (OpNum=3, Write)
+ *     [24 .. 31]  DEFAULT timing, 8 wire-format combos
+ *     [32 .. 39]  AGGRESSIVE timing
+ *     [40 .. 47]  CONSERVATIVE timing
  *
- * Within each timing group, wire formats are ordered by empirical
- * likelihood of success (matching the original 8-strategy design):
- *   0: as-stored, no NDR, full
- *   1: as-stored, with NDR, full
- *   2: swapped, no NDR, full
- *   3: swapped, with NDR, full
- *   4: as-stored, no NDR, DAP-only
- *   5: as-stored, with NDR, DAP-only
- *   6: swapped, no NDR, DAP-only
- *   7: swapped, with NDR, DAP-only
+ * Within each timing group, wire formats are ordered:
+ *   +0: as-stored, no NDR, full      +4: as-stored, no NDR, DAP
+ *   +1: as-stored, +NDR, full        +5: as-stored, +NDR, DAP
+ *   +2: swapped, no NDR, full        +6: swapped, no NDR, DAP
+ *   +3: swapped, +NDR, full          +7: swapped, +NDR, DAP
  */
 
-/* Helper macro — one wire-format entry with a given timing profile */
-#define STRAT(uuid, ndr, scope, timing_id, desc) \
-    { (uuid), (ndr), (scope), (timing_id), (desc) }
+/* Helper macro — one strategy entry */
+#define S(uuid, ndr, scope, timing_id, opn, desc) \
+    { (uuid), (ndr), (scope), (timing_id), (opn), (desc) }
+
+/* Wire-format block macro — 8 entries for one timing+opnum combo */
+#define WIRE8(T, O, tname, oname) \
+    S(UUID_WIRE_AS_STORED,   NDR_REQUEST_ABSENT,  SLOT_SCOPE_FULL,     T, O, tname " " oname ": as-stored, no NDR, full"), \
+    S(UUID_WIRE_AS_STORED,   NDR_REQUEST_PRESENT, SLOT_SCOPE_FULL,     T, O, tname " " oname ": as-stored, +NDR, full"), \
+    S(UUID_WIRE_SWAP_FIELDS, NDR_REQUEST_ABSENT,  SLOT_SCOPE_FULL,     T, O, tname " " oname ": swapped, no NDR, full"), \
+    S(UUID_WIRE_SWAP_FIELDS, NDR_REQUEST_PRESENT, SLOT_SCOPE_FULL,     T, O, tname " " oname ": swapped, +NDR, full"), \
+    S(UUID_WIRE_AS_STORED,   NDR_REQUEST_ABSENT,  SLOT_SCOPE_DAP_ONLY, T, O, tname " " oname ": as-stored, no NDR, DAP"), \
+    S(UUID_WIRE_AS_STORED,   NDR_REQUEST_PRESENT, SLOT_SCOPE_DAP_ONLY, T, O, tname " " oname ": as-stored, +NDR, DAP"), \
+    S(UUID_WIRE_SWAP_FIELDS, NDR_REQUEST_ABSENT,  SLOT_SCOPE_DAP_ONLY, T, O, tname " " oname ": swapped, no NDR, DAP"), \
+    S(UUID_WIRE_SWAP_FIELDS, NDR_REQUEST_PRESENT, SLOT_SCOPE_DAP_ONLY, T, O, tname " " oname ": swapped, +NDR, DAP")
 
 static const rpc_connect_strategy_t strategy_table[] = {
-    /* === DEFAULT timing (indices 0-7) === */
-    STRAT(UUID_WIRE_AS_STORED,   NDR_REQUEST_ABSENT,  SLOT_SCOPE_FULL,     TIMING_DEFAULT,
-          "default: as-stored, no NDR, full"),
-    STRAT(UUID_WIRE_AS_STORED,   NDR_REQUEST_PRESENT, SLOT_SCOPE_FULL,     TIMING_DEFAULT,
-          "default: as-stored, +NDR, full"),
-    STRAT(UUID_WIRE_SWAP_FIELDS, NDR_REQUEST_ABSENT,  SLOT_SCOPE_FULL,     TIMING_DEFAULT,
-          "default: swapped, no NDR, full"),
-    STRAT(UUID_WIRE_SWAP_FIELDS, NDR_REQUEST_PRESENT, SLOT_SCOPE_FULL,     TIMING_DEFAULT,
-          "default: swapped, +NDR, full"),
-    STRAT(UUID_WIRE_AS_STORED,   NDR_REQUEST_ABSENT,  SLOT_SCOPE_DAP_ONLY, TIMING_DEFAULT,
-          "default: as-stored, no NDR, DAP"),
-    STRAT(UUID_WIRE_AS_STORED,   NDR_REQUEST_PRESENT, SLOT_SCOPE_DAP_ONLY, TIMING_DEFAULT,
-          "default: as-stored, +NDR, DAP"),
-    STRAT(UUID_WIRE_SWAP_FIELDS, NDR_REQUEST_ABSENT,  SLOT_SCOPE_DAP_ONLY, TIMING_DEFAULT,
-          "default: swapped, no NDR, DAP"),
-    STRAT(UUID_WIRE_SWAP_FIELDS, NDR_REQUEST_PRESENT, SLOT_SCOPE_DAP_ONLY, TIMING_DEFAULT,
-          "default: swapped, +NDR, DAP"),
+    /* === OpNum=0 (Connect) — indices 0..23 === */
+    WIRE8(TIMING_DEFAULT,      OPNUM_STANDARD, "default",      "op0"),  /*  0.. 7 */
+    WIRE8(TIMING_AGGRESSIVE,   OPNUM_STANDARD, "aggressive",   "op0"),  /*  8..15 */
+    WIRE8(TIMING_CONSERVATIVE, OPNUM_STANDARD, "conservative", "op0"),  /* 16..23 */
 
-    /* === AGGRESSIVE timing (indices 8-15) === */
-    STRAT(UUID_WIRE_AS_STORED,   NDR_REQUEST_ABSENT,  SLOT_SCOPE_FULL,     TIMING_AGGRESSIVE,
-          "aggressive: as-stored, no NDR, full"),
-    STRAT(UUID_WIRE_AS_STORED,   NDR_REQUEST_PRESENT, SLOT_SCOPE_FULL,     TIMING_AGGRESSIVE,
-          "aggressive: as-stored, +NDR, full"),
-    STRAT(UUID_WIRE_SWAP_FIELDS, NDR_REQUEST_ABSENT,  SLOT_SCOPE_FULL,     TIMING_AGGRESSIVE,
-          "aggressive: swapped, no NDR, full"),
-    STRAT(UUID_WIRE_SWAP_FIELDS, NDR_REQUEST_PRESENT, SLOT_SCOPE_FULL,     TIMING_AGGRESSIVE,
-          "aggressive: swapped, +NDR, full"),
-    STRAT(UUID_WIRE_AS_STORED,   NDR_REQUEST_ABSENT,  SLOT_SCOPE_DAP_ONLY, TIMING_AGGRESSIVE,
-          "aggressive: as-stored, no NDR, DAP"),
-    STRAT(UUID_WIRE_AS_STORED,   NDR_REQUEST_PRESENT, SLOT_SCOPE_DAP_ONLY, TIMING_AGGRESSIVE,
-          "aggressive: as-stored, +NDR, DAP"),
-    STRAT(UUID_WIRE_SWAP_FIELDS, NDR_REQUEST_ABSENT,  SLOT_SCOPE_DAP_ONLY, TIMING_AGGRESSIVE,
-          "aggressive: swapped, no NDR, DAP"),
-    STRAT(UUID_WIRE_SWAP_FIELDS, NDR_REQUEST_PRESENT, SLOT_SCOPE_DAP_ONLY, TIMING_AGGRESSIVE,
-          "aggressive: swapped, +NDR, DAP"),
-
-    /* === CONSERVATIVE timing (indices 16-23) === */
-    STRAT(UUID_WIRE_AS_STORED,   NDR_REQUEST_ABSENT,  SLOT_SCOPE_FULL,     TIMING_CONSERVATIVE,
-          "conservative: as-stored, no NDR, full"),
-    STRAT(UUID_WIRE_AS_STORED,   NDR_REQUEST_PRESENT, SLOT_SCOPE_FULL,     TIMING_CONSERVATIVE,
-          "conservative: as-stored, +NDR, full"),
-    STRAT(UUID_WIRE_SWAP_FIELDS, NDR_REQUEST_ABSENT,  SLOT_SCOPE_FULL,     TIMING_CONSERVATIVE,
-          "conservative: swapped, no NDR, full"),
-    STRAT(UUID_WIRE_SWAP_FIELDS, NDR_REQUEST_PRESENT, SLOT_SCOPE_FULL,     TIMING_CONSERVATIVE,
-          "conservative: swapped, +NDR, full"),
-    STRAT(UUID_WIRE_AS_STORED,   NDR_REQUEST_ABSENT,  SLOT_SCOPE_DAP_ONLY, TIMING_CONSERVATIVE,
-          "conservative: as-stored, no NDR, DAP"),
-    STRAT(UUID_WIRE_AS_STORED,   NDR_REQUEST_PRESENT, SLOT_SCOPE_DAP_ONLY, TIMING_CONSERVATIVE,
-          "conservative: as-stored, +NDR, DAP"),
-    STRAT(UUID_WIRE_SWAP_FIELDS, NDR_REQUEST_ABSENT,  SLOT_SCOPE_DAP_ONLY, TIMING_CONSERVATIVE,
-          "conservative: swapped, no NDR, DAP"),
-    STRAT(UUID_WIRE_SWAP_FIELDS, NDR_REQUEST_PRESENT, SLOT_SCOPE_DAP_ONLY, TIMING_CONSERVATIVE,
-          "conservative: swapped, +NDR, DAP"),
+    /* === OpNum=3 (Write) — indices 24..47 === */
+    WIRE8(TIMING_DEFAULT,      OPNUM_WRITE,    "default",      "op3"),  /* 24..31 */
+    WIRE8(TIMING_AGGRESSIVE,   OPNUM_WRITE,    "aggressive",   "op3"),  /* 32..39 */
+    WIRE8(TIMING_CONSERVATIVE, OPNUM_WRITE,    "conservative", "op3"),  /* 40..47 */
 };
 
-#undef STRAT
+#undef S
+#undef WIRE8
 
 #define STRATEGY_COUNT ((int)(sizeof(strategy_table) / sizeof(strategy_table[0])))
 
@@ -227,6 +204,14 @@ void rpc_strategy_get_timing(timing_profile_t profile, timing_params_t *out)
     }
 
     *out = timing_profiles[profile];
+}
+
+uint16_t rpc_strategy_get_opnum(opnum_variant_t variant)
+{
+    if (variant < 0 || variant >= OPNUM_VARIANT_COUNT) {
+        variant = OPNUM_STANDARD;
+    }
+    return opnum_wire_values[variant];
 }
 
 void rpc_strategy_apply_vendor_hint(rpc_strategy_state_t *state,

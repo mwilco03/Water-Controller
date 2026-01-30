@@ -62,6 +62,23 @@ typedef enum {
     SLOT_SCOPE_DAP_ONLY = 1,
 } slot_scope_t;
 
+/* RPC OpNum variant for Connect Request.
+ *
+ * IEC 61158-6 defines OpNum=0 for Connect.  However, some non-standard
+ * PROFINET stacks may interpret or route the request differently based
+ * on the operation number.  The pcap-observed historical bug (commit
+ * 18b657d) showed that wrong opnum causes silent failures — so trying
+ * alternative opnums can reveal firmware-specific expectations.
+ *
+ * STANDARD:  OpNum 0 (Connect per IEC 61158-6)
+ * WRITE:     OpNum 3 (Write — some stacks accept connect-via-write)
+ */
+typedef enum {
+    OPNUM_STANDARD = 0,
+    OPNUM_WRITE    = 1,
+    OPNUM_VARIANT_COUNT = 2,
+} opnum_variant_t;
+
 /* Timing profile for IOCR and Alarm CR parameters.
  *
  * Different PROFINET devices expect different timing parameters.
@@ -98,11 +115,12 @@ typedef struct {
     ndr_request_mode_t ndr_mode;
     slot_scope_t slot_scope;
     timing_profile_t timing;
+    opnum_variant_t opnum;
     const char *description;
 } rpc_connect_strategy_t;
 
-/* Maximum strategies in the table: 8 wire formats × 3 timing profiles */
-#define RPC_MAX_STRATEGIES 24
+/* Maximum strategies: 8 wire formats × 3 timing profiles × 2 opnum = 48 */
+#define RPC_MAX_STRATEGIES 48
 
 /* Strategy iteration state — persists across ABORT recovery cycles */
 typedef struct {
@@ -140,6 +158,14 @@ const rpc_connect_strategy_t *rpc_strategy_table(int *count);
  * @param[out] out      Filled timing parameters
  */
 void rpc_strategy_get_timing(timing_profile_t profile, timing_params_t *out);
+
+/**
+ * @brief Resolve opnum variant to the wire-value for the RPC header.
+ *
+ * @param[in] variant  Opnum variant enum
+ * @return uint16_t    RPC OpNum value for the header
+ */
+uint16_t rpc_strategy_get_opnum(opnum_variant_t variant);
 
 /**
  * @brief Apply vendor hint to reorder strategy starting point.
