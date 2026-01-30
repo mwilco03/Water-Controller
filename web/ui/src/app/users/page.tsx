@@ -1,31 +1,11 @@
 'use client';
 
 /**
- * TODO: User Management Page
+ * User Management Page (disabled)
  *
- * This page is disabled because it calls non-existent backend endpoints.
- *
- * MISSING BACKEND:
- * - GET/POST/PUT/DELETE /api/v1/users
- * - GET /api/v1/auth/sessions (list all sessions)
- * - DELETE /api/v1/auth/sessions/{id} (terminate session)
- *
- * TO IMPLEMENT:
- * Option 1: Use fastapi-users library
- *   pip install 'fastapi-users[sqlalchemy]'
- *   Provides user CRUD, JWT auth, password hashing
- *
- * Option 2: Use Keycloak/Authentik for enterprise environments
- *   Self-hosted identity provider with LDAP/AD support
- *
- * SCADA REQUIREMENTS:
- * - Role-based access (viewer, operator, engineer, admin)
- * - Audit trail for all control actions (ISA-62443)
- * - Session management and timeout enforcement
- * - Password policies
- *
- * ORIGINAL FILE: 26KB of commented code removed for clarity.
- * See git history for original implementation.
+ * Disabled: requires backend user CRUD endpoints (/api/v1/users).
+ * Current auth uses the hardcoded credential per CLAUDE.md.
+ * Needs fastapi-users or equivalent before this page can function.
  */
 
 export default function UsersPage() {

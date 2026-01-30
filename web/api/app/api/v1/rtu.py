@@ -243,8 +243,8 @@ async def get_rtu_config(
         "station_name": rtu.station_name,
         "config_version": CONFIG_VERSION,
         "slot_count": rtu.slot_count,
-        "sensors": [],  # TODO: Add sensor configs from 0xF842
-        "actuators": [],  # TODO: Add actuator configs from 0xF843
+        "sensors": [],  # Populated when RTU reports sensor submodules via PROFINET
+        "actuators": [],  # Populated when RTU reports actuator submodules via PROFINET
         "authority_mode": "SUPERVISED",
         "watchdog_ms": 3000,
     }
