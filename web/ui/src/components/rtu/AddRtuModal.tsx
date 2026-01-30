@@ -218,7 +218,11 @@ export default function AddRtuModal({
             {error && (
               <p className="text-red-400 text-xs mt-1">{error}</p>
             )}
-            <p className="text-gray-500 text-xs mt-1">Station name will be auto-generated from IP</p>
+            <p className="text-gray-500 text-xs mt-1">
+              {isFromDiscovery
+                ? 'Station name provided by device discovery'
+                : 'Use DCP Scan or Ping Scan to discover devices first'}
+            </p>
           </div>
 
           {/* Discovery info (read-only, shown only if from discovery) */}
