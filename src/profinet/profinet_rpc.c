@@ -101,24 +101,6 @@ static uint16_t read_u16_be(const uint8_t *buf, size_t *pos)
 }
 
 /**
- * @brief Read uint32 from buffer in network byte order.
- *
- * @param[in]  buf   Source buffer
- * @param[in,out] pos Current position, incremented by 4
- * @return Host byte order value
- *
- * @note Thread safety: SAFE
- * @note Memory: NO_ALLOC
- */
-static uint32_t read_u32_be(const uint8_t *buf, size_t *pos)
-{
-    uint32_t be;
-    memcpy(&be, buf + *pos, 4);
-    *pos += 4;
-    return ntohl(be);
-}
-
-/**
  * @brief Pad position to 4-byte alignment.
  *
  * @param[in,out] pos Position to align
@@ -177,29 +159,48 @@ static wtc_result_t build_rpc_header(uint8_t *buf,
     hdr->packet_type = RPC_PACKET_TYPE_REQUEST;
     hdr->flags1 = RPC_FLAG1_LAST_FRAGMENT | RPC_FLAG1_IDEMPOTENT;
     hdr->flags2 = 0;
+
+    /*
+     * DREP = 0x10 (Little-Endian integers, ASCII characters).
+     *
+     * All multi-byte fields in the RPC header (interface_version,
+     * sequence_number, opnum, fragment_length, etc.) MUST be encoded
+     * in little-endian byte order to match this DREP declaration.
+     *
+     * UUIDs: first 3 fields (time_low, time_mid, time_hi_and_version)
+     * are stored in LE; remaining bytes (clock_seq, node) are unchanged.
+     * Our C arrays store UUIDs in big-endian, so we swap after memcpy.
+     *
+     * Note: PNIO block payloads (ARBlockReq, IOCRBlockReq, etc.) are
+     * always big-endian per IEC 61158-6, independent of DREP.
+     */
     hdr->drep[0] = RPC_DREP_LITTLE_ENDIAN;
     hdr->drep[1] = RPC_DREP_ASCII;
     hdr->drep[2] = 0;
     hdr->serial_high = 0;
 
-    /* Object UUID (AR UUID for this connection) */
+    /* Object UUID (AR UUID) — swap from BE storage to LE wire format */
     memcpy(hdr->object_uuid, object_uuid, 16);
+    uuid_swap_fields(hdr->object_uuid);
 
-    /* Interface UUID (PROFINET IO Device) */
+    /* Interface UUID (PROFINET IO Device) — swap to LE */
     memcpy(hdr->interface_uuid, PNIO_DEVICE_INTERFACE_UUID, 16);
+    uuid_swap_fields(hdr->interface_uuid);
 
-    /* Activity UUID (unique per request) */
+    /* Activity UUID (unique per request) — swap to LE */
     memcpy(hdr->activity_uuid, ctx->activity_uuid, 16);
+    uuid_swap_fields(hdr->activity_uuid);
 
+    /* All multi-byte header fields in LE (native on this platform) */
     hdr->server_boot = 0;
-    hdr->interface_version = htonl(1);
-    hdr->sequence_number = htonl(ctx->sequence_number);
+    hdr->interface_version = 1;
+    hdr->sequence_number = ctx->sequence_number;
     ctx->sequence_number++;
 
-    hdr->opnum = htons(opnum);
+    hdr->opnum = opnum;
     hdr->interface_hint = 0xFFFF;
     hdr->activity_hint = 0xFFFF;
-    hdr->fragment_length = htons(fragment_length);
+    hdr->fragment_length = fragment_length;
     hdr->fragment_number = 0;
     hdr->auth_protocol = 0;
     hdr->serial_low = 0;
@@ -226,6 +227,38 @@ static void write_block_header(uint8_t *buf, uint16_t type,
     write_u16_be(buf, length, pos);
     buf[(*pos)++] = BLOCK_VERSION_HIGH;
     buf[(*pos)++] = BLOCK_VERSION_LOW;
+}
+
+/* ============== DREP-Aware RPC Header Field Decoding ============== */
+
+/**
+ * @brief Decode uint16 from RPC header based on DREP byte order.
+ *
+ * The sender's DREP field specifies how multi-byte fields in the RPC
+ * header are encoded.  DREP[0] & 0x10 = LE, otherwise BE.
+ *
+ * @param[in] hdr  RPC header
+ * @param[in] val  Raw field value from the packed struct
+ * @return Decoded host-order value
+ */
+static uint16_t rpc_hdr_u16(const profinet_rpc_header_t *hdr, uint16_t val)
+{
+    if (hdr->drep[0] & 0x10) {
+        /* Sender encoded as LE — on an LE host the raw value is already correct */
+        return val;
+    }
+    return ntohs(val);  /* Sender encoded as BE */
+}
+
+/**
+ * @brief Decode uint32 from RPC header based on DREP byte order.
+ */
+static uint32_t rpc_hdr_u32(const profinet_rpc_header_t *hdr, uint32_t val)
+{
+    if (hdr->drep[0] & 0x10) {
+        return val;  /* LE on LE host */
+    }
+    return ntohl(val);  /* BE */
 }
 
 /* ============== NDR Header Support ============== */
@@ -407,7 +440,6 @@ wtc_result_t rpc_build_connect_request(rpc_context_t *ctx,
     }
 
     size_t pos = sizeof(profinet_rpc_header_t);  /* Skip header, fill later */
-    size_t ar_args_start = pos;
 
     /*
      * Connect Request structure (per IEC 61158-6):
@@ -446,10 +478,12 @@ wtc_result_t rpc_build_connect_request(rpc_context_t *ctx,
     write_block_header(buffer, BLOCK_TYPE_AR_BLOCK_REQ,
                         (uint16_t)ar_block_len, &save_pos);
 
-    /* ============== IOCR Block Requests ============== */
+    /* ============== IOCR Block Requests (IEC 61158-6 format) ============== */
     for (int i = 0; i < params->iocr_count; i++) {
         size_t iocr_block_start = pos;
-        pos += 6;  /* Skip header */
+        pos += 6;  /* Skip block header, fill later */
+
+        bool is_input_iocr = (params->iocr[i].type == IOCR_TYPE_INPUT);
 
         write_u16_be(buffer, params->iocr[i].type, &pos);
         write_u16_be(buffer, params->iocr[i].reference, &pos);
@@ -460,47 +494,73 @@ wtc_result_t rpc_build_connect_request(rpc_context_t *ctx,
         write_u16_be(buffer, params->iocr[i].send_clock_factor, &pos);
         write_u16_be(buffer, params->iocr[i].reduction_ratio, &pos);
         write_u16_be(buffer, 0, &pos);  /* Phase */
-        write_u16_be(buffer, 0, &pos);  /* Sequence (deprecated) */
-        write_u32_be(buffer, 0, &pos);  /* Frame send offset */
+        write_u16_be(buffer, 0, &pos);  /* Sequence (deprecated in V2.3+) */
+        write_u32_be(buffer, 0xFFFFFFFF, &pos);  /* FrameSendOffset: best effort */
         write_u16_be(buffer, params->iocr[i].watchdog_factor, &pos);
         write_u16_be(buffer, params->data_hold_factor ? params->data_hold_factor : 3, &pos);
         write_u16_be(buffer, 0, &pos);  /* IOCR tag header */
-        memset(buffer + pos, 0, 6);     /* Multicast MAC (not used) */
+        memset(buffer + pos, 0, 6);     /* Multicast MAC (not used for Class 1) */
         pos += 6;
 
-        /* API section */
-        write_u16_be(buffer, 1, &pos);  /* Number of APIs */
+        /* ---- API section (IEC 61158-6 §5.2.7.6) ---- */
+        write_u16_be(buffer, 1, &pos);  /* NumberOfAPIs = 1 */
+        write_u32_be(buffer, 0, &pos);  /* API = 0 */
 
-        /* API 0 */
-        write_u32_be(buffer, 0, &pos);  /* API number */
-
-        /* Count slots for this IOCR type */
-        int slot_count = 0;
+        /*
+         * IOData objects: submodules whose data appears in THIS IOCR's frame.
+         * For Input IOCR:  input submodules (device → controller data)
+         * For Output IOCR: output submodules (controller → device data)
+         *
+         * Each IODataObject = SlotNumber(u16) + SubslotNumber(u16)
+         *                   + IODataObjectFrameOffset(u16) = 6 bytes
+         *
+         * Frame layout: [user_data_0][user_data_1]...[iops_0][iops_1]...[iocs_0]...
+         */
+        int iodata_count = 0;
+        uint16_t iodata_frame_offset = 0;
         for (int j = 0; j < params->expected_count; j++) {
-            bool is_input_iocr = (params->iocr[i].type == IOCR_TYPE_INPUT);
             if (params->expected_config[j].is_input == is_input_iocr) {
-                slot_count++;
+                iodata_count++;
             }
         }
-        write_u16_be(buffer, (uint16_t)slot_count, &pos);
+        write_u16_be(buffer, (uint16_t)iodata_count, &pos);
 
-        /* Slot data */
+        uint16_t running_offset = 0;
         for (int j = 0; j < params->expected_count; j++) {
-            bool is_input_iocr = (params->iocr[i].type == IOCR_TYPE_INPUT);
             if (params->expected_config[j].is_input != is_input_iocr) {
                 continue;
             }
-
             write_u16_be(buffer, params->expected_config[j].slot, &pos);
-            write_u16_be(buffer, 1, &pos);  /* Subslot count */
             write_u16_be(buffer, params->expected_config[j].subslot, &pos);
-            write_u16_be(buffer, params->expected_config[j].data_length, &pos);
+            write_u16_be(buffer, running_offset, &pos);
+            running_offset += params->expected_config[j].data_length;
+        }
+        /* IOPS bytes follow user data (1 per IOData submodule) */
+        iodata_frame_offset = running_offset + (uint16_t)iodata_count;
 
-            /* IOCS/IOPS length (consumer status) */
-            write_u8(buffer + pos, 1);  /* 1 byte status */
-            pos++;
-            write_u8(buffer + pos, 1);
-            pos++;
+        /*
+         * IOCS objects: consumer status bytes for the OPPOSITE direction's
+         * submodules, sent in THIS frame.
+         * For Input IOCR:  IOCS for output submodules
+         * For Output IOCR: IOCS for input submodules
+         */
+        int iocs_count = 0;
+        for (int j = 0; j < params->expected_count; j++) {
+            if (params->expected_config[j].is_input != is_input_iocr) {
+                iocs_count++;
+            }
+        }
+        write_u16_be(buffer, (uint16_t)iocs_count, &pos);
+
+        uint16_t iocs_offset = iodata_frame_offset;
+        for (int j = 0; j < params->expected_count; j++) {
+            if (params->expected_config[j].is_input == is_input_iocr) {
+                continue;
+            }
+            write_u16_be(buffer, params->expected_config[j].slot, &pos);
+            write_u16_be(buffer, params->expected_config[j].subslot, &pos);
+            write_u16_be(buffer, iocs_offset, &pos);
+            iocs_offset += 1;  /* Each IOCS is 1 byte */
         }
 
         /* Fill IOCR block header */
@@ -569,6 +629,7 @@ wtc_result_t rpc_build_connect_request(rpc_context_t *ctx,
             }
         }
         write_u32_be(buffer, module_ident, &pos);
+        write_u16_be(buffer, 0x0000, &pos);  /* ModuleProperties */
 
         /* Count subslots in this slot */
         int subslot_count = 0;
@@ -587,15 +648,20 @@ wtc_result_t rpc_build_connect_request(rpc_context_t *ctx,
             write_u16_be(buffer, params->expected_config[j].subslot, &pos);
             write_u32_be(buffer, params->expected_config[j].submodule_ident, &pos);
 
-            /* Submodule properties */
+            /* SubmoduleProperties: bits 0-1 = Type (1=Input, 2=Output) */
             uint16_t submod_props = params->expected_config[j].is_input ? 0x0001 : 0x0002;
             write_u16_be(buffer, submod_props, &pos);
 
-            /* Data description */
+            /* DataDescription per IEC 61158-6:
+             *   DataDescription(u16) + SubmoduleDataLength(u16) +
+             *   LengthIOCS(u8) + LengthIOPS(u8)
+             * Type field: 0x0001=Input, 0x0002=Output */
+            uint16_t data_desc_type = params->expected_config[j].is_input ? 0x0001 : 0x0002;
+            write_u16_be(buffer, data_desc_type, &pos);
             write_u16_be(buffer, params->expected_config[j].data_length, &pos);
-            write_u8(buffer + pos, 1);  /* Length IOCS */
+            write_u8(buffer + pos, 1);  /* LengthIOCS */
             pos++;
-            write_u8(buffer + pos, 1);  /* Length IOPS */
+            write_u8(buffer + pos, 1);  /* LengthIOPS */
             pos++;
         }
     }
@@ -653,9 +719,9 @@ wtc_result_t rpc_parse_connect_response(const uint8_t *buffer,
         return WTC_ERROR_PROTOCOL;
     }
 
-    /* Validate OpNum — log mismatch but don't reject, since non-standard
-     * stacks may echo a different opnum than what we sent. */
-    uint16_t resp_opnum = ntohs(hdr->opnum);
+    /* Validate OpNum — DREP-aware decode, log mismatch but don't reject,
+     * since non-standard stacks may echo a different opnum. */
+    uint16_t resp_opnum = rpc_hdr_u16(hdr, hdr->opnum);
     if (resp_opnum != RPC_OPNUM_CONNECT) {
         LOG_WARN("Connect response: opnum=%u (expected %u) — "
                  "device may use non-standard opnum mapping",
@@ -908,8 +974,8 @@ wtc_result_t rpc_parse_control_response(const uint8_t *buffer,
         return WTC_ERROR_PROTOCOL;
     }
 
-    /* Validate OpNum — Control operations use OpNum 4 */
-    uint16_t ctrl_opnum = ntohs(hdr->opnum);
+    /* Validate OpNum — DREP-aware decode; Control operations use OpNum 4 */
+    uint16_t ctrl_opnum = rpc_hdr_u16(hdr, hdr->opnum);
     if (ctrl_opnum != RPC_OPNUM_CONTROL) {
         LOG_WARN("Control response: opnum=%u (expected %u)",
                  ctrl_opnum, RPC_OPNUM_CONTROL);
@@ -1282,10 +1348,10 @@ wtc_result_t rpc_connect_with_strategy(rpc_context_t *ctx,
 
         req_len += NDR_REQUEST_HEADER_SIZE;
 
-        /* Update fragment_length in RPC header */
+        /* Update fragment_length in RPC header (LE native) */
         profinet_rpc_header_t *hdr = (profinet_rpc_header_t *)req_buf;
-        uint16_t old_frag = ntohs(hdr->fragment_length);
-        hdr->fragment_length = htons(old_frag + NDR_REQUEST_HEADER_SIZE);
+        uint16_t old_frag = hdr->fragment_length;
+        hdr->fragment_length = old_frag + NDR_REQUEST_HEADER_SIZE;
 
         LOG_DEBUG("  Inserted %d-byte NDR header (frag_len: %u -> %u)",
                   NDR_REQUEST_HEADER_SIZE, old_frag,
@@ -1306,8 +1372,8 @@ wtc_result_t rpc_connect_with_strategy(rpc_context_t *ctx,
         profinet_rpc_header_t *hdr = (profinet_rpc_header_t *)req_buf;
         uint16_t wire_opnum = rpc_strategy_get_opnum(strategy->opnum);
         LOG_DEBUG("  Patching OpNum: %u -> %u (strategy variant %d)",
-                  ntohs(hdr->opnum), wire_opnum, strategy->opnum);
-        hdr->opnum = htons(wire_opnum);
+                  hdr->opnum, wire_opnum, strategy->opnum);
+        hdr->opnum = wire_opnum;  /* LE native */
     }
 
     /* Log summary of outgoing packet for diagnosis */
@@ -1436,17 +1502,17 @@ wtc_result_t rpc_parse_incoming_control_request(const uint8_t *buffer,
         return WTC_ERROR_PROTOCOL;
     }
 
-    /* Check opnum - should be CONTROL for ApplicationReady */
-    uint16_t opnum = ntohs(hdr->opnum);
+    /* Check opnum — DREP-aware decode for ApplicationReady */
+    uint16_t opnum = rpc_hdr_u16(hdr, hdr->opnum);
     if (opnum != RPC_OPNUM_CONTROL) {
         LOG_DEBUG("Incoming RPC: unexpected opnum %u (expected CONTROL=%u)",
                   opnum, RPC_OPNUM_CONTROL);
         return WTC_ERROR_PROTOCOL;
     }
 
-    /* Save activity UUID and sequence for response */
+    /* Save activity UUID and sequence for response — DREP-aware decode */
     memcpy(request->activity_uuid, hdr->activity_uuid, 16);
-    request->sequence_number = ntohl(hdr->sequence_number);
+    request->sequence_number = rpc_hdr_u32(hdr, hdr->sequence_number);
 
     /* Parse the IOD Control Request block */
     size_t pos = sizeof(profinet_rpc_header_t);
@@ -1531,20 +1597,23 @@ wtc_result_t rpc_build_control_response(rpc_context_t *ctx,
     hdr->drep[2] = 0;
     hdr->serial_high = 0;
 
-    /* Object UUID (AR UUID) */
+    /* Object UUID (AR UUID) — swap to LE wire format */
     memcpy(hdr->object_uuid, request->ar_uuid, 16);
+    uuid_swap_fields(hdr->object_uuid);
 
-    /* Interface UUID - use Controller interface for response */
+    /* Interface UUID (Controller) — swap to LE wire format */
     memcpy(hdr->interface_uuid, PNIO_CONTROLLER_INTERFACE_UUID, 16);
+    uuid_swap_fields(hdr->interface_uuid);
 
-    /* Activity UUID - must match the request */
+    /* Activity UUID — must match request, already in wire format from device */
     memcpy(hdr->activity_uuid, request->activity_uuid, 16);
 
+    /* All multi-byte header fields in LE (matching DREP=0x10) */
     hdr->server_boot = 0;
-    hdr->interface_version = htonl(1);
-    hdr->sequence_number = htonl(request->sequence_number);
+    hdr->interface_version = 1;
+    hdr->sequence_number = request->sequence_number;
 
-    hdr->opnum = htons(RPC_OPNUM_CONTROL);
+    hdr->opnum = RPC_OPNUM_CONTROL;
     hdr->interface_hint = 0xFFFF;
     hdr->activity_hint = 0xFFFF;
 
@@ -1567,9 +1636,9 @@ wtc_result_t rpc_build_control_response(rpc_context_t *ctx,
     write_block_header(buffer, BLOCK_TYPE_IOD_CONTROL_RES,
                         (uint16_t)block_len, &save_pos);
 
-    /* Update fragment length in RPC header */
+    /* Update fragment length in RPC header (LE, matching DREP) */
     uint16_t fragment_length = (uint16_t)(pos - sizeof(profinet_rpc_header_t));
-    hdr->fragment_length = htons(fragment_length);
+    hdr->fragment_length = fragment_length;
     hdr->fragment_number = 0;
     hdr->auth_protocol = 0;
     hdr->serial_low = 0;
