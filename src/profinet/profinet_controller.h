@@ -104,6 +104,8 @@ typedef struct {
     char device_station_name[64];
     uint8_t device_mac[6];
     uint32_t device_ip;
+    uint16_t device_vendor_id;          /* DCP-discovered vendor ID (for strategy hints) */
+    uint16_t device_device_id;          /* DCP-discovered device ID */
 
     /* IO CRs */
     struct {

@@ -351,6 +351,9 @@ typedef struct {
 
     /* Alarm CR */
     uint16_t max_alarm_data_length;
+    uint16_t rta_timeout_factor;    /* RTA timeout (0 = use default 100) */
+    uint16_t rta_retries;           /* RTA retries (0 = use default 3) */
+    uint16_t data_hold_factor;      /* Data hold factor (0 = use default 3) */
 } connect_request_params_t;
 
 /* Connect Response result */

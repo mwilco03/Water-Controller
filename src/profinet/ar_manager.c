@@ -302,6 +302,8 @@ wtc_result_t ar_manager_create_ar(ar_manager_t *manager,
             sizeof(new_ar->device_station_name) - 1);
     memcpy(new_ar->device_mac, config->device_mac, 6);
     new_ar->device_ip = config->device_ip;
+    new_ar->device_vendor_id = config->vendor_id;
+    new_ar->device_device_id = config->device_id;
     new_ar->watchdog_ms = config->watchdog_ms > 0 ? config->watchdog_ms : 3000;
 
     /* Count input and output slots */
@@ -789,13 +791,23 @@ wtc_result_t ar_send_connect_request(ar_manager_t *manager,
              manager->strategy_state.attempt_count,
              manager->strategy_state.cycle_count);
 
+    /* Apply vendor hint to jump to the most likely working strategy
+     * for this device's manufacturer.  Only effective if no prior
+     * successful strategy is recorded (vendor hint won't override
+     * a known-working strategy index). */
+    if (ar->device_vendor_id != 0) {
+        rpc_strategy_apply_vendor_hint(&manager->strategy_state,
+                                        ar->device_vendor_id);
+    }
+
     /*
      * PROFINET Communication Resiliency: iterate through wire format
-     * strategies until one succeeds or we exhaust the current set.
+     * and timing strategies until one succeeds or we exhaust the set.
      *
-     * Each strategy varies UUID encoding, NDR header, and/or slot
-     * configuration.  On success the working strategy is remembered
-     * so reconnections start with a known-good format.
+     * Each strategy varies UUID encoding, NDR header, slot scope,
+     * and timing parameters (watchdog, reduction ratio, send clock,
+     * RTA timeout, data hold).  On success the working strategy is
+     * remembered so reconnections start with a known-good format.
      */
     const int max_attempts = AR_STRATEGIES_PER_CALL;
 

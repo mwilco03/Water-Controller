@@ -463,7 +463,7 @@ wtc_result_t rpc_build_connect_request(rpc_context_t *ctx,
         write_u16_be(buffer, 0, &pos);  /* Sequence (deprecated) */
         write_u32_be(buffer, 0, &pos);  /* Frame send offset */
         write_u16_be(buffer, params->iocr[i].watchdog_factor, &pos);
-        write_u16_be(buffer, 3, &pos);  /* Data hold factor */
+        write_u16_be(buffer, params->data_hold_factor ? params->data_hold_factor : 3, &pos);
         write_u16_be(buffer, 0, &pos);  /* IOCR tag header */
         memset(buffer + pos, 0, 6);     /* Multicast MAC (not used) */
         pos += 6;
@@ -517,8 +517,8 @@ wtc_result_t rpc_build_connect_request(rpc_context_t *ctx,
     write_u16_be(buffer, 1, &pos);  /* Alarm CR type */
     write_u16_be(buffer, PROFINET_ETHERTYPE, &pos);  /* LT */
     write_u32_be(buffer, 0, &pos);  /* Alarm CR properties */
-    write_u16_be(buffer, 100, &pos);  /* RTA timeout factor */
-    write_u16_be(buffer, 3, &pos);    /* RTA retries */
+    write_u16_be(buffer, params->rta_timeout_factor ? params->rta_timeout_factor : 100, &pos);
+    write_u16_be(buffer, params->rta_retries ? params->rta_retries : 3, &pos);
     write_u16_be(buffer, 0x0001, &pos);  /* Local alarm reference */
     write_u16_be(buffer, params->max_alarm_data_length, &pos);
     write_u16_be(buffer, 0, &pos);  /* Tag header high */
@@ -1215,6 +1215,25 @@ wtc_result_t rpc_connect_with_strategy(rpc_context_t *ctx,
                   work_params.expected_count, kept);
         work_params.expected_count = kept;
     }
+
+    /* Step 1b: Apply timing profile to IOCR and Alarm CR parameters */
+    timing_params_t tp;
+    rpc_strategy_get_timing(strategy->timing, &tp);
+
+    for (int i = 0; i < work_params.iocr_count; i++) {
+        work_params.iocr[i].send_clock_factor = tp.send_clock_factor;
+        work_params.iocr[i].reduction_ratio   = tp.reduction_ratio;
+        work_params.iocr[i].watchdog_factor   = tp.watchdog_factor;
+    }
+    work_params.data_hold_factor  = tp.data_hold_factor;
+    work_params.rta_timeout_factor = tp.rta_timeout_factor;
+    work_params.rta_retries       = tp.rta_retries;
+
+    LOG_DEBUG("  Timing [%s]: SCF=%u RR=%u WD=%u DHF=%u RTA=%u×100ms RET=%u",
+              strategy->description,
+              tp.send_clock_factor, tp.reduction_ratio,
+              tp.watchdog_factor, tp.data_hold_factor,
+              tp.rta_timeout_factor, tp.rta_retries);
 
     /* Step 2: Build baseline connect request using existing builder */
     res = rpc_build_connect_request(ctx, &work_params, req_buf, &req_len);
