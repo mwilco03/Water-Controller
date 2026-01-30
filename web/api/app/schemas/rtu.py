@@ -107,8 +107,12 @@ class RtuResponse(BaseModel):
     id: int = Field(description="Database ID")
     station_name: str = Field(description="Unique station name")
     ip_address: str = Field(description="IPv4 address")
-    state: RtuState = Field(description="Current connection state")
+    vendor_id: str | None = Field(None, description="PROFINET vendor ID")
+    device_id: str | None = Field(None, description="PROFINET device ID")
+    slot_count: int = Field(0, description="Number of I/O slots")
+    connection_state: str = Field(description="Current connection state")
     state_since: datetime | None = Field(None, description="Time of last state change")
+    last_seen: str | None = Field(None, description="Last state change as ISO timestamp")
     stats: RtuStats | None = Field(None, description="Optional statistics")
 
 

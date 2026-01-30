@@ -65,7 +65,10 @@ async def create_rtu(
     """
     # Delegate to service layer
     service = get_rtu_service(db)
-    rtu = service.create(request)
+    try:
+        rtu = service.create(request)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
 
     # Register RTU with PROFINET controller (if available)
     controller_registered = False
@@ -270,8 +273,12 @@ async def list_rtus(
             id=rtu.id,
             station_name=rtu.station_name,
             ip_address=rtu.ip_address,
-            state=rtu.state,
+            vendor_id=rtu.vendor_id,
+            device_id=rtu.device_id,
+            slot_count=rtu.slot_count or 0,
+            connection_state=rtu.state,
             state_since=rtu.state_since,
+            last_seen=rtu.state_since.isoformat() if rtu.state_since else None,
             stats=build_rtu_stats(db, rtu) if include_stats else None,
         )
         result.append(item.model_dump())

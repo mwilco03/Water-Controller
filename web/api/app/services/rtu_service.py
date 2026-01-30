@@ -65,17 +65,21 @@ class RtuService:
         Validates uniqueness of station_name and ip_address,
         creates the RTU record, and initializes empty slots.
 
-        If station_name is not provided, auto-generates from IP address.
+        station_name is required - it must come from the device itself
+        via DCP discovery or HTTP config probe, never fabricated.
         """
         # Check for duplicate IP first
         existing_ip = self.db.query(RTU).filter(RTU.ip_address == request.ip_address).first()
         if existing_ip:
             raise RtuAlreadyExistsError("ip_address", request.ip_address)
 
-        # Auto-generate station_name from IP if not provided
+        # station_name must come from the device via DCP discovery or HTTP probe
         station_name = request.station_name
         if not station_name:
-            station_name = f"rtu-{request.ip_address.replace('.', '-')}"
+            raise ValueError(
+                "station_name is required. Use DCP discovery (POST /api/v1/discover/rtu) "
+                "or add-by-ip (POST /api/v1/rtus/add-by-ip) to obtain the device identity."
+            )
 
         # Check for duplicate station_name
         existing = self.db.query(RTU).filter(RTU.station_name == station_name).first()

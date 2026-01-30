@@ -45,7 +45,17 @@ class DiscoveryRequest(BaseModel):
     """Request for network discovery."""
 
     subnet: str | None = Field(None, description="Subnet to scan (e.g., '192.168.1.0/24')")
-    timeout_seconds: int = Field(10, ge=1, le=60, description="Discovery timeout")
+    timeout_seconds: int | None = Field(None, ge=1, le=60, description="Discovery timeout in seconds")
+    timeout_ms: int | None = Field(None, ge=1000, le=60000, description="Discovery timeout in milliseconds")
+
+    @property
+    def effective_timeout_seconds(self) -> int:
+        """Return timeout in seconds, preferring timeout_ms if provided."""
+        if self.timeout_ms is not None:
+            return max(1, self.timeout_ms // 1000)
+        if self.timeout_seconds is not None:
+            return self.timeout_seconds
+        return 10
 
     @field_validator("subnet")
     @classmethod
@@ -101,7 +111,7 @@ async def discover_rtus(
     registered in the system.
     """
     start_time = time.time()
-    timeout_sec = request.timeout_seconds if request else 10
+    timeout_sec = request.effective_timeout_seconds if request else 10
 
     # Get list of already configured RTUs for matching
     existing_rtus = db.query(RTU).all()

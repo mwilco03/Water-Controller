@@ -41,6 +41,10 @@ struct ipc_server {
     struct dcp_discovery *dcp;
 
     uint32_t last_command_seq;
+
+    /* Discovery timing */
+    uint64_t discovery_start_ms;
+    uint32_t discovery_timeout_ms;
 };
 
 /* Initialize IPC server */
@@ -332,6 +336,45 @@ wtc_result_t ipc_server_update(ipc_server_t *server) {
     update_alarm_data(server);
     update_pid_data(server);
 
+    /* Harvest DCP discovery results from PROFINET controller cache after timeout */
+    if (server->shm->discovery_in_progress && server->profinet &&
+        server->discovery_start_ms > 0) {
+        uint64_t elapsed_ms = time_get_ms() - server->discovery_start_ms;
+        if (elapsed_ms >= server->discovery_timeout_ms) {
+            dcp_device_info_t devices[WTC_MAX_DISCOVERY_DEVICES];
+            int count = 0;
+
+            if (profinet_controller_get_discovered_devices(
+                    server->profinet, devices, &count,
+                    WTC_MAX_DISCOVERY_DEVICES) == WTC_OK) {
+                server->shm->discovered_device_count = 0;
+                for (int i = 0; i < count && i < WTC_MAX_DISCOVERY_DEVICES; i++) {
+                    shm_discovered_device_t *shm_dev =
+                        &server->shm->discovered_devices[i];
+
+                    strncpy(shm_dev->station_name, devices[i].station_name, 63);
+                    shm_dev->station_name[63] = '\0';
+                    format_ip_address(devices[i].ip_address,
+                                      shm_dev->ip_address,
+                                      sizeof(shm_dev->ip_address));
+                    format_mac_address(devices[i].mac_address,
+                                       shm_dev->mac_address,
+                                       sizeof(shm_dev->mac_address));
+                    shm_dev->vendor_id = devices[i].vendor_id;
+                    shm_dev->device_id = devices[i].device_id;
+                    shm_dev->reachable = true;
+
+                    server->shm->discovered_device_count++;
+                }
+                LOG_INFO(LOG_TAG, "DCP discovery complete: %d devices found", count);
+            }
+
+            server->shm->discovery_in_progress = false;
+            server->shm->discovery_complete = true;
+            server->discovery_start_ms = 0;
+        }
+    }
+
     pthread_mutex_unlock(&server->shm->lock);
 
     return WTC_OK;
@@ -476,25 +519,38 @@ static wtc_result_t handle_discovery_command(ipc_server_t *server, shm_command_t
 
     switch (cmd->command_type) {
         case SHM_CMD_DCP_DISCOVER:
-            if (server->dcp) {
-                /* Clear previous results */
+            if (server->profinet) {
+                /* Use PROFINET controller's DCP instance */
                 server->shm->discovered_device_count = 0;
                 server->shm->discovery_in_progress = true;
                 server->shm->discovery_complete = false;
 
-                /* Start discovery with callback */
+                /* Track timing so update loop knows when to harvest results */
+                server->discovery_start_ms = time_get_ms();
+                server->discovery_timeout_ms = cmd->dcp_discover_cmd.timeout_ms > 0
+                    ? cmd->dcp_discover_cmd.timeout_ms : 5000;
+
+                /* Trigger DCP Identify All broadcast */
+                result = profinet_controller_discover_all(server->profinet);
+
+                LOG_INFO(LOG_TAG, "DCP discover via PROFINET controller (timeout=%ums, result=%d)",
+                         server->discovery_timeout_ms, result);
+            } else if (server->dcp) {
+                /* Fallback: standalone DCP handle */
+                server->shm->discovered_device_count = 0;
+                server->shm->discovery_in_progress = true;
+                server->shm->discovery_complete = false;
+
                 result = dcp_discovery_start(server->dcp, dcp_discovery_callback, server);
                 if (result == WTC_OK) {
                     result = dcp_discovery_identify_all(server->dcp);
                 }
 
-                LOG_INFO(LOG_TAG, "DCP discover command on %s (timeout=%ums, result=%d)",
-                         cmd->dcp_discover_cmd.network_interface,
-                         cmd->dcp_discover_cmd.timeout_ms,
-                         result);
+                LOG_INFO(LOG_TAG, "DCP discover via standalone DCP (timeout=%ums, result=%d)",
+                         cmd->dcp_discover_cmd.timeout_ms, result);
             } else {
                 result = WTC_ERROR_NOT_INITIALIZED;
-                LOG_WARN(LOG_TAG, "DCP discovery not initialized");
+                LOG_WARN(LOG_TAG, "DCP discovery not available: no PROFINET controller or DCP handle");
             }
             break;
 
