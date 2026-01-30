@@ -8,6 +8,7 @@
 #include "cyclic_exchange.h"
 #include "profinet_frame.h"
 #include "profinet_rpc.h"
+#include "rpc_strategy.h"
 #include "gsdml_modules.h"
 #include "utils/logger.h"
 #include "utils/time_utils.h"
@@ -18,6 +19,7 @@
 #include <sys/socket.h>
 #include <linux/if_packet.h>
 #include <arpa/inet.h>
+#include <unistd.h>
 
 /* Maximum ARs */
 #define MAX_ARS 64
@@ -27,6 +29,15 @@
 
 /* Maximum retry attempts for ABORT recovery (PN-C4 fix) */
 #define AR_MAX_RETRY_ATTEMPTS 3
+
+/* Number of strategies to try per ar_send_connect_request call.
+ * Each attempt may block for up to RPC_CONNECT_TIMEOUT_MS (5s),
+ * so total blocking time per call is bounded at
+ * AR_STRATEGIES_PER_CALL * (5s + 0.5s inter-attempt delay). */
+#define AR_STRATEGIES_PER_CALL  RPC_MAX_STRATEGIES
+
+/* Delay in microseconds between strategy attempts within one call */
+#define AR_INTER_ATTEMPT_DELAY_US  500000  /* 500ms */
 
 /* AR manager structure */
 struct ar_manager {
@@ -47,6 +58,10 @@ struct ar_manager {
 
     /* Controller UUID (generated once at startup) */
     uint8_t controller_uuid[16];
+
+    /* Connection strategy state — persists across ABORT recovery cycles
+     * so that if a format worked before, we try it first on reconnection. */
+    rpc_strategy_state_t strategy_state;
 
     /* State change notification */
     ar_state_change_callback_t state_callback;
@@ -194,6 +209,11 @@ wtc_result_t ar_manager_init(ar_manager_t **manager,
 
     /* Generate controller UUID (used in Connect Request) */
     rpc_generate_uuid(mgr->controller_uuid);
+
+    /* Initialize connection strategy state */
+    rpc_strategy_init(&mgr->strategy_state);
+    LOG_INFO("RPC strategy system initialized with %d strategies",
+             mgr->strategy_state.total_strategies);
 
     *manager = mgr;
     LOG_DEBUG("AR manager initialized");
@@ -545,19 +565,48 @@ wtc_result_t ar_manager_process(ar_manager_t *manager) {
             /* AR is closing - allow graceful shutdown */
             break;
 
-        case AR_STATE_ABORT:
-            /* AR aborted - implement recovery (PN-C4 fix) */
-            /* After a brief delay, attempt to re-establish connection */
-            if (now_ms - ar->last_activity_ms > 5000) { /* 5 second recovery delay */
-                LOG_INFO("AR %s attempting recovery from ABORT state",
-                         ar->device_station_name);
-                /* Reset to INIT state for reconnection attempt */
+        case AR_STATE_ABORT: {
+            /*
+             * PROFINET Communication Resiliency: auto-reconnect with
+             * exponential backoff.  Strategy state is preserved across
+             * ABORT cycles so known-working formats are tried first.
+             *
+             * Backoff: 5s base, doubles per strategy cycle, max 60s.
+             * After backoff, directly attempts reconnection (blocking).
+             */
+            uint32_t backoff_ms = 5000;
+            int cycles = manager->strategy_state.cycle_count;
+            if (cycles > 0) {
+                /* 5s, 10s, 20s, 40s, capped at 60s */
+                int shift = cycles < 4 ? cycles : 3;
+                backoff_ms = 5000U << shift;
+                if (backoff_ms > 60000) {
+                    backoff_ms = 60000;
+                }
+            }
+
+            if (now_ms - ar->last_activity_ms > backoff_ms) {
+                LOG_INFO("AR %s: ABORT recovery after %u ms backoff "
+                         "(attempts: %d, cycles: %d, last_success: %d)",
+                         ar->device_station_name, backoff_ms,
+                         manager->strategy_state.attempt_count,
+                         manager->strategy_state.cycle_count,
+                         manager->strategy_state.last_success_index);
+
+                /* Directly attempt reconnection — the strategy loop
+                 * in ar_send_connect_request will try all formats. */
                 ar_state_t old_state = ar->state;
-                ar->state = AR_STATE_INIT;
-                ar->last_activity_ms = now_ms;
-                notify_state_change(manager, ar, old_state, AR_STATE_INIT);
+                ar_send_connect_request(manager, ar);
+
+                /* If connect succeeded, AR is now in CONNECT_CNF.
+                 * If it failed, AR is back in ABORT with fresh timestamp.
+                 * Either way, notify the state change. */
+                if (ar->state != old_state) {
+                    notify_state_change(manager, ar, old_state, ar->state);
+                }
             }
             break;
+        }
         }
     }
 
@@ -729,58 +778,116 @@ wtc_result_t ar_send_connect_request(ar_manager_t *manager,
     ar->state = AR_STATE_CONNECT_REQ;
     ar->last_activity_ms = time_get_ms();
 
-    LOG_INFO("Sending RPC Connect Request to %s (IP: %d.%d.%d.%d)",
+    LOG_INFO("=== PROFINET Connect: %s (IP: %d.%d.%d.%d) ===",
              ar->device_station_name,
              (ar->device_ip >> 24) & 0xFF, (ar->device_ip >> 16) & 0xFF,
              (ar->device_ip >> 8) & 0xFF, ar->device_ip & 0xFF);
+    LOG_INFO("  Strategy state: index=%d, last_success=%d, "
+             "total_attempts=%d, cycles=%d",
+             manager->strategy_state.current_index,
+             manager->strategy_state.last_success_index,
+             manager->strategy_state.attempt_count,
+             manager->strategy_state.cycle_count);
 
-    /* Build connect request parameters */
-    connect_request_params_t params;
-    build_connect_params(manager, ar, &params);
+    /*
+     * PROFINET Communication Resiliency: iterate through wire format
+     * strategies until one succeeds or we exhaust the current set.
+     *
+     * Each strategy varies UUID encoding, NDR header, and/or slot
+     * configuration.  On success the working strategy is remembered
+     * so reconnections start with a known-good format.
+     */
+    const int max_attempts = AR_STRATEGIES_PER_CALL;
 
-    /* Send RPC connect and wait for response */
-    connect_response_t response;
-    res = rpc_connect(&manager->rpc_ctx, ar->device_ip, &params, &response);
+    for (int attempt = 0; attempt < max_attempts; attempt++) {
+        const rpc_connect_strategy_t *strategy =
+            rpc_strategy_current(&manager->strategy_state);
 
-    if (res != WTC_OK) {
-        LOG_ERROR("RPC Connect failed for %s: error %d",
-                  ar->device_station_name, res);
-        ar->state = AR_STATE_ABORT;
-        ar->last_activity_ms = time_get_ms();
-        return res;
-    }
+        manager->strategy_state.attempt_count++;
+        manager->strategy_state.last_attempt_ms = time_get_ms();
+        if (manager->strategy_state.first_attempt_ms == 0) {
+            manager->strategy_state.first_attempt_ms =
+                manager->strategy_state.last_attempt_ms;
+        }
 
-    if (!response.success) {
-        LOG_ERROR("RPC Connect rejected by device %s: error 0x%02X",
-                  ar->device_station_name, response.error_code);
-        ar->state = AR_STATE_ABORT;
-        ar->last_activity_ms = time_get_ms();
-        return WTC_ERROR_PROTOCOL;
-    }
+        LOG_INFO("  Attempt %d/%d: strategy [%d/%d] %s",
+                 attempt + 1, max_attempts,
+                 manager->strategy_state.current_index + 1,
+                 manager->strategy_state.total_strategies,
+                 strategy->description);
 
-    /* Update AR with response data */
-    memcpy(ar->device_mac, response.device_mac, 6);
+        /* Regenerate AR UUID and session key for each attempt to avoid
+         * the device rejecting a retried UUID from a failed attempt. */
+        rpc_generate_uuid((uint8_t *)ar->ar_uuid);
+        ar->session_key = manager->session_key_counter++;
 
-    /* Update frame IDs from response (device may have assigned different IDs) */
-    for (int i = 0; i < response.frame_id_count && i < ar->iocr_count; i++) {
-        if (ar->iocr[i].frame_id != response.frame_ids[i].assigned) {
-            LOG_DEBUG("Frame ID updated for IOCR %d: 0x%04X -> 0x%04X",
-                      i, ar->iocr[i].frame_id, response.frame_ids[i].assigned);
-            ar->iocr[i].frame_id = response.frame_ids[i].assigned;
+        /* Build full connect parameters */
+        connect_request_params_t params;
+        build_connect_params(manager, ar, &params);
+
+        /* Attempt connect with this strategy */
+        connect_response_t response;
+        res = rpc_connect_with_strategy(&manager->rpc_ctx, ar->device_ip,
+                                         &params, strategy, &response);
+
+        if (res == WTC_OK && response.success) {
+            /* === Strategy succeeded === */
+            rpc_strategy_mark_success(&manager->strategy_state);
+
+            /* Update AR with response data */
+            memcpy(ar->device_mac, response.device_mac, 6);
+
+            for (int i = 0; i < response.frame_id_count &&
+                            i < ar->iocr_count; i++) {
+                if (ar->iocr[i].frame_id !=
+                    response.frame_ids[i].assigned) {
+                    LOG_DEBUG("Frame ID updated IOCR %d: 0x%04X -> 0x%04X",
+                              i, ar->iocr[i].frame_id,
+                              response.frame_ids[i].assigned);
+                    ar->iocr[i].frame_id = response.frame_ids[i].assigned;
+                }
+            }
+
+            if (response.has_diff) {
+                LOG_WARN("Device reported module differences, "
+                         "AR may have limited functionality");
+            }
+
+            ar->state = AR_STATE_CONNECT_CNF;
+            ar->last_activity_ms = time_get_ms();
+
+            LOG_INFO("=== CONNECT SUCCESS for %s (session_key=%u, "
+                     "strategy=%s) ===",
+                     ar->device_station_name, response.session_key,
+                     strategy->description);
+            return WTC_OK;
+        }
+
+        /* === Strategy failed === */
+        LOG_WARN("  Attempt %d FAILED: error=%d, strategy=%s",
+                 attempt + 1, res, strategy->description);
+
+        rpc_strategy_advance(&manager->strategy_state);
+
+        /* Brief pause between attempts to avoid flooding the RTU */
+        if (attempt + 1 < max_attempts) {
+            usleep(AR_INTER_ATTEMPT_DELAY_US);
         }
     }
 
-    if (response.has_diff) {
-        LOG_WARN("Device reported module differences, AR may have limited functionality");
-    }
-
-    ar->state = AR_STATE_CONNECT_CNF;
+    /* All strategies exhausted for this call */
+    ar->state = AR_STATE_ABORT;
     ar->last_activity_ms = time_get_ms();
 
-    LOG_INFO("RPC Connect successful for %s (session_key=%u)",
-             ar->device_station_name, response.session_key);
+    LOG_ERROR("=== CONNECT FAILED for %s: all %d strategies exhausted "
+              "(total attempts: %d, cycles: %d) ===",
+              ar->device_station_name, max_attempts,
+              manager->strategy_state.attempt_count,
+              manager->strategy_state.cycle_count);
+    LOG_INFO("  Will retry from ABORT state with exponential backoff. "
+             "Strategy state preserved for next attempt.");
 
-    return WTC_OK;
+    return WTC_ERROR_CONNECTION_FAILED;
 }
 
 wtc_result_t ar_send_parameter_end(ar_manager_t *manager,

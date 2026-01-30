@@ -16,6 +16,9 @@ extern "C" {
 /* Include frame definitions (constants are defined in profinet_frame.h) */
 #include "profinet_frame.h"
 
+/* Include DCP types for dcp_device_info_t used in discovery API */
+#include "dcp_discovery.h"
+
 /* PROFINET timing constants */
 #ifndef PROFINET_FRAME_ID_RTC1_MIN
 #define PROFINET_FRAME_ID_RTC1_MIN      PROFINET_FRAME_ID_RT_CLASS1
