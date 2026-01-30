@@ -653,6 +653,15 @@ wtc_result_t rpc_parse_connect_response(const uint8_t *buffer,
         return WTC_ERROR_PROTOCOL;
     }
 
+    /* Validate OpNum — log mismatch but don't reject, since non-standard
+     * stacks may echo a different opnum than what we sent. */
+    uint16_t resp_opnum = ntohs(hdr->opnum);
+    if (resp_opnum != RPC_OPNUM_CONNECT) {
+        LOG_WARN("Connect response: opnum=%u (expected %u) — "
+                 "device may use non-standard opnum mapping",
+                 resp_opnum, RPC_OPNUM_CONNECT);
+    }
+
     size_t pos = sizeof(profinet_rpc_header_t);
 
     /*
@@ -897,6 +906,13 @@ wtc_result_t rpc_parse_control_response(const uint8_t *buffer,
     if (hdr->packet_type != RPC_PACKET_TYPE_RESPONSE) {
         LOG_ERROR("Control response: unexpected packet type %u", hdr->packet_type);
         return WTC_ERROR_PROTOCOL;
+    }
+
+    /* Validate OpNum — Control operations use OpNum 4 */
+    uint16_t ctrl_opnum = ntohs(hdr->opnum);
+    if (ctrl_opnum != RPC_OPNUM_CONTROL) {
+        LOG_WARN("Control response: opnum=%u (expected %u)",
+                 ctrl_opnum, RPC_OPNUM_CONTROL);
     }
 
     size_t pos = sizeof(profinet_rpc_header_t);
@@ -1283,6 +1299,15 @@ wtc_result_t rpc_connect_with_strategy(rpc_context_t *ctx,
         uuid_swap_fields(hdr->interface_uuid);
         uuid_swap_fields(hdr->activity_uuid);
         LOG_DEBUG("  Swapped UUID field byte order in RPC header");
+    }
+
+    /* Step 4b: Patch OpNum if the strategy uses a non-standard value */
+    if (strategy->opnum != OPNUM_STANDARD) {
+        profinet_rpc_header_t *hdr = (profinet_rpc_header_t *)req_buf;
+        uint16_t wire_opnum = rpc_strategy_get_opnum(strategy->opnum);
+        LOG_DEBUG("  Patching OpNum: %u -> %u (strategy variant %d)",
+                  ntohs(hdr->opnum), wire_opnum, strategy->opnum);
+        hdr->opnum = htons(wire_opnum);
     }
 
     /* Log summary of outgoing packet for diagnosis */

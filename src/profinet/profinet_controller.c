@@ -931,8 +931,8 @@ wtc_result_t profinet_controller_write_output(profinet_controller_t *controller,
 #define RPC_VERSION             4
 #define RPC_PACKET_REQUEST      0
 #define RPC_PACKET_RESPONSE     2
-#define RPC_OPNUM_READ          0
-#define RPC_OPNUM_WRITE         1
+#define RPC_OPNUM_READ          2  /* IEC 61158-6: OpNum 2 = Read */
+#define RPC_OPNUM_WRITE         3  /* IEC 61158-6: OpNum 3 = Write */
 #define RPC_TIMEOUT_MS          5000
 
 /* PROFINET IO Device Interface UUID */
