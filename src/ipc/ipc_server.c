@@ -47,6 +47,10 @@ struct ipc_server {
     uint32_t discovery_timeout_ms;
 };
 
+/* Forward declarations for static helpers */
+static void format_mac_address(const uint8_t *mac, char *str, size_t str_size);
+static void format_ip_address(uint32_t ip, char *str, size_t str_size);
+
 /* Initialize IPC server */
 wtc_result_t ipc_server_init(ipc_server_t **server) {
     if (!server) return WTC_ERROR_INVALID_PARAM;

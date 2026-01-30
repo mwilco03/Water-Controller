@@ -146,8 +146,9 @@ async def start_service(
 
     if not start_cmd:
         raise HTTPException(
-            status_code=400,
-            detail=f"Service {service_name} cannot be started via API. Use container orchestration."
+            status_code=503,
+            detail=f"Service {service_name} is managed by Docker and cannot be started via API. "
+                   "Use 'docker compose restart <service>' from the host."
         )
 
     try:
@@ -201,8 +202,9 @@ async def stop_service(
 
     if not stop_cmd:
         raise HTTPException(
-            status_code=400,
-            detail=f"Service {service_name} cannot be stopped via API. Use container orchestration."
+            status_code=503,
+            detail=f"Service {service_name} is managed by Docker and cannot be stopped via API. "
+                   "Use 'docker compose stop <service>' from the host."
         )
 
     try:
@@ -256,8 +258,9 @@ async def restart_service(
 
     if not restart_cmd:
         raise HTTPException(
-            status_code=400,
-            detail=f"Service {service_name} cannot be restarted via API. Use container orchestration."
+            status_code=503,
+            detail=f"Service {service_name} is managed by Docker and cannot be restarted via API. "
+                   "Use 'docker compose restart <service>' from the host."
         )
 
     try:

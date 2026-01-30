@@ -314,9 +314,7 @@ export default function SettingsPage() {
       const res = await fetch('/api/v1/services');
       if (res.ok) {
         const json = await res.json();
-        // API may wrap in { data: {...} } or return directly
-        const obj = json.data || json.services || json;
-        // Ensure it's an object, not an array
+        const obj = json.data || json;
         if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
           setServices(obj);
         }

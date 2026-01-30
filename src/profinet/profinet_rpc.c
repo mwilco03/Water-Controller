@@ -228,6 +228,95 @@ static void write_block_header(uint8_t *buf, uint16_t type,
     buf[(*pos)++] = BLOCK_VERSION_LOW;
 }
 
+/* ============== NDR Header Support ============== */
+
+/* Size of NDR request header inserted before PNIO blocks */
+#define NDR_REQUEST_HEADER_SIZE 20
+
+/**
+ * @brief Write 20-byte NDR request header in little-endian format.
+ *
+ * Layout (all uint32 LE):
+ *   ArgsMaximum  — maximum response size the caller can accept
+ *   ArgsLength   — actual payload length following this header
+ *   MaxCount     — NDR conformant array max (= ArgsLength)
+ *   Offset       — NDR array offset (always 0)
+ *   ActualCount  — NDR array actual count (= ArgsLength)
+ *
+ * @param[out] buf           Destination buffer
+ * @param[in]  pos           Byte offset where the header starts
+ * @param[in]  args_maximum  Maximum PDU payload capacity
+ * @param[in]  args_length   Actual PNIO block payload length
+ */
+static void write_ndr_request_header(uint8_t *buf, size_t pos,
+                                      uint32_t args_maximum,
+                                      uint32_t args_length)
+{
+    size_t p = pos;
+
+    /* ArgsMaximum (4 bytes LE) */
+    buf[p++] = (uint8_t)(args_maximum);
+    buf[p++] = (uint8_t)(args_maximum >> 8);
+    buf[p++] = (uint8_t)(args_maximum >> 16);
+    buf[p++] = (uint8_t)(args_maximum >> 24);
+
+    /* ArgsLength (4 bytes LE) */
+    buf[p++] = (uint8_t)(args_length);
+    buf[p++] = (uint8_t)(args_length >> 8);
+    buf[p++] = (uint8_t)(args_length >> 16);
+    buf[p++] = (uint8_t)(args_length >> 24);
+
+    /* MaxCount = ArgsLength (4 bytes LE) */
+    buf[p++] = (uint8_t)(args_length);
+    buf[p++] = (uint8_t)(args_length >> 8);
+    buf[p++] = (uint8_t)(args_length >> 16);
+    buf[p++] = (uint8_t)(args_length >> 24);
+
+    /* Offset = 0 (4 bytes) */
+    buf[p++] = 0; buf[p++] = 0; buf[p++] = 0; buf[p++] = 0;
+
+    /* ActualCount = ArgsLength (4 bytes LE) */
+    buf[p++] = (uint8_t)(args_length);
+    buf[p++] = (uint8_t)(args_length >> 8);
+    buf[p++] = (uint8_t)(args_length >> 16);
+    buf[p++] = (uint8_t)(args_length >> 24);
+}
+
+/**
+ * @brief Detect whether an NDR header is present after the RPC header.
+ *
+ * Heuristic: PNIO response block types start with 0x81xx (response) or
+ * 0x01xx (request).  An NDR header starts with ArgsMaximum which is
+ * a LE uint32 — its first byte is never 0x81 or 0x01 for realistic
+ * PDU sizes, so we can distinguish by checking the first two bytes as
+ * a big-endian block type.
+ *
+ * @param[in] buf  Response buffer
+ * @param[in] pos  Byte offset right after RPC header
+ * @param[in] len  Total buffer length
+ * @return true if NDR header appears present, false if blocks start directly
+ */
+static bool response_has_ndr_header(const uint8_t *buf, size_t pos, size_t len)
+{
+    if (pos + 6 > len) {
+        return false;
+    }
+
+    /* Read first 2 bytes as big-endian (potential block type) */
+    uint16_t maybe_type = (uint16_t)((buf[pos] << 8) | buf[pos + 1]);
+
+    /* Valid response block types: 0x8101-0x810F */
+    if (maybe_type >= 0x8101 && maybe_type <= 0x810F) {
+        return false;
+    }
+    /* Valid request block types: 0x0101-0x010F */
+    if (maybe_type >= 0x0101 && maybe_type <= 0x010F) {
+        return false;
+    }
+
+    return true;
+}
+
 /* ============== Public API Implementation ============== */
 
 void rpc_generate_uuid(uint8_t *uuid)
@@ -374,7 +463,7 @@ wtc_result_t rpc_build_connect_request(rpc_context_t *ctx,
         write_u16_be(buffer, 0, &pos);  /* Sequence (deprecated) */
         write_u32_be(buffer, 0, &pos);  /* Frame send offset */
         write_u16_be(buffer, params->iocr[i].watchdog_factor, &pos);
-        write_u16_be(buffer, 3, &pos);  /* Data hold factor */
+        write_u16_be(buffer, params->data_hold_factor ? params->data_hold_factor : 3, &pos);
         write_u16_be(buffer, 0, &pos);  /* IOCR tag header */
         memset(buffer + pos, 0, 6);     /* Multicast MAC (not used) */
         pos += 6;
@@ -428,8 +517,8 @@ wtc_result_t rpc_build_connect_request(rpc_context_t *ctx,
     write_u16_be(buffer, 1, &pos);  /* Alarm CR type */
     write_u16_be(buffer, PROFINET_ETHERTYPE, &pos);  /* LT */
     write_u32_be(buffer, 0, &pos);  /* Alarm CR properties */
-    write_u16_be(buffer, 100, &pos);  /* RTA timeout factor */
-    write_u16_be(buffer, 3, &pos);    /* RTA retries */
+    write_u16_be(buffer, params->rta_timeout_factor ? params->rta_timeout_factor : 100, &pos);
+    write_u16_be(buffer, params->rta_retries ? params->rta_retries : 3, &pos);
     write_u16_be(buffer, 0x0001, &pos);  /* Local alarm reference */
     write_u16_be(buffer, params->max_alarm_data_length, &pos);
     write_u16_be(buffer, 0, &pos);  /* Tag header high */
@@ -568,61 +657,68 @@ wtc_result_t rpc_parse_connect_response(const uint8_t *buffer,
 
     /*
      * PNIO Connect Response format (after RPC header):
-     * - ArgsMaximum (4 bytes, always 0)
-     * - ErrorStatus1 (4 bytes) - PNIO error code
-     * - ErrorStatus2 (4 bytes) - Additional error info
-     * - MaxCount (4 bytes) - NDR array max
-     * - Offset (4 bytes) - NDR array offset (always 0)
-     * - ActualCount (4 bytes) - NDR array actual count
-     * - Then the PNIO blocks (ARBlockRes, IOCRBlockRes, etc.)
+     *
+     * Some devices include an NDR header (24 bytes):
+     *   ArgsMaximum (4 LE), ErrorStatus1 (4 LE), ErrorStatus2 (4 LE),
+     *   MaxCount (4 LE), Offset (4 LE), ActualCount (4 LE)
+     * Others send PNIO blocks directly.
+     *
+     * We auto-detect which format is present.
      */
-    if (pos + 24 > buf_len) {
-        LOG_ERROR("Connect response too short for NDR header");
-        return WTC_ERROR_PROTOCOL;
-    }
+    bool has_ndr = response_has_ndr_header(buffer, pos, buf_len);
 
-    /* Parse NDR/PNIO header - values are little-endian */
-    uint32_t args_maximum = buffer[pos] | (buffer[pos+1] << 8) |
-                            (buffer[pos+2] << 16) | (buffer[pos+3] << 24);
-    pos += 4;
-    (void)args_maximum;
+    if (has_ndr) {
+        if (pos + 24 > buf_len) {
+            LOG_ERROR("Connect response too short for NDR header");
+            return WTC_ERROR_PROTOCOL;
+        }
 
-    uint32_t error_status1 = buffer[pos] | (buffer[pos+1] << 8) |
-                             (buffer[pos+2] << 16) | (buffer[pos+3] << 24);
-    pos += 4;
+        /* Parse NDR/PNIO header - values are little-endian */
+        uint32_t args_maximum = buffer[pos] | (buffer[pos+1] << 8) |
+                                (buffer[pos+2] << 16) | (buffer[pos+3] << 24);
+        pos += 4;
+        (void)args_maximum;
 
-    uint32_t error_status2 = buffer[pos] | (buffer[pos+1] << 8) |
-                             (buffer[pos+2] << 16) | (buffer[pos+3] << 24);
-    pos += 4;
+        uint32_t error_status1 = buffer[pos] | (buffer[pos+1] << 8) |
+                                 (buffer[pos+2] << 16) | (buffer[pos+3] << 24);
+        pos += 4;
 
-    LOG_DEBUG("Connect response NDR: error1=0x%08X, error2=0x%08X",
-              error_status1, error_status2);
+        uint32_t error_status2 = buffer[pos] | (buffer[pos+1] << 8) |
+                                 (buffer[pos+2] << 16) | (buffer[pos+3] << 24);
+        pos += 4;
 
-    /* Check for PNIO-level errors */
-    if (error_status1 != 0 || error_status2 != 0) {
-        LOG_ERROR("Connect response PNIO error: status1=0x%08X, status2=0x%08X",
+        LOG_DEBUG("Connect response NDR: error1=0x%08X, error2=0x%08X",
                   error_status1, error_status2);
-        response->success = false;
-        response->error_code = (uint8_t)(error_status2 & 0xFF);
-        return WTC_ERROR_PROTOCOL;
-    }
 
-    /* Skip NDR array conformance header */
-    uint32_t max_count = buffer[pos] | (buffer[pos+1] << 8) |
-                         (buffer[pos+2] << 16) | (buffer[pos+3] << 24);
-    pos += 4;
+        /* Check for PNIO-level errors */
+        if (error_status1 != 0 || error_status2 != 0) {
+            LOG_ERROR("Connect response PNIO error: status1=0x%08X, status2=0x%08X",
+                      error_status1, error_status2);
+            response->success = false;
+            response->error_code = (uint8_t)(error_status2 & 0xFF);
+            return WTC_ERROR_PROTOCOL;
+        }
 
-    pos += 4;  /* Skip offset (always 0) */
+        /* Skip NDR array conformance header */
+        uint32_t max_count = buffer[pos] | (buffer[pos+1] << 8) |
+                             (buffer[pos+2] << 16) | (buffer[pos+3] << 24);
+        pos += 4;
 
-    uint32_t actual_count = buffer[pos] | (buffer[pos+1] << 8) |
-                            (buffer[pos+2] << 16) | (buffer[pos+3] << 24);
-    pos += 4;
+        pos += 4;  /* Skip offset (always 0) */
 
-    LOG_DEBUG("Connect response NDR array: max=%u, actual=%u", max_count, actual_count);
+        uint32_t actual_count = buffer[pos] | (buffer[pos+1] << 8) |
+                                (buffer[pos+2] << 16) | (buffer[pos+3] << 24);
+        pos += 4;
 
-    if (actual_count == 0) {
-        LOG_ERROR("Connect response: no PNIO data in response");
-        return WTC_ERROR_PROTOCOL;
+        LOG_DEBUG("Connect response NDR array: max=%u, actual=%u",
+                  max_count, actual_count);
+
+        if (actual_count == 0) {
+            LOG_ERROR("Connect response: no PNIO data in response");
+            return WTC_ERROR_PROTOCOL;
+        }
+    } else {
+        LOG_DEBUG("Connect response: no NDR header detected, parsing blocks directly");
     }
 
     /* Parse blocks */
@@ -1073,6 +1169,163 @@ wtc_result_t rpc_release(rpc_context_t *ctx,
     }
 
     LOG_INFO("Release successful");
+    return WTC_OK;
+}
+
+/* ============== Strategy-Aware Connect ============== */
+
+wtc_result_t rpc_connect_with_strategy(rpc_context_t *ctx,
+                                        uint32_t device_ip,
+                                        const connect_request_params_t *params,
+                                        const rpc_connect_strategy_t *strategy,
+                                        connect_response_t *response)
+{
+    if (!ctx || !params || !strategy || !response) {
+        return WTC_ERROR_INVALID_PARAM;
+    }
+
+    uint8_t req_buf[RPC_MAX_PDU_SIZE];
+    uint8_t resp_buf[RPC_MAX_PDU_SIZE];
+    size_t req_len = sizeof(req_buf);
+    size_t resp_len = sizeof(resp_buf);
+    wtc_result_t res;
+
+    LOG_INFO("RPC Connect [%s]: target=%d.%d.%d.%d station=%s",
+             strategy->description,
+             (device_ip >> 24) & 0xFF, (device_ip >> 16) & 0xFF,
+             (device_ip >> 8) & 0xFF, device_ip & 0xFF,
+             params->station_name);
+
+    /* Step 1: Apply slot scope filter */
+    connect_request_params_t work_params;
+    memcpy(&work_params, params, sizeof(work_params));
+
+    if (strategy->slot_scope == SLOT_SCOPE_DAP_ONLY) {
+        int kept = 0;
+        for (int i = 0; i < work_params.expected_count; i++) {
+            if (work_params.expected_config[i].slot == 0) {
+                if (kept != i) {
+                    work_params.expected_config[kept] =
+                        work_params.expected_config[i];
+                }
+                kept++;
+            }
+        }
+        LOG_DEBUG("  DAP-only: expected slots %d -> %d",
+                  work_params.expected_count, kept);
+        work_params.expected_count = kept;
+    }
+
+    /* Step 1b: Apply timing profile to IOCR and Alarm CR parameters */
+    timing_params_t tp;
+    rpc_strategy_get_timing(strategy->timing, &tp);
+
+    for (int i = 0; i < work_params.iocr_count; i++) {
+        work_params.iocr[i].send_clock_factor = tp.send_clock_factor;
+        work_params.iocr[i].reduction_ratio   = tp.reduction_ratio;
+        work_params.iocr[i].watchdog_factor   = tp.watchdog_factor;
+    }
+    work_params.data_hold_factor  = tp.data_hold_factor;
+    work_params.rta_timeout_factor = tp.rta_timeout_factor;
+    work_params.rta_retries       = tp.rta_retries;
+
+    LOG_DEBUG("  Timing [%s]: SCF=%u RR=%u WD=%u DHF=%u RTA=%u×100ms RET=%u",
+              strategy->description,
+              tp.send_clock_factor, tp.reduction_ratio,
+              tp.watchdog_factor, tp.data_hold_factor,
+              tp.rta_timeout_factor, tp.rta_retries);
+
+    /* Step 2: Build baseline connect request using existing builder */
+    res = rpc_build_connect_request(ctx, &work_params, req_buf, &req_len);
+    if (res != WTC_OK) {
+        LOG_ERROR("  Failed to build connect request: %d", res);
+        return res;
+    }
+
+    /* Step 3: Insert NDR header if the strategy requires it */
+    if (strategy->ndr_mode == NDR_REQUEST_PRESENT) {
+        size_t pnio_start = sizeof(profinet_rpc_header_t);
+        size_t pnio_len = req_len - pnio_start;
+
+        if (req_len + NDR_REQUEST_HEADER_SIZE > RPC_MAX_PDU_SIZE) {
+            LOG_ERROR("  PDU too large for NDR header insertion (%zu + %d > %d)",
+                      req_len, NDR_REQUEST_HEADER_SIZE, RPC_MAX_PDU_SIZE);
+            return WTC_ERROR_NO_MEMORY;
+        }
+
+        /* Shift PNIO blocks forward to make room for NDR header */
+        memmove(req_buf + pnio_start + NDR_REQUEST_HEADER_SIZE,
+                req_buf + pnio_start,
+                pnio_len);
+
+        /* Write NDR header into the gap */
+        uint32_t args_max = (uint32_t)(RPC_MAX_PDU_SIZE -
+                                        sizeof(profinet_rpc_header_t));
+        write_ndr_request_header(req_buf, pnio_start,
+                                  args_max, (uint32_t)pnio_len);
+
+        req_len += NDR_REQUEST_HEADER_SIZE;
+
+        /* Update fragment_length in RPC header */
+        profinet_rpc_header_t *hdr = (profinet_rpc_header_t *)req_buf;
+        uint16_t old_frag = ntohs(hdr->fragment_length);
+        hdr->fragment_length = htons(old_frag + NDR_REQUEST_HEADER_SIZE);
+
+        LOG_DEBUG("  Inserted %d-byte NDR header (frag_len: %u -> %u)",
+                  NDR_REQUEST_HEADER_SIZE, old_frag,
+                  (unsigned)(old_frag + NDR_REQUEST_HEADER_SIZE));
+    }
+
+    /* Step 4: Swap UUID fields if the strategy requires it */
+    if (strategy->uuid_format == UUID_WIRE_SWAP_FIELDS) {
+        profinet_rpc_header_t *hdr = (profinet_rpc_header_t *)req_buf;
+        uuid_swap_fields(hdr->object_uuid);
+        uuid_swap_fields(hdr->interface_uuid);
+        uuid_swap_fields(hdr->activity_uuid);
+        LOG_DEBUG("  Swapped UUID field byte order in RPC header");
+    }
+
+    /* Log summary of outgoing packet for diagnosis */
+    if (req_len > sizeof(profinet_rpc_header_t)) {
+        size_t payload_offset = sizeof(profinet_rpc_header_t);
+        LOG_DEBUG("  Request: %zu bytes, payload starts %02X %02X %02X %02X "
+                  "%02X %02X %02X %02X ...",
+                  req_len,
+                  req_buf[payload_offset],     req_buf[payload_offset + 1],
+                  req_buf[payload_offset + 2], req_buf[payload_offset + 3],
+                  req_buf[payload_offset + 4], req_buf[payload_offset + 5],
+                  req_buf[payload_offset + 6], req_buf[payload_offset + 7]);
+    }
+
+    /* Step 5: Send and wait for response */
+    res = rpc_send_and_receive(ctx, device_ip, req_buf, req_len,
+                                resp_buf, &resp_len, RPC_CONNECT_TIMEOUT_MS);
+    if (res != WTC_OK) {
+        const char *reason = "UNKNOWN";
+        if (res == WTC_ERROR_TIMEOUT) reason = "TIMEOUT";
+        else if (res == WTC_ERROR_IO) reason = "IO ERROR";
+        LOG_WARN("  Send/receive failed: %s (code %d)", reason, res);
+        return res;
+    }
+
+    LOG_INFO("  Response received: %zu bytes from %d.%d.%d.%d",
+             resp_len,
+             (device_ip >> 24) & 0xFF, (device_ip >> 16) & 0xFF,
+             (device_ip >> 8) & 0xFF, device_ip & 0xFF);
+
+    /* Step 6: Parse response (auto-detects NDR presence) */
+    res = rpc_parse_connect_response(resp_buf, resp_len, response);
+    if (res != WTC_OK) {
+        LOG_WARN("  Response parse failed: %d", res);
+        return res;
+    }
+
+    if (response->success) {
+        LOG_INFO("  Connect SUCCESS [%s]", strategy->description);
+    } else {
+        LOG_WARN("  Device rejected: error_code=0x%02X", response->error_code);
+    }
+
     return WTC_OK;
 }
 

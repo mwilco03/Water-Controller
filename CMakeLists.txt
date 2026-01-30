@@ -115,6 +115,7 @@ set(CORE_SOURCES
 set(PROFINET_SOURCES
     src/profinet/profinet_controller.c
     src/profinet/profinet_rpc.c
+    src/profinet/rpc_strategy.c
     src/profinet/dcp_discovery.c
     src/profinet/cyclic_exchange.c
     src/profinet/profinet_frame.c

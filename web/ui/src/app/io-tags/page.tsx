@@ -1,23 +1,14 @@
 'use client';
 
 /**
- * TODO: I/O Tags Configuration Page
+ * I/O Tags Configuration Page (disabled)
  *
- * This page is disabled because it calls non-existent backend endpoints.
+ * Disabled: requires refactoring from removed /api/v1/rtus/{name}/slots
+ * endpoints to the sensors/controls API. Slots are PROFINET frame
+ * positions per CLAUDE.md, not database entities.
  *
- * BACKGROUND:
- * The original implementation called /api/v1/rtus/{name}/slots endpoints,
- * but per architectural decision (CLAUDE.md), slots are PROFINET frame
- * positions, NOT database entities. The slots endpoints were removed.
- *
- * TO IMPLEMENT:
- * 1. Refactor to use /api/v1/rtus/{name}/sensors and /api/v1/rtus/{name}/controls
- * 2. Display sensors/controls with their slot_number as metadata
- * 3. Allow editing sensor/control configuration (scaling, alarms, etc.)
- * 4. Historian tag configuration can stay as-is (/api/v1/trends/tags works)
- *
- * ORIGINAL FILE: 32KB of commented code removed for clarity.
- * See git history for original implementation.
+ * Implementation path: use /api/v1/rtus/{name}/sensors and
+ * /api/v1/rtus/{name}/controls with slot_number as metadata.
  */
 
 export default function IOTagsPage() {

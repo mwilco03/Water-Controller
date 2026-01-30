@@ -25,6 +25,7 @@ from ..core.exceptions import (
 )
 from ..models.alarm import AlarmEvent, AlarmRule
 from ..models.historian import HistorianSample
+from ..models.pid import PidLoop
 from ..models.rtu import RTU, Control, RtuState, Sensor
 from ..schemas.rtu import RtuCreate, RtuStats
 
@@ -170,6 +171,11 @@ class RtuService:
             AlarmEvent.state == "ACTIVE"
         ).count()
 
+        pid_loop_count = self.db.query(PidLoop).filter(
+            (PidLoop.input_rtu == rtu.station_name) |
+            (PidLoop.output_rtu == rtu.station_name)
+        ).count()
+
         return RtuStats(
             slot_count=rtu.slot_count or 0,
             configured_slots=0,  # Slots are PROFINET frame metadata, not database entities
@@ -177,7 +183,7 @@ class RtuService:
             control_count=control_count,
             alarm_count=alarm_count,
             active_alarms=active_alarms,
-            pid_loop_count=0,
+            pid_loop_count=pid_loop_count,
         )
 
     def connect(self, name: str) -> RTU:

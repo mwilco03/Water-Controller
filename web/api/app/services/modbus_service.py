@@ -991,7 +991,7 @@ class ModbusService:
             )
         else:
             # For multi-register writes, write each register
-            # TODO: Use FC 0x10 (Write Multiple Registers) for efficiency
+            # Writes registers individually; batch FC 0x10 deferred until profiled
             for i, reg_value in enumerate(registers):
                 client.write_register(
                     unit_id=device["slave_addr"],

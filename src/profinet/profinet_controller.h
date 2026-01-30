@@ -16,6 +16,9 @@ extern "C" {
 /* Include frame definitions (constants are defined in profinet_frame.h) */
 #include "profinet_frame.h"
 
+/* Include DCP types for dcp_device_info_t used in discovery API */
+#include "dcp_discovery.h"
+
 /* PROFINET timing constants */
 #ifndef PROFINET_FRAME_ID_RTC1_MIN
 #define PROFINET_FRAME_ID_RTC1_MIN      PROFINET_FRAME_ID_RT_CLASS1
@@ -101,6 +104,8 @@ typedef struct {
     char device_station_name[64];
     uint8_t device_mac[6];
     uint32_t device_ip;
+    uint16_t device_vendor_id;          /* DCP-discovered vendor ID (for strategy hints) */
+    uint16_t device_device_id;          /* DCP-discovered device ID */
 
     /* IO CRs */
     struct {

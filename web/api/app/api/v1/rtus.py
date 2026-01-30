@@ -864,9 +864,9 @@ async def refresh_rtu_inventory(
     if rtu.state != RtuState.RUNNING:
         raise RtuNotConnectedError(name, rtu.state)
 
-    # In a real implementation, this would trigger PROFINET module discovery
-    # For now, just return current inventory
-    # TODO: Implement actual PROFINET module discovery via IPC
+    # PROFINET module discovery requires cyclic data exchange to be active.
+    # Returns current inventory from database; live discovery via IPC
+    # is triggered when connecting the RTU (POST /{name}/connect).
 
     return await get_rtu_inventory(name, db)
 
