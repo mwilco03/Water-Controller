@@ -548,7 +548,7 @@ show_disk_space() {
         if [[ -n "$docker_df" ]]; then
             # Sum up reclaimable space (extract numeric values)
             docker_total=$(docker system df --format "{{.Size}}" 2>/dev/null | paste -sd+ | bc 2>/dev/null || echo "")
-            docker_reclaimable=$(docker system df --format "{{.Reclaimable}}" 2>/dev/null | grep -oP '[\d.]+[KMGT]?B' | head -1 || echo "")
+            docker_reclaimable=$(docker system df --format "{{.Reclaimable}}" 2>/dev/null | awk '{gsub(/[^0-9.KMGTB]/,""); print; exit}' || echo "")
         fi
     fi
 

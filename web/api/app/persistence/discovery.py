@@ -70,6 +70,24 @@ def mark_device_as_added(mac_address: str) -> bool:
         return True
 
 
+def get_discovered_device_by_ip(ip_address: str) -> dict[str, Any] | None:
+    """Look up a discovered device by IP address."""
+    with get_db() as db:
+        device = db.query(DCPDiscoveryCache).filter(
+            DCPDiscoveryCache.ip_address == ip_address
+        ).first()
+        return device.to_dict() if device else None
+
+
+def get_discovered_device_by_mac(mac_address: str) -> dict[str, Any] | None:
+    """Look up a discovered device by MAC address."""
+    with get_db() as db:
+        device = db.query(DCPDiscoveryCache).filter(
+            DCPDiscoveryCache.mac_address == mac_address
+        ).first()
+        return device.to_dict() if device else None
+
+
 def clear_discovery_cache() -> int:
     """Clear the discovery cache"""
     with get_db() as db:

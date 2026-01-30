@@ -151,7 +151,7 @@ wtc_result_t profinet_controller_process(profinet_controller_t *controller);
 
 /* Connect to device
  * station_name: PROFINET station name for connection
- * device_ip_str: Optional IP address string (e.g., "192.168.6.7") for DCP cache fallback
+ * device_ip_str: Optional IP address string for DCP cache fallback (from discovery)
  * slots: Slot configuration array (NULL to use defaults)
  * slot_count: Number of slots (0 to use defaults)
  */
@@ -207,6 +207,16 @@ wtc_result_t profinet_controller_write_record(profinet_controller_t *controller,
 /* Get controller statistics */
 wtc_result_t profinet_controller_get_stats(profinet_controller_t *controller,
                                             cycle_stats_t *stats);
+
+/* Trigger DCP Identify All broadcast via the controller's DCP instance */
+wtc_result_t profinet_controller_discover_all(profinet_controller_t *controller);
+
+/* Get discovered devices from the controller's DCP cache */
+wtc_result_t profinet_controller_get_discovered_devices(
+    profinet_controller_t *controller,
+    dcp_device_info_t *devices,
+    int *count,
+    int max_devices);
 
 /* ============== Authority Handoff API ============== */
 

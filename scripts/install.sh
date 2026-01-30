@@ -104,6 +104,7 @@ _early_log_error() { _early_log "ERROR" "$@"; }
 # Load all library modules
 load_modules() {
     local modules=(
+        "common.sh"
         "detection.sh"
         "dependencies.sh"
         "database.sh"

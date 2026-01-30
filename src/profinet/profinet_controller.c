@@ -1264,3 +1264,23 @@ wtc_result_t profinet_controller_get_stats(profinet_controller_t *controller,
 
     return WTC_OK;
 }
+
+/* Trigger DCP Identify All broadcast via the controller's DCP instance */
+wtc_result_t profinet_controller_discover_all(profinet_controller_t *controller) {
+    if (!controller || !controller->dcp) {
+        return WTC_ERROR_INVALID_PARAM;
+    }
+    return dcp_discovery_identify_all(controller->dcp);
+}
+
+/* Get discovered devices from the controller's DCP cache */
+wtc_result_t profinet_controller_get_discovered_devices(
+    profinet_controller_t *controller,
+    dcp_device_info_t *devices,
+    int *count,
+    int max_devices) {
+    if (!controller || !controller->dcp || !devices || !count) {
+        return WTC_ERROR_INVALID_PARAM;
+    }
+    return dcp_get_devices(controller->dcp, devices, count, max_devices);
+}

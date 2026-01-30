@@ -961,13 +961,19 @@ class WtcShmClient:
             self.mm.write(bytes(cmd_data))
             logger.info(f"DCP discovery command sent to controller (offset={cmd_offset})")
 
-            # Poll for discovery results in shared memory
-            # The controller writes discovered devices to a discovery buffer
-            # For now, we wait the full timeout and then read results
+            # Wait for DCP responses to arrive during the timeout window
             time.sleep(timeout_ms / 1000.0)
 
+            # Poll for discovery_complete flag (IPC update loop harvests DCP
+            # cache into SHM after timeout expires, may lag up to 200ms)
+            poll_deadline = time.time() + 1.0
+            while time.time() < poll_deadline:
+                data = WtcSharedMemory.from_buffer_copy(self.mm)
+                if data.discovery_complete:
+                    break
+                time.sleep(0.1)
+
             # Read discovery results from shared memory
-            # Discovery buffer is located after the main status/RTU data
             devices = self._read_discovery_results()
             logger.info(f"DCP discovery complete, found {len(devices)} devices")
             return devices
