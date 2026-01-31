@@ -948,20 +948,6 @@ wtc_result_t ar_send_release_request(ar_manager_t *manager,
     return WTC_OK;
 }
 
-wtc_result_t ar_handle_rpc(ar_manager_t *manager,
-                            const uint8_t *frame,
-                            size_t len) {
-    if (!manager || !frame) {
-        return WTC_ERROR_INVALID_PARAM;
-    }
-
-    /* Parse RPC frame and dispatch to appropriate AR */
-    /* Full RPC parsing would go here */
-    (void)len;
-
-    return WTC_OK;
-}
-
 wtc_result_t ar_handle_rt_frame(ar_manager_t *manager,
                                  const uint8_t *frame,
                                  size_t len) {

@@ -604,6 +604,15 @@ Additional changes:
   deleted from `dcp_discovery.c/h` (prior commit).
 - **CLAUDE.md updated**: Connection diagram shows 5 steps (no DCP Set),
   "No DCP Set" key point added.
+- **IOData/IOCS mapping fixed**: NO_IO submodules (DAP slot 0) now appear
+  in both Input and Output IOCRs as IODataObjects and IOCS entries per
+  IEC 61158-6.
+- **SubmoduleProperties corrected**: NO_IO submodules emit type=0x0000
+  with 0 DataDescriptions. INPUT emits type=0x0001 with 1 DD, OUTPUT
+  type=0x0002 with 1 DD. LengthIOPS/LengthIOCS order matches spec.
+- **Dead code removed**: `ar_handle_rpc` stub (ar_manager.c/h),
+  `build_output_frame` (cyclic_exchange.c, `__attribute__((unused))`),
+  `cyclic_context_t` (never referenced).
 
 ### Phase 1: DAP-Only Connect — READY FOR TESTING
 
@@ -623,7 +632,11 @@ RTU to verify the connect response.
 - [x] IOCR data_length >= 40 (minimum c_sdu_length)
 - [x] Both IOCRs always created (Input + Output)
 - [x] Conservative timing applied (SCF=64, RR=128, WDF=10)
-- [x] Build passes with zero warnings in modified files
+- [x] NO_IO submodules appear in both IOCRs (IOData + IOCS)
+- [x] SubmoduleProperties type=0 (NO_IO) for DAP, 0 DataDescriptions
+- [x] LengthIOPS/LengthIOCS order correct per IEC 61158-6
+- [x] Dead stub code removed (ar_handle_rpc, build_output_frame, cyclic_context_t)
+- [x] Build passes with zero warnings (`-Wall -Wextra -Werror`)
 - [x] All 5 tests pass
 
 ### Phase 1 wire verification (requires live RTU)

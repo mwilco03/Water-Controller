@@ -525,8 +525,15 @@ wtc_result_t rpc_build_connect_request(rpc_context_t *ctx,
 
         /*
          * IOData objects: submodules whose data appears in THIS IOCR's frame.
-         * For Input IOCR:  input submodules (device → controller data)
-         * For Output IOCR: output submodules (controller → device data)
+         *
+         * Directional submodules (data_length > 0):
+         *   Input IOCR  ← input submodules only
+         *   Output IOCR ← output submodules only
+         *
+         * NO_IO submodules (data_length == 0, e.g., DAP slot 0):
+         *   Appear in BOTH IOCRs as IODataObjects with FrameOffset but
+         *   zero data contribution.  This is required per IEC 61158-6
+         *   so that each submodule gets an IOPS byte in the cyclic frame.
          *
          * Each IODataObject = SlotNumber(u16) + SubslotNumber(u16)
          *                   + IODataObjectFrameOffset(u16) = 6 bytes
@@ -536,7 +543,8 @@ wtc_result_t rpc_build_connect_request(rpc_context_t *ctx,
         int iodata_count = 0;
         uint16_t iodata_frame_offset = 0;
         for (int j = 0; j < params->expected_count; j++) {
-            if (params->expected_config[j].is_input == is_input_iocr) {
+            if (params->expected_config[j].data_length == 0 ||
+                params->expected_config[j].is_input == is_input_iocr) {
                 iodata_count++;
             }
         }
@@ -544,7 +552,8 @@ wtc_result_t rpc_build_connect_request(rpc_context_t *ctx,
 
         uint16_t running_offset = 0;
         for (int j = 0; j < params->expected_count; j++) {
-            if (params->expected_config[j].is_input != is_input_iocr) {
+            if (params->expected_config[j].data_length != 0 &&
+                params->expected_config[j].is_input != is_input_iocr) {
                 continue;
             }
             write_u16_be(buffer, params->expected_config[j].slot, &pos);
@@ -556,14 +565,18 @@ wtc_result_t rpc_build_connect_request(rpc_context_t *ctx,
         iodata_frame_offset = running_offset + (uint16_t)iodata_count;
 
         /*
-         * IOCS objects: consumer status bytes for the OPPOSITE direction's
-         * submodules, sent in THIS frame.
-         * For Input IOCR:  IOCS for output submodules
-         * For Output IOCR: IOCS for input submodules
+         * IOCS objects: consumer status bytes.
+         *
+         * Directional submodules:
+         *   Input IOCR  ← IOCS for output submodules
+         *   Output IOCR ← IOCS for input submodules
+         *
+         * NO_IO submodules: appear in BOTH IOCRs as IOCS (same as IOData).
          */
         int iocs_count = 0;
         for (int j = 0; j < params->expected_count; j++) {
-            if (params->expected_config[j].is_input != is_input_iocr) {
+            if (params->expected_config[j].data_length == 0 ||
+                params->expected_config[j].is_input != is_input_iocr) {
                 iocs_count++;
             }
         }
@@ -571,7 +584,8 @@ wtc_result_t rpc_build_connect_request(rpc_context_t *ctx,
 
         uint16_t iocs_offset = iodata_frame_offset;
         for (int j = 0; j < params->expected_count; j++) {
-            if (params->expected_config[j].is_input == is_input_iocr) {
+            if (params->expected_config[j].data_length != 0 &&
+                params->expected_config[j].is_input == is_input_iocr) {
                 continue;
             }
             write_u16_be(buffer, params->expected_config[j].slot, &pos);
@@ -668,21 +682,36 @@ wtc_result_t rpc_build_connect_request(rpc_context_t *ctx,
             write_u16_be(buffer, params->expected_config[j].subslot, &pos);
             write_u32_be(buffer, params->expected_config[j].submodule_ident, &pos);
 
-            /* SubmoduleProperties: bits 0-1 = Type (1=Input, 2=Output) */
-            uint16_t submod_props = params->expected_config[j].is_input ? 0x0001 : 0x0002;
+            /* SubmoduleProperties: bits 0-1 = Type per IEC 61158-6
+             *   0 = NO_IO  → 0 DataDescriptions
+             *   1 = INPUT  → 1 DataDescription (type 0x0001)
+             *   2 = OUTPUT → 1 DataDescription (type 0x0002)
+             */
+            bool is_no_io = (params->expected_config[j].data_length == 0);
+            uint16_t submod_props;
+            if (is_no_io) {
+                submod_props = 0x0000;  /* NO_IO */
+            } else if (params->expected_config[j].is_input) {
+                submod_props = 0x0001;  /* INPUT */
+            } else {
+                submod_props = 0x0002;  /* OUTPUT */
+            }
             write_u16_be(buffer, submod_props, &pos);
 
-            /* DataDescription per IEC 61158-6:
+            /* DataDescription: 1 block for INPUT/OUTPUT, 0 for NO_IO.
+             * Format per IEC 61158-6:
              *   DataDescription(u16) + SubmoduleDataLength(u16) +
-             *   LengthIOCS(u8) + LengthIOPS(u8)
-             * Type field: 0x0001=Input, 0x0002=Output */
-            uint16_t data_desc_type = params->expected_config[j].is_input ? 0x0001 : 0x0002;
-            write_u16_be(buffer, data_desc_type, &pos);
-            write_u16_be(buffer, params->expected_config[j].data_length, &pos);
-            write_u8(buffer + pos, 1);  /* LengthIOCS */
-            pos++;
-            write_u8(buffer + pos, 1);  /* LengthIOPS */
-            pos++;
+             *   LengthIOPS(u8) + LengthIOCS(u8) */
+            if (!is_no_io) {
+                uint16_t data_desc_type = params->expected_config[j].is_input
+                                          ? 0x0001 : 0x0002;
+                write_u16_be(buffer, data_desc_type, &pos);
+                write_u16_be(buffer, params->expected_config[j].data_length, &pos);
+                write_u8(buffer + pos, 1);  /* LengthIOPS */
+                pos++;
+                write_u8(buffer + pos, 1);  /* LengthIOCS */
+                pos++;
+            }
         }
     }
 
