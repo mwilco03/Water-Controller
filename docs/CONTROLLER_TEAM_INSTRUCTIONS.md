@@ -296,18 +296,22 @@ should ship with (or fetch) this file — it does NOT need an HTTP API.
 
 The GSDML defines these module types as usable in slots 1-246:
 
-| Module | Ident | Submodule Ident | Direction | Data Size |
-|--------|-------|-----------------|-----------|-----------|
-| pH | 0x00000010 | 0x00000011 | INPUT | 5 bytes |
-| TDS | 0x00000020 | 0x00000021 | INPUT | 5 bytes |
-| Turbidity | 0x00000030 | 0x00000031 | INPUT | 5 bytes |
-| Temperature | 0x00000040 | 0x00000041 | INPUT | 5 bytes |
-| Flow | 0x00000050 | 0x00000051 | INPUT | 5 bytes |
-| Level | 0x00000060 | 0x00000061 | INPUT | 5 bytes |
-| Generic AI | 0x00000070 | 0x00000071 | INPUT | 5 bytes |
-| Pump | 0x00000100 | 0x00000101 | OUTPUT | 4 bytes |
-| Valve | 0x00000110 | 0x00000111 | OUTPUT | 4 bytes |
-| Generic DO | 0x00000120 | 0x00000121 | OUTPUT | 4 bytes |
+| Module | Ident (hex) | Ident (dec) | Submodule (hex) | Submodule (dec) | Direction | Data Size |
+|--------|-------------|-------------|-----------------|-----------------|-----------|-----------|
+| pH | 0x00000010 | 16 | 0x00000011 | 17 | INPUT | 5 bytes |
+| TDS | 0x00000020 | 32 | 0x00000021 | 33 | INPUT | 5 bytes |
+| Turbidity | 0x00000030 | 48 | 0x00000031 | 49 | INPUT | 5 bytes |
+| Temperature | 0x00000040 | 64 | 0x00000041 | 65 | INPUT | 5 bytes |
+| Flow | 0x00000050 | 80 | 0x00000051 | 81 | INPUT | 5 bytes |
+| Level | 0x00000060 | 96 | 0x00000061 | 97 | INPUT | 5 bytes |
+| Generic AI | 0x00000070 | 112 | 0x00000071 | 113 | INPUT | 5 bytes |
+| Pump | 0x00000100 | 256 | 0x00000101 | 257 | OUTPUT | 4 bytes |
+| Valve | 0x00000110 | 272 | 0x00000111 | 273 | OUTPUT | 4 bytes |
+| Generic DO | 0x00000120 | 288 | 0x00000121 | 289 | OUTPUT | 4 bytes |
+
+**Note**: Hex values are used in C code (`gsdml_modules.h` defines) and GSDML.
+Decimal values appear in the HTTP `/api/v1/slots` JSON response and the SQLite
+database. They are the same numbers: `0x10 == 16`, `0x100 == 256`.
 
 ### Building ExpectedSubmoduleBlockReq
 
@@ -401,30 +405,20 @@ HTTP fallback should ONLY activate when:
 2. DAP-only connect + Record Read 0xF844 has failed
 3. Standard discovery mechanisms are exhausted
 
-### What to request
+### API Contract
 
-The RTU already has a `/config` endpoint (`health_check.c:684-688`) returning:
+The RTU team document (RTU_TEAM_INSTRUCTIONS.md, Section 2) contains the
+full API contract. Both documents reference the same spec. Key points:
+
+```
+GET http://<rtu_ip>:9081/api/v1/slots
+Content-Type: application/json
+```
+
+**Response format:**
 ```json
 {
-  "profinet": {
-    "station_name": "rtu-4b64",
-    "vendor_id": 1171,
-    "device_id": 1,
-    "enabled": true
-  }
-}
-```
-
-This does NOT include slot/module data. A new endpoint is needed on the RTU
-side (see RTU team document). The controller would call:
-
-```
-GET http://<rtu_ip>:9081/slots
-```
-
-Response format (proposed):
-```json
-{
+  "slot_count": 2,
   "slots": [
     {"slot": 1, "subslot": 1, "module_ident": 16, "submodule_ident": 17,
      "direction": "input", "data_size": 5},
@@ -434,14 +428,32 @@ Response format (proposed):
 }
 ```
 
+**Contract details** (see RTU doc for full field definitions):
+- **Path**: `/api/v1/slots` (versioned, not `/slots`)
+- **Idents**: Integer (decimal). 16 = pH sensor (0x10), 256 = Pump (0x100)
+- **DAP**: NOT included. Slot 0 is always DAP — controller knows this from GSDML.
+- **Source**: Database (`db_module_list()`), available before PROFINET init.
+- **Errors**: HTTP 503 when subsystem unavailable. Connection refused = not ready.
+
 ### Controller-side implementation
 
 **`web/api/app/api/v1/discover.py`** — The `probe-ip` endpoint (line 902)
-already calls RTU HTTP. Extend it to also fetch `/slots` when available.
+already calls RTU HTTP. Extend it to also fetch `/api/v1/slots` when available.
 
 **`src/profinet/profinet_rpc.c`** or a new file — Before building the
 connect request, check if HTTP slot data is available. If so, use it to
 populate `params->expected_config[]`. If not, fall through to DAP-only.
+
+To build ExpectedSubmoduleBlockReq from the JSON response:
+```c
+for each slot in response.slots:
+    expected_config[i].slot = slot.slot
+    expected_config[i].subslot = slot.subslot
+    expected_config[i].module_ident = slot.module_ident       // integer, use directly
+    expected_config[i].submodule_ident = slot.submodule_ident // integer, use directly
+    expected_config[i].is_input = (strcmp(slot.direction, "input") == 0)
+    expected_config[i].data_size = slot.data_size
+```
 
 ### Fallback chain pseudocode
 
@@ -455,10 +467,10 @@ populate `params->expected_config[]`. If not, fall through to DAP-only.
    NO  → Continue
 
 3. Can we reach RTU HTTP on port 9081?
-   YES → GET /slots
+   YES → GET /api/v1/slots
          200 with data → Build ExpectedSubmoduleBlockReq from JSON → Phase 2
          503 or empty  → Continue
-   NO  → Continue (RTU HTTP not available)
+   NO  → Continue (connection refused = RTU HTTP not available)
 
 4. Fall back to DAP-only connect → Phase 1
    After connect, Record Read 0xF844 for actual slot layout
@@ -480,6 +492,12 @@ Identify Response and connects to whatever IP is reported.
 Relevant code: `web/api/app/services/dcp_discovery.py` — DCP response parsing
 extracts `device.ip_address` from the DCP response block (DCP_OPTION_IP).
 
+**ACTION**: The Water-Controller repo's `CLAUDE.md` connection sequence diagram
+shows "DCP Set (assign IP address)" at step 2. This contradicts the design
+agreement. Update the diagram to show DCP Identify only — the controller
+discovers the RTU's existing IP, it does not assign one. Remove or annotate
+step 2 to read: "DCP Identify Response (read IP — do NOT use DCP Set)."
+
 ---
 
 ## Station Name Handling
@@ -493,6 +511,10 @@ MAC). The controller discovers it and uses it as-is.
 The DCP Identify Response contains the station name in
 DCP_OPTION_DEVICE / DCP_SUBOPTION_DEVICE_NAME. The controller parses this
 at `dcp_discovery.py:175-180` and stores it as the RTU identifier.
+
+**ACTION**: Same as the DHCP note above — remove DCP Set-Name from the
+Water-Controller `CLAUDE.md` connection sequence. The controller reads the
+station name from DCP Identify Response, it does not write one.
 
 ---
 
