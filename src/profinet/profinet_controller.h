@@ -113,7 +113,10 @@ typedef struct {
         uint16_t frame_id;
         uint32_t send_clock_factor;
         uint32_t reduction_ratio;
-        uint32_t data_length;
+        uint32_t data_length;           /* C-SDU length: user_data + IOPS + IOCS */
+        uint16_t user_data_length;      /* Application I/O data bytes only */
+        uint16_t iodata_count;          /* IODataObjects in this IOCR (IOPS bytes) */
+        uint16_t iocs_count;            /* IOCS entries in this IOCR */
         uint8_t *data_buffer;
         uint64_t last_frame_time_us;
         uint16_t cycle_counter;     /* Per-IOCR cycle counter for RT frames */

@@ -613,12 +613,30 @@ Additional changes:
 - **Dead code removed**: `ar_handle_rpc` stub (ar_manager.c/h),
   `build_output_frame` (cyclic_exchange.c, `__attribute__((unused))`),
   `cyclic_context_t` (never referenced).
+- **Strategy dead code removed**: `rpc_strategy.h/c` stripped to 2 live
+  functions (`rpc_strategy_get_timing`, `uuid_swap_fields`). Removed
+  48-entry strategy table, all iteration functions, vendor hints, opnum
+  variants, and all dead enums/structs/defines.
+- **C-SDU buffer layout corrected**: `allocate_iocr_buffers()` now
+  computes `data_length = user_data + iodata_count + iocs_count` (min 40).
+  Added `user_data_length`, `iodata_count`, `iocs_count` fields to the
+  IOCR struct. Buffer holds complete C-SDU: user data, then IOPS, then IOCS.
+- **Cyclic frame IOPS/IOCS fixed**: `send_cyclic_frame()` fills IOPS and
+  IOCS bytes within the C-SDU buffer at computed offsets (was hardcoded 8).
+  For DAP-only: 3 IOPS + 3 IOCS. For N app submodules: 3+N IOPS + 3+M IOCS.
+- **parse_input_frame fixed**: Removed broken `data_len / 5` IOCS skip.
+  C-SDU (including IOPS/IOCS from device) is read as a single block;
+  RT trailer follows directly.
+- **Bounds checks corrected**: `get_slot_input_float()` and `set_slot_output()`
+  now check offsets against `user_data_length` (not `data_length`) to prevent
+  reading into IOPS/IOCS area.
 
 ### Phase 1: DAP-Only Connect — READY FOR TESTING
 
 The code changes are in place. `build_connect_params()` includes all 3 DAP
-submodules and the IOCR minimum data_length of 40. Phase 1 requires a live
-RTU to verify the connect response.
+submodules. `allocate_iocr_buffers()` correctly computes c_sdu_length with
+IOPS/IOCS overhead (min 40). Phase 1 requires a live RTU to verify the
+connect response.
 
 ### Phase 0+1 Code verification checklist
 - [x] ARBlockReq block_length = content bytes only (no padding)
@@ -627,15 +645,19 @@ RTU to verify the connect response.
 - [x] `_Static_assert` for LE platform at compile time
 - [x] Zero-fill alignment padding bytes
 - [x] Strategy cycling removed — single correct wire format
+- [x] Strategy dead code removed — rpc_strategy.h/c stripped to 2 functions
 - [x] Frame IDs in RT_CLASS_1 range (0xC000-0xF7FF)
 - [x] DAP slot 0 has 3 submodules (0x0001, 0x8000, 0x8001)
-- [x] IOCR data_length >= 40 (minimum c_sdu_length)
+- [x] IOCR data_length = c_sdu_length (user_data + IOPS + IOCS, min 40)
 - [x] Both IOCRs always created (Input + Output)
 - [x] Conservative timing applied (SCF=64, RR=128, WDF=10)
 - [x] NO_IO submodules appear in both IOCRs (IOData + IOCS)
 - [x] SubmoduleProperties type=0 (NO_IO) for DAP, 0 DataDescriptions
 - [x] LengthIOPS/LengthIOCS order correct per IEC 61158-6
 - [x] Dead stub code removed (ar_handle_rpc, build_output_frame, cyclic_context_t)
+- [x] send_cyclic_frame IOPS/IOCS derived from iodata_count/iocs_count (not hardcoded)
+- [x] parse_input_frame reads full C-SDU, no broken IOCS skip
+- [x] get/set bounds check against user_data_length (not data_length)
 - [x] Build passes with zero warnings (`-Wall -Wextra -Werror`)
 - [x] All 5 tests pass
 

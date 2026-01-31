@@ -63,11 +63,8 @@ wtc_result_t parse_input_frame(profinet_ar_t *ar,
         }
     }
 
-    /* Skip IOCS bytes (one per slot, based on actual data length)
-     * Input slots are 5 bytes each (Float32 + Quality)
-     */
-    int input_slot_count = data_len / 5;
-    frame_skip_bytes(&parser, input_slot_count);
+    /* C-SDU fully read into buffer (user_data + IOPS + IOCS).
+     * RT trailer (cycle counter + data status + transfer status) follows. */
 
     /* Read RT header */
     uint16_t received_counter = 0;
@@ -196,7 +193,7 @@ wtc_result_t get_slot_input_float(profinet_ar_t *ar,
         if (ar->iocr[i].type == IOCR_TYPE_INPUT) {
             /* Calculate offset - 5 bytes per sensor slot */
             size_t offset = slot_index * SENSOR_SLOT_SIZE;
-            if (offset + SENSOR_SLOT_SIZE <= ar->iocr[i].data_length &&
+            if (offset + SENSOR_SLOT_SIZE <= ar->iocr[i].user_data_length &&
                 ar->iocr[i].data_buffer) {
                 /* Unpack using 5-byte format */
                 sensor_reading_t reading;
@@ -249,7 +246,7 @@ wtc_result_t set_slot_output(profinet_ar_t *ar,
         if (ar->iocr[i].type == IOCR_TYPE_OUTPUT) {
             /* Calculate offset - no hardcoded slot limits */
             size_t offset = slot_index * 4; /* 4 bytes per actuator */
-            if (offset + 4 <= ar->iocr[i].data_length &&
+            if (offset + 4 <= ar->iocr[i].user_data_length &&
                 ar->iocr[i].data_buffer) {
                 actuator_output_t output;
                 output.command = command;
@@ -272,14 +269,19 @@ wtc_result_t set_slot_output(profinet_ar_t *ar,
 /* Minimum c_sdu_length for RT_CLASS_1 per IEC 61158-6 (pf_cmdev.c:3095) */
 #define IOCR_MIN_DATA_LENGTH 40
 
+/* DAP slot 0 always contributes 3 submodules to both IOCRs */
+#define DAP_SUBMODULE_COUNT 3
+
 /* Allocate IOCR data buffers.
  * Input slots use 5-byte format (Float32 + Quality).
  * Output slots use 4-byte format (actuator_output_t).
  *
  * Both Input and Output IOCRs are always created — PROFINET requires them
  * even for DAP-only connections (with zero application-module data).
- * The IO buffer is sized for actual cyclic data; the minimum c_sdu_length
- * of 40 bytes is enforced separately in the connect request builder.
+ *
+ * Buffer layout (= C-SDU on the wire):
+ *   [user_data bytes][IOPS bytes (1 per IODataObject)][IOCS bytes (1 per entry)]
+ * Minimum c_sdu_length is 40 per IEC 61158-6.
  */
 wtc_result_t allocate_iocr_buffers(profinet_ar_t *ar,
                                     int input_slots,
@@ -288,17 +290,27 @@ wtc_result_t allocate_iocr_buffers(profinet_ar_t *ar,
         return WTC_ERROR_INVALID_PARAM;
     }
 
-    /* Always create input IOCR (device → controller data) */
+    /* Always create input IOCR (device → controller data).
+     * IODataObjects: 3 DAP + input application submodules.
+     * IOCS entries:  3 DAP + output application submodules. */
     if (ar->iocr_count < PROFINET_MAX_IOCR) {
         int idx = ar->iocr_count++;
         ar->iocr[idx].type = IOCR_TYPE_INPUT;
         ar->iocr[idx].frame_id = 0xC001;  /* RT_CLASS_1, validated at pf_cmdev.c:3136 */
-        uint32_t data_len = (uint32_t)(input_slots * SENSOR_SLOT_SIZE);
-        if (data_len < IOCR_MIN_DATA_LENGTH) {
-            data_len = IOCR_MIN_DATA_LENGTH;
+
+        uint16_t user_data = (uint16_t)(input_slots * SENSOR_SLOT_SIZE);
+        uint16_t iodata = DAP_SUBMODULE_COUNT + (uint16_t)input_slots;
+        uint16_t iocs = DAP_SUBMODULE_COUNT + (uint16_t)output_slots;
+        uint32_t c_sdu = (uint32_t)(user_data + iodata + iocs);
+        if (c_sdu < IOCR_MIN_DATA_LENGTH) {
+            c_sdu = IOCR_MIN_DATA_LENGTH;
         }
-        ar->iocr[idx].data_length = data_len;
-        ar->iocr[idx].data_buffer = calloc(1, ar->iocr[idx].data_length);
+
+        ar->iocr[idx].user_data_length = user_data;
+        ar->iocr[idx].iodata_count = iodata;
+        ar->iocr[idx].iocs_count = iocs;
+        ar->iocr[idx].data_length = c_sdu;
+        ar->iocr[idx].data_buffer = calloc(1, c_sdu);
         if (!ar->iocr[idx].data_buffer) {
             return WTC_ERROR_NO_MEMORY;
         }
@@ -306,17 +318,27 @@ wtc_result_t allocate_iocr_buffers(profinet_ar_t *ar,
 
     /* Always create output IOCR (controller → device data).
      * Frame ID 0xFFFF = let device assign from RT_CLASS_1 range
-     * (pf_cmdev_fix_frame_id at pf_cmdev.c:4660-4698). */
+     * (pf_cmdev_fix_frame_id at pf_cmdev.c:4660-4698).
+     * IODataObjects: 3 DAP + output application submodules.
+     * IOCS entries:  3 DAP + input application submodules. */
     if (ar->iocr_count < PROFINET_MAX_IOCR) {
         int idx = ar->iocr_count++;
         ar->iocr[idx].type = IOCR_TYPE_OUTPUT;
         ar->iocr[idx].frame_id = 0xFFFF;
-        uint32_t data_len = (uint32_t)(output_slots * ACTUATOR_SLOT_SIZE);
-        if (data_len < IOCR_MIN_DATA_LENGTH) {
-            data_len = IOCR_MIN_DATA_LENGTH;
+
+        uint16_t user_data = (uint16_t)(output_slots * ACTUATOR_SLOT_SIZE);
+        uint16_t iodata = DAP_SUBMODULE_COUNT + (uint16_t)output_slots;
+        uint16_t iocs = DAP_SUBMODULE_COUNT + (uint16_t)input_slots;
+        uint32_t c_sdu = (uint32_t)(user_data + iodata + iocs);
+        if (c_sdu < IOCR_MIN_DATA_LENGTH) {
+            c_sdu = IOCR_MIN_DATA_LENGTH;
         }
-        ar->iocr[idx].data_length = data_len;
-        ar->iocr[idx].data_buffer = calloc(1, ar->iocr[idx].data_length);
+
+        ar->iocr[idx].user_data_length = user_data;
+        ar->iocr[idx].iodata_count = iodata;
+        ar->iocr[idx].iocs_count = iocs;
+        ar->iocr[idx].data_length = c_sdu;
+        ar->iocr[idx].data_buffer = calloc(1, c_sdu);
         if (!ar->iocr[idx].data_buffer) {
             return WTC_ERROR_NO_MEMORY;
         }

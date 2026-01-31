@@ -138,16 +138,24 @@ static wtc_result_t send_cyclic_frame(ar_manager_t *manager, profinet_ar_t *ar) 
     memcpy(frame + pos, &frame_id, 2);
     pos += 2;
 
-    /* Cyclic data */
+    /* Fill IOPS bytes in the C-SDU buffer (1 per IODataObject, after user data) */
+    if (ar->iocr[output_idx].data_buffer) {
+        uint16_t iops_off = ar->iocr[output_idx].user_data_length;
+        for (int i = 0; i < ar->iocr[output_idx].iodata_count; i++) {
+            ar->iocr[output_idx].data_buffer[iops_off + i] = IOPS_GOOD;
+        }
+        /* Fill IOCS bytes (1 per IOCS entry, acknowledges received input data) */
+        uint16_t iocs_off = iops_off + ar->iocr[output_idx].iodata_count;
+        for (int i = 0; i < ar->iocr[output_idx].iocs_count; i++) {
+            ar->iocr[output_idx].data_buffer[iocs_off + i] = IOPS_GOOD;
+        }
+    }
+
+    /* Send complete C-SDU (user data + IOPS + IOCS) */
     if (ar->iocr[output_idx].data_buffer && ar->iocr[output_idx].data_length > 0) {
         memcpy(frame + pos, ar->iocr[output_idx].data_buffer,
                ar->iocr[output_idx].data_length);
         pos += ar->iocr[output_idx].data_length;
-    }
-
-    /* IOPS for each slot */
-    for (int i = 0; i < 8; i++) {
-        frame[pos++] = IOPS_GOOD;
     }
 
     /* Cycle counter (16-bit, per-IOCR for correct sequencing) */
