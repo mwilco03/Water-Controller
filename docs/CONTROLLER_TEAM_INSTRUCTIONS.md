@@ -79,7 +79,7 @@ Expected block_length = `54 + strlen(station_name)`.
 
 ---
 
-### Bug 0.2: AlarmCRBlockReq tag headers are zero (BLOCKING after 0.1 fixed)
+### Bug 0.2: AlarmCRBlockReq tag headers are zero (BLOCKING)
 
 **File**: `src/profinet/profinet_rpc.c`
 **Lines**: 584-585
@@ -90,12 +90,21 @@ Expected block_length = `54 + strlen(station_name)`.
 585    write_u16_be(buffer, 0, &pos);  /* Tag header low */
 ```
 
-**Problem**: PROFINET requires VLAN tag headers for alarm CR.
-- `tag_header_high` = 0xC000 (VLAN priority 6)
-- `tag_header_low` = 0xA000 (VLAN priority 5)
+**Problem**: PROFINET requires VLAN priority tags in the AlarmCR block.
+- `tag_header_high` = 0xC000 (VLAN priority 6, vlan_id 0)
+- `tag_header_low` = 0xA000 (VLAN priority 5, vlan_id 0)
 
-p-net may accept 0x0000 in some versions but the spec requires these values.
-Frame 1 in the pcap (the correct manual connect) uses C000/A000.
+p-net **rejects 0x0000**. The validation is in `pf_cmdev.c:4088-4098`:
+```c
+if (p_ar->alarm_cr_request.alarm_cr_tag_header_high.alarm_user_priority != 6)
+{
+   pf_set_error(p_stat, ..., PNET_ERROR_CODE_1_CONN_FAULTY_ALARM_BLOCK_REQ, 11);
+   ret = -1;
+}
+```
+The uint16 is decoded as: bits 0-11 = vlan_id (must be 0), bits 13-15 = priority.
+0x0000 → priority=0 → rejected with error code 11/12.
+0xC000 → priority=6 → accepted. 0xA000 → priority=5 → accepted.
 
 **Fix**:
 ```c
@@ -232,12 +241,28 @@ These match the RTU code in `profinet_manager.c:885-919` and the GSDML.
 DAP has no IO data (PNET_DIR_NO_IO, input_size=0, output_size=0).
 IOCRBlockReq still required but with minimal data lengths:
 
-- Input IOCR: `data_length` = 40 (minimum: IOCS/IOPS overhead only)
+- Input IOCR: `data_length` = 40 (minimum c_sdu_length for RT_CLASS_1)
 - Output IOCR: `data_length` = 40
 
+**Note**: The wire field `data_length` in IOCRBlockReq maps directly to p-net's
+internal `c_sdu_length` field (`pf_block_reader.c:438`). No transformation.
+The 40-byte minimum is the PROFINET spec floor for RT_CLASS_1/2/3 frames,
+enforced at `pf_cmdev.c:3095-3102`. DAP's actual IO payload is 0 bytes —
+the frame is padded to 40.
+
 Frame IDs:
-- Input: 0xC001 (RT_CLASS_1 input range)
-- Output: 0x8001 (RT_CLASS_1 output range)
+- Input: 0xC001 (RT_CLASS_1 range: 0xC000-0xF7FF, validated at `pf_cmdev.c:3136`)
+- Output: 0xFFFF (let device assign from 0xC000-0xF7FF via `pf_cmdev.c:4680`)
+
+**CORRECTION**: The previous version listed Output=0x8001. That's wrong.
+0x8000-0xBBFF is the RT_CLASS_2 range. For RT_CLASS_1, both input and output
+use 0xC000-0xF7FF. The standard practice for OUTPUT IOCR is to send 0xFFFF
+and let the device (p-net) assign a frame_id from the valid range. p-net does
+this in `pf_cmdev_fix_frame_id()` at `pf_cmdev.c:4660-4698`.
+
+The pcap values (0x8002/0x8003) were also wrong — same problem, RT_CLASS_2
+range used for RT_CLASS_1. p-net validates INPUT frame_id at
+`pf_cmdev.c:3132-3149` and would reject 0x8002.
 
 ### IOCRBlockReq API entries
 
@@ -389,25 +414,41 @@ connect response handler. Map each diff entry to the slot manager.
 
 ---
 
-## Phase 4: HTTP Fallback (Non-Standard — Last Resort)
+## Phase 4: HTTP Fallback (Non-Standard)
 
-### Architecture concern
+### Architecture
 
-This creates a proprietary dependency: the controller will only work with
-RTUs that implement this HTTP API. No other PROFINET device will have it.
-Standard PROFINET mechanisms (GSDML + ModuleDiffBlock + Record Read 0xF844)
-provide the same information without custom firmware.
+Two HTTP endpoints are available on the RTU (both implemented in
+`health_check.c`). Neither is standard PROFINET, but `/api/v1/gsdml`
+delivers the standard device description — only the transport is non-standard.
 
-### When to use
+| Endpoint | Returns | Priority | Why |
+|----------|---------|----------|-----|
+| `/api/v1/gsdml` | Raw GSDML XML | Fallback #2 | Standard data, non-standard transport. Cache locally → becomes fallback #1 next time. |
+| `/api/v1/slots` | JSON slot list | Fallback #4 | Proprietary format. Only current config, not full module catalog. |
 
-HTTP fallback should ONLY activate when:
-1. GSDML file is not available to the controller
-2. DAP-only connect + Record Read 0xF844 has failed
-3. Standard discovery mechanisms are exhausted
+### `/api/v1/gsdml` — Preferred HTTP fallback
 
-### API Contract
+```
+GET http://<rtu_ip>:9081/api/v1/gsdml
+Content-Type: application/xml
+```
 
-The RTU team document (RTU_TEAM_INSTRUCTIONS.md, Section 2) contains the
+Returns the raw GSDML XML file (~32KB, streamed in 4KB chunks).
+Returns HTTP 404 if GSDML file not found on RTU filesystem.
+
+**Controller-side usage:**
+1. Fetch once, save to local cache (e.g., `/var/cache/water-controller/gsdml/<station_name>.xml`)
+2. Parse with existing GSDML parser — same code path as a local file
+3. Build ExpectedSubmoduleBlockReq from the module catalog
+4. On next connection, local cache satisfies fallback #1 — no HTTP needed
+
+This is the recommended HTTP fallback because it gives the full module
+catalog, not just what's currently plugged.
+
+### `/api/v1/slots` — Last HTTP fallback
+
+The RTU team document (RTU_TEAM_INSTRUCTIONS.md, Section 2.2) contains the
 full API contract. Both documents reference the same spec. Key points:
 
 ```
@@ -433,18 +474,27 @@ Content-Type: application/json
 - **Idents**: Integer (decimal). 16 = pH sensor (0x10), 256 = Pump (0x100)
 - **DAP**: NOT included. Slot 0 is always DAP — controller knows this from GSDML.
 - **Source**: Database (`db_module_list()`), available before PROFINET init.
-- **Errors**: HTTP 503 when subsystem unavailable. Connection refused = not ready.
+- **Direction**: `(module_ident & 0x100) != 0` → "output" (actuator), else "input" (sensor)
+- **Errors**: HTTP 503 when database unavailable. Connection refused = not ready.
 
 ### Controller-side implementation
 
 **`web/api/app/api/v1/discover.py`** — The `probe-ip` endpoint (line 902)
-already calls RTU HTTP. Extend it to also fetch `/api/v1/slots` when available.
+already calls RTU HTTP. Extend it to fetch `/api/v1/gsdml` first, then
+`/api/v1/slots` as fallback.
 
-**`src/profinet/profinet_rpc.c`** or a new file — Before building the
-connect request, check if HTTP slot data is available. If so, use it to
-populate `params->expected_config[]`. If not, fall through to DAP-only.
+**GSDML fetch path:**
+```c
+http_get(rtu_ip, 9081, "/api/v1/gsdml", &response);
+if (response.status == 200) {
+    save_to_cache(station_name, response.body);  // local file for next time
+    parse_gsdml(response.body);                   // same path as local file
+    return;                                       // → Phase 2
+}
+// 404 or unreachable → fall through to /api/v1/slots
+```
 
-To build ExpectedSubmoduleBlockReq from the JSON response:
+**Slot JSON path** — Build ExpectedSubmoduleBlockReq from JSON response:
 ```c
 for each slot in response.slots:
     expected_config[i].slot = slot.slot
@@ -458,24 +508,31 @@ for each slot in response.slots:
 ### Fallback chain pseudocode
 
 ```
-1. Do we have GSDML for this device?
+1. Do we have a local GSDML for this device?
    YES → Parse GSDML, build full ExpectedSubmoduleBlockReq → Phase 2
    NO  → Continue
 
-2. Do we have cached slot config from a previous connection?
+2. Can we fetch GSDML from RTU HTTP?
+   GET /api/v1/gsdml
+   200 → Save to local cache, parse GSDML → Phase 2
+   404 or unreachable → Continue
+
+3. Do we have cached slot config from a previous connection?
    YES → Use cached config → Phase 2
    NO  → Continue
 
-3. Can we reach RTU HTTP on port 9081?
-   YES → GET /api/v1/slots
-         200 with data → Build ExpectedSubmoduleBlockReq from JSON → Phase 2
-         503 or empty  → Continue
-   NO  → Continue (connection refused = RTU HTTP not available)
+4. Can we fetch slot list from RTU HTTP?
+   GET /api/v1/slots
+   200 with data → Build ExpectedSubmoduleBlockReq from JSON → Phase 2
+   503 or empty  → Continue
 
-4. Fall back to DAP-only connect → Phase 1
+5. Fall back to DAP-only connect → Phase 1
    After connect, Record Read 0xF844 for actual slot layout
    Release, rebuild ExpectedSubmoduleBlockReq, reconnect → Phase 2
 ```
+
+**Note**: Step 2 feeds step 1 — once the GSDML is fetched and cached, all
+future connections use the local file. The HTTP call is a one-time cost.
 
 ---
 
