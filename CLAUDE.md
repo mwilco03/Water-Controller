@@ -64,22 +64,20 @@ IO Controller                                    IO Device (RTU)
      │                                                │
      │─── 1. DCP Identify Request (multicast) ───────►│
      │◄────────── DCP Identify Response ──────────────│
+     │       (controller reads IP + station name)     │
      │                                                │
-     │─── 2. DCP Set (assign IP address) ────────────►│
-     │◄─────────── DCP Set Response ──────────────────│
-     │                                                │
-     │═══ 3. RPC Connect Request ════════════════════►│
+     │═══ 2. RPC Connect Request ════════════════════►│
      │◄══════════ Connect Response ═══════════════════│
      │         (includes Module-Diff-Block if         │
      │          expected ≠ actual submodules)         │
      │                                                │
-     │═══ 4. RPC Write (parameters) ═════════════════►│
+     │═══ 3. RPC Write (parameters) ═════════════════►│
      │◄═════════ Write Response ══════════════════════│
      │                                                │
-     │═══ 5. RPC PrmEnd (IODControlReq) ═════════════►│
+     │═══ 4. RPC PrmEnd (IODControlReq) ═════════════►│
      │◄════════ PrmEnd Response ══════════════════════│
      │                                                │
-     │◄══ 6. RPC ApplicationReady (IODControlReq) ════│  ← DEVICE initiates!
+     │◄══ 5. RPC ApplicationReady (IODControlReq) ════│  ← DEVICE initiates!
      │═══════ ApplicationReady Response ═════════════►│
      │                                                │
      │◄══════════ Cyclic Input Data ══════════════════│
@@ -88,8 +86,9 @@ IO Controller                                    IO Device (RTU)
 ```
 
 **Key points:**
-- **Controller initiates** steps 1-5 (discovery, connect, parameterization)
-- **Device initiates** step 6 (ApplicationReady) - signals readiness for I/O
+- **Controller initiates** steps 1-4 (discovery, connect, parameterization)
+- **Device initiates** step 5 (ApplicationReady) - signals readiness for I/O
+- **No DCP Set** — controller does NOT assign IP or station name. RTU owns its identity (name from MAC, IP from DHCP/static). Controller reads both from the DCP Identify Response.
 - ApplicationReady timeout: up to 300 seconds per spec
 - Cyclic watchdog: 3 seconds default
 
