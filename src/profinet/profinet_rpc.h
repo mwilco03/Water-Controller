@@ -445,30 +445,6 @@ wtc_result_t rpc_connect(rpc_context_t *ctx,
                           const connect_request_params_t *params,
                           connect_response_t *response);
 
-/**
- * @brief Strategy-aware connect — builds request per strategy, sends, parses.
- *
- * Applies the given strategy to the connect request:
- * - uuid_format: toggles UUID field byte order in the RPC header
- * - ndr_mode:    inserts/omits 20-byte NDR header before PNIO blocks
- * - slot_scope:  filters expected slot configuration to DAP-only if requested
- *
- * The response parser auto-detects whether the device included an NDR
- * header in its reply regardless of what was sent.
- *
- * @param[in]  ctx       RPC context
- * @param[in]  device_ip Device IP address (host byte order)
- * @param[in]  params    Full connect request parameters
- * @param[in]  strategy  Wire format strategy to apply
- * @param[out] response  Parsed connect response
- * @return WTC_OK on success, error code on failure
- */
-wtc_result_t rpc_connect_with_strategy(rpc_context_t *ctx,
-                                        uint32_t device_ip,
-                                        const connect_request_params_t *params,
-                                        const rpc_connect_strategy_t *strategy,
-                                        connect_response_t *response);
-
 /* High-level parameter end function */
 wtc_result_t rpc_parameter_end(rpc_context_t *ctx,
                                 uint32_t device_ip,

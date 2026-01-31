@@ -93,11 +93,6 @@ wtc_result_t ar_send_application_ready(ar_manager_t *manager,
 wtc_result_t ar_send_release_request(ar_manager_t *manager,
                                       profinet_ar_t *ar);
 
-/* Handle received RPC frame */
-wtc_result_t ar_handle_rpc(ar_manager_t *manager,
-                            const uint8_t *frame,
-                            size_t len);
-
 /* Handle received RT frame */
 wtc_result_t ar_handle_rt_frame(ar_manager_t *manager,
                                  const uint8_t *frame,

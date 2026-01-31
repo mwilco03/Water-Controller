@@ -11,90 +11,7 @@
 
 #include <stdlib.h>
 #include <string.h>
-#include <pthread.h>
 #include <arpa/inet.h>
-
-/* Cyclic exchange context */
-typedef struct {
-    profinet_controller_t *controller;
-
-    /* Timing */
-    uint32_t cycle_time_us;
-    uint16_t cycle_counter;
-
-    /* Statistics */
-    uint64_t frames_sent;
-    uint64_t frames_received;
-    uint64_t frame_errors;
-    uint64_t overruns;
-} cyclic_context_t;
-
-/* Build cyclic output frame (reserved for direct frame building) */
-__attribute__((unused))
-static wtc_result_t build_output_frame(profinet_ar_t *ar,
-                                        uint8_t *frame,
-                                        size_t *frame_len,
-                                        uint16_t cycle_counter) {
-    if (!ar || !frame || !frame_len) {
-        return WTC_ERROR_INVALID_PARAM;
-    }
-
-    /* Find output IOCR */
-    int output_iocr = -1;
-    for (int i = 0; i < ar->iocr_count; i++) {
-        if (ar->iocr[i].type == IOCR_TYPE_OUTPUT) {
-            output_iocr = i;
-            break;
-        }
-    }
-
-    if (output_iocr < 0) {
-        return WTC_ERROR_NOT_FOUND;
-    }
-
-    frame_builder_t builder;
-    frame_builder_init(&builder, frame, *frame_len, NULL);
-
-    /* Ethernet header - will be filled by caller */
-    builder.position = ETH_HEADER_LEN;
-
-    /* Frame ID */
-    uint16_t frame_id = ar->iocr[output_iocr].frame_id;
-    frame_build_rt_header(&builder, frame_id);
-
-    /* Data */
-    if (ar->iocr[output_iocr].data_buffer &&
-        ar->iocr[output_iocr].data_length > 0) {
-        frame_append_data(&builder,
-                          ar->iocr[output_iocr].data_buffer,
-                          ar->iocr[output_iocr].data_length);
-    }
-
-    /* IOPS for each subslot (one byte per slot, based on actual data length) */
-    int output_slot_count = ar->iocr[output_iocr].data_length / 4;
-    for (int slot = 0; slot < output_slot_count; slot++) {
-        uint8_t iops = IOPS_GOOD;
-        frame_append_data(&builder, &iops, 1);
-    }
-
-    /* RT header (cycle counter, data status, transfer status) */
-    uint16_t net_cycle = htons(cycle_counter);
-    frame_append_data(&builder, &net_cycle, 2);
-
-    uint8_t data_status = PROFINET_DATA_STATUS_STATE |
-                          PROFINET_DATA_STATUS_VALID |
-                          PROFINET_DATA_STATUS_RUN;
-    frame_append_data(&builder, &data_status, 1);
-
-    uint8_t transfer_status = 0x00;
-    frame_append_data(&builder, &transfer_status, 1);
-
-    /* Pad to minimum size */
-    frame_append_padding(&builder, ETH_MIN_FRAME_LEN);
-
-    *frame_len = frame_builder_length(&builder);
-    return WTC_OK;
-}
 
 /* Track last received cycle counter for replay detection (PN-H1 fix) */
 static uint16_t last_cycle_counters[PROFINET_MAX_IOCR];
@@ -146,11 +63,8 @@ wtc_result_t parse_input_frame(profinet_ar_t *ar,
         }
     }
 
-    /* Skip IOCS bytes (one per slot, based on actual data length)
-     * Input slots are 5 bytes each (Float32 + Quality)
-     */
-    int input_slot_count = data_len / 5;
-    frame_skip_bytes(&parser, input_slot_count);
+    /* C-SDU fully read into buffer (user_data + IOPS + IOCS).
+     * RT trailer (cycle counter + data status + transfer status) follows. */
 
     /* Read RT header */
     uint16_t received_counter = 0;
@@ -279,7 +193,7 @@ wtc_result_t get_slot_input_float(profinet_ar_t *ar,
         if (ar->iocr[i].type == IOCR_TYPE_INPUT) {
             /* Calculate offset - 5 bytes per sensor slot */
             size_t offset = slot_index * SENSOR_SLOT_SIZE;
-            if (offset + SENSOR_SLOT_SIZE <= ar->iocr[i].data_length &&
+            if (offset + SENSOR_SLOT_SIZE <= ar->iocr[i].user_data_length &&
                 ar->iocr[i].data_buffer) {
                 /* Unpack using 5-byte format */
                 sensor_reading_t reading;
@@ -332,7 +246,7 @@ wtc_result_t set_slot_output(profinet_ar_t *ar,
         if (ar->iocr[i].type == IOCR_TYPE_OUTPUT) {
             /* Calculate offset - no hardcoded slot limits */
             size_t offset = slot_index * 4; /* 4 bytes per actuator */
-            if (offset + 4 <= ar->iocr[i].data_length &&
+            if (offset + 4 <= ar->iocr[i].user_data_length &&
                 ar->iocr[i].data_buffer) {
                 actuator_output_t output;
                 output.command = command;
@@ -352,9 +266,22 @@ wtc_result_t set_slot_output(profinet_ar_t *ar,
 /* Actuator slot size: 4 bytes (unchanged) */
 #define ACTUATOR_SLOT_SIZE 4
 
-/* Allocate IOCR data buffers
- * Input slots use 5-byte format (Float32 + Quality)
- * Output slots use 4-byte format (actuator_output_t)
+/* Minimum c_sdu_length for RT_CLASS_1 per IEC 61158-6 (pf_cmdev.c:3095) */
+#define IOCR_MIN_DATA_LENGTH 40
+
+/* DAP slot 0 always contributes 3 submodules to both IOCRs */
+#define DAP_SUBMODULE_COUNT 3
+
+/* Allocate IOCR data buffers.
+ * Input slots use 5-byte format (Float32 + Quality).
+ * Output slots use 4-byte format (actuator_output_t).
+ *
+ * Both Input and Output IOCRs are always created — PROFINET requires them
+ * even for DAP-only connections (with zero application-module data).
+ *
+ * Buffer layout (= C-SDU on the wire):
+ *   [user_data bytes][IOPS bytes (1 per IODataObject)][IOCS bytes (1 per entry)]
+ * Minimum c_sdu_length is 40 per IEC 61158-6.
  */
 wtc_result_t allocate_iocr_buffers(profinet_ar_t *ar,
                                     int input_slots,
@@ -363,25 +290,55 @@ wtc_result_t allocate_iocr_buffers(profinet_ar_t *ar,
         return WTC_ERROR_INVALID_PARAM;
     }
 
-    /* Create input IOCR - 5 bytes per sensor slot */
-    if (input_slots > 0 && ar->iocr_count < PROFINET_MAX_IOCR) {
+    /* Always create input IOCR (device → controller data).
+     * IODataObjects: 3 DAP + input application submodules.
+     * IOCS entries:  3 DAP + output application submodules. */
+    if (ar->iocr_count < PROFINET_MAX_IOCR) {
         int idx = ar->iocr_count++;
         ar->iocr[idx].type = IOCR_TYPE_INPUT;
-        ar->iocr[idx].frame_id = PROFINET_FRAME_ID_RTC1_MIN + ar->session_key * 2;
-        ar->iocr[idx].data_length = input_slots * SENSOR_SLOT_SIZE; /* 5 bytes per slot */
-        ar->iocr[idx].data_buffer = calloc(1, ar->iocr[idx].data_length);
+        ar->iocr[idx].frame_id = 0xC001;  /* RT_CLASS_1, validated at pf_cmdev.c:3136 */
+
+        uint16_t user_data = (uint16_t)(input_slots * SENSOR_SLOT_SIZE);
+        uint16_t iodata = DAP_SUBMODULE_COUNT + (uint16_t)input_slots;
+        uint16_t iocs = DAP_SUBMODULE_COUNT + (uint16_t)output_slots;
+        uint32_t c_sdu = (uint32_t)(user_data + iodata + iocs);
+        if (c_sdu < IOCR_MIN_DATA_LENGTH) {
+            c_sdu = IOCR_MIN_DATA_LENGTH;
+        }
+
+        ar->iocr[idx].user_data_length = user_data;
+        ar->iocr[idx].iodata_count = iodata;
+        ar->iocr[idx].iocs_count = iocs;
+        ar->iocr[idx].data_length = c_sdu;
+        ar->iocr[idx].data_buffer = calloc(1, c_sdu);
         if (!ar->iocr[idx].data_buffer) {
             return WTC_ERROR_NO_MEMORY;
         }
     }
 
-    /* Create output IOCR - 4 bytes per actuator slot (unchanged) */
-    if (output_slots > 0 && ar->iocr_count < PROFINET_MAX_IOCR) {
+    /* Always create output IOCR (controller → device data).
+     * Frame ID 0xFFFF = let device assign from RT_CLASS_1 range
+     * (pf_cmdev_fix_frame_id at pf_cmdev.c:4660-4698).
+     * IODataObjects: 3 DAP + output application submodules.
+     * IOCS entries:  3 DAP + input application submodules. */
+    if (ar->iocr_count < PROFINET_MAX_IOCR) {
         int idx = ar->iocr_count++;
         ar->iocr[idx].type = IOCR_TYPE_OUTPUT;
-        ar->iocr[idx].frame_id = PROFINET_FRAME_ID_RTC1_MIN + ar->session_key * 2 + 1;
-        ar->iocr[idx].data_length = output_slots * ACTUATOR_SLOT_SIZE; /* 4 bytes per slot */
-        ar->iocr[idx].data_buffer = calloc(1, ar->iocr[idx].data_length);
+        ar->iocr[idx].frame_id = 0xFFFF;
+
+        uint16_t user_data = (uint16_t)(output_slots * ACTUATOR_SLOT_SIZE);
+        uint16_t iodata = DAP_SUBMODULE_COUNT + (uint16_t)output_slots;
+        uint16_t iocs = DAP_SUBMODULE_COUNT + (uint16_t)input_slots;
+        uint32_t c_sdu = (uint32_t)(user_data + iodata + iocs);
+        if (c_sdu < IOCR_MIN_DATA_LENGTH) {
+            c_sdu = IOCR_MIN_DATA_LENGTH;
+        }
+
+        ar->iocr[idx].user_data_length = user_data;
+        ar->iocr[idx].iodata_count = iodata;
+        ar->iocr[idx].iocs_count = iocs;
+        ar->iocr[idx].data_length = c_sdu;
+        ar->iocr[idx].data_buffer = calloc(1, c_sdu);
         if (!ar->iocr[idx].data_buffer) {
             return WTC_ERROR_NO_MEMORY;
         }

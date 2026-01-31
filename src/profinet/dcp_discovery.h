@@ -105,20 +105,6 @@ wtc_result_t dcp_discovery_identify_all(dcp_discovery_t *discovery);
 wtc_result_t dcp_discovery_identify_name(dcp_discovery_t *discovery,
                                           const char *station_name);
 
-/* Set device IP address */
-wtc_result_t dcp_set_ip_address(dcp_discovery_t *discovery,
-                                 const uint8_t *mac_address,
-                                 uint32_t ip_address,
-                                 uint32_t subnet_mask,
-                                 uint32_t gateway,
-                                 bool permanent);
-
-/* Set device station name */
-wtc_result_t dcp_set_station_name(dcp_discovery_t *discovery,
-                                   const uint8_t *mac_address,
-                                   const char *station_name,
-                                   bool permanent);
-
 /* Blink device LED (signal) */
 wtc_result_t dcp_signal_device(dcp_discovery_t *discovery,
                                 const uint8_t *mac_address);

@@ -780,7 +780,7 @@ static bool detect_network_interface(char *interface, size_t size) {
     }
 
     struct dirent *entry;
-    char state_path[256];
+    char state_path[512];
     char state[32];
     FILE *fp;
     bool found = false;

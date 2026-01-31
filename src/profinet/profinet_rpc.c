@@ -20,6 +20,12 @@
 #include <errno.h>
 #include <unistd.h>
 
+/* Bug 0.3: RPC header fields are written via direct struct assignment which
+ * produces the correct little-endian encoding only on LE platforms.
+ * Fail at compile time if this assumption is violated. */
+_Static_assert(__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__,
+               "RPC header relies on LE platform; use explicit conversion for BE");
+
 /* ============== Constants ============== */
 
 /* RPC timeouts */
@@ -442,12 +448,17 @@ wtc_result_t rpc_build_connect_request(rpc_context_t *ctx,
     size_t pos = sizeof(profinet_rpc_header_t);  /* Skip header, fill later */
 
     /*
-     * Connect Request structure (per IEC 61158-6):
-     * - AR Block Request
-     * - IOCR Block Request(s)
-     * - Alarm CR Block Request
-     * - Expected Submodule Block(s)
+     * Bug 0.4 fix: NDR header is mandatory — p-net rejects requests without
+     * it (pf_cmrpc.c:4622-4634).  Reserve 20 bytes between the RPC header
+     * and the first PNIO block; the actual values are filled in after all
+     * blocks are built (we need the total PNIO payload length).
+     *
+     * Connect Request layout:
+     *   [RPC Header][NDR Header][AR Block][IOCR Block(s)][AlarmCR Block][ExpSubmod Block]
      */
+    size_t ndr_header_pos = pos;
+    pos += NDR_REQUEST_HEADER_SIZE;  /* Reserve 20 bytes for NDR */
+    size_t pnio_blocks_start = pos;
 
     /* ============== AR Block Request ============== */
     size_t ar_block_start = pos;
@@ -470,13 +481,19 @@ wtc_result_t rpc_build_connect_request(rpc_context_t *ctx,
     write_u16_be(buffer, (uint16_t)name_len, &pos);
     memcpy(buffer + pos, params->station_name, name_len);
     pos += name_len;
-    align_to_4(&pos);
 
-    /* Fill AR block header */
+    /* Bug 0.1 fix: Calculate block_length BEFORE adding inter-block padding.
+     * block_length = content bytes after type+length fields, excluding padding.
+     * p-net validates at pf_cmrpc.c:1176: exact match required. */
     size_t ar_block_len = pos - ar_block_start - 4;  /* Exclude type + length */
     size_t save_pos = ar_block_start;
     write_block_header(buffer, BLOCK_TYPE_AR_BLOCK_REQ,
                         (uint16_t)ar_block_len, &save_pos);
+
+    /* Bug 0.5 fix: Zero-fill alignment padding to avoid leaking buffer content */
+    while (pos % 4 != 0) {
+        buffer[pos++] = 0;
+    }
 
     /* ============== IOCR Block Requests (IEC 61158-6 format) ============== */
     for (int i = 0; i < params->iocr_count; i++) {
@@ -508,8 +525,15 @@ wtc_result_t rpc_build_connect_request(rpc_context_t *ctx,
 
         /*
          * IOData objects: submodules whose data appears in THIS IOCR's frame.
-         * For Input IOCR:  input submodules (device → controller data)
-         * For Output IOCR: output submodules (controller → device data)
+         *
+         * Directional submodules (data_length > 0):
+         *   Input IOCR  ← input submodules only
+         *   Output IOCR ← output submodules only
+         *
+         * NO_IO submodules (data_length == 0, e.g., DAP slot 0):
+         *   Appear in BOTH IOCRs as IODataObjects with FrameOffset but
+         *   zero data contribution.  This is required per IEC 61158-6
+         *   so that each submodule gets an IOPS byte in the cyclic frame.
          *
          * Each IODataObject = SlotNumber(u16) + SubslotNumber(u16)
          *                   + IODataObjectFrameOffset(u16) = 6 bytes
@@ -519,7 +543,8 @@ wtc_result_t rpc_build_connect_request(rpc_context_t *ctx,
         int iodata_count = 0;
         uint16_t iodata_frame_offset = 0;
         for (int j = 0; j < params->expected_count; j++) {
-            if (params->expected_config[j].is_input == is_input_iocr) {
+            if (params->expected_config[j].data_length == 0 ||
+                params->expected_config[j].is_input == is_input_iocr) {
                 iodata_count++;
             }
         }
@@ -527,7 +552,8 @@ wtc_result_t rpc_build_connect_request(rpc_context_t *ctx,
 
         uint16_t running_offset = 0;
         for (int j = 0; j < params->expected_count; j++) {
-            if (params->expected_config[j].is_input != is_input_iocr) {
+            if (params->expected_config[j].data_length != 0 &&
+                params->expected_config[j].is_input != is_input_iocr) {
                 continue;
             }
             write_u16_be(buffer, params->expected_config[j].slot, &pos);
@@ -539,14 +565,18 @@ wtc_result_t rpc_build_connect_request(rpc_context_t *ctx,
         iodata_frame_offset = running_offset + (uint16_t)iodata_count;
 
         /*
-         * IOCS objects: consumer status bytes for the OPPOSITE direction's
-         * submodules, sent in THIS frame.
-         * For Input IOCR:  IOCS for output submodules
-         * For Output IOCR: IOCS for input submodules
+         * IOCS objects: consumer status bytes.
+         *
+         * Directional submodules:
+         *   Input IOCR  ← IOCS for output submodules
+         *   Output IOCR ← IOCS for input submodules
+         *
+         * NO_IO submodules: appear in BOTH IOCRs as IOCS (same as IOData).
          */
         int iocs_count = 0;
         for (int j = 0; j < params->expected_count; j++) {
-            if (params->expected_config[j].is_input != is_input_iocr) {
+            if (params->expected_config[j].data_length == 0 ||
+                params->expected_config[j].is_input != is_input_iocr) {
                 iocs_count++;
             }
         }
@@ -554,7 +584,8 @@ wtc_result_t rpc_build_connect_request(rpc_context_t *ctx,
 
         uint16_t iocs_offset = iodata_frame_offset;
         for (int j = 0; j < params->expected_count; j++) {
-            if (params->expected_config[j].is_input == is_input_iocr) {
+            if (params->expected_config[j].data_length != 0 &&
+                params->expected_config[j].is_input == is_input_iocr) {
                 continue;
             }
             write_u16_be(buffer, params->expected_config[j].slot, &pos);
@@ -581,8 +612,11 @@ wtc_result_t rpc_build_connect_request(rpc_context_t *ctx,
     write_u16_be(buffer, params->rta_retries ? params->rta_retries : 3, &pos);
     write_u16_be(buffer, 0x0001, &pos);  /* Local alarm reference */
     write_u16_be(buffer, params->max_alarm_data_length, &pos);
-    write_u16_be(buffer, 0, &pos);  /* Tag header high */
-    write_u16_be(buffer, 0, &pos);  /* Tag header low */
+    /* Bug 0.2 fix: VLAN priority tags are mandatory.
+     * 0xC000 = priority 6 (high), 0xA000 = priority 5 (low).
+     * p-net rejects 0x0000 at pf_cmdev.c:4088-4098 (error code 11/12). */
+    write_u16_be(buffer, 0xC000, &pos);  /* Tag header high (VLAN prio 6) */
+    write_u16_be(buffer, 0xA000, &pos);  /* Tag header low  (VLAN prio 5) */
 
     size_t alarm_block_len = pos - alarm_block_start - 4;
     save_pos = alarm_block_start;
@@ -648,21 +682,36 @@ wtc_result_t rpc_build_connect_request(rpc_context_t *ctx,
             write_u16_be(buffer, params->expected_config[j].subslot, &pos);
             write_u32_be(buffer, params->expected_config[j].submodule_ident, &pos);
 
-            /* SubmoduleProperties: bits 0-1 = Type (1=Input, 2=Output) */
-            uint16_t submod_props = params->expected_config[j].is_input ? 0x0001 : 0x0002;
+            /* SubmoduleProperties: bits 0-1 = Type per IEC 61158-6
+             *   0 = NO_IO  → 0 DataDescriptions
+             *   1 = INPUT  → 1 DataDescription (type 0x0001)
+             *   2 = OUTPUT → 1 DataDescription (type 0x0002)
+             */
+            bool is_no_io = (params->expected_config[j].data_length == 0);
+            uint16_t submod_props;
+            if (is_no_io) {
+                submod_props = 0x0000;  /* NO_IO */
+            } else if (params->expected_config[j].is_input) {
+                submod_props = 0x0001;  /* INPUT */
+            } else {
+                submod_props = 0x0002;  /* OUTPUT */
+            }
             write_u16_be(buffer, submod_props, &pos);
 
-            /* DataDescription per IEC 61158-6:
+            /* DataDescription: 1 block for INPUT/OUTPUT, 0 for NO_IO.
+             * Format per IEC 61158-6:
              *   DataDescription(u16) + SubmoduleDataLength(u16) +
-             *   LengthIOCS(u8) + LengthIOPS(u8)
-             * Type field: 0x0001=Input, 0x0002=Output */
-            uint16_t data_desc_type = params->expected_config[j].is_input ? 0x0001 : 0x0002;
-            write_u16_be(buffer, data_desc_type, &pos);
-            write_u16_be(buffer, params->expected_config[j].data_length, &pos);
-            write_u8(buffer + pos, 1);  /* LengthIOCS */
-            pos++;
-            write_u8(buffer + pos, 1);  /* LengthIOPS */
-            pos++;
+             *   LengthIOPS(u8) + LengthIOCS(u8) */
+            if (!is_no_io) {
+                uint16_t data_desc_type = params->expected_config[j].is_input
+                                          ? 0x0001 : 0x0002;
+                write_u16_be(buffer, data_desc_type, &pos);
+                write_u16_be(buffer, params->expected_config[j].data_length, &pos);
+                write_u8(buffer + pos, 1);  /* LengthIOPS */
+                pos++;
+                write_u8(buffer + pos, 1);  /* LengthIOCS */
+                pos++;
+            }
         }
     }
 
@@ -671,7 +720,7 @@ wtc_result_t rpc_build_connect_request(rpc_context_t *ctx,
     write_block_header(buffer, BLOCK_TYPE_EXPECTED_SUBMOD_BLOCK,
                         (uint16_t)exp_block_len, &save_pos);
 
-    /* ============== Finalize RPC Header ============== */
+    /* ============== Finalize NDR Header and RPC Header ============== */
 
     /* Verify we didn't exceed buffer size */
     if (pos > RPC_MAX_PDU_SIZE) {
@@ -680,6 +729,12 @@ wtc_result_t rpc_build_connect_request(rpc_context_t *ctx,
         return WTC_ERROR_NO_MEMORY;
     }
 
+    /* Fill in NDR request header now that we know the PNIO payload length */
+    uint32_t pnio_len = (uint32_t)(pos - pnio_blocks_start);
+    uint32_t args_max = (uint32_t)(RPC_MAX_PDU_SIZE - sizeof(profinet_rpc_header_t));
+    write_ndr_request_header(buffer, ndr_header_pos, args_max, pnio_len);
+
+    /* fragment_length = NDR header + PNIO blocks */
     uint16_t fragment_length = (uint16_t)(pos - sizeof(profinet_rpc_header_t));
 
     /* Generate new activity UUID for this request */
@@ -689,7 +744,8 @@ wtc_result_t rpc_build_connect_request(rpc_context_t *ctx,
                       fragment_length, &save_pos);
 
     *buf_len = pos;
-    LOG_DEBUG("Built Connect Request PDU: %zu bytes", pos);
+    LOG_DEBUG("Built Connect Request PDU: %zu bytes (NDR: %d, PNIO: %u)",
+              pos, NDR_REQUEST_HEADER_SIZE, pnio_len);
     return WTC_OK;
 }
 
@@ -1251,172 +1307,6 @@ wtc_result_t rpc_release(rpc_context_t *ctx,
     }
 
     LOG_INFO("Release successful");
-    return WTC_OK;
-}
-
-/* ============== Strategy-Aware Connect ============== */
-
-wtc_result_t rpc_connect_with_strategy(rpc_context_t *ctx,
-                                        uint32_t device_ip,
-                                        const connect_request_params_t *params,
-                                        const rpc_connect_strategy_t *strategy,
-                                        connect_response_t *response)
-{
-    if (!ctx || !params || !strategy || !response) {
-        return WTC_ERROR_INVALID_PARAM;
-    }
-
-    uint8_t req_buf[RPC_MAX_PDU_SIZE];
-    uint8_t resp_buf[RPC_MAX_PDU_SIZE];
-    size_t req_len = sizeof(req_buf);
-    size_t resp_len = sizeof(resp_buf);
-    wtc_result_t res;
-
-    LOG_INFO("RPC Connect [%s]: target=%d.%d.%d.%d station=%s",
-             strategy->description,
-             (device_ip >> 24) & 0xFF, (device_ip >> 16) & 0xFF,
-             (device_ip >> 8) & 0xFF, device_ip & 0xFF,
-             params->station_name);
-
-    /* Step 1: Apply slot scope filter */
-    connect_request_params_t work_params;
-    memcpy(&work_params, params, sizeof(work_params));
-
-    if (strategy->slot_scope == SLOT_SCOPE_DAP_ONLY) {
-        int kept = 0;
-        for (int i = 0; i < work_params.expected_count; i++) {
-            if (work_params.expected_config[i].slot == 0) {
-                if (kept != i) {
-                    work_params.expected_config[kept] =
-                        work_params.expected_config[i];
-                }
-                kept++;
-            }
-        }
-        LOG_DEBUG("  DAP-only: expected slots %d -> %d",
-                  work_params.expected_count, kept);
-        work_params.expected_count = kept;
-    }
-
-    /* Step 1b: Apply timing profile to IOCR and Alarm CR parameters */
-    timing_params_t tp;
-    rpc_strategy_get_timing(strategy->timing, &tp);
-
-    for (int i = 0; i < work_params.iocr_count; i++) {
-        work_params.iocr[i].send_clock_factor = tp.send_clock_factor;
-        work_params.iocr[i].reduction_ratio   = tp.reduction_ratio;
-        work_params.iocr[i].watchdog_factor   = tp.watchdog_factor;
-    }
-    work_params.data_hold_factor  = tp.data_hold_factor;
-    work_params.rta_timeout_factor = tp.rta_timeout_factor;
-    work_params.rta_retries       = tp.rta_retries;
-
-    LOG_DEBUG("  Timing [%s]: SCF=%u RR=%u WD=%u DHF=%u RTA=%u×100ms RET=%u",
-              strategy->description,
-              tp.send_clock_factor, tp.reduction_ratio,
-              tp.watchdog_factor, tp.data_hold_factor,
-              tp.rta_timeout_factor, tp.rta_retries);
-
-    /* Step 2: Build baseline connect request using existing builder */
-    res = rpc_build_connect_request(ctx, &work_params, req_buf, &req_len);
-    if (res != WTC_OK) {
-        LOG_ERROR("  Failed to build connect request: %d", res);
-        return res;
-    }
-
-    /* Step 3: Insert NDR header if the strategy requires it */
-    if (strategy->ndr_mode == NDR_REQUEST_PRESENT) {
-        size_t pnio_start = sizeof(profinet_rpc_header_t);
-        size_t pnio_len = req_len - pnio_start;
-
-        if (req_len + NDR_REQUEST_HEADER_SIZE > RPC_MAX_PDU_SIZE) {
-            LOG_ERROR("  PDU too large for NDR header insertion (%zu + %d > %d)",
-                      req_len, NDR_REQUEST_HEADER_SIZE, RPC_MAX_PDU_SIZE);
-            return WTC_ERROR_NO_MEMORY;
-        }
-
-        /* Shift PNIO blocks forward to make room for NDR header */
-        memmove(req_buf + pnio_start + NDR_REQUEST_HEADER_SIZE,
-                req_buf + pnio_start,
-                pnio_len);
-
-        /* Write NDR header into the gap */
-        uint32_t args_max = (uint32_t)(RPC_MAX_PDU_SIZE -
-                                        sizeof(profinet_rpc_header_t));
-        write_ndr_request_header(req_buf, pnio_start,
-                                  args_max, (uint32_t)pnio_len);
-
-        req_len += NDR_REQUEST_HEADER_SIZE;
-
-        /* Update fragment_length in RPC header (LE native) */
-        profinet_rpc_header_t *hdr = (profinet_rpc_header_t *)req_buf;
-        uint16_t old_frag = hdr->fragment_length;
-        hdr->fragment_length = old_frag + NDR_REQUEST_HEADER_SIZE;
-
-        LOG_DEBUG("  Inserted %d-byte NDR header (frag_len: %u -> %u)",
-                  NDR_REQUEST_HEADER_SIZE, old_frag,
-                  (unsigned)(old_frag + NDR_REQUEST_HEADER_SIZE));
-    }
-
-    /* Step 4: Swap UUID fields if the strategy requires it */
-    if (strategy->uuid_format == UUID_WIRE_SWAP_FIELDS) {
-        profinet_rpc_header_t *hdr = (profinet_rpc_header_t *)req_buf;
-        uuid_swap_fields(hdr->object_uuid);
-        uuid_swap_fields(hdr->interface_uuid);
-        uuid_swap_fields(hdr->activity_uuid);
-        LOG_DEBUG("  Swapped UUID field byte order in RPC header");
-    }
-
-    /* Step 4b: Patch OpNum if the strategy uses a non-standard value */
-    if (strategy->opnum != OPNUM_STANDARD) {
-        profinet_rpc_header_t *hdr = (profinet_rpc_header_t *)req_buf;
-        uint16_t wire_opnum = rpc_strategy_get_opnum(strategy->opnum);
-        LOG_DEBUG("  Patching OpNum: %u -> %u (strategy variant %d)",
-                  hdr->opnum, wire_opnum, strategy->opnum);
-        hdr->opnum = wire_opnum;  /* LE native */
-    }
-
-    /* Log summary of outgoing packet for diagnosis */
-    if (req_len > sizeof(profinet_rpc_header_t)) {
-        size_t payload_offset = sizeof(profinet_rpc_header_t);
-        LOG_DEBUG("  Request: %zu bytes, payload starts %02X %02X %02X %02X "
-                  "%02X %02X %02X %02X ...",
-                  req_len,
-                  req_buf[payload_offset],     req_buf[payload_offset + 1],
-                  req_buf[payload_offset + 2], req_buf[payload_offset + 3],
-                  req_buf[payload_offset + 4], req_buf[payload_offset + 5],
-                  req_buf[payload_offset + 6], req_buf[payload_offset + 7]);
-    }
-
-    /* Step 5: Send and wait for response */
-    res = rpc_send_and_receive(ctx, device_ip, req_buf, req_len,
-                                resp_buf, &resp_len, RPC_CONNECT_TIMEOUT_MS);
-    if (res != WTC_OK) {
-        const char *reason = "UNKNOWN";
-        if (res == WTC_ERROR_TIMEOUT) reason = "TIMEOUT";
-        else if (res == WTC_ERROR_IO) reason = "IO ERROR";
-        LOG_WARN("  Send/receive failed: %s (code %d)", reason, res);
-        return res;
-    }
-
-    LOG_INFO("  Response received: %zu bytes from %d.%d.%d.%d",
-             resp_len,
-             (device_ip >> 24) & 0xFF, (device_ip >> 16) & 0xFF,
-             (device_ip >> 8) & 0xFF, device_ip & 0xFF);
-
-    /* Step 6: Parse response (auto-detects NDR presence) */
-    res = rpc_parse_connect_response(resp_buf, resp_len, response);
-    if (res != WTC_OK) {
-        LOG_WARN("  Response parse failed: %d", res);
-        return res;
-    }
-
-    if (response->success) {
-        LOG_INFO("  Connect SUCCESS [%s]", strategy->description);
-    } else {
-        LOG_WARN("  Device rejected: error_code=0x%02X", response->error_code);
-    }
-
     return WTC_OK;
 }
 
