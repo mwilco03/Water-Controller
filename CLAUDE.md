@@ -133,8 +133,8 @@ This tells you exactly which commit is running.
 
 ## External References
 
-- **p-net**: PROFINET stack (https://github.com/rtlabs-com/p-net)
-- **Water-Treat**: RTU firmware (https://github.com/mwilco03/Water-Treat)
+- **p-net**: PROFINET stack — our fork (https://github.com/mwilco03/p-net), upstream (https://github.com/rtlabs-com/p-net)
+- **Water-Treat**: RTU firmware (https://github.com/mwilco03/Water-treat)
 
 ## Docs
 
