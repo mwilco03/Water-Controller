@@ -352,9 +352,17 @@ wtc_result_t set_slot_output(profinet_ar_t *ar,
 /* Actuator slot size: 4 bytes (unchanged) */
 #define ACTUATOR_SLOT_SIZE 4
 
-/* Allocate IOCR data buffers
- * Input slots use 5-byte format (Float32 + Quality)
- * Output slots use 4-byte format (actuator_output_t)
+/* Minimum c_sdu_length for RT_CLASS_1 per IEC 61158-6 (pf_cmdev.c:3095) */
+#define IOCR_MIN_DATA_LENGTH 40
+
+/* Allocate IOCR data buffers.
+ * Input slots use 5-byte format (Float32 + Quality).
+ * Output slots use 4-byte format (actuator_output_t).
+ *
+ * Both Input and Output IOCRs are always created — PROFINET requires them
+ * even for DAP-only connections (with zero application-module data).
+ * The IO buffer is sized for actual cyclic data; the minimum c_sdu_length
+ * of 40 bytes is enforced separately in the connect request builder.
  */
 wtc_result_t allocate_iocr_buffers(profinet_ar_t *ar,
                                     int input_slots,
@@ -363,24 +371,34 @@ wtc_result_t allocate_iocr_buffers(profinet_ar_t *ar,
         return WTC_ERROR_INVALID_PARAM;
     }
 
-    /* Create input IOCR - 5 bytes per sensor slot */
-    if (input_slots > 0 && ar->iocr_count < PROFINET_MAX_IOCR) {
+    /* Always create input IOCR (device → controller data) */
+    if (ar->iocr_count < PROFINET_MAX_IOCR) {
         int idx = ar->iocr_count++;
         ar->iocr[idx].type = IOCR_TYPE_INPUT;
-        ar->iocr[idx].frame_id = PROFINET_FRAME_ID_RTC1_MIN + ar->session_key * 2;
-        ar->iocr[idx].data_length = input_slots * SENSOR_SLOT_SIZE; /* 5 bytes per slot */
+        ar->iocr[idx].frame_id = 0xC001;  /* RT_CLASS_1, validated at pf_cmdev.c:3136 */
+        uint32_t data_len = (uint32_t)(input_slots * SENSOR_SLOT_SIZE);
+        if (data_len < IOCR_MIN_DATA_LENGTH) {
+            data_len = IOCR_MIN_DATA_LENGTH;
+        }
+        ar->iocr[idx].data_length = data_len;
         ar->iocr[idx].data_buffer = calloc(1, ar->iocr[idx].data_length);
         if (!ar->iocr[idx].data_buffer) {
             return WTC_ERROR_NO_MEMORY;
         }
     }
 
-    /* Create output IOCR - 4 bytes per actuator slot (unchanged) */
-    if (output_slots > 0 && ar->iocr_count < PROFINET_MAX_IOCR) {
+    /* Always create output IOCR (controller → device data).
+     * Frame ID 0xFFFF = let device assign from RT_CLASS_1 range
+     * (pf_cmdev_fix_frame_id at pf_cmdev.c:4660-4698). */
+    if (ar->iocr_count < PROFINET_MAX_IOCR) {
         int idx = ar->iocr_count++;
         ar->iocr[idx].type = IOCR_TYPE_OUTPUT;
-        ar->iocr[idx].frame_id = PROFINET_FRAME_ID_RTC1_MIN + ar->session_key * 2 + 1;
-        ar->iocr[idx].data_length = output_slots * ACTUATOR_SLOT_SIZE; /* 4 bytes per slot */
+        ar->iocr[idx].frame_id = 0xFFFF;
+        uint32_t data_len = (uint32_t)(output_slots * ACTUATOR_SLOT_SIZE);
+        if (data_len < IOCR_MIN_DATA_LENGTH) {
+            data_len = IOCR_MIN_DATA_LENGTH;
+        }
+        ar->iocr[idx].data_length = data_len;
         ar->iocr[idx].data_buffer = calloc(1, ar->iocr[idx].data_length);
         if (!ar->iocr[idx].data_buffer) {
             return WTC_ERROR_NO_MEMORY;

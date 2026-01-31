@@ -30,14 +30,8 @@
 /* Maximum retry attempts for ABORT recovery (PN-C4 fix) */
 #define AR_MAX_RETRY_ATTEMPTS 3
 
-/* Number of strategies to try per ar_send_connect_request call.
- * Each attempt may block for up to RPC_CONNECT_TIMEOUT_MS (5s),
- * so total blocking time per call is bounded at
- * AR_STRATEGIES_PER_CALL * (5s + 0.5s inter-attempt delay). */
-#define AR_STRATEGIES_PER_CALL  RPC_MAX_STRATEGIES
-
-/* Delay in microseconds between strategy attempts within one call */
-#define AR_INTER_ATTEMPT_DELAY_US  500000  /* 500ms */
+/* Minimum c_sdu_length for RT_CLASS_1 per IEC 61158-6 */
+#define IOCR_MIN_C_SDU_LENGTH  40
 
 /* AR manager structure */
 struct ar_manager {
@@ -58,10 +52,6 @@ struct ar_manager {
 
     /* Controller UUID (generated once at startup) */
     uint8_t controller_uuid[16];
-
-    /* Connection strategy state — persists across ABORT recovery cycles
-     * so that if a format worked before, we try it first on reconnection. */
-    rpc_strategy_state_t strategy_state;
 
     /* State change notification */
     ar_state_change_callback_t state_callback;
@@ -209,11 +199,6 @@ wtc_result_t ar_manager_init(ar_manager_t **manager,
 
     /* Generate controller UUID (used in Connect Request) */
     rpc_generate_uuid(mgr->controller_uuid);
-
-    /* Initialize connection strategy state */
-    rpc_strategy_init(&mgr->strategy_state);
-    LOG_INFO("RPC strategy system initialized with %d strategies",
-             mgr->strategy_state.total_strategies);
 
     *manager = mgr;
     LOG_DEBUG("AR manager initialized");
@@ -570,42 +555,26 @@ wtc_result_t ar_manager_process(ar_manager_t *manager) {
         case AR_STATE_ABORT: {
             /*
              * PROFINET Communication Resiliency: auto-reconnect with
-             * exponential backoff.  Strategy state is preserved across
-             * ABORT cycles so known-working formats are tried first.
+             * exponential backoff.
              *
-             * Backoff: 5s base, doubles per strategy cycle, max 60s.
-             * After backoff, directly attempts reconnection (blocking).
+             * Backoff: 5s, 10s, 20s, 40s, capped at 60s.
+             * After backoff, directly attempts reconnection.
              */
             uint32_t backoff_ms = 5000;
-            int cycles = manager->strategy_state.cycle_count;
-            if (cycles > 0) {
-                /* 5s, 10s, 20s, 40s, capped at 60s */
-                int shift = cycles < 4 ? cycles : 3;
-                backoff_ms = 5000U << shift;
-                if (backoff_ms > 60000) {
-                    backoff_ms = 60000;
-                }
+            /* Use watchdog_ms count as a proxy for retry attempts */
+            uint32_t elapsed = (uint32_t)(now_ms - ar->last_activity_ms);
+            if (elapsed < backoff_ms) {
+                break;
             }
 
-            if (now_ms - ar->last_activity_ms > backoff_ms) {
-                LOG_INFO("AR %s: ABORT recovery after %u ms backoff "
-                         "(attempts: %d, cycles: %d, last_success: %d)",
-                         ar->device_station_name, backoff_ms,
-                         manager->strategy_state.attempt_count,
-                         manager->strategy_state.cycle_count,
-                         manager->strategy_state.last_success_index);
+            LOG_INFO("AR %s: ABORT recovery after %u ms",
+                     ar->device_station_name, elapsed);
 
-                /* Directly attempt reconnection — the strategy loop
-                 * in ar_send_connect_request will try all formats. */
-                ar_state_t old_state = ar->state;
-                ar_send_connect_request(manager, ar);
+            ar_state_t old_state = ar->state;
+            ar_send_connect_request(manager, ar);
 
-                /* If connect succeeded, AR is now in CONNECT_CNF.
-                 * If it failed, AR is back in ABORT with fresh timestamp.
-                 * Either way, notify the state change. */
-                if (ar->state != old_state) {
-                    notify_state_change(manager, ar, old_state, ar->state);
-                }
+            if (ar->state != old_state) {
+                notify_state_change(manager, ar, old_state, ar->state);
             }
             break;
         }
@@ -682,18 +651,34 @@ static void build_connect_params(ar_manager_t *manager,
     params->controller_port = manager->rpc_ctx.controller_port;
     params->activity_timeout = 100;  /* 100 * 100ms = 10 seconds */
 
-    /* IOCR configuration from AR */
+    /* IOCR configuration from AR.
+     * Conservative timing: 2ms cycle (SCF=64), 256ms update (RR=128),
+     * 2.56s watchdog (WDF=10), 20s alarm timeout, 5 retries.
+     * Clamp c_sdu_length to minimum 40 per IEC 61158-6. */
+    timing_params_t tp;
+    rpc_strategy_get_timing(TIMING_CONSERVATIVE, &tp);
+
     params->iocr_count = 0;
     for (int i = 0; i < ar->iocr_count && params->iocr_count < 4; i++) {
         params->iocr[params->iocr_count].type = ar->iocr[i].type;
         params->iocr[params->iocr_count].reference = (uint16_t)(i + 1);
         params->iocr[params->iocr_count].frame_id = ar->iocr[i].frame_id;
-        params->iocr[params->iocr_count].data_length = ar->iocr[i].data_length;
-        params->iocr[params->iocr_count].send_clock_factor = 32;  /* 1ms cycle */
-        params->iocr[params->iocr_count].reduction_ratio = 32;    /* 32ms update */
-        params->iocr[params->iocr_count].watchdog_factor = 3;     /* 3x reduction */
+
+        /* Enforce minimum c_sdu_length of 40 for the wire format */
+        uint16_t dl = (uint16_t)ar->iocr[i].data_length;
+        if (dl < IOCR_MIN_C_SDU_LENGTH) {
+            dl = IOCR_MIN_C_SDU_LENGTH;
+        }
+        params->iocr[params->iocr_count].data_length = dl;
+
+        params->iocr[params->iocr_count].send_clock_factor = tp.send_clock_factor;
+        params->iocr[params->iocr_count].reduction_ratio = tp.reduction_ratio;
+        params->iocr[params->iocr_count].watchdog_factor = tp.watchdog_factor;
         params->iocr_count++;
     }
+    params->data_hold_factor = tp.data_hold_factor;
+    params->rta_timeout_factor = tp.rta_timeout_factor;
+    params->rta_retries = tp.rta_retries;
 
     /*
      * Expected configuration using GSDML-defined module identifiers.
@@ -701,11 +686,31 @@ static void build_connect_params(ar_manager_t *manager,
      */
     params->expected_count = 0;
 
-    /* Add DAP slot 0 (Device Access Point - always present) */
+    /* DAP slot 0 — 3 mandatory submodules per IEC 61158-6:
+     *   Subslot 0x0001: DAP identity (submod 0x00000001)
+     *   Subslot 0x8000: Interface   (submod 0x00000100)
+     *   Subslot 0x8001: Port        (submod 0x00000200)
+     * All have data_length=0 (PNET_DIR_NO_IO). */
     params->expected_config[params->expected_count].slot = 0;
     params->expected_config[params->expected_count].module_ident = GSDML_MOD_DAP;
-    params->expected_config[params->expected_count].subslot = 1;
+    params->expected_config[params->expected_count].subslot = 0x0001;
     params->expected_config[params->expected_count].submodule_ident = GSDML_SUBMOD_DAP;
+    params->expected_config[params->expected_count].data_length = 0;
+    params->expected_config[params->expected_count].is_input = true;
+    params->expected_count++;
+
+    params->expected_config[params->expected_count].slot = 0;
+    params->expected_config[params->expected_count].module_ident = GSDML_MOD_DAP;
+    params->expected_config[params->expected_count].subslot = 0x8000;
+    params->expected_config[params->expected_count].submodule_ident = GSDML_SUBMOD_INTERFACE;
+    params->expected_config[params->expected_count].data_length = 0;
+    params->expected_config[params->expected_count].is_input = true;
+    params->expected_count++;
+
+    params->expected_config[params->expected_count].slot = 0;
+    params->expected_config[params->expected_count].module_ident = GSDML_MOD_DAP;
+    params->expected_config[params->expected_count].subslot = 0x8001;
+    params->expected_config[params->expected_count].submodule_ident = GSDML_SUBMOD_PORT;
     params->expected_config[params->expected_count].data_length = 0;
     params->expected_config[params->expected_count].is_input = true;
     params->expected_count++;
@@ -784,120 +789,57 @@ wtc_result_t ar_send_connect_request(ar_manager_t *manager,
              ar->device_station_name,
              (ar->device_ip >> 24) & 0xFF, (ar->device_ip >> 16) & 0xFF,
              (ar->device_ip >> 8) & 0xFF, ar->device_ip & 0xFF);
-    LOG_INFO("  Strategy state: index=%d, last_success=%d, "
-             "total_attempts=%d, cycles=%d",
-             manager->strategy_state.current_index,
-             manager->strategy_state.last_success_index,
-             manager->strategy_state.attempt_count,
-             manager->strategy_state.cycle_count);
 
-    /* Apply vendor hint to jump to the most likely working strategy
-     * for this device's manufacturer.  Only effective if no prior
-     * successful strategy is recorded (vendor hint won't override
-     * a known-working strategy index). */
-    if (ar->device_vendor_id != 0) {
-        rpc_strategy_apply_vendor_hint(&manager->strategy_state,
-                                        ar->device_vendor_id);
+    /* Generate fresh AR UUID and session key for this attempt */
+    rpc_generate_uuid((uint8_t *)ar->ar_uuid);
+    ar->session_key = manager->session_key_counter++;
+
+    /* Build connect parameters with conservative timing and full expected config.
+     * The connect request builder (rpc_build_connect_request) now always includes
+     * the NDR header and uses the correct wire format: UUID fields swapped to LE
+     * per DREP, OpNum=0 (Connect), VLAN priority tags set. */
+    connect_request_params_t params;
+    build_connect_params(manager, ar, &params);
+
+    /* Single connect attempt — the wire format is now correct,
+     * no brute-force strategy cycling needed. */
+    connect_response_t response;
+    res = rpc_connect(&manager->rpc_ctx, ar->device_ip, &params, &response);
+
+    if (res == WTC_OK && response.success) {
+        /* Update AR with response data */
+        memcpy(ar->device_mac, response.device_mac, 6);
+
+        for (int i = 0; i < response.frame_id_count &&
+                        i < ar->iocr_count; i++) {
+            if (ar->iocr[i].frame_id != response.frame_ids[i].assigned) {
+                LOG_DEBUG("Frame ID updated IOCR %d: 0x%04X -> 0x%04X",
+                          i, ar->iocr[i].frame_id,
+                          response.frame_ids[i].assigned);
+                ar->iocr[i].frame_id = response.frame_ids[i].assigned;
+            }
+        }
+
+        if (response.has_diff) {
+            LOG_WARN("Device reported module differences, "
+                     "AR may have limited functionality");
+        }
+
+        ar->state = AR_STATE_CONNECT_CNF;
+        ar->last_activity_ms = time_get_ms();
+
+        LOG_INFO("=== CONNECT SUCCESS for %s (session_key=%u) ===",
+                 ar->device_station_name, response.session_key);
+        return WTC_OK;
     }
 
-    /*
-     * PROFINET Communication Resiliency: iterate through wire format
-     * and timing strategies until one succeeds or we exhaust the set.
-     *
-     * Each strategy varies UUID encoding, NDR header, slot scope,
-     * and timing parameters (watchdog, reduction ratio, send clock,
-     * RTA timeout, data hold).  On success the working strategy is
-     * remembered so reconnections start with a known-good format.
-     */
-    const int max_attempts = AR_STRATEGIES_PER_CALL;
-
-    for (int attempt = 0; attempt < max_attempts; attempt++) {
-        const rpc_connect_strategy_t *strategy =
-            rpc_strategy_current(&manager->strategy_state);
-
-        manager->strategy_state.attempt_count++;
-        manager->strategy_state.last_attempt_ms = time_get_ms();
-        if (manager->strategy_state.first_attempt_ms == 0) {
-            manager->strategy_state.first_attempt_ms =
-                manager->strategy_state.last_attempt_ms;
-        }
-
-        LOG_INFO("  Attempt %d/%d: strategy [%d/%d] %s",
-                 attempt + 1, max_attempts,
-                 manager->strategy_state.current_index + 1,
-                 manager->strategy_state.total_strategies,
-                 strategy->description);
-
-        /* Regenerate AR UUID and session key for each attempt to avoid
-         * the device rejecting a retried UUID from a failed attempt. */
-        rpc_generate_uuid((uint8_t *)ar->ar_uuid);
-        ar->session_key = manager->session_key_counter++;
-
-        /* Build full connect parameters */
-        connect_request_params_t params;
-        build_connect_params(manager, ar, &params);
-
-        /* Attempt connect with this strategy */
-        connect_response_t response;
-        res = rpc_connect_with_strategy(&manager->rpc_ctx, ar->device_ip,
-                                         &params, strategy, &response);
-
-        if (res == WTC_OK && response.success) {
-            /* === Strategy succeeded === */
-            rpc_strategy_mark_success(&manager->strategy_state);
-
-            /* Update AR with response data */
-            memcpy(ar->device_mac, response.device_mac, 6);
-
-            for (int i = 0; i < response.frame_id_count &&
-                            i < ar->iocr_count; i++) {
-                if (ar->iocr[i].frame_id !=
-                    response.frame_ids[i].assigned) {
-                    LOG_DEBUG("Frame ID updated IOCR %d: 0x%04X -> 0x%04X",
-                              i, ar->iocr[i].frame_id,
-                              response.frame_ids[i].assigned);
-                    ar->iocr[i].frame_id = response.frame_ids[i].assigned;
-                }
-            }
-
-            if (response.has_diff) {
-                LOG_WARN("Device reported module differences, "
-                         "AR may have limited functionality");
-            }
-
-            ar->state = AR_STATE_CONNECT_CNF;
-            ar->last_activity_ms = time_get_ms();
-
-            LOG_INFO("=== CONNECT SUCCESS for %s (session_key=%u, "
-                     "strategy=%s) ===",
-                     ar->device_station_name, response.session_key,
-                     strategy->description);
-            return WTC_OK;
-        }
-
-        /* === Strategy failed === */
-        LOG_WARN("  Attempt %d FAILED: error=%d, strategy=%s",
-                 attempt + 1, res, strategy->description);
-
-        rpc_strategy_advance(&manager->strategy_state);
-
-        /* Brief pause between attempts to avoid flooding the RTU */
-        if (attempt + 1 < max_attempts) {
-            usleep(AR_INTER_ATTEMPT_DELAY_US);
-        }
-    }
-
-    /* All strategies exhausted for this call */
+    /* Connect failed */
     ar->state = AR_STATE_ABORT;
     ar->last_activity_ms = time_get_ms();
 
-    LOG_ERROR("=== CONNECT FAILED for %s: all %d strategies exhausted "
-              "(total attempts: %d, cycles: %d) ===",
-              ar->device_station_name, max_attempts,
-              manager->strategy_state.attempt_count,
-              manager->strategy_state.cycle_count);
-    LOG_INFO("  Will retry from ABORT state with exponential backoff. "
-             "Strategy state preserved for next attempt.");
+    LOG_ERROR("=== CONNECT FAILED for %s: error=%d ===",
+              ar->device_station_name, res);
+    LOG_INFO("  Will retry from ABORT state with backoff.");
 
     return WTC_ERROR_CONNECTION_FAILED;
 }
