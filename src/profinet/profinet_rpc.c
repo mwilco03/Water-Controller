@@ -175,7 +175,9 @@ static wtc_result_t build_rpc_header(uint8_t *buf,
      *
      * UUIDs: first 3 fields (time_low, time_mid, time_hi_and_version)
      * are stored in LE; remaining bytes (clock_seq, node) are unchanged.
-     * Our C arrays store UUIDs in big-endian, so we swap after memcpy.
+     * Generated UUIDs (Object, Activity) are stored in BE, so we swap
+     * after memcpy.  The Interface UUID constant is NOT swapped — see
+     * the comment at its memcpy below for the rationale.
      *
      * Note: PNIO block payloads (ARBlockReq, IOCRBlockReq, etc.) are
      * always big-endian per IEC 61158-6, independent of DREP.
@@ -189,9 +191,18 @@ static wtc_result_t build_rpc_header(uint8_t *buf,
     memcpy(hdr->object_uuid, object_uuid, 16);
     uuid_swap_fields(hdr->object_uuid);
 
-    /* Interface UUID (PROFINET IO Device) — swap to LE */
+    /*
+     * Interface UUID (PROFINET IO Device) — use constant as-is.
+     *
+     * Unlike Object/Activity UUIDs (which are generated in BE and swapped
+     * to LE for the wire), the Interface UUID constant is stored in the
+     * same byte order that p-net's internal constant uses.  p-net matches
+     * the Interface UUID with a raw memcmp, NOT per DREP, so swapping
+     * produces a mismatch and the packet is silently dropped.
+     *
+     * Confirmed by pcap: unswapped bytes accepted, swapped bytes rejected.
+     */
     memcpy(hdr->interface_uuid, PNIO_DEVICE_INTERFACE_UUID, 16);
-    uuid_swap_fields(hdr->interface_uuid);
 
     /* Activity UUID (unique per request) — swap to LE */
     memcpy(hdr->activity_uuid, ctx->activity_uuid, 16);
@@ -1491,9 +1502,8 @@ wtc_result_t rpc_build_control_response(rpc_context_t *ctx,
     memcpy(hdr->object_uuid, request->ar_uuid, 16);
     uuid_swap_fields(hdr->object_uuid);
 
-    /* Interface UUID (Controller) — swap to LE wire format */
+    /* Interface UUID (Controller) — use constant as-is (see build_rpc_header comment) */
     memcpy(hdr->interface_uuid, PNIO_CONTROLLER_INTERFACE_UUID, 16);
-    uuid_swap_fields(hdr->interface_uuid);
 
     /* Activity UUID — must match request, already in wire format from device */
     memcpy(hdr->activity_uuid, request->activity_uuid, 16);

@@ -735,60 +735,63 @@ async def get_rtu_inventory(
     """
     Get RTU slot/module inventory.
 
-    Returns configured sensors and controls as inventory items.
-    Note: Slots are PROFINET frame positions, not database entities.
-    The inventory is derived from configured sensors/controls.
+    Returns configured sensors and controls matching the frontend
+    RTUInventory interface: { rtu_station, sensors[], controls[], last_refresh }.
     """
     from ...models.rtu import Sensor, Control
 
     rtu = get_rtu_or_404(db, name)
 
-    # Get sensors and controls as inventory items
-    sensors = db.query(Sensor).filter(Sensor.rtu_id == rtu.id).all()
-    controls = db.query(Control).filter(Control.rtu_id == rtu.id).all()
+    # Get sensors and controls from database
+    sensor_rows = db.query(Sensor).filter(Sensor.rtu_id == rtu.id).all()
+    control_rows = db.query(Control).filter(Control.rtu_id == rtu.id).all()
 
-    slots = []
-
-    # Add sensors as input slots
-    for sensor in sensors:
-        slots.append({
-            "slot": sensor.slot_number,
-            "subslot": 0,
-            "type": "input",
-            "module_type": "analog_input",
-            "tag": sensor.tag,
-            "sensor_type": sensor.sensor_type,
-            "unit": sensor.unit,
-            "channel": sensor.channel,
+    # Serialize sensors to match frontend RTUSensor interface
+    sensors = []
+    for s in sensor_rows:
+        sensors.append({
+            "id": s.id,
+            "rtu_station": rtu.station_name,
+            "sensor_id": s.tag,
+            "sensor_type": s.sensor_type,
+            "name": s.tag,
+            "unit": s.unit or "",
+            "register_address": s.slot_number if s.slot_number is not None else s.channel,
+            "data_type": "float32",
+            "scale_min": s.scale_min if s.scale_min is not None else 0.0,
+            "scale_max": s.scale_max if s.scale_max is not None else 100.0,
+            "last_value": None,
+            "last_quality": 0xC0,  # NOT_CONNECTED until cyclic data flows
+            "last_update": None,
+            "created_at": s.created_at.isoformat() if s.created_at else None,
         })
 
-    # Add controls as output slots
-    for control in controls:
-        slots.append({
-            "slot": control.slot_number,
-            "subslot": 0,
-            "type": "output",
-            "module_type": control.control_type,
-            "tag": control.tag,
-            "equipment_type": control.equipment_type,
-            "unit": control.unit,
-            "channel": control.channel,
+    # Serialize controls to match frontend RTUControl interface
+    controls = []
+    for c in control_rows:
+        controls.append({
+            "id": c.id,
+            "rtu_station": rtu.station_name,
+            "control_id": c.tag,
+            "control_type": c.control_type,
+            "name": c.tag,
+            "command_type": c.equipment_type or c.control_type,
+            "register_address": c.slot_number if c.slot_number is not None else c.channel,
+            "feedback_register": None,
+            "range_min": c.min_value,
+            "range_max": c.max_value,
+            "current_state": "unknown",
+            "current_value": None,
+            "last_command": None,
+            "last_update": None,
+            "created_at": c.created_at.isoformat() if c.created_at else None,
         })
-
-    # Sort by slot number (None values at end)
-    slots.sort(key=lambda x: (x.get("slot") is None, x.get("slot") or 0))
-
-    # Calculate slot usage
-    populated_slots = sum(1 for s in slots if s.get("slot") is not None)
-    total_slots = rtu.slot_count or 0
 
     return build_success_response({
-        "station_name": rtu.station_name,
-        "slot_count": total_slots,
-        "populated_slots": populated_slots,
-        "empty_slots": max(0, total_slots - populated_slots),
-        "slots": slots,
-        "last_updated": rtu.updated_at.isoformat() if rtu.updated_at else None,
+        "rtu_station": rtu.station_name,
+        "sensors": sensors,
+        "controls": controls,
+        "last_refresh": rtu.updated_at.isoformat() if rtu.updated_at else None,
     })
 
 
