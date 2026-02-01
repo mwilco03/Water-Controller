@@ -120,6 +120,7 @@ set(PROFINET_SOURCES
     src/profinet/cyclic_exchange.c
     src/profinet/profinet_frame.c
     src/profinet/ar_manager.c
+    src/profinet/gsdml_cache.c
 )
 
 # Registry module sources

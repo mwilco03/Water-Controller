@@ -1064,3 +1064,208 @@ async def http_probe_batch(request: HttpProbeBatchRequest) -> dict[str, Any]:
         "scan_duration_seconds": round(duration, 2),
         "results": [r.model_dump() for r in results],
     })
+
+
+# ============== Phase 5: GSDML Fetch ==============
+
+
+class GsdmlFetchRequest(BaseModel):
+    """Request to fetch GSDML from an RTU."""
+
+    ip_address: str = Field(..., description="RTU IP address")
+    station_name: str | None = Field(None, description="RTU station name (for caching)")
+    port: int = Field(9081, ge=1, le=65535, description="RTU HTTP port")
+
+    @field_validator("ip_address")
+    @classmethod
+    def validate_ip(cls, v: str) -> str:
+        try:
+            ipaddress.ip_address(v)
+            return v
+        except ValueError:
+            raise ValueError(f"Invalid IP address: {v}")
+
+
+@router.post("/gsdml")
+async def fetch_gsdml(request: GsdmlFetchRequest) -> dict[str, Any]:
+    """
+    Phase 5: Fetch GSDML XML from RTU via HTTP.
+
+    Fetches the GSDML device description from the RTU's HTTP server.
+    The GSDML contains module/submodule configuration needed for
+    PROFINET connection establishment.
+
+    Returns the raw GSDML XML content.
+    """
+    import httpx
+
+    url = f"http://{request.ip_address}:{request.port}/api/v1/gsdml"
+
+    logger.info(f"Fetching GSDML from {url}")
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(url)
+
+        if response.status_code != 200:
+            logger.error(f"GSDML fetch returned HTTP {response.status_code}")
+            raise HTTPException(
+                status_code=502,
+                detail={
+                    "error": "GSDML_FETCH_FAILED",
+                    "message": f"RTU returned HTTP {response.status_code}",
+                    "rtu_ip": request.ip_address,
+                },
+            )
+
+        gsdml_content = response.text
+
+        # Basic validation
+        if "<?xml" not in gsdml_content and "<GSDML" not in gsdml_content:
+            logger.error("GSDML response is not valid XML")
+            raise HTTPException(
+                status_code=502,
+                detail={
+                    "error": "GSDML_INVALID",
+                    "message": "Response is not valid GSDML XML",
+                },
+            )
+
+        result: dict[str, Any] = {
+            "gsdml_xml": gsdml_content,
+            "content_length": len(gsdml_content),
+            "rtu_ip": request.ip_address,
+        }
+
+        # Cache locally if station_name provided
+        if request.station_name:
+            import os
+
+            cache_dir = "/var/cache/water-controller/gsdml"
+            os.makedirs(cache_dir, exist_ok=True)
+            cache_path = os.path.join(cache_dir, f"{request.station_name}.xml")
+            with open(cache_path, "w") as f:
+                f.write(gsdml_content)
+            result["cached_at"] = cache_path
+            logger.info(f"GSDML cached: {cache_path}")
+
+        return build_success_response(result)
+
+    except httpx.ConnectError:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "RTU_UNREACHABLE",
+                "message": f"Cannot connect to RTU at {request.ip_address}:{request.port}",
+            },
+        )
+    except httpx.TimeoutException:
+        raise HTTPException(
+            status_code=504,
+            detail={
+                "error": "RTU_TIMEOUT",
+                "message": f"Timeout fetching GSDML from {request.ip_address}",
+            },
+        )
+
+
+# ============== Phase 6: HTTP Fallback Slots ==============
+
+
+class SlotInfo(BaseModel):
+    """Slot configuration from RTU."""
+
+    slot: int
+    subslot: int = 1
+    module_ident: int
+    submodule_ident: int
+    direction: str  # "input" or "output"
+    data_size: int
+
+
+class SlotsFetchRequest(BaseModel):
+    """Request to fetch slot configuration from RTU."""
+
+    ip_address: str = Field(..., description="RTU IP address")
+    port: int = Field(9081, ge=1, le=65535, description="RTU HTTP port")
+
+    @field_validator("ip_address")
+    @classmethod
+    def validate_ip(cls, v: str) -> str:
+        try:
+            ipaddress.ip_address(v)
+            return v
+        except ValueError:
+            raise ValueError(f"Invalid IP address: {v}")
+
+
+@router.post("/slots")
+async def fetch_rtu_slots(request: SlotsFetchRequest) -> dict[str, Any]:
+    """
+    Phase 6: Fetch slot configuration from RTU via HTTP (fallback).
+
+    When PROFINET connection fails, this endpoint fetches the RTU's
+    slot configuration via HTTP. The response provides module identifiers
+    needed for display in the HMI (degraded mode, no real-time I/O).
+
+    DAP (slot 0) is NOT included — controller knows DAP from GSDML.
+    """
+    import httpx
+
+    url = f"http://{request.ip_address}:{request.port}/api/v1/slots"
+
+    logger.info(f"Fetching slot config from {url} (HTTP fallback)")
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(url)
+
+        if response.status_code != 200:
+            logger.error(f"Slots fetch returned HTTP {response.status_code}")
+            raise HTTPException(
+                status_code=502,
+                detail={
+                    "error": "SLOTS_FETCH_FAILED",
+                    "message": f"RTU returned HTTP {response.status_code}",
+                },
+            )
+
+        data = response.json()
+
+        # Parse and validate slot data
+        slots: list[dict[str, Any]] = []
+        raw_slots = data.get("slots", [])
+        for raw in raw_slots:
+            slot = SlotInfo(
+                slot=raw.get("slot", 0),
+                subslot=raw.get("subslot", 1),
+                module_ident=raw.get("module_ident", 0),
+                submodule_ident=raw.get("submodule_ident", 0),
+                direction=raw.get("direction", "input"),
+                data_size=raw.get("data_size", 0),
+            )
+            slots.append(slot.model_dump())
+
+        return build_success_response({
+            "slot_count": data.get("slot_count", len(slots)),
+            "slots": slots,
+            "rtu_ip": request.ip_address,
+            "mode": "degraded",
+        })
+
+    except httpx.ConnectError:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "RTU_UNREACHABLE",
+                "message": f"Cannot connect to RTU at {request.ip_address}:{request.port}",
+            },
+        )
+    except httpx.TimeoutException:
+        raise HTTPException(
+            status_code=504,
+            detail={
+                "error": "RTU_TIMEOUT",
+                "message": f"Timeout fetching slots from {request.ip_address}",
+            },
+        )

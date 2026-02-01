@@ -1588,3 +1588,335 @@ wtc_result_t rpc_send_response(rpc_context_t *ctx,
 
     return WTC_OK;
 }
+
+/* ============== Record Read (Phase 3: Module Discovery) ============== */
+
+/**
+ * @brief Read uint32 in network byte order from buffer.
+ */
+static uint32_t read_u32_be(const uint8_t *buf, size_t *pos)
+{
+    uint32_t be;
+    memcpy(&be, buf + *pos, 4);
+    *pos += 4;
+    return ntohl(be);
+}
+
+wtc_result_t rpc_build_read_request(rpc_context_t *ctx,
+                                     const read_request_params_t *params,
+                                     uint8_t *buffer,
+                                     size_t *buf_len)
+{
+    if (!ctx || !params || !buffer || !buf_len) {
+        return WTC_ERROR_INVALID_PARAM;
+    }
+
+    if (*buf_len < RPC_MAX_PDU_SIZE) {
+        return WTC_ERROR_NO_MEMORY;
+    }
+
+    size_t pos = sizeof(profinet_rpc_header_t);
+
+    /* NDR request header — reserve 20 bytes, fill after blocks are built */
+    size_t ndr_header_pos = pos;
+    pos += NDR_REQUEST_HEADER_SIZE;
+    size_t pnio_blocks_start = pos;
+
+    /* IODReadReqHeader block (IEC 61158-6 §5.2.3.9) */
+    size_t block_start = pos;
+    pos += 6;  /* Skip block header, fill later */
+
+    write_u16_be(buffer, 1, &pos);             /* SeqNumber */
+    memcpy(buffer + pos, params->ar_uuid, 16); /* ARUUID */
+    pos += 16;
+    write_u32_be(buffer, params->api, &pos);   /* API */
+    write_u16_be(buffer, params->slot, &pos);  /* SlotNumber */
+    write_u16_be(buffer, params->subslot, &pos); /* SubslotNumber */
+    write_u16_be(buffer, 0, &pos);             /* Padding */
+    write_u16_be(buffer, params->index, &pos); /* Index */
+    write_u32_be(buffer, params->max_record_length, &pos); /* RecordDataLength */
+
+    /* TargetARUUID — 16 bytes of zeros (not used for explicit reads) */
+    memset(buffer + pos, 0, 16);
+    pos += 16;
+
+    /* Padding to 4-byte alignment (8 bytes padding per spec) */
+    memset(buffer + pos, 0, 8);
+    pos += 8;
+
+    /* Fill block header */
+    size_t block_len = pos - block_start - 4;
+    size_t save_pos = block_start;
+    write_block_header(buffer, BLOCK_TYPE_IOD_READ_REQ_HEADER,
+                        (uint16_t)block_len, &save_pos);
+
+    /* Fill NDR header */
+    uint32_t pnio_len = (uint32_t)(pos - pnio_blocks_start);
+    uint32_t args_max = (uint32_t)(RPC_MAX_PDU_SIZE - sizeof(profinet_rpc_header_t));
+    write_ndr_request_header(buffer, ndr_header_pos, args_max, pnio_len);
+
+    /* Build RPC header (OpNum = READ) */
+    uint16_t fragment_length = (uint16_t)(pos - sizeof(profinet_rpc_header_t));
+    rpc_generate_uuid(ctx->activity_uuid);
+    build_rpc_header(buffer, ctx, params->ar_uuid, RPC_OPNUM_READ,
+                      fragment_length, &save_pos);
+
+    *buf_len = pos;
+    LOG_DEBUG("Built Read Request PDU: %zu bytes, index=0x%04X, slot=%u, subslot=%u",
+              pos, params->index, params->slot, params->subslot);
+    return WTC_OK;
+}
+
+/**
+ * @brief Parse RealIdentificationData (index 0xF844) from response data.
+ *
+ * Format: NumberOfAPIs(u16), then for each API:
+ *   API(u32), NumberOfSlots(u16), then for each slot:
+ *     SlotNumber(u16), ModuleIdentNumber(u32), NumberOfSubslots(u16),
+ *     then for each subslot:
+ *       SubslotNumber(u16), SubmoduleIdentNumber(u32)
+ */
+static wtc_result_t parse_real_identification_data(const uint8_t *data,
+                                                     size_t data_len,
+                                                     read_response_t *response)
+{
+    size_t pos = 0;
+
+    /* Parse block header if present (BlockType 0x0240) */
+    if (pos + 6 <= data_len) {
+        uint16_t block_type = read_u16_be(data, &pos);
+        if (block_type == BLOCK_TYPE_REAL_IDENT_DATA) {
+            pos += 2;  /* block_length */
+            pos += 2;  /* version */
+        } else {
+            /* Not a block header, reset and parse raw data */
+            pos = 0;
+        }
+    }
+
+    if (pos + 2 > data_len) {
+        LOG_ERROR("RealIdentificationData too short for API count");
+        return WTC_ERROR_PROTOCOL;
+    }
+
+    uint16_t api_count = read_u16_be(data, &pos);
+    LOG_DEBUG("RealIdentificationData: %u APIs", api_count);
+
+    response->module_count = 0;
+
+    for (uint16_t a = 0; a < api_count && pos + 6 <= data_len; a++) {
+        uint32_t api = read_u32_be(data, &pos);
+        if (pos + 2 > data_len) break;
+        uint16_t slot_count = read_u16_be(data, &pos);
+
+        LOG_DEBUG("  API %u: %u slots", api, slot_count);
+
+        for (uint16_t s = 0; s < slot_count && pos + 8 <= data_len; s++) {
+            uint16_t slot_num = read_u16_be(data, &pos);
+            uint32_t module_ident = read_u32_be(data, &pos);
+            if (pos + 2 > data_len) break;
+            uint16_t subslot_count = read_u16_be(data, &pos);
+
+            LOG_DEBUG("    Slot %u: module=0x%08X, %u subslots",
+                      slot_num, module_ident, subslot_count);
+
+            for (uint16_t ss = 0; ss < subslot_count && pos + 6 <= data_len; ss++) {
+                uint16_t subslot_num = read_u16_be(data, &pos);
+                uint32_t submod_ident = read_u32_be(data, &pos);
+
+                if (response->module_count < RPC_MAX_DISCOVERED_MODULES) {
+                    discovered_module_t *m = &response->modules[response->module_count];
+                    m->slot = slot_num;
+                    m->subslot = subslot_num;
+                    m->module_ident = module_ident;
+                    m->submodule_ident = submod_ident;
+                    response->module_count++;
+
+                    LOG_DEBUG("      Subslot 0x%04X: submod=0x%08X",
+                              subslot_num, submod_ident);
+                }
+            }
+
+            (void)api;
+        }
+    }
+
+    LOG_INFO("RealIdentificationData: discovered %d modules", response->module_count);
+    return WTC_OK;
+}
+
+wtc_result_t rpc_parse_read_response(const uint8_t *buffer,
+                                      size_t buf_len,
+                                      read_response_t *response)
+{
+    if (!buffer || !response || buf_len < sizeof(profinet_rpc_header_t)) {
+        return WTC_ERROR_INVALID_PARAM;
+    }
+
+    memset(response, 0, sizeof(read_response_t));
+
+    const profinet_rpc_header_t *hdr = (const profinet_rpc_header_t *)buffer;
+
+    if (hdr->packet_type == RPC_PACKET_TYPE_FAULT) {
+        LOG_ERROR("Read response: RPC fault received");
+        response->success = false;
+        response->error_code = PNIO_ERR_CODE_READ;
+        return WTC_ERROR_PROTOCOL;
+    }
+
+    if (hdr->packet_type != RPC_PACKET_TYPE_RESPONSE) {
+        LOG_ERROR("Read response: unexpected packet type %u", hdr->packet_type);
+        response->success = false;
+        return WTC_ERROR_PROTOCOL;
+    }
+
+    size_t pos = sizeof(profinet_rpc_header_t);
+
+    /* NDR response header (24 bytes):
+     * ArgsMaximum(4), ErrorStatus1(4), ErrorStatus2(4),
+     * MaxCount(4), Offset(4), ActualCount(4) */
+    bool has_ndr = response_has_ndr_header(buffer, pos, buf_len);
+
+    if (has_ndr) {
+        if (pos + 24 > buf_len) {
+            LOG_ERROR("Read response too short for NDR header");
+            return WTC_ERROR_PROTOCOL;
+        }
+
+        pos += 4;  /* ArgsMaximum */
+
+        uint32_t error_status1 = buffer[pos] | (buffer[pos+1] << 8) |
+                                 (buffer[pos+2] << 16) | (buffer[pos+3] << 24);
+        pos += 4;
+        uint32_t error_status2 = buffer[pos] | (buffer[pos+1] << 8) |
+                                 (buffer[pos+2] << 16) | (buffer[pos+3] << 24);
+        pos += 4;
+
+        if (error_status1 != 0 || error_status2 != 0) {
+            LOG_ERROR("Read response PNIO error: status1=0x%08X, status2=0x%08X",
+                      error_status1, error_status2);
+            response->success = false;
+            response->error_code = (uint8_t)(error_status2 & 0xFF);
+            return WTC_ERROR_PROTOCOL;
+        }
+
+        pos += 4;  /* MaxCount */
+        pos += 4;  /* Offset */
+        pos += 4;  /* ActualCount */
+    }
+
+    /* Parse IODReadResHeader block (0x8009) */
+    if (pos + 6 > buf_len) {
+        LOG_ERROR("Read response: no block header");
+        return WTC_ERROR_PROTOCOL;
+    }
+
+    uint16_t block_type = read_u16_be(buffer, &pos);
+    uint16_t block_length = read_u16_be(buffer, &pos);
+
+    if (block_type != BLOCK_TYPE_IOD_READ_RES_HEADER) {
+        LOG_ERROR("Read response: unexpected block type 0x%04X (expected 0x8009)",
+                  block_type);
+        return WTC_ERROR_PROTOCOL;
+    }
+
+    if (block_length < 2) {
+        LOG_ERROR("Read response: block length too small: %u", block_length);
+        return WTC_ERROR_PROTOCOL;
+    }
+
+    pos += 2;  /* Version */
+    pos += 2;  /* SeqNumber */
+    pos += 16; /* ARUUID */
+    pos += 4;  /* API */
+    pos += 2;  /* SlotNumber */
+    pos += 2;  /* SubslotNumber */
+    pos += 2;  /* Padding */
+
+    if (pos + 6 > buf_len) {
+        LOG_ERROR("Read response: truncated after header fields");
+        return WTC_ERROR_PROTOCOL;
+    }
+
+    response->index = read_u16_be(buffer, &pos);
+    response->record_data_length = read_u32_be(buffer, &pos);
+
+    /* Skip additional padding (20 bytes: TargetARUUID + padding) */
+    size_t remaining_header = (block_length + 4) - (pos - (pos - block_length - 4 + 6));
+    /* Simpler: advance to where record data starts based on block_length */
+    /* IODReadResHeader total = 6 (header) + block_length bytes
+     * We've parsed: 6 (header) + 2(ver) + 2(seq) + 16(uuid) + 4(api) +
+     *               2(slot) + 2(subslot) + 2(pad) + 2(index) + 4(len) = 42
+     * Remaining in block: block_length - (42 - 6) = block_length - 36
+     * This includes TargetARUUID(16) + padding(8) = 24 bytes */
+    (void)remaining_header;
+    if (pos + 24 <= buf_len) {
+        pos += 16; /* TargetARUUID */
+        pos += 8;  /* Padding */
+    }
+
+    response->success = true;
+
+    LOG_DEBUG("Read response: index=0x%04X, data_length=%u",
+              response->index, response->record_data_length);
+
+    /* Parse the record data payload */
+    if (response->record_data_length > 0 && pos < buf_len) {
+        size_t data_available = buf_len - pos;
+        if (data_available > response->record_data_length) {
+            data_available = response->record_data_length;
+        }
+
+        /* If this is RealIdentificationData (0xF844), parse the modules */
+        if (response->index == 0xF844) {
+            wtc_result_t res = parse_real_identification_data(
+                buffer + pos, data_available, response);
+            if (res != WTC_OK) {
+                LOG_WARN("Failed to parse RealIdentificationData, "
+                         "response still valid");
+            }
+        }
+    }
+
+    return WTC_OK;
+}
+
+wtc_result_t rpc_read_record(rpc_context_t *ctx,
+                              uint32_t device_ip,
+                              const read_request_params_t *params,
+                              read_response_t *response)
+{
+    if (!ctx || !params || !response) {
+        return WTC_ERROR_INVALID_PARAM;
+    }
+
+    uint8_t req_buf[RPC_MAX_PDU_SIZE];
+    uint8_t resp_buf[RPC_MAX_PDU_SIZE];
+    size_t req_len = sizeof(req_buf);
+    size_t resp_len = sizeof(resp_buf);
+
+    wtc_result_t res;
+
+    res = rpc_build_read_request(ctx, params, req_buf, &req_len);
+    if (res != WTC_OK) {
+        LOG_ERROR("Failed to build read request");
+        return res;
+    }
+
+    res = rpc_send_and_receive(ctx, device_ip, req_buf, req_len,
+                                resp_buf, &resp_len, RPC_READ_TIMEOUT_MS);
+    if (res != WTC_OK) {
+        LOG_ERROR("Read RPC failed");
+        return res;
+    }
+
+    res = rpc_parse_read_response(resp_buf, resp_len, response);
+    if (res != WTC_OK) {
+        LOG_ERROR("Failed to parse read response");
+        return res;
+    }
+
+    LOG_INFO("RPC Read successful: index=0x%04X, %d modules discovered",
+             response->index, response->module_count);
+    return WTC_OK;
+}

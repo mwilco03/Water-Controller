@@ -120,6 +120,92 @@ void ar_manager_set_state_callback(ar_manager_t *manager,
                                     ar_state_change_callback_t callback,
                                     void *ctx);
 
+/* ============== Phase 2-4: Discovery Pipeline ============== */
+
+/* Maximum discovered modules from RealIdentificationData 0xF844 */
+#define AR_MAX_DISCOVERED_MODULES  64
+
+/* Module discovered via Record Read 0xF844 */
+typedef struct {
+    uint16_t slot;
+    uint16_t subslot;
+    uint32_t module_ident;
+    uint32_t submodule_ident;
+} ar_discovered_module_t;
+
+/* Module discovery result (Phase 3 output) */
+typedef struct {
+    ar_discovered_module_t modules[AR_MAX_DISCOVERED_MODULES];
+    int module_count;
+    bool from_cache;  /* true if loaded from GSDML cache */
+} ar_module_discovery_t;
+
+/**
+ * @brief Phase 2: DAP-only connect.
+ *
+ * Establishes a minimal AR with only DAP (slot 0) submodules:
+ *   Subslot 0x0001 (DAP identity)
+ *   Subslot 0x8000 (Interface)
+ *   Subslot 0x8001 (Port)
+ *
+ * This AR is used for Record Read operations to discover
+ * actual plugged modules before the full connect.
+ *
+ * @param[in]  manager  AR manager
+ * @param[in]  ar       AR with device info populated
+ * @return WTC_OK on success
+ */
+wtc_result_t ar_send_dap_connect_request(ar_manager_t *manager,
+                                          profinet_ar_t *ar);
+
+/**
+ * @brief Phase 3: Read RealIdentificationData from device.
+ *
+ * Sends Record Read (index 0xF844) to discover actual plugged modules.
+ * Must be called after a successful DAP-only connect (Phase 2).
+ *
+ * @param[in]  manager    AR manager
+ * @param[in]  ar         Active AR (from Phase 2)
+ * @param[out] discovery  Discovered modules
+ * @return WTC_OK on success
+ */
+wtc_result_t ar_read_real_identification(ar_manager_t *manager,
+                                          profinet_ar_t *ar,
+                                          ar_module_discovery_t *discovery);
+
+/**
+ * @brief Phases 2-4 orchestrator: discover modules and full connect.
+ *
+ * Executes the complete discovery pipeline:
+ * 1. DAP-only connect (Phase 2)
+ * 2. Record Read 0xF844 for module discovery (Phase 3)
+ * 3. Release DAP-only AR
+ * 4. Full connect with discovered modules (Phase 4)
+ *
+ * If GSDML cache is available (Phase 5), phases 2-3 are skipped.
+ *
+ * @param[in]  manager  AR manager
+ * @param[in]  ar       AR with device info populated (station_name, IP, MAC)
+ * @return WTC_OK on success, error if any phase fails
+ */
+wtc_result_t ar_connect_with_discovery(ar_manager_t *manager,
+                                        profinet_ar_t *ar);
+
+/**
+ * @brief Build connect params using discovered modules.
+ *
+ * Converts ar_module_discovery_t into a connect_request_params_t
+ * suitable for full connect (Phase 4).
+ *
+ * @param[in]  manager    AR manager
+ * @param[in]  ar         AR handle
+ * @param[in]  discovery  Discovered module layout
+ * @return WTC_OK on success
+ */
+wtc_result_t ar_build_full_connect_params(ar_manager_t *manager,
+                                           profinet_ar_t *ar,
+                                           const ar_module_discovery_t *discovery);
+
 #ifdef __cplusplus
 }
 #endif
