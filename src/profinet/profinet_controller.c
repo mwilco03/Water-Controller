@@ -790,8 +790,22 @@ wtc_result_t profinet_controller_connect(profinet_controller_t *controller,
         return res;
     }
 
-    /* Initiate connection */
-    res = ar_send_connect_request(controller->ar_manager, ar);
+    /*
+     * Connection strategy:
+     * - If explicit slots were provided by the caller, use direct connect
+     *   (existing behavior — caller knows the module layout).
+     * - If using default/generic slots, use the discovery pipeline which
+     *   discovers the actual module layout from the device (Phases 2-6).
+     */
+    if (slots != default_slots) {
+        /* Caller provided explicit slot configuration */
+        res = ar_send_connect_request(controller->ar_manager, ar);
+    } else {
+        /* No explicit slots — use discovery pipeline to learn module layout.
+         * Pipeline: GSDML cache → DAP connect → Record Read → Full connect
+         * Falls back to HTTP /slots if PROFINET discovery fails. */
+        res = ar_connect_with_discovery(controller->ar_manager, ar);
+    }
 
     pthread_mutex_unlock(&controller->lock);
 

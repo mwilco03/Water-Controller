@@ -6,6 +6,7 @@
 
 #include "ar_manager.h"
 #include "cyclic_exchange.h"
+#include "gsdml_cache.h"
 #include "profinet_frame.h"
 #include "profinet_identity.h"
 #include "profinet_rpc.h"
@@ -1395,31 +1396,75 @@ wtc_result_t ar_connect_with_discovery(ar_manager_t *manager,
 
     wtc_result_t res;
     ar_module_discovery_t discovery;
+    bool need_profinet_discovery = true;
 
-    /* Phase 2: DAP-only connect */
-    res = ar_send_dap_connect_request(manager, ar);
-    if (res != WTC_OK) {
-        LOG_ERROR("Phase 2 (DAP connect) failed for %s", ar->device_station_name);
-        return res;
+    /* Phase 5 shortcut: Check GSDML cache first.
+     * If cached GSDML exists for this station, skip DAP-only connect
+     * and Record Read (Phases 2-3) entirely. */
+    if (gsdml_cache_exists(ar->device_station_name)) {
+        LOG_INFO("GSDML cache found for %s, skipping Phases 2-3",
+                 ar->device_station_name);
+
+        res = gsdml_cache_load_modules(ar->device_station_name, &discovery);
+        if (res == WTC_OK && discovery.module_count > 0) {
+            need_profinet_discovery = false;
+            LOG_INFO("Loaded %d modules from cached GSDML",
+                     discovery.module_count);
+        } else {
+            LOG_WARN("GSDML cache load failed, falling back to PROFINET discovery");
+        }
     }
 
-    /* Phase 3: Record Read 0xF844 */
-    res = ar_read_real_identification(manager, ar, &discovery);
-    if (res != WTC_OK) {
-        LOG_ERROR("Phase 3 (Record Read) failed for %s", ar->device_station_name);
-        /* Release the DAP AR before returning */
-        ar_send_release_request(manager, ar);
-        return res;
+    /* Phases 2-3: PROFINET-based module discovery */
+    if (need_profinet_discovery) {
+        /* Phase 2: DAP-only connect */
+        res = ar_send_dap_connect_request(manager, ar);
+        if (res != WTC_OK) {
+            LOG_ERROR("Phase 2 (DAP connect) failed for %s",
+                      ar->device_station_name);
+
+            /* Phase 6 fallback: try HTTP /slots if PROFINET fails */
+            LOG_INFO("Attempting Phase 6 HTTP fallback for %s",
+                     ar->device_station_name);
+
+            /* Convert device_ip (host order uint32) to string */
+            char ip_str[16];
+            snprintf(ip_str, sizeof(ip_str), "%u.%u.%u.%u",
+                     (ar->device_ip >> 24) & 0xFF,
+                     (ar->device_ip >> 16) & 0xFF,
+                     (ar->device_ip >> 8) & 0xFF,
+                     ar->device_ip & 0xFF);
+
+            res = gsdml_fetch_slots_http(ip_str, &discovery);
+            if (res != WTC_OK) {
+                LOG_ERROR("HTTP fallback also failed for %s",
+                          ar->device_station_name);
+                return WTC_ERROR_CONNECTION_FAILED;
+            }
+            /* HTTP fallback succeeded — skip to Phase 4 */
+            need_profinet_discovery = false;
+        }
+
+        if (need_profinet_discovery) {
+            /* Phase 3: Record Read 0xF844 */
+            res = ar_read_real_identification(manager, ar, &discovery);
+            if (res != WTC_OK) {
+                LOG_ERROR("Phase 3 (Record Read) failed for %s",
+                          ar->device_station_name);
+                ar_send_release_request(manager, ar);
+                return res;
+            }
+
+            /* Release DAP-only AR before full connect */
+            LOG_INFO("Releasing DAP-only AR for %s before full connect",
+                     ar->device_station_name);
+            ar_send_release_request(manager, ar);
+
+            /* Brief pause for device to clean up the old AR */
+            struct timespec ts = {0, 100000000}; /* 100ms */
+            nanosleep(&ts, NULL);
+        }
     }
-
-    /* Release DAP-only AR before full connect */
-    LOG_INFO("Releasing DAP-only AR for %s before full connect",
-             ar->device_station_name);
-    ar_send_release_request(manager, ar);
-
-    /* Brief pause for device to clean up the old AR */
-    struct timespec ts = {0, 100000000}; /* 100ms */
-    nanosleep(&ts, NULL);
 
     /* Phase 4: Build full params from discovered modules */
     res = ar_build_full_connect_params(manager, ar, &discovery);
@@ -1440,6 +1485,23 @@ wtc_result_t ar_connect_with_discovery(ar_manager_t *manager,
         LOG_ERROR("Phase 4 (full connect) failed for %s",
                   ar->device_station_name);
         return res;
+    }
+
+    /* Phase 5: Background GSDML cache fetch (if not already cached) */
+    if (!discovery.from_cache) {
+        char ip_str[16];
+        snprintf(ip_str, sizeof(ip_str), "%u.%u.%u.%u",
+                 (ar->device_ip >> 24) & 0xFF,
+                 (ar->device_ip >> 16) & 0xFF,
+                 (ar->device_ip >> 8) & 0xFF,
+                 ar->device_ip & 0xFF);
+
+        wtc_result_t cache_res = gsdml_cache_fetch(ip_str,
+                                                     ar->device_station_name);
+        if (cache_res != WTC_OK) {
+            LOG_DEBUG("GSDML cache fetch failed (non-critical) for %s",
+                      ar->device_station_name);
+        }
     }
 
     LOG_INFO("=== Discovery Pipeline COMPLETE for %s ===",
