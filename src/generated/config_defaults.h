@@ -2,7 +2,7 @@
  * AUTO-GENERATED FILE - DO NOT EDIT MANUALLY
  *
  * Generated from: schemas/config/*.schema.yaml
- * Generated at: 2026-01-23 14:43:37 UTC
+ * Generated at: 2026-02-01 17:03:31 UTC
  * Generator: scripts/generate_c_types.py
  *
  * To update this file, modify the source schemas and run:
@@ -154,7 +154,7 @@ extern "C" {
 #define WTC_DEFAULT_PROFINET_CONTROLLER_MAC_ADDRESS ""
 #define WTC_DEFAULT_PROFINET_CONTROLLER_STATION_NAME "wtc-controller"
 #define WTC_DEFAULT_PROFINET_CONTROLLER_SUBNET_MASK "255.255.255.0"
-#define WTC_DEFAULT_PROFINET_CONTROLLER_VENDOR_ID 4660
+#define WTC_DEFAULT_PROFINET_CONTROLLER_VENDOR_ID 1171
 #define WTC_DEFAULT_PROFINET_CYCLE_TIME_US 1000000
 #define WTC_DEFAULT_PROFINET_DISCOVERY_AUTO_DISCOVER true
 #define WTC_DEFAULT_PROFINET_DISCOVERY_PERIODIC_SCAN false

@@ -46,10 +46,14 @@ typedef struct {
     void *callback_ctx;
 } ar_config_t;
 
-/* Initialize AR manager */
+/* Initialize AR manager.
+ * vendor_id/device_id are used to build the CMInitiatorObjectUUID
+ * (DEA00000-6C97-11D1-8271-{instance}{device}{vendor}) per IEC 61158-6-10. */
 wtc_result_t ar_manager_init(ar_manager_t **manager,
                               int socket_fd,
-                              const uint8_t *controller_mac);
+                              const uint8_t *controller_mac,
+                              uint16_t vendor_id,
+                              uint16_t device_id);
 
 /* Set controller IP address (required for RPC) */
 void ar_manager_set_controller_ip(ar_manager_t *manager, uint32_t ip);

@@ -7,6 +7,7 @@
 #include "ar_manager.h"
 #include "cyclic_exchange.h"
 #include "profinet_frame.h"
+#include "profinet_identity.h"
 #include "profinet_rpc.h"
 #include "rpc_strategy.h"
 #include "gsdml_modules.h"
@@ -183,7 +184,9 @@ static wtc_result_t send_cyclic_frame(ar_manager_t *manager, profinet_ar_t *ar) 
 
 wtc_result_t ar_manager_init(ar_manager_t **manager,
                               int socket_fd,
-                              const uint8_t *controller_mac) {
+                              const uint8_t *controller_mac,
+                              uint16_t vendor_id,
+                              uint16_t device_id) {
     if (!manager || socket_fd < 0 || !controller_mac) {
         return WTC_ERROR_INVALID_PARAM;
     }
@@ -205,8 +208,13 @@ wtc_result_t ar_manager_init(ar_manager_t **manager,
         mgr->if_index = sll.sll_ifindex;
     }
 
-    /* Generate controller UUID (used in Connect Request) */
-    rpc_generate_uuid(mgr->controller_uuid);
+    /*
+     * Build CMInitiatorObjectUUID per IEC 61158-6-10 §4.10.3.2:
+     *   DEA00000-6C97-11D1-8271-{instance}{device}{vendor}
+     * This identifies the controller in the ARBlockReq.
+     */
+    pn_build_cm_initiator_uuid(mgr->controller_uuid,
+                                vendor_id, device_id, PN_INSTANCE_ID);
 
     *manager = mgr;
     LOG_DEBUG("AR manager initialized");

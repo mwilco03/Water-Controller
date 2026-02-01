@@ -5,6 +5,7 @@
  */
 
 #include "config_manager.h"
+#include "profinet/profinet_identity.h"
 #include "logger.h"
 #include <stdlib.h>
 #include <string.h>
@@ -341,8 +342,8 @@ void config_manager_get_defaults(system_config_t *config) {
     /* PROFINET - empty interface means auto-detect */
     config->interface_name[0] = '\0';
     config->cycle_time_ms = 1000;
-    config->vendor_id = 0x1234;
-    config->device_id = 0x0001;
+    config->vendor_id = PN_VENDOR_ID;
+    config->device_id = PN_DEVICE_ID;
 
     /* Database */
     strncpy(config->db_host, "localhost", sizeof(config->db_host) - 1);
