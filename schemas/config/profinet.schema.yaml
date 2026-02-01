@@ -64,8 +64,8 @@ properties:
         type: integer
         minimum: 0
         maximum: 65535
-        default: 4660
-        description: "PROFINET vendor ID (0x1234)"
+        default: 1171
+        description: "PROFINET vendor ID (0x0493, must match GSDML)"
         x-format: "hex"
 
       device_id:

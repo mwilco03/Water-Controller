@@ -5,6 +5,7 @@
  */
 
 #include "profinet_controller.h"
+#include "profinet_identity.h"
 #include "dcp_discovery.h"
 #include "profinet_frame.h"
 #include "ar_manager.h"
@@ -461,8 +462,9 @@ wtc_result_t profinet_controller_init(profinet_controller_t **controller,
      */
     dcp_set_socket(ctrl->dcp, ctrl->raw_socket);
 
-    /* Initialize AR manager */
-    res = ar_manager_init(&ctrl->ar_manager, ctrl->raw_socket, ctrl->mac_address);
+    /* Initialize AR manager with controller identity for CMInitiatorObjectUUID */
+    res = ar_manager_init(&ctrl->ar_manager, ctrl->raw_socket, ctrl->mac_address,
+                           config->vendor_id, config->device_id);
     if (res != WTC_OK) {
         dcp_discovery_cleanup(ctrl->dcp);
         close(ctrl->rpc_socket);
@@ -745,9 +747,9 @@ wtc_result_t profinet_controller_connect(profinet_controller_t *controller,
             synthetic_device.ip_address = target_ip;
             strncpy(synthetic_device.station_name, station_name,
                     sizeof(synthetic_device.station_name) - 1);
-            /* Use default vendor/device IDs for Water-Treat RTU */
-            synthetic_device.vendor_id = 0x1234;
-            synthetic_device.device_id = 0x0001;
+            /* Use identity constants for Water-Treat RTU (must match GSDML) */
+            synthetic_device.vendor_id = PN_VENDOR_ID;
+            synthetic_device.device_id = PN_DEVICE_ID;
             synthetic_device.ip_set = true;
             synthetic_device.name_set = true;
 

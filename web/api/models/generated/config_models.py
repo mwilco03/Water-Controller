@@ -2,7 +2,7 @@
 AUTO-GENERATED FILE - DO NOT EDIT MANUALLY
 
 Generated from: schemas/config/*.schema.yaml
-Generated at: 2026-01-23 14:43:37 UTC
+Generated at: 2026-02-01 17:03:31 UTC
 Generator: scripts/generate_pydantic.py
 
 To update this file, modify the source schemas and run:
@@ -545,7 +545,7 @@ class ControllerConfig(BaseModel):
     mac_address: str = Field(default="", pattern=r"^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$", description="Controller MAC address (auto-detect if empty)")
     station_name: str = Field(default="wtc-controller", max_length=63, pattern=r"^[a-z0-9][a-z0-9-]{0,62}$", description="Controller station name (PROFINET IEC 61158-6: lowercase, digits, hyphen only)")
     subnet_mask: str = Field(default="255.255.255.0", description="Network subnet mask")
-    vendor_id: int = Field(default=4660, ge=0, le=65535, description="PROFINET vendor ID (0x1234)")
+    vendor_id: int = Field(default=1171, ge=0, le=65535, description="PROFINET vendor ID (0x0493, must match GSDML)")
 
     model_config = {
         "extra": "forbid",
