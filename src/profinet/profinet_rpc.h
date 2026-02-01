@@ -463,6 +463,69 @@ wtc_result_t rpc_release(rpc_context_t *ctx,
                           const uint8_t *ar_uuid,
                           uint16_t session_key);
 
+/* ============== Record Read/Write ============== */
+
+/* Maximum discovered modules from a single Record Read 0xF844 */
+#define RPC_MAX_DISCOVERED_MODULES  64
+
+/* Record Read timeout */
+#define RPC_READ_TIMEOUT_MS         5000
+
+/* RealIdentificationData block type */
+#define BLOCK_TYPE_REAL_IDENT_DATA  0x0240
+
+/* Record Read request parameters */
+typedef struct {
+    uint8_t ar_uuid[16];        /* AR UUID (from connect) */
+    uint16_t session_key;       /* Session key */
+    uint32_t api;               /* API number (0 = default) */
+    uint16_t slot;              /* Slot (0xFFFF = all) */
+    uint16_t subslot;           /* Subslot (0xFFFF = all) */
+    uint16_t index;             /* Record index (e.g. 0xF844) */
+    uint32_t max_record_length; /* Max response data length */
+} read_request_params_t;
+
+/* Discovered module from RealIdentificationData (0xF844) */
+typedef struct {
+    uint16_t slot;
+    uint16_t subslot;
+    uint32_t module_ident;
+    uint32_t submodule_ident;
+} discovered_module_t;
+
+/* Record Read response */
+typedef struct {
+    bool success;
+    uint16_t index;             /* Echoed record index */
+    uint32_t record_data_length;/* Actual data length */
+
+    /* For 0xF844 (RealIdentificationData) parsing */
+    discovered_module_t modules[RPC_MAX_DISCOVERED_MODULES];
+    int module_count;
+
+    /* Error info */
+    uint8_t error_code;
+    uint16_t error_code1;
+    uint16_t error_code2;
+} read_response_t;
+
+/* Build Record Read Request PDU (OpNum 2) */
+wtc_result_t rpc_build_read_request(rpc_context_t *ctx,
+                                     const read_request_params_t *params,
+                                     uint8_t *buffer,
+                                     size_t *buf_len);
+
+/* Parse Record Read Response PDU */
+wtc_result_t rpc_parse_read_response(const uint8_t *buffer,
+                                      size_t buf_len,
+                                      read_response_t *response);
+
+/* High-level Record Read: send request, receive and parse response */
+wtc_result_t rpc_read_record(rpc_context_t *ctx,
+                              uint32_t device_ip,
+                              const read_request_params_t *params,
+                              read_response_t *response);
+
 /* ============== RPC Server (for incoming requests from device) ============== */
 
 /* Incoming Control Request info (parsed from device's ApplicationReady) */

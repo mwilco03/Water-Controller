@@ -6,6 +6,7 @@
 
 #include "ar_manager.h"
 #include "cyclic_exchange.h"
+#include "gsdml_cache.h"
 #include "profinet_frame.h"
 #include "profinet_identity.h"
 #include "profinet_rpc.h"
@@ -1057,4 +1058,453 @@ void ar_manager_set_state_callback(ar_manager_t *manager,
         manager->state_callback = callback;
         manager->state_callback_ctx = ctx;
     }
+}
+
+/* ============== Phase 2-4: Discovery Pipeline ============== */
+
+/**
+ * @brief Build DAP-only connect parameters.
+ *
+ * Creates connect request params with only DAP (slot 0) submodules:
+ *   Subslot 0x0001: DAP identity
+ *   Subslot 0x8000: Interface
+ *   Subslot 0x8001: Port
+ *
+ * IOCRs use minimum data_length (40 bytes) since no application I/O.
+ */
+static void build_dap_connect_params(ar_manager_t *manager,
+                                      profinet_ar_t *ar,
+                                      connect_request_params_t *params) {
+    memset(params, 0, sizeof(connect_request_params_t));
+
+    /* AR configuration */
+    memcpy(params->ar_uuid, ar->ar_uuid, 16);
+    params->session_key = ar->session_key;
+    params->ar_type = ar->type;
+    params->ar_properties = AR_PROP_STATE_ACTIVE |
+                            AR_PROP_PARAMETERIZATION_TYPE |
+                            AR_PROP_STARTUP_MODE_LEGACY;
+    strncpy(params->station_name, ar->device_station_name,
+            sizeof(params->station_name) - 1);
+
+    /* Controller info */
+    memcpy(params->controller_mac, manager->controller_mac, 6);
+    memcpy(params->controller_uuid, manager->controller_uuid, 16);
+    params->controller_port = manager->rpc_ctx.controller_port;
+    params->activity_timeout = 100;
+
+    /* Conservative timing */
+    timing_params_t tp;
+    rpc_strategy_get_timing(TIMING_CONSERVATIVE, &tp);
+
+    /* Input IOCR: minimum data_length for RT_CLASS_1 */
+    params->iocr_count = 2;
+    params->iocr[0].type = IOCR_TYPE_INPUT;
+    params->iocr[0].reference = 1;
+    params->iocr[0].frame_id = 0xC001;
+    params->iocr[0].data_length = IOCR_MIN_C_SDU_LENGTH;
+    params->iocr[0].send_clock_factor = tp.send_clock_factor;
+    params->iocr[0].reduction_ratio = tp.reduction_ratio;
+    params->iocr[0].watchdog_factor = tp.watchdog_factor;
+
+    /* Output IOCR: minimum data_length */
+    params->iocr[1].type = IOCR_TYPE_OUTPUT;
+    params->iocr[1].reference = 2;
+    params->iocr[1].frame_id = 0xFFFF; /* Device assigns */
+    params->iocr[1].data_length = IOCR_MIN_C_SDU_LENGTH;
+    params->iocr[1].send_clock_factor = tp.send_clock_factor;
+    params->iocr[1].reduction_ratio = tp.reduction_ratio;
+    params->iocr[1].watchdog_factor = tp.watchdog_factor;
+
+    params->data_hold_factor = tp.data_hold_factor;
+    params->rta_timeout_factor = tp.rta_timeout_factor;
+    params->rta_retries = tp.rta_retries;
+
+    /* DAP-only expected configuration (3 submodules) */
+    params->expected_count = 0;
+
+    params->expected_config[0].slot = 0;
+    params->expected_config[0].module_ident = GSDML_MOD_DAP;
+    params->expected_config[0].subslot = 0x0001;
+    params->expected_config[0].submodule_ident = GSDML_SUBMOD_DAP;
+    params->expected_config[0].data_length = 0;
+    params->expected_config[0].is_input = true;
+
+    params->expected_config[1].slot = 0;
+    params->expected_config[1].module_ident = GSDML_MOD_DAP;
+    params->expected_config[1].subslot = 0x8000;
+    params->expected_config[1].submodule_ident = GSDML_SUBMOD_INTERFACE;
+    params->expected_config[1].data_length = 0;
+    params->expected_config[1].is_input = true;
+
+    params->expected_config[2].slot = 0;
+    params->expected_config[2].module_ident = GSDML_MOD_DAP;
+    params->expected_config[2].subslot = 0x8001;
+    params->expected_config[2].submodule_ident = GSDML_SUBMOD_PORT;
+    params->expected_config[2].data_length = 0;
+    params->expected_config[2].is_input = true;
+
+    params->expected_count = 3;
+    params->max_alarm_data_length = 200;
+}
+
+/**
+ * @brief Determine if a discovered module is an input (sensor) module.
+ *
+ * Uses module_ident ranges from GSDML:
+ *   0x10-0x70: sensor modules (input)
+ *   0x100+: actuator modules (output)
+ */
+static bool is_input_module(uint32_t module_ident) {
+    return (module_ident >= GSDML_MOD_PH && module_ident <= GSDML_MOD_GENERIC_AI);
+}
+
+/**
+ * @brief Get I/O data size for a module ident.
+ */
+static uint16_t get_module_data_size(uint32_t module_ident) {
+    if (is_input_module(module_ident)) {
+        return GSDML_INPUT_DATA_SIZE;
+    }
+    return GSDML_OUTPUT_DATA_SIZE;
+}
+
+wtc_result_t ar_send_dap_connect_request(ar_manager_t *manager,
+                                          profinet_ar_t *ar) {
+    if (!manager || !ar) {
+        return WTC_ERROR_INVALID_PARAM;
+    }
+
+    /* Set controller IP if needed */
+    if (manager->controller_ip == 0 && ar->device_ip != 0) {
+        manager->controller_ip = (ar->device_ip & 0xFFFFFF00) | 0x00000001;
+        LOG_DEBUG("Auto-configured controller IP: %08X", manager->controller_ip);
+    }
+
+    wtc_result_t res = ensure_rpc_initialized(manager);
+    if (res != WTC_OK) {
+        LOG_ERROR("Failed to initialize RPC for DAP connect");
+        return res;
+    }
+
+    LOG_INFO("=== Phase 2: DAP-only Connect to %s ===", ar->device_station_name);
+
+    /* Generate fresh AR UUID and session key */
+    rpc_generate_uuid((uint8_t *)ar->ar_uuid);
+    ar->session_key = manager->session_key_counter++;
+
+    /* Build DAP-only connect parameters */
+    connect_request_params_t params;
+    build_dap_connect_params(manager, ar, &params);
+
+    /* Send connect request */
+    connect_response_t response;
+    res = rpc_connect(&manager->rpc_ctx, ar->device_ip, &params, &response);
+
+    if (res == WTC_OK && response.success) {
+        memcpy(ar->device_mac, response.device_mac, 6);
+        ar->state = AR_STATE_CONNECT_CNF;
+        ar->last_activity_ms = time_get_ms();
+
+        LOG_INFO("=== DAP Connect SUCCESS for %s (session_key=%u) ===",
+                 ar->device_station_name, response.session_key);
+
+        if (response.has_diff) {
+            LOG_DEBUG("DAP connect: module diff block present (expected for DAP-only)");
+        }
+
+        return WTC_OK;
+    }
+
+    LOG_ERROR("=== DAP Connect FAILED for %s: error=%d ===",
+              ar->device_station_name, res);
+    return WTC_ERROR_CONNECTION_FAILED;
+}
+
+wtc_result_t ar_read_real_identification(ar_manager_t *manager,
+                                          profinet_ar_t *ar,
+                                          ar_module_discovery_t *discovery) {
+    if (!manager || !ar || !discovery) {
+        return WTC_ERROR_INVALID_PARAM;
+    }
+
+    if (!manager->rpc_initialized) {
+        LOG_ERROR("RPC not initialized for Record Read");
+        return WTC_ERROR_NOT_INITIALIZED;
+    }
+
+    memset(discovery, 0, sizeof(ar_module_discovery_t));
+
+    LOG_INFO("=== Phase 3: Record Read 0xF844 from %s ===",
+             ar->device_station_name);
+
+    /* Build Record Read parameters */
+    read_request_params_t read_params;
+    memset(&read_params, 0, sizeof(read_params));
+    memcpy(read_params.ar_uuid, ar->ar_uuid, 16);
+    read_params.session_key = ar->session_key;
+    read_params.api = 0x00000000;
+    read_params.slot = 0xFFFF;     /* All slots */
+    read_params.subslot = 0xFFFF;  /* All subslots */
+    read_params.index = 0xF844;    /* RealIdentificationData */
+    read_params.max_record_length = RPC_MAX_PDU_SIZE;
+
+    /* Execute Record Read */
+    read_response_t read_response;
+    wtc_result_t res = rpc_read_record(&manager->rpc_ctx, ar->device_ip,
+                                        &read_params, &read_response);
+    if (res != WTC_OK) {
+        LOG_ERROR("Record Read 0xF844 failed for %s: error=%d",
+                  ar->device_station_name, res);
+        return res;
+    }
+
+    if (!read_response.success) {
+        LOG_ERROR("Record Read 0xF844 returned error for %s",
+                  ar->device_station_name);
+        return WTC_ERROR_PROTOCOL;
+    }
+
+    /* Copy discovered modules to output */
+    for (int i = 0; i < read_response.module_count &&
+                    i < AR_MAX_DISCOVERED_MODULES; i++) {
+        discovery->modules[i].slot = read_response.modules[i].slot;
+        discovery->modules[i].subslot = read_response.modules[i].subslot;
+        discovery->modules[i].module_ident = read_response.modules[i].module_ident;
+        discovery->modules[i].submodule_ident = read_response.modules[i].submodule_ident;
+    }
+    discovery->module_count = read_response.module_count;
+    discovery->from_cache = false;
+
+    LOG_INFO("=== Module Discovery: %d modules found on %s ===",
+             discovery->module_count, ar->device_station_name);
+
+    for (int i = 0; i < discovery->module_count; i++) {
+        ar_discovered_module_t *m = &discovery->modules[i];
+        LOG_DEBUG("  Slot %u.0x%04X: module=0x%08X submod=0x%08X",
+                  m->slot, m->subslot, m->module_ident, m->submodule_ident);
+    }
+
+    return WTC_OK;
+}
+
+wtc_result_t ar_build_full_connect_params(ar_manager_t *manager,
+                                           profinet_ar_t *ar,
+                                           const ar_module_discovery_t *discovery) {
+    if (!manager || !ar || !discovery) {
+        return WTC_ERROR_INVALID_PARAM;
+    }
+
+    LOG_INFO("Building full connect params from %d discovered modules",
+             discovery->module_count);
+
+    /* Count input and output data sizes for IOCR calculation */
+    uint16_t input_data_total = 0;
+    uint16_t input_submod_count = 0;
+    uint16_t output_data_total = 0;
+    uint16_t output_submod_count = 0;
+
+    for (int i = 0; i < discovery->module_count; i++) {
+        const ar_discovered_module_t *m = &discovery->modules[i];
+
+        /* Skip DAP submodules (slot 0) - they have no I/O data */
+        if (m->slot == 0) {
+            continue;
+        }
+
+        uint16_t data_size = get_module_data_size(m->module_ident);
+
+        if (is_input_module(m->module_ident)) {
+            input_data_total += data_size;
+            input_submod_count++;
+        } else {
+            output_data_total += data_size;
+            output_submod_count++;
+        }
+    }
+
+    /* Update IOCR buffers on the AR to match discovered layout.
+     * IOCR data_length = 40 + user_data + IOPS_count (1 per submodule) */
+    if (ar->iocr_count >= 2) {
+        uint16_t input_csdu = IOCR_MIN_C_SDU_LENGTH + input_data_total +
+                              input_submod_count;
+        if (input_csdu < IOCR_MIN_C_SDU_LENGTH) {
+            input_csdu = IOCR_MIN_C_SDU_LENGTH;
+        }
+        ar->iocr[0].data_length = input_csdu;
+        ar->iocr[0].user_data_length = input_data_total;
+        ar->iocr[0].iodata_count = input_submod_count;
+
+        uint16_t output_csdu = IOCR_MIN_C_SDU_LENGTH + output_data_total +
+                               output_submod_count;
+        if (output_csdu < IOCR_MIN_C_SDU_LENGTH) {
+            output_csdu = IOCR_MIN_C_SDU_LENGTH;
+        }
+        ar->iocr[1].data_length = output_csdu;
+        ar->iocr[1].user_data_length = output_data_total;
+        ar->iocr[1].iodata_count = output_submod_count;
+    }
+
+    /* Store discovered modules as slot_info for full connect */
+    ar->slot_count = 0;
+    for (int i = 0; i < discovery->module_count && ar->slot_count < WTC_MAX_SLOTS; i++) {
+        const ar_discovered_module_t *m = &discovery->modules[i];
+        if (m->slot == 0) continue;  /* DAP handled separately in build_connect_params */
+
+        ar_slot_info_t *info = &ar->slot_info[ar->slot_count];
+        info->slot = m->slot;
+        info->subslot = m->subslot;
+
+        if (is_input_module(m->module_ident)) {
+            info->type = SLOT_TYPE_SENSOR;
+            /* Reverse-map module ident to measurement type */
+            switch (m->module_ident) {
+            case GSDML_MOD_PH:          info->measurement_type = MEASUREMENT_PH; break;
+            case GSDML_MOD_TDS:         info->measurement_type = MEASUREMENT_TDS; break;
+            case GSDML_MOD_TURBIDITY:   info->measurement_type = MEASUREMENT_TURBIDITY; break;
+            case GSDML_MOD_TEMPERATURE: info->measurement_type = MEASUREMENT_TEMPERATURE; break;
+            case GSDML_MOD_FLOW:        info->measurement_type = MEASUREMENT_FLOW_RATE; break;
+            case GSDML_MOD_LEVEL:       info->measurement_type = MEASUREMENT_LEVEL; break;
+            default:                    info->measurement_type = MEASUREMENT_CUSTOM; break;
+            }
+        } else {
+            info->type = SLOT_TYPE_ACTUATOR;
+            switch (m->module_ident) {
+            case GSDML_MOD_PUMP:  info->actuator_type = ACTUATOR_PUMP; break;
+            case GSDML_MOD_VALVE: info->actuator_type = ACTUATOR_VALVE; break;
+            default:              info->actuator_type = ACTUATOR_RELAY; break;
+            }
+        }
+
+        ar->slot_count++;
+    }
+
+    LOG_INFO("Full connect params: %d slots, input_data=%u output_data=%u",
+             ar->slot_count, input_data_total, output_data_total);
+
+    return WTC_OK;
+}
+
+wtc_result_t ar_connect_with_discovery(ar_manager_t *manager,
+                                        profinet_ar_t *ar) {
+    if (!manager || !ar) {
+        return WTC_ERROR_INVALID_PARAM;
+    }
+
+    LOG_INFO("=== Starting Discovery Pipeline for %s ===",
+             ar->device_station_name);
+
+    wtc_result_t res;
+    ar_module_discovery_t discovery;
+    bool need_profinet_discovery = true;
+
+    /* Phase 5 shortcut: Check GSDML cache first.
+     * If cached GSDML exists for this station, skip DAP-only connect
+     * and Record Read (Phases 2-3) entirely. */
+    if (gsdml_cache_exists(ar->device_station_name)) {
+        LOG_INFO("GSDML cache found for %s, skipping Phases 2-3",
+                 ar->device_station_name);
+
+        res = gsdml_cache_load_modules(ar->device_station_name, &discovery);
+        if (res == WTC_OK && discovery.module_count > 0) {
+            need_profinet_discovery = false;
+            LOG_INFO("Loaded %d modules from cached GSDML",
+                     discovery.module_count);
+        } else {
+            LOG_WARN("GSDML cache load failed, falling back to PROFINET discovery");
+        }
+    }
+
+    /* Phases 2-3: PROFINET-based module discovery */
+    if (need_profinet_discovery) {
+        /* Phase 2: DAP-only connect */
+        res = ar_send_dap_connect_request(manager, ar);
+        if (res != WTC_OK) {
+            LOG_ERROR("Phase 2 (DAP connect) failed for %s",
+                      ar->device_station_name);
+
+            /* Phase 6 fallback: try HTTP /slots if PROFINET fails */
+            LOG_INFO("Attempting Phase 6 HTTP fallback for %s",
+                     ar->device_station_name);
+
+            /* Convert device_ip (host order uint32) to string */
+            char ip_str[16];
+            snprintf(ip_str, sizeof(ip_str), "%u.%u.%u.%u",
+                     (ar->device_ip >> 24) & 0xFF,
+                     (ar->device_ip >> 16) & 0xFF,
+                     (ar->device_ip >> 8) & 0xFF,
+                     ar->device_ip & 0xFF);
+
+            res = gsdml_fetch_slots_http(ip_str, &discovery);
+            if (res != WTC_OK) {
+                LOG_ERROR("HTTP fallback also failed for %s",
+                          ar->device_station_name);
+                return WTC_ERROR_CONNECTION_FAILED;
+            }
+            /* HTTP fallback succeeded — skip to Phase 4 */
+            need_profinet_discovery = false;
+        }
+
+        if (need_profinet_discovery) {
+            /* Phase 3: Record Read 0xF844 */
+            res = ar_read_real_identification(manager, ar, &discovery);
+            if (res != WTC_OK) {
+                LOG_ERROR("Phase 3 (Record Read) failed for %s",
+                          ar->device_station_name);
+                ar_send_release_request(manager, ar);
+                return res;
+            }
+
+            /* Release DAP-only AR before full connect */
+            LOG_INFO("Releasing DAP-only AR for %s before full connect",
+                     ar->device_station_name);
+            ar_send_release_request(manager, ar);
+
+            /* Brief pause for device to clean up the old AR */
+            struct timespec ts = {0, 100000000}; /* 100ms */
+            nanosleep(&ts, NULL);
+        }
+    }
+
+    /* Phase 4: Build full params from discovered modules */
+    res = ar_build_full_connect_params(manager, ar, &discovery);
+    if (res != WTC_OK) {
+        LOG_ERROR("Failed to build full connect params for %s",
+                  ar->device_station_name);
+        return res;
+    }
+
+    /* Phase 4: Full connect with discovered configuration */
+    LOG_INFO("=== Phase 4: Full Connect to %s with %d discovered modules ===",
+             ar->device_station_name, discovery.module_count);
+
+    /* Reset AR state for full connect */
+    ar->state = AR_STATE_INIT;
+    res = ar_send_connect_request(manager, ar);
+    if (res != WTC_OK) {
+        LOG_ERROR("Phase 4 (full connect) failed for %s",
+                  ar->device_station_name);
+        return res;
+    }
+
+    /* Phase 5: Background GSDML cache fetch (if not already cached) */
+    if (!discovery.from_cache) {
+        char ip_str[16];
+        snprintf(ip_str, sizeof(ip_str), "%u.%u.%u.%u",
+                 (ar->device_ip >> 24) & 0xFF,
+                 (ar->device_ip >> 16) & 0xFF,
+                 (ar->device_ip >> 8) & 0xFF,
+                 ar->device_ip & 0xFF);
+
+        wtc_result_t cache_res = gsdml_cache_fetch(ip_str,
+                                                     ar->device_station_name);
+        if (cache_res != WTC_OK) {
+            LOG_DEBUG("GSDML cache fetch failed (non-critical) for %s",
+                      ar->device_station_name);
+        }
+    }
+
+    LOG_INFO("=== Discovery Pipeline COMPLETE for %s ===",
+             ar->device_station_name);
+    return WTC_OK;
 }
