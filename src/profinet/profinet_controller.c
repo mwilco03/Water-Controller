@@ -9,6 +9,7 @@
 #include "dcp_discovery.h"
 #include "profinet_frame.h"
 #include "ar_manager.h"
+#include "gsdml_modules.h"
 #include "utils/logger.h"
 #include "utils/time_utils.h"
 
@@ -203,18 +204,25 @@ static profinet_state_t ar_state_to_profinet_state(ar_state_t ar_state) {
     }
 }
 
-/* AR state change callback - forwards to profinet_config_t callback */
+/* AR state change callback - forwards to profinet_config_t callbacks */
 static void ar_state_change_callback(const char *station_name,
                                       ar_state_t old_state,
                                       ar_state_t new_state,
                                       void *ctx) {
     profinet_controller_t *ctrl = (profinet_controller_t *)ctx;
-    (void)old_state;  /* May be used for logging */
 
     if (ctrl->config.on_device_state_changed) {
         profinet_state_t pn_state = ar_state_to_profinet_state(new_state);
         ctrl->config.on_device_state_changed(station_name, pn_state,
                                               ctrl->config.callback_ctx);
+    }
+
+    /* Notify device removed when AR closes */
+    if (new_state == AR_STATE_CLOSE && old_state != AR_STATE_CLOSE) {
+        if (ctrl->config.on_device_removed) {
+            ctrl->config.on_device_removed(station_name,
+                                            ctrl->config.callback_ctx);
+        }
     }
 }
 
@@ -344,7 +352,42 @@ static void *recv_thread_func(void *arg) {
             } else if (frame_id >= PROFINET_FRAME_ID_RTC1_MIN &&
                        frame_id <= PROFINET_FRAME_ID_RTC1_MAX) {
                 /* RT Class 1 frame (cyclic data) */
-                ar_handle_rt_frame(ctrl->ar_manager, buffer, len);
+                wtc_result_t rt_res = ar_handle_rt_frame(ctrl->ar_manager,
+                                                          buffer, len);
+
+                /* Forward input data to application via on_data_received.
+                 * Parse per-slot sensor data from the IOCR buffer and
+                 * invoke the callback so the registry/historian gets
+                 * updated with live values. */
+                if (rt_res == WTC_OK && ctrl->config.on_data_received) {
+                    profinet_ar_t *ar = ar_manager_get_ar_by_frame_id(
+                        ctrl->ar_manager, frame_id);
+                    if (ar && ar->state == AR_STATE_RUN) {
+                        for (int j = 0; j < ar->iocr_count; j++) {
+                            if (ar->iocr[j].type != IOCR_TYPE_INPUT ||
+                                ar->iocr[j].frame_id != frame_id ||
+                                !ar->iocr[j].data_buffer) {
+                                continue;
+                            }
+                            uint16_t offset = 0;
+                            for (int s = 0; s < ar->slot_count; s++) {
+                                if (ar->slot_info[s].type == SLOT_TYPE_SENSOR) {
+                                    if (offset + GSDML_INPUT_DATA_SIZE <=
+                                        ar->iocr[j].user_data_length) {
+                                        ctrl->config.on_data_received(
+                                            ar->device_station_name,
+                                            ar->slot_info[s].slot,
+                                            ar->iocr[j].data_buffer + offset,
+                                            GSDML_INPUT_DATA_SIZE,
+                                            ctrl->config.callback_ctx);
+                                    }
+                                    offset += GSDML_INPUT_DATA_SIZE;
+                                }
+                            }
+                            break;
+                        }
+                    }
+                }
             }
 
             pthread_mutex_unlock(&ctrl->lock);
@@ -869,7 +912,15 @@ wtc_result_t profinet_controller_connect(profinet_controller_t *controller,
      *   (existing behavior — caller knows the module layout).
      * - If using default/generic slots, use the discovery pipeline which
      *   discovers the actual module layout from the device (Phases 2-6).
+     *
+     * The RPC connect calls are blocking (up to 5s timeout each).
+     * Set ar->connecting so the cyclic thread skips this AR, then
+     * release ctrl->lock so recv/cyclic threads can continue processing
+     * other ARs and incoming frames.
      */
+    ar->connecting = true;
+    pthread_mutex_unlock(&controller->lock);
+
     if (slots != default_slots) {
         /* Caller provided explicit slot configuration */
         res = ar_send_connect_request(controller->ar_manager, ar);
@@ -880,6 +931,8 @@ wtc_result_t profinet_controller_connect(profinet_controller_t *controller,
         res = ar_connect_with_discovery(controller->ar_manager, ar);
     }
 
+    pthread_mutex_lock(&controller->lock);
+    ar->connecting = false;
     pthread_mutex_unlock(&controller->lock);
 
     if (res == WTC_OK) {

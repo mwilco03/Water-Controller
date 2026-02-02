@@ -136,6 +136,10 @@ typedef struct {
 
     /* Internal */
     void *internal;
+
+    /* Connection pipeline in progress — cyclic thread must not process
+     * this AR while the main thread is running blocking RPC operations. */
+    bool connecting;
 } profinet_ar_t;
 
 /* PROFINET controller handle */
