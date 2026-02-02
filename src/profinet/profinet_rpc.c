@@ -163,7 +163,7 @@ static wtc_result_t build_rpc_header(uint8_t *buf,
 
     hdr->version = RPC_VERSION_MAJOR;
     hdr->packet_type = RPC_PACKET_TYPE_REQUEST;
-    hdr->flags1 = RPC_FLAG1_LAST_FRAGMENT | RPC_FLAG1_IDEMPOTENT;
+    hdr->flags1 = RPC_FLAG1_LAST_FRAGMENT;
     hdr->flags2 = 0;
 
     /*
@@ -174,10 +174,9 @@ static wtc_result_t build_rpc_header(uint8_t *buf,
      * in little-endian byte order to match this DREP declaration.
      *
      * UUIDs: first 3 fields (time_low, time_mid, time_hi_and_version)
-     * are stored in LE; remaining bytes (clock_seq, node) are unchanged.
-     * Generated UUIDs (Object, Activity) are stored in BE, so we swap
-     * after memcpy.  The Interface UUID constant is NOT swapped — see
-     * the comment at its memcpy below for the rationale.
+     * are swapped to LE wire format; remaining bytes (clock_seq, node)
+     * are unchanged.  ALL three UUIDs (Object, Interface, Activity)
+     * must be swapped to match the LE DREP declaration.
      *
      * Note: PNIO block payloads (ARBlockReq, IOCRBlockReq, etc.) are
      * always big-endian per IEC 61158-6, independent of DREP.
@@ -192,17 +191,19 @@ static wtc_result_t build_rpc_header(uint8_t *buf,
     uuid_swap_fields(hdr->object_uuid);
 
     /*
-     * Interface UUID (PROFINET IO Device) — use constant as-is.
+     * Interface UUID (PROFINET IO Device) — swap to LE wire format.
      *
-     * Unlike Object/Activity UUIDs (which are generated in BE and swapped
-     * to LE for the wire), the Interface UUID constant is stored in the
-     * same byte order that p-net's internal constant uses.  p-net matches
-     * the Interface UUID with a raw memcmp, NOT per DREP, so swapping
-     * produces a mismatch and the packet is silently dropped.
+     * The constant PNIO_DEVICE_INTERFACE_UUID is stored in canonical
+     * (big-endian) byte order: DE A0 00 01 6C 97 11 D1 ...
+     * Since DREP declares LE encoding, the first 3 UUID fields must be
+     * byte-swapped on the wire so that the receiver (p-net) decodes
+     * them correctly via its DREP-aware UUID parser (pf_get_uuid).
      *
-     * Confirmed by pcap: unswapped bytes accepted, swapped bytes rejected.
+     * Wire bytes after swap: 01 00 A0 DE 97 6C D1 11 82 71 ...
+     * which p-net reads as:  DEA00001-6C97-11D1-8271-...  (correct)
      */
     memcpy(hdr->interface_uuid, PNIO_DEVICE_INTERFACE_UUID, 16);
+    uuid_swap_fields(hdr->interface_uuid);
 
     /* Activity UUID (unique per request) — swap to LE */
     memcpy(hdr->activity_uuid, ctx->activity_uuid, 16);
@@ -610,6 +611,11 @@ wtc_result_t rpc_build_connect_request(rpc_context_t *ctx,
         save_pos = iocr_block_start;
         write_block_header(buffer, BLOCK_TYPE_IOCR_BLOCK_REQ,
                             (uint16_t)iocr_block_len, &save_pos);
+
+        /* Inter-block alignment padding (IEC 61158-6 §4.10.3.2) */
+        while (pos % 4 != 0) {
+            buffer[pos++] = 0;
+        }
     }
 
     /* ============== Alarm CR Block Request ============== */
@@ -633,6 +639,11 @@ wtc_result_t rpc_build_connect_request(rpc_context_t *ctx,
     save_pos = alarm_block_start;
     write_block_header(buffer, BLOCK_TYPE_ALARM_CR_BLOCK_REQ,
                         (uint16_t)alarm_block_len, &save_pos);
+
+    /* Inter-block alignment padding (IEC 61158-6 §4.10.3.2) */
+    while (pos % 4 != 0) {
+        buffer[pos++] = 0;
+    }
 
     /* ============== Expected Submodule Block ============== */
     size_t exp_block_start = pos;
@@ -1502,8 +1513,9 @@ wtc_result_t rpc_build_control_response(rpc_context_t *ctx,
     memcpy(hdr->object_uuid, request->ar_uuid, 16);
     uuid_swap_fields(hdr->object_uuid);
 
-    /* Interface UUID (Controller) — use constant as-is (see build_rpc_header comment) */
+    /* Interface UUID (Controller) — swap to LE wire format per DREP */
     memcpy(hdr->interface_uuid, PNIO_CONTROLLER_INTERFACE_UUID, 16);
+    uuid_swap_fields(hdr->interface_uuid);
 
     /* Activity UUID — must match request, already in wire format from device */
     memcpy(hdr->activity_uuid, request->activity_uuid, 16);
