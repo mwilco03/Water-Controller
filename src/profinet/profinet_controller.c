@@ -27,6 +27,12 @@
 #include <poll.h>
 #include <net/if_arp.h>
 
+/* Receive buffer size */
+#define RECV_BUFFER_SIZE 2048
+
+/* Maximum pending auto-connect entries */
+#define MAX_PENDING_CONNECTS 64
+
 /* Internal controller structure */
 struct profinet_controller {
     profinet_config_t config;
@@ -55,10 +61,16 @@ struct profinet_controller {
     int if_index;
     uint8_t mac_address[6];
     uint32_t ip_address;  /* Auto-detected from interface */
-};
 
-/* Receive buffer size */
-#define RECV_BUFFER_SIZE 2048
+    /* Auto-connect queue: DCP-discovered devices pending RPC Connect.
+     * Written by dcp_callback (under ctrl->lock from recv thread),
+     * drained by profinet_controller_process (from main loop, no lock). */
+    struct {
+        char station_name[64];
+        char ip_str[16];
+    } pending_connects[MAX_PENDING_CONNECTS];
+    int pending_connect_count;
+};
 
 /* Get interface info */
 static wtc_result_t get_interface_info(profinet_controller_t *ctrl) {
@@ -229,6 +241,39 @@ static void dcp_callback(const dcp_device_info_t *device, void *ctx) {
         rtu.connection_state = PROFINET_STATE_OFFLINE;
 
         ctrl->config.on_device_added(&rtu, ctrl->config.callback_ctx);
+    }
+
+    /*
+     * Queue for auto-connect.  This callback runs under ctrl->lock (from
+     * recv_thread_func), so we cannot call profinet_controller_connect()
+     * directly (it also takes ctrl->lock → deadlock).  Instead, enqueue
+     * the device; profinet_controller_process() drains the queue from the
+     * main loop where no lock is held.
+     */
+    profinet_ar_t *existing = ar_manager_get_ar(ctrl->ar_manager,
+                                                 device->station_name);
+    if (!existing) {
+        bool already_pending = false;
+        for (int i = 0; i < ctrl->pending_connect_count; i++) {
+            if (strcmp(ctrl->pending_connects[i].station_name,
+                       device->station_name) == 0) {
+                already_pending = true;
+                break;
+            }
+        }
+
+        if (!already_pending &&
+            ctrl->pending_connect_count < MAX_PENDING_CONNECTS) {
+            strncpy(ctrl->pending_connects[ctrl->pending_connect_count].station_name,
+                    device->station_name,
+                    sizeof(ctrl->pending_connects[0].station_name) - 1);
+            strncpy(ctrl->pending_connects[ctrl->pending_connect_count].ip_str,
+                    ip_str,
+                    sizeof(ctrl->pending_connects[0].ip_str) - 1);
+            ctrl->pending_connect_count++;
+            LOG_INFO("Queued auto-connect for discovered device: %s (%s)",
+                     device->station_name, ip_str);
+        }
     }
 }
 
@@ -625,14 +670,42 @@ wtc_result_t profinet_controller_process(profinet_controller_t *controller) {
         return WTC_ERROR_INVALID_PARAM;
     }
 
-    /* Manual processing mode - not needed if threads are running */
-    if (controller->running) {
-        return WTC_OK;
-    }
+    /*
+     * Drain pending auto-connect queue.
+     *
+     * Copy entries under lock, then connect outside lock.
+     * profinet_controller_connect() takes ctrl->lock internally,
+     * so we must not hold it here.
+     */
+    struct { char station_name[64]; char ip_str[16]; } local[MAX_PENDING_CONNECTS];
+    int count = 0;
 
     pthread_mutex_lock(&controller->lock);
-    ar_manager_process(controller->ar_manager);
+    count = controller->pending_connect_count;
+    if (count > 0) {
+        memcpy(local, controller->pending_connects,
+               (size_t)count * sizeof(local[0]));
+        controller->pending_connect_count = 0;
+    }
     pthread_mutex_unlock(&controller->lock);
+
+    for (int i = 0; i < count; i++) {
+        LOG_INFO("Auto-connecting to discovered device: %s (%s)",
+                 local[i].station_name, local[i].ip_str);
+        wtc_result_t res = profinet_controller_connect(
+            controller, local[i].station_name, local[i].ip_str, NULL, 0);
+        if (res != WTC_OK && res != WTC_ERROR_ALREADY_EXISTS) {
+            LOG_ERROR("Auto-connect failed for %s: error %d",
+                      local[i].station_name, res);
+        }
+    }
+
+    /* Manual AR processing when threads are not running */
+    if (!controller->running) {
+        pthread_mutex_lock(&controller->lock);
+        ar_manager_process(controller->ar_manager);
+        pthread_mutex_unlock(&controller->lock);
+    }
 
     return WTC_OK;
 }
