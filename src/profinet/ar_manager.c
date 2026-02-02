@@ -509,7 +509,7 @@ wtc_result_t ar_manager_process(ar_manager_t *manager) {
     /* Process each AR state machine */
     for (int i = 0; i < manager->ar_count; i++) {
         profinet_ar_t *ar = manager->ars[i];
-        if (!ar) continue;
+        if (!ar || ar->connecting) continue;
 
         switch (ar->state) {
         case AR_STATE_INIT:
@@ -1037,7 +1037,7 @@ wtc_result_t ar_manager_check_health(ar_manager_t *manager) {
 
     for (int i = 0; i < manager->ar_count; i++) {
         profinet_ar_t *ar = manager->ars[i];
-        if (!ar || ar->state != AR_STATE_RUN) continue;
+        if (!ar || ar->state != AR_STATE_RUN || ar->connecting) continue;
 
         /* Check watchdog timeout */
         if (now_ms - ar->last_activity_ms > ar->watchdog_ms) {

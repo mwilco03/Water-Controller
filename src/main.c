@@ -27,6 +27,7 @@
 
 #include "types.h"
 #include "profinet/profinet_controller.h"
+#include "profinet/profinet_identity.h"
 #include "registry/rtu_registry.h"
 #include "control/control_engine.h"
 #include "alarms/alarm_manager.h"
@@ -44,6 +45,7 @@
 #include <string.h>
 #include <signal.h>
 #include <unistd.h>
+#include <arpa/inet.h>
 #include <getopt.h>
 #include <dirent.h>
 
@@ -452,13 +454,22 @@ static void parse_args(int argc, char *argv[]) {
     }
 }
 
-/* Device added callback */
+/* Device added callback — from DCP discovery via PROFINET controller */
 static void on_device_added(const rtu_device_t *device, void *ctx) {
     (void)ctx;
     LOG_INFO("Device discovered: %s (%s)", device->station_name, device->ip_address);
+
+    /* Register in RTU registry so the rest of the system (historian,
+     * alarms, IPC, Modbus gateway) can see this device.  Slot config
+     * is NULL/0 — the discovery pipeline will learn the actual module
+     * layout from the device during RPC Connect. */
+    if (g_registry) {
+        rtu_registry_add_device(g_registry, device->station_name,
+                                device->ip_address, NULL, 0);
+    }
 }
 
-/* Device state changed callback */
+/* Device state changed callback — from RTU registry (4-param signature) */
 static void on_device_state_changed(const char *station_name,
                                      profinet_state_t old_state,
                                      profinet_state_t new_state,
@@ -466,6 +477,51 @@ static void on_device_state_changed(const char *station_name,
     (void)ctx;
     (void)old_state;
     LOG_INFO("Device %s state changed to %d", station_name, new_state);
+}
+
+/* PROFINET state changed callback — from AR manager (3-param signature) */
+static void on_profinet_state_changed(const char *station_name,
+                                       profinet_state_t state,
+                                       void *ctx) {
+    (void)ctx;
+    LOG_INFO("Device %s PROFINET state: %d", station_name, state);
+
+    if (g_registry) {
+        rtu_registry_set_device_state(g_registry, station_name, state);
+    }
+}
+
+/* PROFINET data received callback — from recv thread on each RT input frame.
+ * Parses the 5-byte sensor format (Float32 BE + Quality) and updates the
+ * RTU registry so the historian, control engine, and HMI see live values. */
+static void on_data_received(const char *station_name, int slot,
+                              const void *data, size_t len, void *ctx) {
+    (void)ctx;
+    if (!g_registry || !data || len < 5) return;
+
+    /* 5-byte PROFINET sensor format: big-endian float32 + quality byte */
+    uint32_t raw;
+    float value;
+    memcpy(&raw, data, 4);
+    raw = ntohl(raw);
+    memcpy(&value, &raw, 4);
+
+    uint8_t quality = ((const uint8_t *)data)[4];
+    data_quality_t dq = (quality & 0x80) ? QUALITY_GOOD : QUALITY_BAD;
+    iops_t iops = (quality & 0x80) ? IOPS_GOOD : IOPS_BAD;
+
+    rtu_registry_update_sensor(g_registry, station_name, slot, value, iops, dq);
+}
+
+/* Device removed callback — from AR state change to CLOSE */
+static void on_device_removed(const char *station_name, void *ctx) {
+    (void)ctx;
+    LOG_INFO("Device removed: %s", station_name);
+
+    if (g_registry) {
+        rtu_registry_set_device_state(g_registry, station_name,
+                                       PROFINET_STATE_OFFLINE);
+    }
 }
 
 /* Alarm raised callback */
@@ -552,6 +608,13 @@ static wtc_result_t initialize_components(void) {
             .send_clock_factor = 32,
             .use_raw_sockets = true,
             .socket_priority = 6,
+            .vendor_id = PN_VENDOR_ID,
+            .device_id = PN_DEVICE_ID,
+            .on_device_added = on_device_added,
+            .on_device_removed = on_device_removed,
+            .on_device_state_changed = on_profinet_state_changed,
+            .on_data_received = on_data_received,
+            .callback_ctx = NULL,
         };
         strncpy(pn_config.interface_name, g_config.interface,
                 sizeof(pn_config.interface_name) - 1);
@@ -899,6 +962,11 @@ int main(int argc, char *argv[]) {
         /* Process simulator if in simulation mode */
         if (g_simulator) {
             simulator_process(g_simulator);
+        }
+
+        /* Process PROFINET pending connections (auto-connect after DCP discovery) */
+        if (g_profinet) {
+            profinet_controller_process(g_profinet);
         }
 
         /* Update IPC shared memory and process commands */

@@ -9,6 +9,7 @@
 #include "dcp_discovery.h"
 #include "profinet_frame.h"
 #include "ar_manager.h"
+#include "gsdml_modules.h"
 #include "utils/logger.h"
 #include "utils/time_utils.h"
 
@@ -26,6 +27,12 @@
 #include <errno.h>
 #include <poll.h>
 #include <net/if_arp.h>
+
+/* Receive buffer size */
+#define RECV_BUFFER_SIZE 2048
+
+/* Maximum pending auto-connect entries */
+#define MAX_PENDING_CONNECTS 64
 
 /* Internal controller structure */
 struct profinet_controller {
@@ -55,10 +62,16 @@ struct profinet_controller {
     int if_index;
     uint8_t mac_address[6];
     uint32_t ip_address;  /* Auto-detected from interface */
-};
 
-/* Receive buffer size */
-#define RECV_BUFFER_SIZE 2048
+    /* Auto-connect queue: DCP-discovered devices pending RPC Connect.
+     * Written by dcp_callback (under ctrl->lock from recv thread),
+     * drained by profinet_controller_process (from main loop, no lock). */
+    struct {
+        char station_name[64];
+        char ip_str[16];
+    } pending_connects[MAX_PENDING_CONNECTS];
+    int pending_connect_count;
+};
 
 /* Get interface info */
 static wtc_result_t get_interface_info(profinet_controller_t *ctrl) {
@@ -191,18 +204,25 @@ static profinet_state_t ar_state_to_profinet_state(ar_state_t ar_state) {
     }
 }
 
-/* AR state change callback - forwards to profinet_config_t callback */
+/* AR state change callback - forwards to profinet_config_t callbacks */
 static void ar_state_change_callback(const char *station_name,
                                       ar_state_t old_state,
                                       ar_state_t new_state,
                                       void *ctx) {
     profinet_controller_t *ctrl = (profinet_controller_t *)ctx;
-    (void)old_state;  /* May be used for logging */
 
     if (ctrl->config.on_device_state_changed) {
         profinet_state_t pn_state = ar_state_to_profinet_state(new_state);
         ctrl->config.on_device_state_changed(station_name, pn_state,
                                               ctrl->config.callback_ctx);
+    }
+
+    /* Notify device removed when AR closes */
+    if (new_state == AR_STATE_CLOSE && old_state != AR_STATE_CLOSE) {
+        if (ctrl->config.on_device_removed) {
+            ctrl->config.on_device_removed(station_name,
+                                            ctrl->config.callback_ctx);
+        }
     }
 }
 
@@ -229,6 +249,39 @@ static void dcp_callback(const dcp_device_info_t *device, void *ctx) {
         rtu.connection_state = PROFINET_STATE_OFFLINE;
 
         ctrl->config.on_device_added(&rtu, ctrl->config.callback_ctx);
+    }
+
+    /*
+     * Queue for auto-connect.  This callback runs under ctrl->lock (from
+     * recv_thread_func), so we cannot call profinet_controller_connect()
+     * directly (it also takes ctrl->lock → deadlock).  Instead, enqueue
+     * the device; profinet_controller_process() drains the queue from the
+     * main loop where no lock is held.
+     */
+    profinet_ar_t *existing = ar_manager_get_ar(ctrl->ar_manager,
+                                                 device->station_name);
+    if (!existing) {
+        bool already_pending = false;
+        for (int i = 0; i < ctrl->pending_connect_count; i++) {
+            if (strcmp(ctrl->pending_connects[i].station_name,
+                       device->station_name) == 0) {
+                already_pending = true;
+                break;
+            }
+        }
+
+        if (!already_pending &&
+            ctrl->pending_connect_count < MAX_PENDING_CONNECTS) {
+            strncpy(ctrl->pending_connects[ctrl->pending_connect_count].station_name,
+                    device->station_name,
+                    sizeof(ctrl->pending_connects[0].station_name) - 1);
+            strncpy(ctrl->pending_connects[ctrl->pending_connect_count].ip_str,
+                    ip_str,
+                    sizeof(ctrl->pending_connects[0].ip_str) - 1);
+            ctrl->pending_connect_count++;
+            LOG_INFO("Queued auto-connect for discovered device: %s (%s)",
+                     device->station_name, ip_str);
+        }
     }
 }
 
@@ -299,7 +352,42 @@ static void *recv_thread_func(void *arg) {
             } else if (frame_id >= PROFINET_FRAME_ID_RTC1_MIN &&
                        frame_id <= PROFINET_FRAME_ID_RTC1_MAX) {
                 /* RT Class 1 frame (cyclic data) */
-                ar_handle_rt_frame(ctrl->ar_manager, buffer, len);
+                wtc_result_t rt_res = ar_handle_rt_frame(ctrl->ar_manager,
+                                                          buffer, len);
+
+                /* Forward input data to application via on_data_received.
+                 * Parse per-slot sensor data from the IOCR buffer and
+                 * invoke the callback so the registry/historian gets
+                 * updated with live values. */
+                if (rt_res == WTC_OK && ctrl->config.on_data_received) {
+                    profinet_ar_t *ar = ar_manager_get_ar_by_frame_id(
+                        ctrl->ar_manager, frame_id);
+                    if (ar && ar->state == AR_STATE_RUN) {
+                        for (int j = 0; j < ar->iocr_count; j++) {
+                            if (ar->iocr[j].type != IOCR_TYPE_INPUT ||
+                                ar->iocr[j].frame_id != frame_id ||
+                                !ar->iocr[j].data_buffer) {
+                                continue;
+                            }
+                            uint16_t offset = 0;
+                            for (int s = 0; s < ar->slot_count; s++) {
+                                if (ar->slot_info[s].type == SLOT_TYPE_SENSOR) {
+                                    if (offset + GSDML_INPUT_DATA_SIZE <=
+                                        ar->iocr[j].user_data_length) {
+                                        ctrl->config.on_data_received(
+                                            ar->device_station_name,
+                                            ar->slot_info[s].slot,
+                                            ar->iocr[j].data_buffer + offset,
+                                            GSDML_INPUT_DATA_SIZE,
+                                            ctrl->config.callback_ctx);
+                                    }
+                                    offset += GSDML_INPUT_DATA_SIZE;
+                                }
+                            }
+                            break;
+                        }
+                    }
+                }
             }
 
             pthread_mutex_unlock(&ctrl->lock);
@@ -625,14 +713,42 @@ wtc_result_t profinet_controller_process(profinet_controller_t *controller) {
         return WTC_ERROR_INVALID_PARAM;
     }
 
-    /* Manual processing mode - not needed if threads are running */
-    if (controller->running) {
-        return WTC_OK;
-    }
+    /*
+     * Drain pending auto-connect queue.
+     *
+     * Copy entries under lock, then connect outside lock.
+     * profinet_controller_connect() takes ctrl->lock internally,
+     * so we must not hold it here.
+     */
+    struct { char station_name[64]; char ip_str[16]; } local[MAX_PENDING_CONNECTS];
+    int count = 0;
 
     pthread_mutex_lock(&controller->lock);
-    ar_manager_process(controller->ar_manager);
+    count = controller->pending_connect_count;
+    if (count > 0) {
+        memcpy(local, controller->pending_connects,
+               (size_t)count * sizeof(local[0]));
+        controller->pending_connect_count = 0;
+    }
     pthread_mutex_unlock(&controller->lock);
+
+    for (int i = 0; i < count; i++) {
+        LOG_INFO("Auto-connecting to discovered device: %s (%s)",
+                 local[i].station_name, local[i].ip_str);
+        wtc_result_t res = profinet_controller_connect(
+            controller, local[i].station_name, local[i].ip_str, NULL, 0);
+        if (res != WTC_OK && res != WTC_ERROR_ALREADY_EXISTS) {
+            LOG_ERROR("Auto-connect failed for %s: error %d",
+                      local[i].station_name, res);
+        }
+    }
+
+    /* Manual AR processing when threads are not running */
+    if (!controller->running) {
+        pthread_mutex_lock(&controller->lock);
+        ar_manager_process(controller->ar_manager);
+        pthread_mutex_unlock(&controller->lock);
+    }
 
     return WTC_OK;
 }
@@ -796,7 +912,15 @@ wtc_result_t profinet_controller_connect(profinet_controller_t *controller,
      *   (existing behavior — caller knows the module layout).
      * - If using default/generic slots, use the discovery pipeline which
      *   discovers the actual module layout from the device (Phases 2-6).
+     *
+     * The RPC connect calls are blocking (up to 5s timeout each).
+     * Set ar->connecting so the cyclic thread skips this AR, then
+     * release ctrl->lock so recv/cyclic threads can continue processing
+     * other ARs and incoming frames.
      */
+    ar->connecting = true;
+    pthread_mutex_unlock(&controller->lock);
+
     if (slots != default_slots) {
         /* Caller provided explicit slot configuration */
         res = ar_send_connect_request(controller->ar_manager, ar);
@@ -807,6 +931,8 @@ wtc_result_t profinet_controller_connect(profinet_controller_t *controller,
         res = ar_connect_with_discovery(controller->ar_manager, ar);
     }
 
+    pthread_mutex_lock(&controller->lock);
+    ar->connecting = false;
     pthread_mutex_unlock(&controller->lock);
 
     if (res == WTC_OK) {
