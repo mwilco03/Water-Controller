@@ -139,6 +139,7 @@ TEST(registry_get_device)
     rtu_device_t *device = rtu_registry_get_device(reg, "rtu-tank-1");
     ASSERT_NOT_NULL(device);
     ASSERT_STR_EQ("rtu-tank-1", device->station_name);
+    rtu_registry_free_device_copy(device);
 
     rtu_registry_cleanup(reg);
 }
@@ -337,6 +338,7 @@ TEST(registry_update_connection_state)
     rtu_device_t *device = rtu_registry_get_device(reg, "rtu-tank-1");
     ASSERT_NOT_NULL(device);
     ASSERT_EQ(PROFINET_STATE_RUNNING, device->connection_state);
+    rtu_registry_free_device_copy(device);
 
     rtu_registry_cleanup(reg);
 }

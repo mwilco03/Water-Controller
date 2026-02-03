@@ -54,13 +54,18 @@ wtc_result_t rtu_registry_add_device(rtu_registry_t *registry,
 wtc_result_t rtu_registry_remove_device(rtu_registry_t *registry,
                                          const char *station_name);
 
-/* Get device by station name */
+/* Get device by station name (returns deep copy — caller must free with
+ * rtu_registry_free_device_copy). Returns NULL if not found. */
 rtu_device_t *rtu_registry_get_device(rtu_registry_t *registry,
                                        const char *station_name);
 
-/* Get device by index */
+/* Get device by index (returns deep copy — caller must free with
+ * rtu_registry_free_device_copy). Returns NULL if out of range. */
 rtu_device_t *rtu_registry_get_device_by_index(rtu_registry_t *registry,
                                                 int index);
+
+/* Free a single device copy returned by get_device / get_device_by_index */
+void rtu_registry_free_device_copy(rtu_device_t *device);
 
 /* List all devices (deep copy - caller must free with rtu_registry_free_device_list) */
 wtc_result_t rtu_registry_list_devices(rtu_registry_t *registry,

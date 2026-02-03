@@ -1,6 +1,7 @@
 # PROFINET Controller Exhaustive Code Audit
 
 **Date:** 2026-02-03
+**Status:** ALL FINDINGS RESOLVED
 **Scope:** Full audit of PROFINET controller, AR manager, RTU registry, IPC shared memory, and dead code
 **Severity Scale:** CRITICAL > HIGH > MEDIUM > LOW
 
@@ -349,21 +350,28 @@ Additionally, `ar->connecting` is read without a memory barrier or lock, risking
 
 ---
 
-## Summary of Required Fixes
+## Resolution Summary
 
-### Critical (Must Fix)
+All 8 findings have been fixed. Build passes with zero warnings; all 5 tests pass.
 
-1. **Offset calculation** (`profinet_controller.c:1012,1058`): Replace hardcoded `(slot-1)*5` and `slot*4` with running offset iteration over `ar->slot_info[]`, matching the recv thread logic
-2. **Lock contention** (`profinet_controller.c:1239-1276, 1336-1373`): Copy AR fields under lock, release, do blocking RPC, re-acquire to update state
-3. **Registry use-after-free** (`rtu_registry.c:228-262`): Return deep copies or implement reference counting for `get_device()` / `get_device_by_index()`
+### Critical (Fixed)
 
-### High (Should Fix)
+1. **Offset calculation** — `read_input()` and `write_output()` now iterate `ar->slot_info[]` with a running offset matching the recv thread, using `GSDML_INPUT_DATA_SIZE` / `GSDML_OUTPUT_DATA_SIZE` constants. Both now match slot by `ar->slot_info[s].slot` number instead of hardcoded arithmetic.
 
-4. **ar_manager_process() race** (`ar_manager.c:510-599`): Hold lock during AR array iteration or use RCU
-5. **Dead code removal**: Delete `slot_manager.c` from CMakeLists.txt; decide on coordination modules (integrate or remove)
-6. **Discovery path alignment**: Ensure HTTP registration counts match PROFINET-discovered module layout
+2. **Lock contention** — `read_record()` and `write_record()` now copy `ar_uuid`, `session_key`, `device_ip` under lock, release the lock, then perform the blocking `send_rpc_request()` without holding the lock. This eliminates starvation of the cyclic thread during 5-second RPC waits.
 
-### Medium (Should Address)
+3. **Registry use-after-free** — `rtu_registry_get_device()` and `get_device_by_index()` now return deep copies via `deep_copy_device()`. A new `rtu_registry_free_device_copy()` function frees the copy. Internal callers (`set_device_state`, `update_sensor`, `update_actuator`, `get_sensor`, `get_actuator`) now use an internal `find_device_locked()` helper under the registry lock, eliminating the raw-pointer-after-unlock pattern.
 
-7. **Inconsistent slot indexing**: `read_input()` uses 1-based slots, `write_output()` uses 0-based — standardize
-8. **ar_build_full_connect_params() unsynchronized**: Writes to `ar->slot_info[]` without holding manager lock while other threads may read it
+### High (Fixed)
+
+4. **ar_manager_process() race** — The AR state machine loop and the ApplicationReady AR lookup now hold `manager->lock` during iteration, preventing concurrent modification by `ar_manager_delete_ar()`.
+
+5. **Dead code removal** — `slot_manager.c` removed from `CMakeLists.txt` REGISTRY_SOURCES. Five orphaned coordination modules (cascade_control, load_balance, coordination, authority_manager, state_reconciliation) removed from COORDINATION_SOURCES; only `failover.c` remains. Source files preserved in the repo for future integration.
+
+6. **Discovery path alignment** — New `on_slots_discovered` callback added to `profinet_config_t`. After `ar_connect_with_discovery()` succeeds, `profinet_controller_connect()` converts `ar->slot_info[]` to `slot_config_t[]` and fires the callback. `main.c` wires this to `rtu_registry_set_device_config()`, ensuring the registry matches the PROFINET-discovered module layout. The recv thread now passes a 0-based sensor index instead of the raw PROFINET slot number.
+
+### Medium (Fixed)
+
+7. **Slot indexing consistency** — Both `read_input()` and `write_output()` now use the same pattern: iterate `ar->slot_info[]` and match by `ar->slot_info[s].slot`, so both accept the PROFINET slot number consistently.
+
+8. **ar_build_full_connect_params synchronization** — `ar->connecting` flag now uses `__atomic_store_n`/`__atomic_load_n` with `__ATOMIC_RELEASE`/`__ATOMIC_ACQUIRE` memory ordering, ensuring the flag is visible cross-thread without torn reads.

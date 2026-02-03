@@ -225,21 +225,81 @@ wtc_result_t rtu_registry_remove_device(rtu_registry_t *registry,
     return WTC_ERROR_NOT_FOUND;
 }
 
+/*
+ * Internal: find device by station_name while lock is ALREADY HELD.
+ * Returns raw pointer for internal use only — caller must hold registry->lock.
+ */
+static rtu_device_t *find_device_locked(rtu_registry_t *registry,
+                                         const char *station_name) {
+    for (int i = 0; i < registry->device_count; i++) {
+        if (strcmp(registry->devices[i]->station_name, station_name) == 0) {
+            return registry->devices[i];
+        }
+    }
+    return NULL;
+}
+
+/*
+ * Deep-copy a single device (caller frees with rtu_registry_free_device_copy).
+ * Must be called while registry lock is held.
+ */
+static rtu_device_t *deep_copy_device(const rtu_device_t *src) {
+    rtu_device_t *dst = calloc(1, sizeof(rtu_device_t));
+    if (!dst) return NULL;
+
+    memcpy(dst, src, sizeof(rtu_device_t));
+
+    /* Deep copy dynamic arrays */
+    if (src->slots && src->slot_capacity > 0) {
+        dst->slots = calloc(src->slot_capacity, sizeof(slot_config_t));
+        if (dst->slots) {
+            memcpy(dst->slots, src->slots, src->slot_count * sizeof(slot_config_t));
+        } else {
+            dst->slot_capacity = 0;
+            dst->slot_count = 0;
+        }
+    } else {
+        dst->slots = NULL;
+    }
+
+    if (src->sensors && src->sensor_capacity > 0) {
+        dst->sensors = calloc(src->sensor_capacity, sizeof(sensor_data_t));
+        if (dst->sensors) {
+            memcpy(dst->sensors, src->sensors,
+                   src->sensor_capacity * sizeof(sensor_data_t));
+        } else {
+            dst->sensor_capacity = 0;
+        }
+    } else {
+        dst->sensors = NULL;
+    }
+
+    if (src->actuators && src->actuator_capacity > 0) {
+        dst->actuators = calloc(src->actuator_capacity, sizeof(actuator_state_t));
+        if (dst->actuators) {
+            memcpy(dst->actuators, src->actuators,
+                   src->actuator_capacity * sizeof(actuator_state_t));
+        } else {
+            dst->actuator_capacity = 0;
+        }
+    } else {
+        dst->actuators = NULL;
+    }
+
+    return dst;
+}
+
 rtu_device_t *rtu_registry_get_device(rtu_registry_t *registry,
                                        const char *station_name) {
     if (!registry || !station_name) return NULL;
 
     pthread_mutex_lock(&registry->lock);
 
-    for (int i = 0; i < registry->device_count; i++) {
-        if (strcmp(registry->devices[i]->station_name, station_name) == 0) {
-            pthread_mutex_unlock(&registry->lock);
-            return registry->devices[i];
-        }
-    }
+    rtu_device_t *src = find_device_locked(registry, station_name);
+    rtu_device_t *copy = src ? deep_copy_device(src) : NULL;
 
     pthread_mutex_unlock(&registry->lock);
-    return NULL;
+    return copy;
 }
 
 rtu_device_t *rtu_registry_get_device_by_index(rtu_registry_t *registry, int index) {
@@ -247,7 +307,6 @@ rtu_device_t *rtu_registry_get_device_by_index(rtu_registry_t *registry, int ind
         return NULL;
     }
 
-    /* REG-C1 fix: protect device_count read with lock */
     pthread_mutex_lock(&registry->lock);
 
     if (index < 0 || index >= registry->device_count) {
@@ -255,10 +314,10 @@ rtu_device_t *rtu_registry_get_device_by_index(rtu_registry_t *registry, int ind
         return NULL;
     }
 
-    rtu_device_t *device = registry->devices[index];
+    rtu_device_t *copy = deep_copy_device(registry->devices[index]);
     pthread_mutex_unlock(&registry->lock);
 
-    return device;
+    return copy;
 }
 
 wtc_result_t rtu_registry_list_devices(rtu_registry_t *registry,
@@ -353,6 +412,15 @@ void rtu_registry_free_device_list(rtu_device_t *devices, int count) {
     free(devices);
 }
 
+/* Free single device copy returned by get_device / get_device_by_index */
+void rtu_registry_free_device_copy(rtu_device_t *device) {
+    if (!device) return;
+    free(device->slots);
+    free(device->sensors);
+    free(device->actuators);
+    free(device);
+}
+
 int rtu_registry_get_device_count(rtu_registry_t *registry) {
     if (!registry) {
         return 0;
@@ -430,20 +498,26 @@ wtc_result_t rtu_registry_set_device_state(rtu_registry_t *registry,
         return WTC_ERROR_INVALID_PARAM;
     }
 
-    rtu_device_t *device = rtu_registry_get_device(registry, station_name);
+    pthread_mutex_lock(&registry->lock);
+
+    rtu_device_t *device = find_device_locked(registry, station_name);
     if (!device) {
+        pthread_mutex_unlock(&registry->lock);
         return WTC_ERROR_NOT_FOUND;
     }
 
     profinet_state_t old_state = device->connection_state;
     if (old_state == state) {
+        pthread_mutex_unlock(&registry->lock);
         return WTC_OK;
     }
 
     device->connection_state = state;
     device->last_seen_ms = time_get_ms();
 
-    /* Invoke callback */
+    pthread_mutex_unlock(&registry->lock);
+
+    /* Invoke callback outside lock to avoid deadlocks */
     if (registry->config.on_device_state_changed) {
         registry->config.on_device_state_changed(station_name, old_state, state,
                                                   registry->config.callback_ctx);
@@ -463,21 +537,26 @@ wtc_result_t rtu_registry_update_sensor(rtu_registry_t *registry,
         return WTC_ERROR_INVALID_PARAM;
     }
 
-    rtu_device_t *device = rtu_registry_get_device(registry, station_name);
+    pthread_mutex_lock(&registry->lock);
+
+    rtu_device_t *device = find_device_locked(registry, station_name);
     if (!device) {
+        pthread_mutex_unlock(&registry->lock);
         return WTC_ERROR_NOT_FOUND;
     }
 
-    /* Slot index is 0-based; RTU dictates slot configuration */
     if (slot >= device->sensor_capacity) {
+        pthread_mutex_unlock(&registry->lock);
         return WTC_ERROR_INVALID_PARAM;
     }
 
     device->sensors[slot].value = value;
     device->sensors[slot].status = status;
-    device->sensors[slot].quality = quality;  /* 5-byte format quality */
+    device->sensors[slot].quality = quality;
     device->sensors[slot].timestamp_ms = time_get_ms();
     device->sensors[slot].stale = false;
+
+    pthread_mutex_unlock(&registry->lock);
 
     return WTC_OK;
 }
@@ -490,18 +569,23 @@ wtc_result_t rtu_registry_update_actuator(rtu_registry_t *registry,
         return WTC_ERROR_INVALID_PARAM;
     }
 
-    rtu_device_t *device = rtu_registry_get_device(registry, station_name);
+    pthread_mutex_lock(&registry->lock);
+
+    rtu_device_t *device = find_device_locked(registry, station_name);
     if (!device) {
+        pthread_mutex_unlock(&registry->lock);
         return WTC_ERROR_NOT_FOUND;
     }
 
-    /* Slot index is 0-based; RTU dictates slot configuration */
     if (slot >= device->actuator_capacity) {
+        pthread_mutex_unlock(&registry->lock);
         return WTC_ERROR_INVALID_PARAM;
     }
 
     memcpy(&device->actuators[slot].output, output, sizeof(actuator_output_t));
     device->actuators[slot].last_change_ms = time_get_ms();
+
+    pthread_mutex_unlock(&registry->lock);
 
     return WTC_OK;
 }
@@ -514,21 +598,26 @@ wtc_result_t rtu_registry_get_sensor(rtu_registry_t *registry,
         return WTC_ERROR_INVALID_PARAM;
     }
 
-    rtu_device_t *device = rtu_registry_get_device(registry, station_name);
+    pthread_mutex_lock(&registry->lock);
+
+    rtu_device_t *device = find_device_locked(registry, station_name);
     if (!device) {
+        pthread_mutex_unlock(&registry->lock);
         return WTC_ERROR_NOT_FOUND;
     }
 
-    /* Slot index is 0-based; RTU dictates slot configuration */
     if (slot >= device->sensor_capacity) {
+        pthread_mutex_unlock(&registry->lock);
         return WTC_ERROR_INVALID_PARAM;
     }
 
     memcpy(data, &device->sensors[slot], sizeof(sensor_data_t));
 
-    /* Check staleness */
+    pthread_mutex_unlock(&registry->lock);
+
+    /* Check staleness (safe on the copy) */
     uint64_t now = time_get_ms();
-    if (now - data->timestamp_ms > 5000) { /* 5 second stale threshold */
+    if (now - data->timestamp_ms > 5000) {
         data->stale = true;
     }
 
@@ -543,17 +632,22 @@ wtc_result_t rtu_registry_get_actuator(rtu_registry_t *registry,
         return WTC_ERROR_INVALID_PARAM;
     }
 
-    rtu_device_t *device = rtu_registry_get_device(registry, station_name);
+    pthread_mutex_lock(&registry->lock);
+
+    rtu_device_t *device = find_device_locked(registry, station_name);
     if (!device) {
+        pthread_mutex_unlock(&registry->lock);
         return WTC_ERROR_NOT_FOUND;
     }
 
-    /* Slot index is 0-based; RTU dictates slot configuration */
     if (slot >= device->actuator_capacity) {
+        pthread_mutex_unlock(&registry->lock);
         return WTC_ERROR_INVALID_PARAM;
     }
 
     memcpy(state, &device->actuators[slot], sizeof(actuator_state_t));
+
+    pthread_mutex_unlock(&registry->lock);
 
     return WTC_OK;
 }

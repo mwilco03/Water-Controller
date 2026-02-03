@@ -283,6 +283,7 @@ wtc_result_t load_balance_process(load_balancer_t *lb) {
                 if (rtu) {
                     group->members[j].available =
                         (rtu->connection_state == PROFINET_STATE_RUNNING);
+                    rtu_registry_free_device_copy(rtu);
                 }
             }
         }
