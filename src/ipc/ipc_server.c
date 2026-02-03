@@ -481,11 +481,12 @@ static wtc_result_t handle_rtu_command(ipc_server_t *server, shm_command_t *cmd)
                              (void*)device->slots, device->slot_count);
                     result = profinet_controller_connect(server->profinet,
                                                           cmd->connect_rtu_cmd.station_name,
-                                                          device->ip_address,  /* IP for fallback DCP lookup */
+                                                          device->ip_address,
                                                           device->slots,
                                                           device->slot_count);
                     LOG_INFO(LOG_TAG, "Connect RTU command: %s (result=%d)",
                              cmd->connect_rtu_cmd.station_name, result);
+                    rtu_registry_free_device_copy(device);
                 } else {
                     result = WTC_ERROR_NOT_FOUND;
                     LOG_WARN(LOG_TAG, "Connect RTU failed: %s not found in registry",

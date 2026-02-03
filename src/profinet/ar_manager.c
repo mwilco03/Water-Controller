@@ -452,7 +452,8 @@ wtc_result_t ar_manager_process(ar_manager_t *manager) {
                              (source_ip >> 16) & 0xFF, (source_ip >> 24) & 0xFF,
                              source_port);
 
-                    /* Find AR by session key and/or AR UUID */
+                    /* Find AR by session key and/or AR UUID (under lock) */
+                    pthread_mutex_lock(&manager->lock);
                     profinet_ar_t *ar = NULL;
                     for (int i = 0; i < manager->ar_count; i++) {
                         if (manager->ars[i] &&
@@ -479,7 +480,6 @@ wtc_result_t ar_manager_process(ar_manager_t *manager) {
                             }
 
                             if (res == WTC_OK) {
-                                /* Transition to RUN state */
                                 ar_state_t old_state = ar->state;
                                 ar->state = AR_STATE_RUN;
                                 ar->last_activity_ms = now_ms;
@@ -498,6 +498,7 @@ wtc_result_t ar_manager_process(ar_manager_t *manager) {
                         LOG_WARN("Received ApplicationReady for unknown AR (session_key=%u)",
                                  incoming_req.session_key);
                     }
+                    pthread_mutex_unlock(&manager->lock);
                 } else {
                     LOG_DEBUG("Received incoming RPC with command %u (not ApplicationReady)",
                               incoming_req.control_command);
@@ -506,18 +507,19 @@ wtc_result_t ar_manager_process(ar_manager_t *manager) {
         }
     }
 
-    /* Process each AR state machine */
+    /* Process each AR state machine under lock to prevent concurrent
+     * modification (e.g. ar_manager_delete_ar shifting the array). */
+    pthread_mutex_lock(&manager->lock);
+
     for (int i = 0; i < manager->ar_count; i++) {
         profinet_ar_t *ar = manager->ars[i];
-        if (!ar || ar->connecting) continue;
+        if (!ar || __atomic_load_n(&ar->connecting, __ATOMIC_ACQUIRE)) continue;
 
         switch (ar->state) {
         case AR_STATE_INIT:
-            /* Waiting for connect request to be sent */
             break;
 
         case AR_STATE_CONNECT_REQ:
-            /* Waiting for connect response - check timeout (PN-C3 fix) */
             if (now_ms - ar->last_activity_ms > AR_CONNECT_TIMEOUT_MS) {
                 LOG_WARN("AR %s connect request timeout after %d ms",
                          ar->device_station_name, AR_CONNECT_TIMEOUT_MS);
@@ -527,7 +529,6 @@ wtc_result_t ar_manager_process(ar_manager_t *manager) {
             break;
 
         case AR_STATE_CONNECT_CNF:
-            /* Connection confirmed, move to parameter server phase */
             LOG_DEBUG("AR %s connection confirmed, entering PRMSRV phase",
                       ar->device_station_name);
             ar->state = AR_STATE_PRMSRV;
@@ -535,24 +536,15 @@ wtc_result_t ar_manager_process(ar_manager_t *manager) {
             break;
 
         case AR_STATE_PRMSRV:
-            /* Parameter server phase - send ParameterEnd RPC */
             LOG_DEBUG("AR %s in PRMSRV, sending ParameterEnd",
                       ar->device_station_name);
             if (ar_send_parameter_end(manager, ar) != WTC_OK) {
                 LOG_ERROR("AR %s ParameterEnd failed, aborting",
                           ar->device_station_name);
-                /* State already set to ABORT by ar_send_parameter_end */
             }
-            /* ar_send_parameter_end sets state to READY on success */
             break;
 
         case AR_STATE_READY:
-            /*
-             * Waiting for ApplicationReady from device.
-             * Per IEC 61158-6-10: After PrmEnd, the DEVICE sends ApplicationReady
-             * to the CONTROLLER, not the other way around.
-             * The RPC polling above handles incoming ApplicationReady.
-             */
             if (now_ms - ar->last_activity_ms > AR_APP_READY_TIMEOUT_MS) {
                 LOG_ERROR("AR %s timeout waiting for ApplicationReady from device",
                           ar->device_station_name);
@@ -562,23 +554,13 @@ wtc_result_t ar_manager_process(ar_manager_t *manager) {
             break;
 
         case AR_STATE_RUN:
-            /* Normal operation - cyclic data exchange */
             break;
 
         case AR_STATE_CLOSE:
-            /* AR is closing - allow graceful shutdown */
             break;
 
         case AR_STATE_ABORT: {
-            /*
-             * PROFINET Communication Resiliency: auto-reconnect with
-             * exponential backoff.
-             *
-             * Backoff: 5s, 10s, 20s, 40s, capped at 60s.
-             * After backoff, directly attempts reconnection.
-             */
             uint32_t backoff_ms = 5000;
-            /* Use watchdog_ms count as a proxy for retry attempts */
             uint32_t elapsed = (uint32_t)(now_ms - ar->last_activity_ms);
             if (elapsed < backoff_ms) {
                 break;
@@ -597,6 +579,8 @@ wtc_result_t ar_manager_process(ar_manager_t *manager) {
         }
         }
     }
+
+    pthread_mutex_unlock(&manager->lock);
 
     return WTC_OK;
 }
@@ -1037,7 +1021,8 @@ wtc_result_t ar_manager_check_health(ar_manager_t *manager) {
 
     for (int i = 0; i < manager->ar_count; i++) {
         profinet_ar_t *ar = manager->ars[i];
-        if (!ar || ar->state != AR_STATE_RUN || ar->connecting) continue;
+        if (!ar || ar->state != AR_STATE_RUN ||
+            __atomic_load_n(&ar->connecting, __ATOMIC_ACQUIRE)) continue;
 
         /* Check watchdog timeout */
         if (now_ms - ar->last_activity_ms > ar->watchdog_ms) {

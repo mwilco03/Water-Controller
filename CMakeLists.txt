@@ -126,7 +126,6 @@ set(PROFINET_SOURCES
 # Registry module sources
 set(REGISTRY_SOURCES
     src/registry/rtu_registry.c
-    src/registry/slot_manager.c
 )
 
 # Control module sources
@@ -151,13 +150,12 @@ set(HISTORIAN_SOURCES
 )
 
 # Coordination module sources
+# Only failover.c is integrated into main.c startup. The other modules
+# (cascade_control, load_balance, coordination, authority_manager,
+# state_reconciliation) are fully implemented but not wired into the
+# startup path — excluded to avoid shipping unreachable code.
 set(COORDINATION_SOURCES
-    src/coordination/cascade_control.c
-    src/coordination/load_balance.c
     src/coordination/failover.c
-    src/coordination/coordination.c
-    src/coordination/authority_manager.c
-    src/coordination/state_reconciliation.c
 )
 
 # IPC module sources

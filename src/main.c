@@ -513,6 +513,20 @@ static void on_data_received(const char *station_name, int slot,
     rtu_registry_update_sensor(g_registry, station_name, slot, value, iops, dq);
 }
 
+/* Slot discovery callback — fired after PROFINET module discovery succeeds.
+ * Updates the registry's slot config to match the PROFINET-discovered modules
+ * so that sensor/actuator indices align between the cyclic thread and registry. */
+static void on_slots_discovered(const char *station_name,
+                                 const slot_config_t *slots,
+                                 int slot_count, void *ctx) {
+    (void)ctx;
+    if (g_registry && slots && slot_count > 0) {
+        rtu_registry_set_device_config(g_registry, station_name, slots, slot_count);
+        LOG_INFO("Updated registry slot config for %s (%d slots from PROFINET discovery)",
+                 station_name, slot_count);
+    }
+}
+
 /* Device removed callback — from AR state change to CLOSE */
 static void on_device_removed(const char *station_name, void *ctx) {
     (void)ctx;
@@ -614,6 +628,7 @@ static wtc_result_t initialize_components(void) {
             .on_device_removed = on_device_removed,
             .on_device_state_changed = on_profinet_state_changed,
             .on_data_received = on_data_received,
+            .on_slots_discovered = on_slots_discovered,
             .callback_ctx = NULL,
         };
         strncpy(pn_config.interface_name, g_config.interface,

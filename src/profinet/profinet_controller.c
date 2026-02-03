@@ -358,7 +358,11 @@ static void *recv_thread_func(void *arg) {
                 /* Forward input data to application via on_data_received.
                  * Parse per-slot sensor data from the IOCR buffer and
                  * invoke the callback so the registry/historian gets
-                 * updated with live values. */
+                 * updated with live values.
+                 *
+                 * The callback receives a 0-based sensor index (not the
+                 * raw PROFINET slot number) so the registry's sensor[]
+                 * array is addressed correctly regardless of slot layout. */
                 if (rt_res == WTC_OK && ctrl->config.on_data_received) {
                     profinet_ar_t *ar = ar_manager_get_ar_by_frame_id(
                         ctrl->ar_manager, frame_id);
@@ -370,18 +374,20 @@ static void *recv_thread_func(void *arg) {
                                 continue;
                             }
                             uint16_t offset = 0;
+                            int sensor_idx = 0;
                             for (int s = 0; s < ar->slot_count; s++) {
                                 if (ar->slot_info[s].type == SLOT_TYPE_SENSOR) {
                                     if (offset + GSDML_INPUT_DATA_SIZE <=
                                         ar->iocr[j].user_data_length) {
                                         ctrl->config.on_data_received(
                                             ar->device_station_name,
-                                            ar->slot_info[s].slot,
+                                            sensor_idx,
                                             ar->iocr[j].data_buffer + offset,
                                             GSDML_INPUT_DATA_SIZE,
                                             ctrl->config.callback_ctx);
                                     }
                                     offset += GSDML_INPUT_DATA_SIZE;
+                                    sensor_idx++;
                                 }
                             }
                             break;
@@ -918,7 +924,7 @@ wtc_result_t profinet_controller_connect(profinet_controller_t *controller,
      * release ctrl->lock so recv/cyclic threads can continue processing
      * other ARs and incoming frames.
      */
-    ar->connecting = true;
+    __atomic_store_n(&ar->connecting, true, __ATOMIC_RELEASE);
     pthread_mutex_unlock(&controller->lock);
 
     if (slots != default_slots) {
@@ -932,11 +938,33 @@ wtc_result_t profinet_controller_connect(profinet_controller_t *controller,
     }
 
     pthread_mutex_lock(&controller->lock);
-    ar->connecting = false;
+    __atomic_store_n(&ar->connecting, false, __ATOMIC_RELEASE);
     pthread_mutex_unlock(&controller->lock);
 
     if (res == WTC_OK) {
         LOG_INFO("Connection initiated to %s", station_name);
+
+        /* Notify application of the discovered slot layout so the registry
+         * can be updated to match PROFINET-discovered modules rather than
+         * the generic counts from HTTP self-registration. */
+        if (controller->config.on_slots_discovered && ar->slot_count > 0) {
+            slot_config_t discovered[WTC_MAX_SLOTS];
+            int count = 0;
+            for (int i = 0; i < ar->slot_count && count < WTC_MAX_SLOTS; i++) {
+                discovered[count].slot = ar->slot_info[i].slot;
+                discovered[count].subslot = ar->slot_info[i].subslot;
+                discovered[count].type = ar->slot_info[i].type;
+                discovered[count].measurement_type = ar->slot_info[i].measurement_type;
+                discovered[count].actuator_type = ar->slot_info[i].actuator_type;
+                discovered[count].enabled = true;
+                memset(discovered[count].name, 0, sizeof(discovered[count].name));
+                memset(discovered[count].unit, 0, sizeof(discovered[count].unit));
+                count++;
+            }
+            controller->config.on_slots_discovered(
+                station_name, discovered, count,
+                controller->config.callback_ctx);
+        }
     }
 
     return res;
@@ -1003,21 +1031,31 @@ wtc_result_t profinet_controller_read_input(profinet_controller_t *controller,
         return WTC_ERROR_NOT_INITIALIZED;
     }
 
-    /* Find input IOCR for this slot
-     * Uses 5-byte sensor format: Float32 (big-endian) + Quality byte
-     */
+    /* Find input IOCR and compute offset by iterating slot_info.
+     * This matches the recv_thread_func logic: accumulate a running offset
+     * for each SLOT_TYPE_SENSOR slot rather than using hardcoded arithmetic,
+     * so non-contiguous or mixed-type slot layouts are handled correctly. */
     for (int i = 0; i < ar->iocr_count; i++) {
-        if (ar->iocr[i].type == IOCR_TYPE_INPUT) {
-            /* Calculate offset for slot - 5 bytes per sensor slot */
-            size_t offset = (slot - 1) * 5;
-            if (offset + 5 <= ar->iocr[i].data_length && ar->iocr[i].data_buffer) {
-                size_t copy_len = (*len >= 5) ? 5 : *len;
-                memcpy(data, ar->iocr[i].data_buffer + offset, copy_len);
-                *len = copy_len;
-                if (status) *status = IOPS_GOOD;
-                pthread_mutex_unlock(&controller->lock);
-                return WTC_OK;
+        if (ar->iocr[i].type == IOCR_TYPE_INPUT && ar->iocr[i].data_buffer) {
+            uint16_t offset = 0;
+            for (int s = 0; s < ar->slot_count; s++) {
+                if (ar->slot_info[s].type == SLOT_TYPE_SENSOR) {
+                    if (ar->slot_info[s].slot == (uint16_t)slot) {
+                        if ((uint32_t)(offset + GSDML_INPUT_DATA_SIZE) <= ar->iocr[i].data_length) {
+                            size_t copy_len = (*len >= GSDML_INPUT_DATA_SIZE)
+                                              ? GSDML_INPUT_DATA_SIZE : *len;
+                            memcpy(data, ar->iocr[i].data_buffer + offset, copy_len);
+                            *len = copy_len;
+                            if (status) *status = IOPS_GOOD;
+                            pthread_mutex_unlock(&controller->lock);
+                            return WTC_OK;
+                        }
+                        break;
+                    }
+                    offset += GSDML_INPUT_DATA_SIZE;
+                }
             }
+            break;
         }
     }
 
@@ -1048,19 +1086,28 @@ wtc_result_t profinet_controller_write_output(profinet_controller_t *controller,
         return WTC_ERROR_NOT_INITIALIZED;
     }
 
-    /* Find output IOCR for this slot
-     * slot is a 0-based index into the output data buffer
-     * RTU dictates slot configuration; controller adapts dynamically
-     */
+    /* Find output IOCR and compute offset by iterating slot_info.
+     * Accumulate a running offset for each SLOT_TYPE_ACTUATOR slot,
+     * matching the per-slot structure in the IOCR buffer. */
     for (int i = 0; i < ar->iocr_count; i++) {
-        if (ar->iocr[i].type == IOCR_TYPE_OUTPUT) {
-            /* Calculate offset - no hardcoded slot assumptions */
-            size_t offset = slot * 4; /* 4 bytes per actuator slot */
-            if (offset + len <= ar->iocr[i].data_length && ar->iocr[i].data_buffer) {
-                memcpy(ar->iocr[i].data_buffer + offset, data, len);
-                pthread_mutex_unlock(&controller->lock);
-                return WTC_OK;
+        if (ar->iocr[i].type == IOCR_TYPE_OUTPUT && ar->iocr[i].data_buffer) {
+            uint16_t offset = 0;
+            for (int s = 0; s < ar->slot_count; s++) {
+                if (ar->slot_info[s].type == SLOT_TYPE_ACTUATOR) {
+                    if (ar->slot_info[s].slot == (uint16_t)slot) {
+                        size_t write_len = (len <= GSDML_OUTPUT_DATA_SIZE)
+                                           ? len : GSDML_OUTPUT_DATA_SIZE;
+                        if (offset + write_len <= ar->iocr[i].data_length) {
+                            memcpy(ar->iocr[i].data_buffer + offset, data, write_len);
+                            pthread_mutex_unlock(&controller->lock);
+                            return WTC_OK;
+                        }
+                        break;
+                    }
+                    offset += GSDML_OUTPUT_DATA_SIZE;
+                }
             }
+            break;
         }
     }
 
@@ -1236,9 +1283,15 @@ wtc_result_t profinet_controller_read_record(profinet_controller_t *controller,
         return WTC_ERROR_INVALID_PARAM;
     }
 
+    /* Copy AR fields under lock, then release before blocking RPC.
+     * This prevents starving the cyclic thread and causing watchdog
+     * timeouts on all connected RTUs during a 5-second RPC wait. */
+    uint8_t ar_uuid_copy[16];
+    uint16_t session_key_copy;
+    uint32_t device_ip_copy;
+
     pthread_mutex_lock(&controller->lock);
 
-    /* Get AR for this device */
     profinet_ar_t *ar = ar_manager_get_ar(controller->ar_manager, station_name);
     if (!ar) {
         pthread_mutex_unlock(&controller->lock);
@@ -1252,28 +1305,31 @@ wtc_result_t profinet_controller_read_record(profinet_controller_t *controller,
         return WTC_ERROR_NOT_CONNECTED;
     }
 
-    /* Build RPC request */
+    memcpy(ar_uuid_copy, ar->ar_uuid, 16);
+    session_key_copy = ar->session_key;
+    device_ip_copy = ar->device_ip;
+
+    pthread_mutex_unlock(&controller->lock);
+
+    /* Build RPC request from copied fields (no lock held) */
     uint8_t request[512];
     size_t req_len = sizeof(request);
     wtc_result_t result = build_rpc_record_request(
         request, &req_len,
-        (const uint8_t *)ar->ar_uuid, ar->session_key,
+        ar_uuid_copy, session_key_copy,
         api, slot, subslot, index,
         NULL, 0, false);
 
     if (result != WTC_OK) {
-        pthread_mutex_unlock(&controller->lock);
         return result;
     }
 
-    /* Send request and receive response */
+    /* Send request and receive response (blocking, no lock held) */
     uint8_t response[2048];
     size_t resp_len = sizeof(response);
 
-    result = send_rpc_request(controller->rpc_socket, ar->device_ip,
+    result = send_rpc_request(controller->rpc_socket, device_ip_copy,
                                request, req_len, response, &resp_len);
-
-    pthread_mutex_unlock(&controller->lock);
 
     if (result != WTC_OK) {
         return result;
@@ -1333,9 +1389,14 @@ wtc_result_t profinet_controller_write_record(profinet_controller_t *controller,
         return WTC_ERROR_INVALID_PARAM;
     }
 
+    /* Copy AR fields under lock, then release before blocking RPC.
+     * Same pattern as read_record — avoids starving cyclic thread. */
+    uint8_t ar_uuid_copy[16];
+    uint16_t session_key_copy;
+    uint32_t device_ip_copy;
+
     pthread_mutex_lock(&controller->lock);
 
-    /* Get AR for this device */
     profinet_ar_t *ar = ar_manager_get_ar(controller->ar_manager, station_name);
     if (!ar) {
         pthread_mutex_unlock(&controller->lock);
@@ -1349,28 +1410,31 @@ wtc_result_t profinet_controller_write_record(profinet_controller_t *controller,
         return WTC_ERROR_NOT_CONNECTED;
     }
 
-    /* Build RPC request */
+    memcpy(ar_uuid_copy, ar->ar_uuid, 16);
+    session_key_copy = ar->session_key;
+    device_ip_copy = ar->device_ip;
+
+    pthread_mutex_unlock(&controller->lock);
+
+    /* Build RPC request from copied fields (no lock held) */
     uint8_t request[2048];
     size_t req_len = sizeof(request);
     wtc_result_t result = build_rpc_record_request(
         request, &req_len,
-        (const uint8_t *)ar->ar_uuid, ar->session_key,
+        ar_uuid_copy, session_key_copy,
         api, slot, subslot, index,
         data, len, true);
 
     if (result != WTC_OK) {
-        pthread_mutex_unlock(&controller->lock);
         return result;
     }
 
-    /* Send request and receive response */
+    /* Send request and receive response (blocking, no lock held) */
     uint8_t response[512];
     size_t resp_len = sizeof(response);
 
-    result = send_rpc_request(controller->rpc_socket, ar->device_ip,
+    result = send_rpc_request(controller->rpc_socket, device_ip_copy,
                                request, req_len, response, &resp_len);
-
-    pthread_mutex_unlock(&controller->lock);
 
     if (result != WTC_OK) {
         return result;

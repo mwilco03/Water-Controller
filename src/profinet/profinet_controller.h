@@ -81,7 +81,8 @@ typedef struct {
     void (*on_device_added)(const rtu_device_t *device, void *ctx);
     void (*on_device_removed)(const char *station_name, void *ctx);
     void (*on_device_state_changed)(const char *station_name, profinet_state_t state, void *ctx);
-    void (*on_data_received)(const char *station_name, int slot, const void *data, size_t len, void *ctx);
+    void (*on_data_received)(const char *station_name, int sensor_index, const void *data, size_t len, void *ctx);
+    void (*on_slots_discovered)(const char *station_name, const slot_config_t *slots, int slot_count, void *ctx);
     void *callback_ctx;
 } profinet_config_t;
 
