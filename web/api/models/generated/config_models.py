@@ -2,7 +2,7 @@
 AUTO-GENERATED FILE - DO NOT EDIT MANUALLY
 
 Generated from: schemas/config/*.schema.yaml
-Generated at: 2026-02-01 17:03:31 UTC
+Generated at: 2026-02-03 21:20:37 UTC
 Generator: scripts/generate_pydantic.py
 
 To update this file, modify the source schemas and run:

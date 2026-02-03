@@ -175,9 +175,9 @@ static wtc_result_t build_rpc_header(uint8_t *buf,
      *
      * UUIDs: first 3 fields (time_low, time_mid, time_hi_and_version)
      * are stored in LE; remaining bytes (clock_seq, node) are unchanged.
-     * Generated UUIDs (Object, Activity) are stored in BE, so we swap
-     * after memcpy.  The Interface UUID constant is NOT swapped — see
-     * the comment at its memcpy below for the rationale.
+     * All three UUID fields (Object, Interface, Activity) are stored
+     * in BE and swapped to LE after memcpy.  p-net decodes all UUID
+     * fields per DREP using pf_get_uuid() before comparison.
      *
      * Note: PNIO block payloads (ARBlockReq, IOCRBlockReq, etc.) are
      * always big-endian per IEC 61158-6, independent of DREP.
@@ -192,17 +192,21 @@ static wtc_result_t build_rpc_header(uint8_t *buf,
     uuid_swap_fields(hdr->object_uuid);
 
     /*
-     * Interface UUID (PROFINET IO Device) — use constant as-is.
+     * Interface UUID (PROFINET IO Device) — swap to LE per DREP.
      *
-     * Unlike Object/Activity UUIDs (which are generated in BE and swapped
-     * to LE for the wire), the Interface UUID constant is stored in the
-     * same byte order that p-net's internal constant uses.  p-net matches
-     * the Interface UUID with a raw memcmp, NOT per DREP, so swapping
-     * produces a mismatch and the packet is silently dropped.
+     * The constant is stored in big-endian byte order (DE A0 00 01 ...).
+     * p-net parses ALL UUID fields in the RPC header per DREP using
+     * pf_get_uuid() → pf_get_uint32()/pf_get_uint16(), then compares
+     * the decoded pf_uuid_t struct via memcmp against its internal
+     * constant {0xDEA00001, 0x6C97, 0x11D1, ...}.
      *
-     * Confirmed by pcap: unswapped bytes accepted, swapped bytes rejected.
+     * With DREP=0x10 (LE), the first 3 UUID fields MUST be LE-encoded
+     * on the wire so p-net decodes them to the correct host values.
+     * Without the swap, p-net reads 0x0100A0DE instead of 0xDEA00001,
+     * the UUID check fails, and the packet is silently dropped.
      */
     memcpy(hdr->interface_uuid, PNIO_DEVICE_INTERFACE_UUID, 16);
+    uuid_swap_fields(hdr->interface_uuid);
 
     /* Activity UUID (unique per request) — swap to LE */
     memcpy(hdr->activity_uuid, ctx->activity_uuid, 16);
@@ -977,6 +981,17 @@ wtc_result_t rpc_build_control_request(rpc_context_t *ctx,
 
     size_t pos = sizeof(profinet_rpc_header_t);
 
+    /*
+     * Bug 0.4 applies here too: NDR header is mandatory for all RPC requests.
+     * p-net rejects requests without it (pf_cmrpc.c:4622-4634).
+     * Without NDR, ParameterEnd is silently dropped by the RTU and the AR
+     * never transitions to READY → ApplicationReady never arrives →
+     * connection aborts → reconnect loops indefinitely.
+     */
+    size_t ndr_header_pos = pos;
+    pos += NDR_REQUEST_HEADER_SIZE;
+    size_t pnio_blocks_start = pos;
+
     /* IOD Control Request Block */
     size_t block_start = pos;
     pos += 6;  /* Skip header */
@@ -993,6 +1008,11 @@ wtc_result_t rpc_build_control_request(rpc_context_t *ctx,
     size_t save_pos = block_start;
     write_block_header(buffer, BLOCK_TYPE_IOD_CONTROL_REQ,
                         (uint16_t)block_len, &save_pos);
+
+    /* Fill NDR request header */
+    uint32_t pnio_len = (uint32_t)(pos - pnio_blocks_start);
+    uint32_t args_max = (uint32_t)(RPC_MAX_PDU_SIZE - sizeof(profinet_rpc_header_t));
+    write_ndr_request_header(buffer, ndr_header_pos, args_max, pnio_len);
 
     /* Build RPC header */
     uint16_t fragment_length = (uint16_t)(pos - sizeof(profinet_rpc_header_t));
@@ -1049,6 +1069,33 @@ wtc_result_t rpc_parse_control_response(const uint8_t *buffer,
     }
 
     size_t pos = sizeof(profinet_rpc_header_t);
+
+    /* Skip NDR response header if present (some devices include it) */
+    bool has_ndr = response_has_ndr_header(buffer, pos, buf_len);
+    if (has_ndr) {
+        if (pos + 24 > buf_len) {
+            LOG_ERROR("Control response too short for NDR header");
+            return WTC_ERROR_PROTOCOL;
+        }
+        pos += 4;  /* ArgsMaximum */
+
+        uint32_t error_status1 = buffer[pos] | (buffer[pos+1] << 8) |
+                                 (buffer[pos+2] << 16) | (buffer[pos+3] << 24);
+        pos += 4;
+        uint32_t error_status2 = buffer[pos] | (buffer[pos+1] << 8) |
+                                 (buffer[pos+2] << 16) | (buffer[pos+3] << 24);
+        pos += 4;
+
+        if (error_status1 != 0 || error_status2 != 0) {
+            LOG_ERROR("Control response PNIO error: status1=0x%08X, status2=0x%08X",
+                      error_status1, error_status2);
+            return WTC_ERROR_PROTOCOL;
+        }
+
+        pos += 4;  /* MaxCount */
+        pos += 4;  /* Offset */
+        pos += 4;  /* ActualCount */
+    }
 
     /* Parse control response block */
     if (pos + 6 > buf_len) {
@@ -1193,6 +1240,13 @@ wtc_result_t rpc_connect(rpc_context_t *ctx,
     if (res != WTC_OK) {
         LOG_ERROR("Failed to parse connect response");
         return res;
+    }
+
+    /* Validate response AR UUID matches our request.
+     * A mismatched UUID means we received a stale response from
+     * a previous AR or from a different device on the same IP. */
+    if (memcmp(response->ar_uuid, params->ar_uuid, 16) != 0) {
+        LOG_WARN("Connect response AR UUID mismatch — stale or cross-device response");
     }
 
     LOG_INFO("RPC Connect successful to %08X", ntohl(device_ip));
@@ -1502,8 +1556,9 @@ wtc_result_t rpc_build_control_response(rpc_context_t *ctx,
     memcpy(hdr->object_uuid, request->ar_uuid, 16);
     uuid_swap_fields(hdr->object_uuid);
 
-    /* Interface UUID (Controller) — use constant as-is (see build_rpc_header comment) */
+    /* Interface UUID (Controller) — swap to LE per DREP, same as build_rpc_header */
     memcpy(hdr->interface_uuid, PNIO_CONTROLLER_INTERFACE_UUID, 16);
+    uuid_swap_fields(hdr->interface_uuid);
 
     /* Activity UUID — must match request, already in wire format from device */
     memcpy(hdr->activity_uuid, request->activity_uuid, 16);
