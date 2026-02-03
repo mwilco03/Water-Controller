@@ -769,35 +769,18 @@ wtc_result_t profinet_controller_connect(profinet_controller_t *controller,
     }
 
     /*
-     * Default slot configuration for Water-Treat RTU (GSDML V2.4):
-     * - Slots 1-8: Input modules (sensors) - 5 bytes each
-     * - Slots 9-15: Output modules (actuators) - 4 bytes each
-     *
-     * Used when no explicit slot configuration is provided.
+     * No hardcoded default slots.  The controller must always discover
+     * the RTU's actual module layout via the PROFINET discovery pipeline
+     * (DAP-only connect → Record Read 0xF844 → full connect with
+     * discovered modules).  Hardcoding slot counts violates CLAUDE.md
+     * ("NEVER hardcode RTU data") and causes module mismatch when the
+     * RTU has fewer slots than assumed (e.g. just CPU temp on slot 1).
      */
-    slot_config_t default_slots[15];
-    if (!slots || slot_count <= 0) {
-        memset(default_slots, 0, sizeof(default_slots));
-
-        /* Input slots 1-8: Generic sensors (MEASUREMENT_CUSTOM for flexibility) */
-        for (int i = 0; i < 8; i++) {
-            default_slots[i].slot = i + 1;
-            default_slots[i].subslot = 1;
-            default_slots[i].type = SLOT_TYPE_SENSOR;
-            default_slots[i].measurement_type = MEASUREMENT_CUSTOM;
-        }
-
-        /* Output slots 9-15: Generic actuators (ACTUATOR_RELAY as default) */
-        for (int i = 0; i < 7; i++) {
-            default_slots[8 + i].slot = 9 + i;
-            default_slots[8 + i].subslot = 1;
-            default_slots[8 + i].type = SLOT_TYPE_ACTUATOR;
-            default_slots[8 + i].actuator_type = ACTUATOR_RELAY;
-        }
-
-        slots = default_slots;
-        slot_count = 15;
-        LOG_INFO("Using default slot configuration (8 inputs, 7 outputs)");
+    bool use_discovery = (!slots || slot_count <= 0);
+    if (use_discovery) {
+        slots = NULL;
+        slot_count = 0;
+        LOG_INFO("No slot config provided — will discover from device");
     }
 
     pthread_mutex_lock(&controller->lock);
@@ -897,8 +880,12 @@ wtc_result_t profinet_controller_connect(profinet_controller_t *controller,
     ar_config.vendor_id = device->vendor_id;
     ar_config.device_id = device->device_id;
 
-    memcpy(ar_config.slots, slots, slot_count * sizeof(slot_config_t));
-    ar_config.slot_count = slot_count;
+    if (slots && slot_count > 0) {
+        memcpy(ar_config.slots, slots, slot_count * sizeof(slot_config_t));
+        ar_config.slot_count = slot_count;
+    } else {
+        ar_config.slot_count = 0;
+    }
 
     ar_config.cycle_time_us = controller->config.cycle_time_us;
     ar_config.reduction_ratio = controller->config.reduction_ratio;
@@ -915,9 +902,10 @@ wtc_result_t profinet_controller_connect(profinet_controller_t *controller,
     /*
      * Connection strategy:
      * - If explicit slots were provided by the caller, use direct connect
-     *   (existing behavior — caller knows the module layout).
-     * - If using default/generic slots, use the discovery pipeline which
-     *   discovers the actual module layout from the device (Phases 2-6).
+     *   (caller knows the module layout).
+     * - Otherwise, use the discovery pipeline which learns the actual
+     *   module layout from the device (DAP connect → Record Read →
+     *   full connect with discovered modules).
      *
      * The RPC connect calls are blocking (up to 5s timeout each).
      * Set ar->connecting so the cyclic thread skips this AR, then
@@ -927,11 +915,11 @@ wtc_result_t profinet_controller_connect(profinet_controller_t *controller,
     __atomic_store_n(&ar->connecting, true, __ATOMIC_RELEASE);
     pthread_mutex_unlock(&controller->lock);
 
-    if (slots != default_slots) {
+    if (!use_discovery) {
         /* Caller provided explicit slot configuration */
         res = ar_send_connect_request(controller->ar_manager, ar);
     } else {
-        /* No explicit slots — use discovery pipeline to learn module layout.
+        /* No explicit slots — discover from device.
          * Pipeline: GSDML cache → DAP connect → Record Read → Full connect
          * Falls back to HTTP /slots if PROFINET discovery fails. */
         res = ar_connect_with_discovery(controller->ar_manager, ar);
@@ -939,35 +927,42 @@ wtc_result_t profinet_controller_connect(profinet_controller_t *controller,
 
     pthread_mutex_lock(&controller->lock);
     __atomic_store_n(&ar->connecting, false, __ATOMIC_RELEASE);
+
+    if (res != WTC_OK) {
+        /* Clean up the dead AR so the caller can retry later instead of
+         * getting WTC_ERROR_ALREADY_EXISTS forever. */
+        LOG_WARN("Connect failed for %s (error=%d), removing AR", station_name, res);
+        ar_manager_delete_ar(controller->ar_manager, station_name);
+        pthread_mutex_unlock(&controller->lock);
+        return res;
+    }
     pthread_mutex_unlock(&controller->lock);
 
-    if (res == WTC_OK) {
-        LOG_INFO("Connection initiated to %s", station_name);
+    LOG_INFO("Connection initiated to %s", station_name);
 
-        /* Notify application of the discovered slot layout so the registry
-         * can be updated to match PROFINET-discovered modules rather than
-         * the generic counts from HTTP self-registration. */
-        if (controller->config.on_slots_discovered && ar->slot_count > 0) {
-            slot_config_t discovered[WTC_MAX_SLOTS];
-            int count = 0;
-            for (int i = 0; i < ar->slot_count && count < WTC_MAX_SLOTS; i++) {
-                discovered[count].slot = ar->slot_info[i].slot;
-                discovered[count].subslot = ar->slot_info[i].subslot;
-                discovered[count].type = ar->slot_info[i].type;
-                discovered[count].measurement_type = ar->slot_info[i].measurement_type;
-                discovered[count].actuator_type = ar->slot_info[i].actuator_type;
-                discovered[count].enabled = true;
-                memset(discovered[count].name, 0, sizeof(discovered[count].name));
-                memset(discovered[count].unit, 0, sizeof(discovered[count].unit));
-                count++;
-            }
-            controller->config.on_slots_discovered(
-                station_name, discovered, count,
-                controller->config.callback_ctx);
+    /* Notify application of the discovered slot layout so the registry
+     * can be updated to match PROFINET-discovered modules rather than
+     * the generic counts from HTTP self-registration. */
+    if (controller->config.on_slots_discovered && ar->slot_count > 0) {
+        slot_config_t discovered[WTC_MAX_SLOTS];
+        int count = 0;
+        for (int i = 0; i < ar->slot_count && count < WTC_MAX_SLOTS; i++) {
+            discovered[count].slot = ar->slot_info[i].slot;
+            discovered[count].subslot = ar->slot_info[i].subslot;
+            discovered[count].type = ar->slot_info[i].type;
+            discovered[count].measurement_type = ar->slot_info[i].measurement_type;
+            discovered[count].actuator_type = ar->slot_info[i].actuator_type;
+            discovered[count].enabled = true;
+            memset(discovered[count].name, 0, sizeof(discovered[count].name));
+            memset(discovered[count].unit, 0, sizeof(discovered[count].unit));
+            count++;
         }
+        controller->config.on_slots_discovered(
+            station_name, discovered, count,
+            controller->config.callback_ctx);
     }
 
-    return res;
+    return WTC_OK;
 }
 
 wtc_result_t profinet_controller_disconnect(profinet_controller_t *controller,
