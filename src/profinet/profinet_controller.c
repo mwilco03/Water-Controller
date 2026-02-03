@@ -6,6 +6,8 @@
 
 #include "profinet_controller.h"
 #include "profinet_identity.h"
+#include "profinet_rpc.h"
+#include "rpc_strategy.h"
 #include "dcp_discovery.h"
 #include "profinet_frame.h"
 #include "ar_manager.h"
@@ -1125,11 +1127,7 @@ wtc_result_t profinet_controller_write_output(profinet_controller_t *controller,
 #define RPC_OPNUM_WRITE         3  /* IEC 61158-6: OpNum 3 = Write */
 #define RPC_TIMEOUT_MS          5000
 
-/* PROFINET IO Device Interface UUID */
-static const uint8_t PNIO_DEVICE_INTERFACE_UUID[16] = {
-    0xDE, 0xA0, 0x00, 0x01, 0x6C, 0x97, 0x11, 0xD1,
-    0x82, 0x71, 0x00, 0xA0, 0x24, 0x42, 0xDF, 0x7D
-};
+/* PNIO_DEVICE_INTERFACE_UUID is provided by profinet_rpc.h */
 
 /* Build RPC read/write request */
 static wtc_result_t build_rpc_record_request(
@@ -1150,22 +1148,24 @@ static wtc_result_t build_rpc_record_request(
     memset(rpc, 0, sizeof(profinet_rpc_header_t));
     rpc->version = RPC_VERSION;
     rpc->packet_type = RPC_PACKET_REQUEST;
-    rpc->flags1 = 0x20; /* First fragment, last fragment */
+    rpc->flags1 = 0x22; /* LAST_FRAGMENT (0x02) | IDEMPOTENT (0x20) */
     rpc->drep[0] = 0x10; /* Little-endian */
 
-    /* Generate activity UUID from current time */
-    uint64_t now = time_get_ms();
-    memset(rpc->activity_uuid, 0, 16);
-    memcpy(rpc->activity_uuid, &now, sizeof(now));
+    /* Activity UUID — generate and swap to LE per DREP */
+    rpc_generate_uuid(rpc->activity_uuid);
+    uuid_swap_fields(rpc->activity_uuid);
 
-    /* Interface UUID */
+    /* Interface UUID — swap to LE per DREP (p-net parses per DREP) */
     memcpy(rpc->interface_uuid, PNIO_DEVICE_INTERFACE_UUID, 16);
+    uuid_swap_fields(rpc->interface_uuid);
 
-    /* Object UUID (AR UUID) */
+    /* Object UUID (AR UUID) — swap to LE per DREP */
     memcpy(rpc->object_uuid, ar_uuid, 16);
+    uuid_swap_fields(rpc->object_uuid);
 
     rpc->interface_version = 1;
-    rpc->opnum = htons(is_write ? RPC_OPNUM_WRITE : RPC_OPNUM_READ);
+    /* opnum in LE (native on LE host) matching DREP=0x10 — no htons */
+    rpc->opnum = is_write ? RPC_OPNUM_WRITE : RPC_OPNUM_READ;
 
     pos = sizeof(profinet_rpc_header_t);
 
