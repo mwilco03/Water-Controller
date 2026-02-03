@@ -569,6 +569,35 @@ wtc_result_t ar_manager_process(ar_manager_t *manager) {
             LOG_INFO("AR %s: ABORT recovery after %u ms",
                      ar->device_station_name, elapsed);
 
+            /*
+             * Send Release to clean up any stale AR on the RTU before
+             * retrying Connect.  Without this, the RTU has a partially-
+             * created AR from the previous attempt and silently drops
+             * new Connect requests (empty response, then no response).
+             *
+             * Copy fields under lock, release lock for blocking I/O,
+             * then re-acquire — same pattern as read_record/write_record.
+             */
+            if (manager->rpc_initialized && ar->device_ip != 0) {
+                uint8_t rel_uuid[16];
+                uint16_t rel_session = ar->session_key;
+                uint32_t rel_ip = ar->device_ip;
+                memcpy(rel_uuid, ar->ar_uuid, 16);
+
+                pthread_mutex_unlock(&manager->lock);
+
+                LOG_DEBUG("AR %s: sending Release to clear stale AR",
+                          ar->device_station_name);
+                rpc_release(&manager->rpc_ctx, rel_ip,
+                            rel_uuid, rel_session);
+
+                pthread_mutex_lock(&manager->lock);
+                /* AR may have been deleted while unlocked — re-validate */
+                if (i >= manager->ar_count || manager->ars[i] != ar) {
+                    break;
+                }
+            }
+
             ar_state_t old_state = ar->state;
             ar_send_connect_request(manager, ar);
 

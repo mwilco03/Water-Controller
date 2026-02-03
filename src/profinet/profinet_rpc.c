@@ -977,6 +977,17 @@ wtc_result_t rpc_build_control_request(rpc_context_t *ctx,
 
     size_t pos = sizeof(profinet_rpc_header_t);
 
+    /*
+     * Bug 0.4 applies here too: NDR header is mandatory for all RPC requests.
+     * p-net rejects requests without it (pf_cmrpc.c:4622-4634).
+     * Without NDR, ParameterEnd is silently dropped by the RTU and the AR
+     * never transitions to READY → ApplicationReady never arrives →
+     * connection aborts → reconnect loops indefinitely.
+     */
+    size_t ndr_header_pos = pos;
+    pos += NDR_REQUEST_HEADER_SIZE;
+    size_t pnio_blocks_start = pos;
+
     /* IOD Control Request Block */
     size_t block_start = pos;
     pos += 6;  /* Skip header */
@@ -993,6 +1004,11 @@ wtc_result_t rpc_build_control_request(rpc_context_t *ctx,
     size_t save_pos = block_start;
     write_block_header(buffer, BLOCK_TYPE_IOD_CONTROL_REQ,
                         (uint16_t)block_len, &save_pos);
+
+    /* Fill NDR request header */
+    uint32_t pnio_len = (uint32_t)(pos - pnio_blocks_start);
+    uint32_t args_max = (uint32_t)(RPC_MAX_PDU_SIZE - sizeof(profinet_rpc_header_t));
+    write_ndr_request_header(buffer, ndr_header_pos, args_max, pnio_len);
 
     /* Build RPC header */
     uint16_t fragment_length = (uint16_t)(pos - sizeof(profinet_rpc_header_t));
@@ -1049,6 +1065,33 @@ wtc_result_t rpc_parse_control_response(const uint8_t *buffer,
     }
 
     size_t pos = sizeof(profinet_rpc_header_t);
+
+    /* Skip NDR response header if present (some devices include it) */
+    bool has_ndr = response_has_ndr_header(buffer, pos, buf_len);
+    if (has_ndr) {
+        if (pos + 24 > buf_len) {
+            LOG_ERROR("Control response too short for NDR header");
+            return WTC_ERROR_PROTOCOL;
+        }
+        pos += 4;  /* ArgsMaximum */
+
+        uint32_t error_status1 = buffer[pos] | (buffer[pos+1] << 8) |
+                                 (buffer[pos+2] << 16) | (buffer[pos+3] << 24);
+        pos += 4;
+        uint32_t error_status2 = buffer[pos] | (buffer[pos+1] << 8) |
+                                 (buffer[pos+2] << 16) | (buffer[pos+3] << 24);
+        pos += 4;
+
+        if (error_status1 != 0 || error_status2 != 0) {
+            LOG_ERROR("Control response PNIO error: status1=0x%08X, status2=0x%08X",
+                      error_status1, error_status2);
+            return WTC_ERROR_PROTOCOL;
+        }
+
+        pos += 4;  /* MaxCount */
+        pos += 4;  /* Offset */
+        pos += 4;  /* ActualCount */
+    }
 
     /* Parse control response block */
     if (pos + 6 > buf_len) {
