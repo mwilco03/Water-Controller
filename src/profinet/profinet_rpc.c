@@ -1238,6 +1238,13 @@ wtc_result_t rpc_connect(rpc_context_t *ctx,
         return res;
     }
 
+    /* Validate response AR UUID matches our request.
+     * A mismatched UUID means we received a stale response from
+     * a previous AR or from a different device on the same IP. */
+    if (memcmp(response->ar_uuid, params->ar_uuid, 16) != 0) {
+        LOG_WARN("Connect response AR UUID mismatch — stale or cross-device response");
+    }
+
     LOG_INFO("RPC Connect successful to %08X", ntohl(device_ip));
     return WTC_OK;
 }

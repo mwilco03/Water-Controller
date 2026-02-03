@@ -291,9 +291,16 @@ static wtc_result_t parse_gsdml_modules(const char *xml, size_t xml_len,
         const char *mod = strstr(pos, "ModuleIdentNumber=\"0x");
         if (!mod || mod >= end) break;
 
-        /* Parse module ident */
+        /* Parse module ident with validation */
         const char *hex_start = mod + strlen("ModuleIdentNumber=\"0x");
-        unsigned long mod_ident = strtoul(hex_start, NULL, 16);
+        char *endptr = NULL;
+        unsigned long mod_ident = strtoul(hex_start, &endptr, 16);
+        if (endptr == hex_start || mod_ident == 0) {
+            LOG_WARN("GSDML: invalid ModuleIdentNumber at offset %td, skipping",
+                     hex_start - xml);
+            pos = hex_start;
+            continue;
+        }
 
         /* Skip DAP module (we already added it) */
         if (mod_ident == GSDML_MOD_DAP) {
@@ -306,7 +313,13 @@ static wtc_result_t parse_gsdml_modules(const char *xml, size_t xml_len,
         if (!submod || submod >= end) break;
 
         const char *sub_hex = submod + strlen("SubmoduleIdentNumber=\"0x");
-        unsigned long submod_ident = strtoul(sub_hex, NULL, 16);
+        unsigned long submod_ident = strtoul(sub_hex, &endptr, 16);
+        if (endptr == sub_hex || submod_ident == 0) {
+            LOG_WARN("GSDML: invalid SubmoduleIdentNumber at offset %td, skipping",
+                     sub_hex - xml);
+            pos = sub_hex;
+            continue;
+        }
 
         ar_discovered_module_t *m = &discovery->modules[discovery->module_count];
         m->slot = slot_num++;
@@ -412,16 +425,27 @@ static wtc_result_t parse_slots_json(const char *json,
 
         ar_discovered_module_t *m = &discovery->modules[discovery->module_count];
 
-        /* Parse "slot": N */
+        /* Parse "slot": N — with validation */
         const char *colon = strchr(pos + 6, ':');
         if (!colon) break;
-        m->slot = (uint16_t)atoi(colon + 1);
+        char *endptr = NULL;
+        long slot_val = strtol(colon + 1, &endptr, 10);
+        if (endptr == colon + 1 || slot_val < 0 || slot_val > 0xFFFF) {
+            LOG_WARN("HTTP /slots: invalid slot number, skipping");
+            pos = colon + 1;
+            continue;
+        }
+        m->slot = (uint16_t)slot_val;
 
         /* Parse "subslot": N */
         const char *subslot = strstr(pos, "\"subslot\"");
         if (subslot) {
             colon = strchr(subslot + 9, ':');
-            if (colon) m->subslot = (uint16_t)atoi(colon + 1);
+            if (colon) {
+                long ss_val = strtol(colon + 1, &endptr, 10);
+                m->subslot = (endptr != colon + 1 && ss_val > 0)
+                             ? (uint16_t)ss_val : 1;
+            }
         } else {
             m->subslot = 1;
         }
@@ -430,14 +454,20 @@ static wtc_result_t parse_slots_json(const char *json,
         const char *mod = strstr(pos, "\"module_ident\"");
         if (mod) {
             colon = strchr(mod + 14, ':');
-            if (colon) m->module_ident = (uint32_t)strtoul(colon + 1, NULL, 0);
+            if (colon) {
+                unsigned long mi = strtoul(colon + 1, &endptr, 0);
+                m->module_ident = (endptr != colon + 1) ? (uint32_t)mi : 0;
+            }
         }
 
         /* Parse "submodule_ident": N */
         const char *submod = strstr(pos, "\"submodule_ident\"");
         if (submod) {
             colon = strchr(submod + 17, ':');
-            if (colon) m->submodule_ident = (uint32_t)strtoul(colon + 1, NULL, 0);
+            if (colon) {
+                unsigned long si = strtoul(colon + 1, &endptr, 0);
+                m->submodule_ident = (endptr != colon + 1) ? (uint32_t)si : 0;
+            }
         }
 
         /* Skip slot 0 entries (DAP already added) */

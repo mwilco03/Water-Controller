@@ -929,10 +929,16 @@ wtc_result_t profinet_controller_connect(profinet_controller_t *controller,
     __atomic_store_n(&ar->connecting, false, __ATOMIC_RELEASE);
 
     if (res != WTC_OK) {
-        /* Clean up the dead AR so the caller can retry later instead of
-         * getting WTC_ERROR_ALREADY_EXISTS forever. */
-        LOG_WARN("Connect failed for %s (error=%d), removing AR", station_name, res);
-        ar_manager_delete_ar(controller->ar_manager, station_name);
+        /* Move AR to ABORT state so ar_manager_process() retries with
+         * exponential backoff.  Don't delete — deletion would prevent
+         * the retry mechanism from ever firing, since the DCP auto-connect
+         * callback only fires once per discovered device. */
+        LOG_WARN("Connect failed for %s (error=%d), entering ABORT for retry",
+                 station_name, res);
+        ar->state = AR_STATE_ABORT;
+        ar->last_error = res;
+        ar->retry_count++;
+        ar->last_activity_ms = time_get_ms();
         pthread_mutex_unlock(&controller->lock);
         return res;
     }

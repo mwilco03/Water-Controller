@@ -132,6 +132,13 @@ typedef struct {
     uint64_t last_activity_ms;
     uint32_t watchdog_ms;
 
+    /* ABORT recovery state */
+    int retry_count;                    /* Consecutive failed connect attempts */
+    wtc_result_t last_error;            /* Error code from last failure */
+
+    /* Watchdog degradation */
+    int missed_cycles;                  /* Consecutive missed watchdog cycles */
+
     /* Authority handoff - who has control of this device */
     authority_context_t authority;
 

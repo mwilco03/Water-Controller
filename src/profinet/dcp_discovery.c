@@ -19,6 +19,16 @@
 #include <linux/if_packet.h>
 #include <linux/if_ether.h>
 #include <arpa/inet.h>
+#include <ctype.h>
+
+/* Normalize station name to lowercase per IEC 61158-6-10 §4.3.1.4.18:
+ * PROFINET station names follow DNS label rules (case-insensitive).
+ * Normalizing at ingest ensures all comparisons use strcmp(). */
+static void normalize_station_name(char *name) {
+    for (char *p = name; *p; p++) {
+        *p = (char)tolower((unsigned char)*p);
+    }
+}
 
 /* DCP multicast address */
 static const uint8_t DCP_MULTICAST_ADDR[6] = {0x01, 0x0E, 0xCF, 0x00, 0x00, 0x00};
@@ -176,6 +186,7 @@ static void parse_dcp_blocks(dcp_discovery_t *dcp,
                 }
                 memcpy(device->station_name, block_data + 2, name_len);
                 device->station_name[name_len] = '\0';
+                normalize_station_name(device->station_name);
                 device->name_set = true;
             } else if (block.suboption == DCP_SUBOPTION_DEVICE_ID && block.length >= 6) {
                 device->vendor_id = ntohs(*(uint16_t *)(block_data + 2));

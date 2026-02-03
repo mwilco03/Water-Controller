@@ -560,14 +560,39 @@ wtc_result_t ar_manager_process(ar_manager_t *manager) {
             break;
 
         case AR_STATE_ABORT: {
-            uint32_t backoff_ms = 5000;
+            /* Retry limit: permanent errors (PROTOCOL) give up immediately.
+             * Transient errors (TIMEOUT, CONNECTION_FAILED, IO) retry with
+             * exponential backoff up to AR_MAX_RETRY_ATTEMPTS. */
+            bool is_permanent = (ar->last_error == WTC_ERROR_PROTOCOL ||
+                                 ar->last_error == WTC_ERROR_PERMISSION);
+
+            if (is_permanent || ar->retry_count >= AR_MAX_RETRY_ATTEMPTS) {
+                LOG_ERROR("AR %s: giving up after %d attempts (last_error=%d, %s)",
+                          ar->device_station_name, ar->retry_count,
+                          ar->last_error,
+                          is_permanent ? "permanent" : "max retries");
+                ar_state_t old_state = ar->state;
+                ar->state = AR_STATE_CLOSE;
+                notify_state_change(manager, ar, old_state, AR_STATE_CLOSE);
+                break;
+            }
+
+            /* Exponential backoff: 5s, 10s, 20s (capped at 30s).
+             * Add jitter ±25% to prevent synchronized retry storms
+             * when multiple RTUs fail simultaneously. */
+            uint32_t base_ms = 5000u << (ar->retry_count > 3 ? 3 : ar->retry_count);
+            if (base_ms > 30000) base_ms = 30000;
+            uint32_t jitter = base_ms / 4;
+            uint32_t backoff_ms = base_ms - jitter + (uint32_t)(now_ms % (2 * jitter + 1));
+
             uint32_t elapsed = (uint32_t)(now_ms - ar->last_activity_ms);
             if (elapsed < backoff_ms) {
                 break;
             }
 
-            LOG_INFO("AR %s: ABORT recovery after %u ms",
-                     ar->device_station_name, elapsed);
+            LOG_INFO("AR %s: ABORT recovery attempt %d/%d after %u ms",
+                     ar->device_station_name, ar->retry_count + 1,
+                     AR_MAX_RETRY_ATTEMPTS, elapsed);
 
             /*
              * Send Release to clean up any stale AR on the RTU before
@@ -599,10 +624,14 @@ wtc_result_t ar_manager_process(ar_manager_t *manager) {
             }
 
             ar_state_t old_state = ar->state;
+            ar->retry_count++;
             ar_send_connect_request(manager, ar);
 
             if (ar->state != old_state) {
                 notify_state_change(manager, ar, old_state, ar->state);
+            } else {
+                /* Connect failed again — stay in ABORT, backoff will increase */
+                ar->last_activity_ms = now_ms;
             }
             break;
         }
@@ -857,19 +886,26 @@ wtc_result_t ar_send_connect_request(ar_manager_t *manager,
 
         ar->state = AR_STATE_CONNECT_CNF;
         ar->last_activity_ms = time_get_ms();
+        ar->retry_count = 0;
+        ar->last_error = WTC_OK;
+        ar->missed_cycles = 0;
 
         LOG_INFO("=== CONNECT SUCCESS for %s (session_key=%u) ===",
                  ar->device_station_name, response.session_key);
         return WTC_OK;
     }
 
-    /* Connect failed */
+    /* Connect failed — classify the error for the ABORT retry handler.
+     * PROTOCOL errors (RPC fault, wrong opnum) are permanent.
+     * TIMEOUT and IO errors are transient — worth retrying. */
     ar->state = AR_STATE_ABORT;
     ar->last_activity_ms = time_get_ms();
+    ar->last_error = (res != WTC_OK) ? res : WTC_ERROR_CONNECTION_FAILED;
 
     LOG_ERROR("=== CONNECT FAILED for %s: error=%d ===",
-              ar->device_station_name, res);
-    LOG_INFO("  Will retry from ABORT state with backoff.");
+              ar->device_station_name, ar->last_error);
+    LOG_INFO("  Will retry from ABORT state with backoff (attempt %d/%d).",
+             ar->retry_count, AR_MAX_RETRY_ATTEMPTS);
 
     return WTC_ERROR_CONNECTION_FAILED;
 }
@@ -1041,6 +1077,11 @@ wtc_result_t ar_manager_get_all(ar_manager_t *manager,
     return WTC_OK;
 }
 
+/* Number of consecutive watchdog misses before ABORT.
+ * With 3s watchdog, 3 misses = 9s total before disconnect.
+ * This prevents one late frame from tearing down the AR. */
+#define WATCHDOG_MISS_THRESHOLD 3
+
 wtc_result_t ar_manager_check_health(ar_manager_t *manager) {
     if (!manager) {
         return WTC_ERROR_INVALID_PARAM;
@@ -1053,12 +1094,34 @@ wtc_result_t ar_manager_check_health(ar_manager_t *manager) {
         if (!ar || ar->state != AR_STATE_RUN ||
             __atomic_load_n(&ar->connecting, __ATOMIC_ACQUIRE)) continue;
 
-        /* Check watchdog timeout */
+        /* Progressive watchdog: track consecutive misses */
         if (now_ms - ar->last_activity_ms > ar->watchdog_ms) {
-            LOG_WARN("AR %s watchdog timeout", ar->device_station_name);
-            ar_state_t old_state = ar->state;
-            ar->state = AR_STATE_ABORT;
-            notify_state_change(manager, ar, old_state, AR_STATE_ABORT);
+            ar->missed_cycles++;
+
+            if (ar->missed_cycles == 1) {
+                LOG_WARN("AR %s watchdog miss (%d/%d)",
+                         ar->device_station_name,
+                         ar->missed_cycles, WATCHDOG_MISS_THRESHOLD);
+            } else if (ar->missed_cycles >= WATCHDOG_MISS_THRESHOLD) {
+                LOG_ERROR("AR %s watchdog ABORT after %d consecutive misses",
+                          ar->device_station_name, ar->missed_cycles);
+                ar_state_t old_state = ar->state;
+                ar->missed_cycles = 0;
+                ar->last_error = WTC_ERROR_TIMEOUT;
+                ar->state = AR_STATE_ABORT;
+                notify_state_change(manager, ar, old_state, AR_STATE_ABORT);
+            } else {
+                LOG_WARN("AR %s watchdog miss (%d/%d)",
+                         ar->device_station_name,
+                         ar->missed_cycles, WATCHDOG_MISS_THRESHOLD);
+            }
+        } else {
+            /* Receiving data — reset miss counter */
+            if (ar->missed_cycles > 0) {
+                LOG_DEBUG("AR %s watchdog recovered after %d misses",
+                          ar->device_station_name, ar->missed_cycles);
+                ar->missed_cycles = 0;
+            }
         }
     }
 
