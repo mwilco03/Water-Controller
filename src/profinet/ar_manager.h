@@ -52,6 +52,7 @@ typedef struct {
 wtc_result_t ar_manager_init(ar_manager_t **manager,
                               int socket_fd,
                               const uint8_t *controller_mac,
+                              const char *controller_station_name,
                               uint16_t vendor_id,
                               uint16_t device_id);
 

@@ -55,6 +55,10 @@ struct ar_manager {
     /* Controller UUID (generated once at startup) */
     uint8_t controller_uuid[16];
 
+    /* Controller NameOfStation used in ARBlockReq (CMInitiatorStationName) */
+    char controller_station_name[64];
+
+
     /* State change notification */
     ar_state_change_callback_t state_callback;
     void *state_callback_ctx;
@@ -186,9 +190,10 @@ static wtc_result_t send_cyclic_frame(ar_manager_t *manager, profinet_ar_t *ar) 
 wtc_result_t ar_manager_init(ar_manager_t **manager,
                               int socket_fd,
                               const uint8_t *controller_mac,
+                              const char *controller_station_name,
                               uint16_t vendor_id,
                               uint16_t device_id) {
-    if (!manager || socket_fd < 0 || !controller_mac) {
+    if (!manager || socket_fd < 0 || !controller_mac || !controller_station_name) {
         return WTC_ERROR_INVALID_PARAM;
     }
 
@@ -199,6 +204,8 @@ wtc_result_t ar_manager_init(ar_manager_t **manager,
 
     mgr->socket_fd = socket_fd;
     memcpy(mgr->controller_mac, controller_mac, 6);
+    strncpy(mgr->controller_station_name, controller_station_name,
+            sizeof(mgr->controller_station_name) - 1);
     mgr->session_key_counter = 1;
     pthread_mutex_init(&mgr->lock, NULL);
 
@@ -701,7 +708,7 @@ static void build_connect_params(ar_manager_t *manager,
     params->ar_properties = AR_PROP_STATE_ACTIVE |
                             AR_PROP_PARAMETERIZATION_TYPE |
                             AR_PROP_STARTUP_MODE_LEGACY;
-    strncpy(params->station_name, ar->device_station_name,
+    strncpy(params->station_name, manager->controller_station_name,
             sizeof(params->station_name) - 1);
 
     /* Controller info */
@@ -1161,7 +1168,7 @@ static void build_dap_connect_params(ar_manager_t *manager,
     params->ar_properties = AR_PROP_STATE_ACTIVE |
                             AR_PROP_PARAMETERIZATION_TYPE |
                             AR_PROP_STARTUP_MODE_LEGACY;
-    strncpy(params->station_name, ar->device_station_name,
+    strncpy(params->station_name, manager->controller_station_name,
             sizeof(params->station_name) - 1);
 
     /* Controller info */

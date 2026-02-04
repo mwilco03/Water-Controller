@@ -560,6 +560,7 @@ wtc_result_t profinet_controller_init(profinet_controller_t **controller,
 
     /* Initialize AR manager with controller identity for CMInitiatorObjectUUID */
     res = ar_manager_init(&ctrl->ar_manager, ctrl->raw_socket, ctrl->mac_address,
+                           config->station_name,
                            config->vendor_id, config->device_id);
     if (res != WTC_OK) {
         dcp_discovery_cleanup(ctrl->dcp);
