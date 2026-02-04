@@ -528,6 +528,21 @@ wtc_result_t profinet_controller_init(profinet_controller_t **controller,
         return WTC_ERROR_IO;
     }
 
+    /* Bind RPC socket to the PROFINET interface (SO_BINDTODEVICE).
+     * Without this, on multi-homed hosts the kernel routing table may
+     * send UDP packets out a non-PROFINET interface.  DCP uses raw L2
+     * sockets bound to the interface and is unaffected. */
+    if (ctrl->config.interface_name[0]) {
+        if (setsockopt(ctrl->rpc_socket, SOL_SOCKET, SO_BINDTODEVICE,
+                       ctrl->config.interface_name,
+                       strlen(ctrl->config.interface_name) + 1) < 0) {
+            LOG_ERROR("Failed to bind record RPC socket to %s: %s",
+                      ctrl->config.interface_name, strerror(errno));
+        } else {
+            LOG_INFO("Record RPC socket bound to %s", ctrl->config.interface_name);
+        }
+    }
+
     /* Set RPC socket options */
     struct timeval tv;
     tv.tv_sec = 5;  /* 5 second timeout */
@@ -540,7 +555,8 @@ wtc_result_t profinet_controller_init(profinet_controller_t **controller,
     int reuse = 1;
     setsockopt(ctrl->rpc_socket, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
 
-    LOG_INFO("RPC socket created for acyclic communication");
+    LOG_INFO("RPC socket created for acyclic communication on %s",
+             ctrl->config.interface_name);
 
     /* Initialize DCP discovery */
     res = dcp_discovery_init(&ctrl->dcp, ctrl->config.interface_name);
@@ -558,10 +574,14 @@ wtc_result_t profinet_controller_init(profinet_controller_t **controller,
      */
     dcp_set_socket(ctrl->dcp, ctrl->raw_socket);
 
-    /* Initialize AR manager with controller identity for CMInitiatorObjectUUID */
+    /* Initialize AR manager with controller identity for CMInitiatorObjectUUID.
+     * Pass interface_name so the RPC socket can be bound to the PROFINET NIC
+     * via SO_BINDTODEVICE — ensures UDP RPC packets egress the correct
+     * interface on multi-homed hosts (Docker with host networking). */
     res = ar_manager_init(&ctrl->ar_manager, ctrl->raw_socket, ctrl->mac_address,
                            config->station_name,
-                           config->vendor_id, config->device_id);
+                           config->vendor_id, config->device_id,
+                           ctrl->config.interface_name);
     if (res != WTC_OK) {
         dcp_discovery_cleanup(ctrl->dcp);
         close(ctrl->rpc_socket);

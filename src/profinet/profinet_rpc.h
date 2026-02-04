@@ -307,6 +307,7 @@ typedef struct {
     uint16_t controller_port;   /* Our RPC port */
     uint32_t sequence_number;   /* RPC sequence counter */
     uint8_t activity_uuid[16];  /* Current activity UUID */
+    char interface_name[32];    /* PROFINET interface (for SO_BINDTODEVICE) */
 } rpc_context_t;
 
 /* ============== Connect Request/Response ============== */
@@ -387,10 +388,16 @@ typedef struct {
 
 /* ============== Function Prototypes ============== */
 
-/* Initialize RPC context */
+/* Initialize RPC context.
+ * interface_name binds the UDP socket to the PROFINET NIC via SO_BINDTODEVICE
+ * so that RPC packets are sent/received on the correct interface (critical on
+ * multi-homed hosts where the kernel routing table may otherwise direct UDP
+ * traffic through a non-PROFINET interface — DCP uses raw L2 sockets bound
+ * to the interface and is unaffected, but RPC uses AF_INET and needs this). */
 wtc_result_t rpc_context_init(rpc_context_t *ctx,
                                const uint8_t *controller_mac,
-                               uint32_t controller_ip);
+                               uint32_t controller_ip,
+                               const char *interface_name);
 
 /* Cleanup RPC context */
 void rpc_context_cleanup(rpc_context_t *ctx);

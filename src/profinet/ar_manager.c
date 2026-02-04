@@ -41,6 +41,7 @@ struct ar_manager {
     uint8_t controller_mac[6];
     uint32_t controller_ip;
     int if_index;
+    char interface_name[32]; /* PROFINET NIC — passed to RPC for SO_BINDTODEVICE */
 
     profinet_ar_t *ars[MAX_ARS];
     int ar_count;
@@ -192,7 +193,8 @@ wtc_result_t ar_manager_init(ar_manager_t **manager,
                               const uint8_t *controller_mac,
                               const char *controller_station_name,
                               uint16_t vendor_id,
-                              uint16_t device_id) {
+                              uint16_t device_id,
+                              const char *interface_name) {
     if (!manager || socket_fd < 0 || !controller_mac || !controller_station_name) {
         return WTC_ERROR_INVALID_PARAM;
     }
@@ -208,6 +210,12 @@ wtc_result_t ar_manager_init(ar_manager_t **manager,
             sizeof(mgr->controller_station_name) - 1);
     mgr->session_key_counter = 1;
     pthread_mutex_init(&mgr->lock, NULL);
+
+    /* Store interface name for RPC socket binding (SO_BINDTODEVICE) */
+    if (interface_name) {
+        strncpy(mgr->interface_name, interface_name,
+                sizeof(mgr->interface_name) - 1);
+    }
 
     /* Get interface index from socket */
     struct sockaddr_ll sll;
@@ -225,7 +233,7 @@ wtc_result_t ar_manager_init(ar_manager_t **manager,
                                 vendor_id, device_id, PN_INSTANCE_ID);
 
     *manager = mgr;
-    LOG_DEBUG("AR manager initialized");
+    LOG_DEBUG("AR manager initialized on %s", interface_name ? interface_name : "unknown");
     return WTC_OK;
 }
 
@@ -674,15 +682,17 @@ static wtc_result_t ensure_rpc_initialized(ar_manager_t *manager) {
 
     wtc_result_t res = rpc_context_init(&manager->rpc_ctx,
                                          manager->controller_mac,
-                                         manager->controller_ip);
+                                         manager->controller_ip,
+                                         manager->interface_name);
     if (res != WTC_OK) {
         LOG_ERROR("Failed to initialize RPC context");
         return res;
     }
 
     manager->rpc_initialized = true;
-    LOG_INFO("RPC context initialized for controller IP %08X",
-             manager->controller_ip);
+    LOG_INFO("RPC context initialized for controller IP %08X on %s",
+             manager->controller_ip,
+             manager->interface_name[0] ? manager->interface_name : "any");
     return WTC_OK;
 }
 
