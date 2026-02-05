@@ -803,6 +803,14 @@ wtc_result_t profinet_controller_connect(profinet_controller_t *controller,
         }
     }
 
+    /*
+     * Refresh DCP discovery before connect to ensure we have current device info.
+     * RTUs may change vendor_id/device_id dynamically, so stale cache causes issues.
+     * This is a quick multicast identify - responses update the cache.
+     */
+    LOG_DEBUG("Refreshing DCP cache before connect attempt");
+    dcp_discovery_identify_all(controller->dcp);
+
     /* Get device info from DCP cache */
     dcp_device_info_t devices[64];
     int device_count = 64;
@@ -871,14 +879,20 @@ wtc_result_t profinet_controller_connect(profinet_controller_t *controller,
         return WTC_ERROR_NOT_FOUND;
     }
 
-    /* Create AR configuration */
+    /* Create AR configuration
+     *
+     * Note: vendor_id/device_id here are for tracking purposes only.
+     * The CMInitiatorObjectUUID (used in Connect request) is built with
+     * the CONTROLLER's identity (PN_VENDOR_ID/PN_DEVICE_ID), not the device's.
+     * Using consistent values here avoids issues if RTU changes its advertised IDs.
+     */
     ar_config_t ar_config;
     memset(&ar_config, 0, sizeof(ar_config));
     strncpy(ar_config.station_name, station_name, sizeof(ar_config.station_name) - 1);
     memcpy(ar_config.device_mac, device->mac_address, 6);
     ar_config.device_ip = device->ip_address;
-    ar_config.vendor_id = device->vendor_id;
-    ar_config.device_id = device->device_id;
+    ar_config.vendor_id = PN_VENDOR_ID;   /* Use controller's identity */
+    ar_config.device_id = PN_DEVICE_ID;   /* Use controller's identity */
 
     if (slots && slot_count > 0) {
         memcpy(ar_config.slots, slots, slot_count * sizeof(slot_config_t));
