@@ -407,8 +407,7 @@ static void dcp_discovery_callback(const dcp_device_info_t *device, void *ctx) {
     if (idx < WTC_MAX_DISCOVERY_DEVICES) {
         shm_discovered_device_t *shm_dev = &server->shm->discovered_devices[idx];
 
-        strncpy(shm_dev->station_name, device->station_name, 63);
-        shm_dev->station_name[63] = '\0';
+        snprintf(shm_dev->station_name, sizeof(shm_dev->station_name), "%s", device->station_name);
 
         format_ip_address(device->ip_address, shm_dev->ip_address,
                           sizeof(shm_dev->ip_address));

@@ -109,8 +109,8 @@ wtc_result_t config_manager_load(config_manager_t *mgr, const char *filename) {
             value[strlen(value) - 1] = '\0';
         }
 
-        strncpy(mgr->entries[mgr->entry_count].key, key, MAX_KEY_LEN - 1);
-        strncpy(mgr->entries[mgr->entry_count].value, value, MAX_VALUE_LEN - 1);
+        snprintf(mgr->entries[mgr->entry_count].key, sizeof(mgr->entries[mgr->entry_count].key), "%s", key);
+        snprintf(mgr->entries[mgr->entry_count].value, sizeof(mgr->entries[mgr->entry_count].value), "%s", value);
         mgr->entry_count++;
     }
 

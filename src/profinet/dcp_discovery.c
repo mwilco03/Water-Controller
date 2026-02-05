@@ -69,7 +69,13 @@ static wtc_result_t get_interface_info(dcp_discovery_t *dcp) {
     struct ifreq ifr;
 
     memset(&ifr, 0, sizeof(ifr));
-    strncpy(ifr.ifr_name, dcp->interface_name, IFNAMSIZ - 1);
+    /* Copy interface name with explicit bounds check to avoid truncation warnings.
+     * interface_name is 32 bytes but ifr_name is IFNAMSIZ (16). */
+    size_t name_len = strlen(dcp->interface_name);
+    if (name_len >= sizeof(ifr.ifr_name)) {
+        name_len = sizeof(ifr.ifr_name) - 1;
+    }
+    memcpy(ifr.ifr_name, dcp->interface_name, name_len);
 
     /* Get interface index */
     if (ioctl(dcp->socket_fd, SIOCGIFINDEX, &ifr) < 0) {

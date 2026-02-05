@@ -126,9 +126,9 @@ wtc_result_t rtu_registry_add_device(rtu_registry_t *registry,
     }
 
     device->id = registry->device_count;
-    strncpy(device->station_name, station_name, sizeof(device->station_name) - 1);
+    snprintf(device->station_name, sizeof(device->station_name), "%s", station_name);
     if (ip_address) {
-        strncpy(device->ip_address, ip_address, sizeof(device->ip_address) - 1);
+        snprintf(device->ip_address, sizeof(device->ip_address), "%s", ip_address);
     }
     device->connection_state = PROFINET_STATE_OFFLINE;
     device->last_seen_ms = time_get_ms();
