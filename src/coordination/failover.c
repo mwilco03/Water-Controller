@@ -119,7 +119,7 @@ static rtu_health_t *get_health_entry(failover_manager_t *mgr, const char *stati
 
     rtu_health_t *h = &mgr->health[mgr->health_count++];
     memset(h, 0, sizeof(rtu_health_t));
-    strncpy(h->station_name, station_name, WTC_MAX_STATION_NAME - 1);
+    snprintf(h->station_name, sizeof(h->station_name), "%s", station_name);
     h->healthy = true;
     h->last_heartbeat_ms = time_get_ms();
 
@@ -137,7 +137,7 @@ wtc_result_t failover_set_backup(failover_manager_t *mgr,
     /* Check for existing */
     for (int i = 0; i < mgr->backup_count; i++) {
         if (strcmp(mgr->backups[i].primary, primary_station) == 0) {
-            strncpy(mgr->backups[i].backup, backup_station, WTC_MAX_STATION_NAME - 1);
+            snprintf(mgr->backups[i].backup, sizeof(mgr->backups[i].backup), "%s", backup_station);
             LOG_INFO(LOG_TAG, "Updated backup for %s -> %s",
                      primary_station, backup_station);
             return WTC_OK;
@@ -149,8 +149,8 @@ wtc_result_t failover_set_backup(failover_manager_t *mgr,
     }
 
     backup_mapping_t *b = &mgr->backups[mgr->backup_count++];
-    strncpy(b->primary, primary_station, WTC_MAX_STATION_NAME - 1);
-    strncpy(b->backup, backup_station, WTC_MAX_STATION_NAME - 1);
+    snprintf(b->primary, sizeof(b->primary), "%s", primary_station);
+    snprintf(b->backup, sizeof(b->backup), "%s", backup_station);
     b->active = false;
 
     LOG_INFO(LOG_TAG, "Configured backup for %s -> %s", primary_station, backup_station);
@@ -213,7 +213,7 @@ static void execute_failover(failover_manager_t *mgr, backup_mapping_t *mapping)
     rtu_health_t *h = get_health_entry(mgr, mapping->primary);
     if (h) {
         h->in_failover = true;
-        strncpy(h->backup_station, mapping->backup, WTC_MAX_STATION_NAME - 1);
+        snprintf(h->backup_station, sizeof(h->backup_station), "%s", mapping->backup);
     }
 
     /* Notify callback */

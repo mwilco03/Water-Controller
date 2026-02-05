@@ -231,7 +231,7 @@ static void *server_thread_func(void *arg) {
 
                 if (slot >= 0 && ctx->client_count < (int)ctx->config.max_connections) {
                     ctx->clients[slot].fd = client_fd;
-                    strncpy(ctx->clients[slot].ip, client_ip, 63);
+                    snprintf(ctx->clients[slot].ip, sizeof(ctx->clients[slot].ip), "%s", client_ip);
                     ctx->clients[slot].last_activity_ms = time_get_ms();
                     ctx->clients[slot].active = true;
                     ctx->client_count++;

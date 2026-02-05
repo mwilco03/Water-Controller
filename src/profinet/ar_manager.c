@@ -321,8 +321,8 @@ wtc_result_t ar_manager_create_ar(ar_manager_t *manager,
     new_ar->type = AR_TYPE_IOCAR;
     new_ar->state = AR_STATE_INIT;
 
-    strncpy(new_ar->device_station_name, config->station_name,
-            sizeof(new_ar->device_station_name) - 1);
+    snprintf(new_ar->device_station_name, sizeof(new_ar->device_station_name),
+             "%s", config->station_name);
     memcpy(new_ar->device_mac, config->device_mac, 6);
     new_ar->device_ip = config->device_ip;
     new_ar->device_vendor_id = config->vendor_id;
@@ -728,8 +728,8 @@ static void build_connect_params(ar_manager_t *manager,
     /* ARBlockReq carries CMInitiatorStationName — the CONTROLLER's name,
      * not the device's.  Using the device name here causes p-net to reject
      * the connect request (silent drop or invalid response). */
-    strncpy(params->station_name, manager->controller_station_name,
-            sizeof(params->station_name) - 1);
+    snprintf(params->station_name, sizeof(params->station_name),
+             "%s", manager->controller_station_name);
 
     /* Controller info */
     memcpy(params->controller_mac, manager->controller_mac, 6);
@@ -1215,8 +1215,8 @@ static void build_dap_connect_params(ar_manager_t *manager,
     /* ARBlockReq carries CMInitiatorStationName — the CONTROLLER's name,
      * not the device's.  Using the device name here causes p-net to reject
      * the connect request (silent drop or invalid response). */
-    strncpy(params->station_name, manager->controller_station_name,
-            sizeof(params->station_name) - 1);
+    snprintf(params->station_name, sizeof(params->station_name),
+             "%s", manager->controller_station_name);
 
     /* Controller info */
     memcpy(params->controller_mac, manager->controller_mac, 6);

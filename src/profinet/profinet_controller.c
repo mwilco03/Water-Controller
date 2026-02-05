@@ -245,8 +245,8 @@ static void dcp_callback(const dcp_device_info_t *device, void *ctx) {
     if (ctrl->config.on_device_added) {
         rtu_device_t rtu;
         memset(&rtu, 0, sizeof(rtu));
-        strncpy(rtu.station_name, device->station_name, sizeof(rtu.station_name) - 1);
-        strncpy(rtu.ip_address, ip_str, sizeof(rtu.ip_address) - 1);
+        snprintf(rtu.station_name, sizeof(rtu.station_name), "%s", device->station_name);
+        snprintf(rtu.ip_address, sizeof(rtu.ip_address), "%s", ip_str);
         rtu.vendor_id = device->vendor_id;
         rtu.device_id = device->device_id;
         rtu.connection_state = PROFINET_STATE_OFFLINE;
@@ -275,12 +275,12 @@ static void dcp_callback(const dcp_device_info_t *device, void *ctx) {
 
         if (!already_pending &&
             ctrl->pending_connect_count < MAX_PENDING_CONNECTS) {
-            strncpy(ctrl->pending_connects[ctrl->pending_connect_count].station_name,
-                    device->station_name,
-                    sizeof(ctrl->pending_connects[0].station_name) - 1);
-            strncpy(ctrl->pending_connects[ctrl->pending_connect_count].ip_str,
-                    ip_str,
-                    sizeof(ctrl->pending_connects[0].ip_str) - 1);
+            snprintf(ctrl->pending_connects[ctrl->pending_connect_count].station_name,
+                     sizeof(ctrl->pending_connects[0].station_name), "%s",
+                     device->station_name);
+            snprintf(ctrl->pending_connects[ctrl->pending_connect_count].ip_str,
+                     sizeof(ctrl->pending_connects[0].ip_str), "%s",
+                     ip_str);
             ctrl->pending_connect_count++;
             LOG_INFO("Queued auto-connect for discovered device: %s (%s)",
                      device->station_name, ip_str);
@@ -689,7 +689,7 @@ static wtc_result_t arp_lookup_mac(const char *interface_name,
     sin->sin_family = AF_INET;
     sin->sin_addr.s_addr = htonl(ip_address);
 
-    strncpy(arp_req.arp_dev, interface_name, sizeof(arp_req.arp_dev) - 1);
+    snprintf(arp_req.arp_dev, sizeof(arp_req.arp_dev), "%s", interface_name);
 
     if (ioctl(sock, SIOCGARP, &arp_req) < 0) {
         LOG_DEBUG("ARP lookup failed for 0x%08X: %s (may need to ping first)",
