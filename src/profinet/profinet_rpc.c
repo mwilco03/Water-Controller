@@ -1229,12 +1229,34 @@ wtc_result_t rpc_send_and_receive(rpc_context_t *ctx,
         }
     }
 
-    /* Log at INFO level - critical for debugging "no packet on wire" issues */
-    LOG_INFO("RPC %s: sending %zu bytes to %d.%d.%d.%d:%u (fd=%d)",
-             opnum_name, req_len,
-             (device_ip >> 24) & 0xFF, (device_ip >> 16) & 0xFF,
-             (device_ip >> 8) & 0xFF, device_ip & 0xFF,
-             PNIO_RPC_PORT, ctx->socket_fd);
+    /*
+     * Detailed pre-send diagnostics for "no packet on wire" debugging.
+     * Log: dst IP (hex + dotted), dst port, local socket info, payload preview.
+     */
+    char dst_ip_str[INET_ADDRSTRLEN];
+    inet_ntop(AF_INET, &addr.sin_addr, dst_ip_str, sizeof(dst_ip_str));
+
+    /* Get local socket binding info via getsockname() */
+    struct sockaddr_in local_addr;
+    socklen_t local_len = sizeof(local_addr);
+    char local_ip_str[INET_ADDRSTRLEN] = "unknown";
+    uint16_t local_port = 0;
+    if (getsockname(ctx->socket_fd, (struct sockaddr *)&local_addr, &local_len) == 0) {
+        inet_ntop(AF_INET, &local_addr.sin_addr, local_ip_str, sizeof(local_ip_str));
+        local_port = ntohs(local_addr.sin_port);
+    }
+
+    /* Log first 32 bytes of payload in hex for protocol analysis */
+    char payload_hex[97] = {0};  /* 32 bytes * 3 chars + null */
+    size_t hex_len = req_len > 32 ? 32 : req_len;
+    for (size_t i = 0; i < hex_len; i++) {
+        snprintf(payload_hex + i*3, 4, "%02X ", request[i]);
+    }
+
+    LOG_INFO("RPC %s PRE-SEND: dst=%s:%u (0x%08X), local=%s:%u, fd=%d, len=%zu",
+             opnum_name, dst_ip_str, PNIO_RPC_PORT, device_ip,
+             local_ip_str, local_port, ctx->socket_fd, req_len);
+    LOG_INFO("RPC %s PAYLOAD[0:32]: %s", opnum_name, payload_hex);
 
     /*
      * Use connect() + send() instead of sendto() to force early routing
@@ -1246,10 +1268,8 @@ wtc_result_t rpc_send_and_receive(rpc_context_t *ctx,
      * immediately. If routing fails, connect() returns an error.
      */
     if (connect(ctx->socket_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-        LOG_ERROR("RPC connect() failed for %d.%d.%d.%d:%u: %s (errno=%d)",
-                  (device_ip >> 24) & 0xFF, (device_ip >> 16) & 0xFF,
-                  (device_ip >> 8) & 0xFF, device_ip & 0xFF,
-                  PNIO_RPC_PORT, strerror(errno), errno);
+        LOG_ERROR("RPC connect() failed for %s:%u: %s (errno=%d, fd=%d)",
+                  dst_ip_str, PNIO_RPC_PORT, strerror(errno), errno, ctx->socket_fd);
         return WTC_ERROR_IO;
     }
 
@@ -1273,23 +1293,40 @@ wtc_result_t rpc_send_and_receive(rpc_context_t *ctx,
     pfd.events = POLLIN;
 
     int poll_result = poll(&pfd, 1, (int)timeout_ms);
+
+    /* Log poll result with revents for debugging */
+    LOG_INFO("RPC %s POLL: result=%d, revents=0x%04X (POLLIN=%d, POLLERR=%d, POLLHUP=%d)",
+             opnum_name, poll_result, pfd.revents,
+             (pfd.revents & POLLIN) ? 1 : 0,
+             (pfd.revents & POLLERR) ? 1 : 0,
+             (pfd.revents & POLLHUP) ? 1 : 0);
+
     if (poll_result < 0) {
-        LOG_ERROR("RPC poll failed: %s", strerror(errno));
+        LOG_ERROR("RPC poll failed: %s (errno=%d)", strerror(errno), errno);
         return WTC_ERROR_IO;
     }
     if (poll_result == 0) {
-        LOG_WARN("RPC timeout after %u ms", timeout_ms);
+        LOG_WARN("RPC %s TIMEOUT after %u ms (no response received)", opnum_name, timeout_ms);
         return WTC_ERROR_TIMEOUT;
     }
 
     /* Receive response */
-    socklen_t addr_len = sizeof(addr);
+    struct sockaddr_in recv_addr;
+    socklen_t recv_addr_len = sizeof(recv_addr);
+    memset(&recv_addr, 0, sizeof(recv_addr));
+
     ssize_t received = recvfrom(ctx->socket_fd, response, *resp_len, 0,
-                                 (struct sockaddr *)&addr, &addr_len);
+                                 (struct sockaddr *)&recv_addr, &recv_addr_len);
     if (received < 0) {
-        LOG_ERROR("RPC receive failed: %s", strerror(errno));
+        LOG_ERROR("RPC receive failed: %s (errno=%d)", strerror(errno), errno);
         return WTC_ERROR_IO;
     }
+
+    /* Log response source for debugging */
+    char recv_ip_str[INET_ADDRSTRLEN];
+    inet_ntop(AF_INET, &recv_addr.sin_addr, recv_ip_str, sizeof(recv_ip_str));
+    LOG_INFO("RPC %s RECV: %zd bytes from %s:%u",
+             opnum_name, received, recv_ip_str, ntohs(recv_addr.sin_port));
 
     *resp_len = (size_t)received;
 
@@ -1306,7 +1343,13 @@ wtc_result_t rpc_send_and_receive(rpc_context_t *ctx,
         }
     }
 
-    LOG_INFO("RPC %s received: %zd bytes", pkt_type_name, received);
+    /* Log response payload preview */
+    char resp_hex[97] = {0};
+    size_t resp_hex_len = (size_t)received > 32 ? 32 : (size_t)received;
+    for (size_t i = 0; i < resp_hex_len; i++) {
+        snprintf(resp_hex + i*3, 4, "%02X ", response[i]);
+    }
+    LOG_INFO("RPC %s RESPONSE[0:32]: %s", pkt_type_name, resp_hex);
     return WTC_OK;
 }
 
