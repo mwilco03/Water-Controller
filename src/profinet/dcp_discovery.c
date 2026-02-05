@@ -161,10 +161,16 @@ static void parse_dcp_blocks(dcp_discovery_t *dcp,
         switch (block.option) {
         case DCP_OPTION_IP:
             if (block.suboption == DCP_SUBOPTION_IP_PARAMETER && block.length >= 12) {
-                /* Skip block info (2 bytes) */
-                device->ip_address = ntohl(*(uint32_t *)(block_data + 2));
-                device->subnet_mask = ntohl(*(uint32_t *)(block_data + 6));
-                device->gateway = ntohl(*(uint32_t *)(block_data + 10));
+                /* Skip block info (2 bytes).
+                 * Use memcpy to avoid alignment hazards on ARM/strict-alignment architectures.
+                 * block_data may not be 4-byte aligned. */
+                uint32_t ip_be, mask_be, gw_be;
+                memcpy(&ip_be, block_data + 2, sizeof(ip_be));
+                memcpy(&mask_be, block_data + 6, sizeof(mask_be));
+                memcpy(&gw_be, block_data + 10, sizeof(gw_be));
+                device->ip_address = ntohl(ip_be);
+                device->subnet_mask = ntohl(mask_be);
+                device->gateway = ntohl(gw_be);
                 device->ip_set = true;
             } else if (block.suboption == DCP_SUBOPTION_IP_MAC && block.length >= 6) {
                 memcpy(device->mac_address, block_data, 6);
@@ -189,10 +195,17 @@ static void parse_dcp_blocks(dcp_discovery_t *dcp,
                 normalize_station_name(device->station_name);
                 device->name_set = true;
             } else if (block.suboption == DCP_SUBOPTION_DEVICE_ID && block.length >= 6) {
-                device->vendor_id = ntohs(*(uint16_t *)(block_data + 2));
-                device->device_id = ntohs(*(uint16_t *)(block_data + 4));
+                /* Use memcpy to avoid alignment hazards */
+                uint16_t vendor_be, device_be;
+                memcpy(&vendor_be, block_data + 2, sizeof(vendor_be));
+                memcpy(&device_be, block_data + 4, sizeof(device_be));
+                device->vendor_id = ntohs(vendor_be);
+                device->device_id = ntohs(device_be);
             } else if (block.suboption == DCP_SUBOPTION_DEVICE_ROLE && block.length >= 4) {
-                device->device_role = ntohs(*(uint16_t *)(block_data + 2));
+                /* Use memcpy to avoid alignment hazards */
+                uint16_t role_be;
+                memcpy(&role_be, block_data + 2, sizeof(role_be));
+                device->device_role = ntohs(role_be);
             }
             break;
 

@@ -83,7 +83,7 @@ async def create_rtu(
                 rtu.ip_address,
                 vendor_int,
                 device_int,
-                rtu.slot_count or 8
+                rtu.slot_count or 0  # 0 = discover from device via PROFINET
             )
             if controller_registered:
                 logger.info(f"RTU {rtu.station_name} registered with PROFINET controller")
@@ -214,7 +214,7 @@ async def add_rtu_by_ip(
                 ip_address,
                 vendor_id or 0,
                 device_id or 0,
-                8  # Default slot count
+                0  # 0 = discover slot count from device via PROFINET
             )
             logger.info(f"RTU {station_name} registered with PROFINET controller")
     except Exception as e:
@@ -406,7 +406,7 @@ async def connect_rtu(
                 rtu.ip_address,
                 vendor_int,
                 device_int,
-                rtu.slot_count or 8
+                rtu.slot_count or 0  # 0 = discover from device via PROFINET
             )
             logger.debug(f"Ensured RTU {name} is registered with controller")
     except Exception as e:
@@ -826,7 +826,7 @@ async def refresh_rtu_inventory(
                     rtu.ip_address,
                     vendor_int,
                     device_int,
-                    rtu.slot_count or 8
+                    rtu.slot_count or 0  # 0 = discover from device via PROFINET
                 )
         except Exception as e:
             logger.warning(f"Could not ensure RTU {name} is registered: {e}")

@@ -119,7 +119,7 @@ wtc_result_t create_actuator_slot_config(slot_config_t *slot,
     } else {
         const char *type_name = (type < sizeof(actuator_names) / sizeof(actuator_names[0]))
                                 ? actuator_names[type] : "Actuator";
-        snprintf(slot->name, sizeof(slot->name), "%s %d", type_name, slot_number - 8);
+        snprintf(slot->name, sizeof(slot->name), "%s (slot %d)", type_name, slot_number);
     }
 
     return WTC_OK;

@@ -147,7 +147,7 @@ async def get_profinet_slots(
     sensor_by_slot = {s["slot"]: s for s in shm_rtu.get("sensors", [])}
     actuator_by_slot = {a["slot"]: a for a in shm_rtu.get("actuators", [])}
 
-    # PROFINET convention: slots 1-8 inputs, slots 9-15 outputs (0 is reserved)
+    # Iterate over discovered slots (slot 0 is reserved for DAP)
     for slot_num in range(1, slot_count + 1):
         slot_data = {
             "slot": slot_num,

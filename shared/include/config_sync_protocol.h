@@ -122,7 +122,7 @@ typedef struct __attribute__((packed)) {
  *   scale_min:f32 scale_max:f32 alarm_low:f32 alarm_high:f32
  */
 typedef struct __attribute__((packed)) {
-    uint8_t slot;                                 /* Slot number (1-8) */
+    uint8_t slot;                                 /* Slot number (1..CONFIG_SYNC_MAX_SENSORS) */
     uint8_t sensor_type;                          /* Sensor type enum */
     char name[CONFIG_SYNC_MAX_NAME_LEN];          /* Sensor name/tag */
     char unit[CONFIG_SYNC_MAX_UNIT_LEN];          /* Engineering unit */
@@ -154,7 +154,7 @@ typedef struct __attribute__((packed)) {
  *   slot:u8 type:u8 name:char[16] default_state:u8 reserved:u8 interlock_mask:u16
  */
 typedef struct __attribute__((packed)) {
-    uint8_t slot;                                 /* Slot number (9-15) */
+    uint8_t slot;                                 /* Slot number (discovered from device) */
     uint8_t actuator_type;                        /* Actuator type enum */
     char name[CONFIG_SYNC_MAX_NAME_LEN];          /* Actuator name/tag */
     uint8_t default_state;                        /* Default state on startup/failsafe */

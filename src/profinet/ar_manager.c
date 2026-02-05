@@ -41,6 +41,7 @@ struct ar_manager {
     uint8_t controller_mac[6];
     uint32_t controller_ip;
     int if_index;
+    char interface_name[32]; /* PROFINET NIC — passed to RPC for SO_BINDTODEVICE */
 
     profinet_ar_t *ars[MAX_ARS];
     int ar_count;
@@ -55,9 +56,9 @@ struct ar_manager {
     /* Controller UUID (generated once at startup) */
     uint8_t controller_uuid[16];
 
-    /* Controller NameOfStation used in ARBlockReq (CMInitiatorStationName) */
+    /* Controller NameOfStation (CMInitiatorStationName in ARBlockReq).
+     * This is the CONTROLLER's identity, not the device's. */
     char controller_station_name[64];
-
 
     /* State change notification */
     ar_state_change_callback_t state_callback;
@@ -192,7 +193,8 @@ wtc_result_t ar_manager_init(ar_manager_t **manager,
                               const uint8_t *controller_mac,
                               const char *controller_station_name,
                               uint16_t vendor_id,
-                              uint16_t device_id) {
+                              uint16_t device_id,
+                              const char *interface_name) {
     if (!manager || socket_fd < 0 || !controller_mac || !controller_station_name) {
         return WTC_ERROR_INVALID_PARAM;
     }
@@ -208,6 +210,17 @@ wtc_result_t ar_manager_init(ar_manager_t **manager,
             sizeof(mgr->controller_station_name) - 1);
     mgr->session_key_counter = 1;
     pthread_mutex_init(&mgr->lock, NULL);
+
+    /* Store interface name for RPC socket binding (SO_BINDTODEVICE) */
+    if (interface_name) {
+        strncpy(mgr->interface_name, interface_name,
+                sizeof(mgr->interface_name) - 1);
+    }
+
+    /* Store controller station name for CMInitiatorStationName in ARBlockReq.
+     * This MUST be the controller's NameOfStation, not the device's. */
+    strncpy(mgr->controller_station_name, controller_station_name,
+            sizeof(mgr->controller_station_name) - 1);
 
     /* Get interface index from socket */
     struct sockaddr_ll sll;
@@ -225,7 +238,8 @@ wtc_result_t ar_manager_init(ar_manager_t **manager,
                                 vendor_id, device_id, PN_INSTANCE_ID);
 
     *manager = mgr;
-    LOG_DEBUG("AR manager initialized");
+    LOG_DEBUG("AR manager initialized: station='%s', interface=%s",
+              controller_station_name, interface_name ? interface_name : "any");
     return WTC_OK;
 }
 
@@ -674,15 +688,17 @@ static wtc_result_t ensure_rpc_initialized(ar_manager_t *manager) {
 
     wtc_result_t res = rpc_context_init(&manager->rpc_ctx,
                                          manager->controller_mac,
-                                         manager->controller_ip);
+                                         manager->controller_ip,
+                                         manager->interface_name);
     if (res != WTC_OK) {
         LOG_ERROR("Failed to initialize RPC context");
         return res;
     }
 
     manager->rpc_initialized = true;
-    LOG_INFO("RPC context initialized for controller IP %08X",
-             manager->controller_ip);
+    LOG_INFO("RPC context initialized for controller IP %08X on %s",
+             manager->controller_ip,
+             manager->interface_name[0] ? manager->interface_name : "any");
     return WTC_OK;
 }
 
@@ -708,6 +724,10 @@ static void build_connect_params(ar_manager_t *manager,
     params->ar_properties = AR_PROP_STATE_ACTIVE |
                             AR_PROP_PARAMETERIZATION_TYPE |
                             AR_PROP_STARTUP_MODE_LEGACY;
+
+    /* ARBlockReq carries CMInitiatorStationName — the CONTROLLER's name,
+     * not the device's.  Using the device name here causes p-net to reject
+     * the connect request (silent drop or invalid response). */
     strncpy(params->station_name, manager->controller_station_name,
             sizeof(params->station_name) - 1);
 
@@ -876,6 +896,11 @@ wtc_result_t ar_send_connect_request(ar_manager_t *manager,
         /* Update AR with response data */
         memcpy(ar->device_mac, response.device_mac, 6);
 
+        /* Store the device-assigned session key. The device may accept our
+         * proposed key or assign a different one — we must use its value
+         * for all subsequent RPC calls (ParameterEnd, Release, etc.). */
+        ar->session_key = response.session_key;
+
         for (int i = 0; i < response.frame_id_count &&
                         i < ar->iocr_count; i++) {
             if (ar->iocr[i].frame_id != response.frame_ids[i].assigned) {
@@ -1021,6 +1046,22 @@ wtc_result_t ar_send_release_request(ar_manager_t *manager,
     return WTC_OK;
 }
 
+/* ============== Record Read/Write ============== */
+
+rpc_context_t *ar_manager_get_rpc_context(ar_manager_t *manager) {
+    if (!manager || !manager->rpc_initialized) {
+        return NULL;
+    }
+    return &manager->rpc_ctx;
+}
+
+/* Note: ar_manager_record_read and ar_manager_record_write are declared in
+ * the header but not implemented here. Generic record read/write operations
+ * are handled directly by profinet_controller.c using build_rpc_record_request()
+ * and send_rpc_request() with the RPC context obtained via
+ * ar_manager_get_rpc_context(). The specialized ar_read_real_identification()
+ * function handles 0xF844 reads for module discovery. */
+
 wtc_result_t ar_handle_rt_frame(ar_manager_t *manager,
                                  const uint8_t *frame,
                                  size_t len) {
@@ -1028,8 +1069,10 @@ wtc_result_t ar_handle_rt_frame(ar_manager_t *manager,
         return WTC_ERROR_INVALID_PARAM;
     }
 
-    /* Get frame ID */
-    uint16_t frame_id = ntohs(*(uint16_t *)(frame + ETH_HEADER_LEN));
+    /* Get frame ID - use memcpy to avoid alignment hazards */
+    uint16_t frame_id_be;
+    memcpy(&frame_id_be, frame + ETH_HEADER_LEN, sizeof(frame_id_be));
+    uint16_t frame_id = ntohs(frame_id_be);
 
     /* Find AR by frame ID */
     profinet_ar_t *ar = ar_manager_get_ar_by_frame_id(manager, frame_id);
@@ -1168,6 +1211,10 @@ static void build_dap_connect_params(ar_manager_t *manager,
     params->ar_properties = AR_PROP_STATE_ACTIVE |
                             AR_PROP_PARAMETERIZATION_TYPE |
                             AR_PROP_STARTUP_MODE_LEGACY;
+
+    /* ARBlockReq carries CMInitiatorStationName — the CONTROLLER's name,
+     * not the device's.  Using the device name here causes p-net to reject
+     * the connect request (silent drop or invalid response). */
     strncpy(params->station_name, manager->controller_station_name,
             sizeof(params->station_name) - 1);
 
@@ -1287,11 +1334,15 @@ wtc_result_t ar_send_dap_connect_request(ar_manager_t *manager,
 
     if (res == WTC_OK && response.success) {
         memcpy(ar->device_mac, response.device_mac, 6);
+
+        /* Store the device-assigned session key for subsequent RPC calls */
+        ar->session_key = response.session_key;
+
         ar->state = AR_STATE_CONNECT_CNF;
         ar->last_activity_ms = time_get_ms();
 
         LOG_INFO("=== DAP Connect SUCCESS for %s (session_key=%u) ===",
-                 ar->device_station_name, response.session_key);
+                 ar->device_station_name, ar->session_key);
 
         if (response.has_diff) {
             LOG_DEBUG("DAP connect: module diff block present (expected for DAP-only)");
@@ -1328,8 +1379,8 @@ wtc_result_t ar_read_real_identification(ar_manager_t *manager,
     memcpy(read_params.ar_uuid, ar->ar_uuid, 16);
     read_params.session_key = ar->session_key;
     read_params.api = 0x00000000;
-    read_params.slot = 0xFFFF;     /* All slots */
-    read_params.subslot = 0xFFFF;  /* All subslots */
+    read_params.slot = 0;          /* DAP slot */
+    read_params.subslot = 0x0001;  /* DAP identity subslot */
     read_params.index = 0xF844;    /* RealIdentificationData */
     read_params.max_record_length = RPC_MAX_PDU_SIZE;
 
@@ -1530,6 +1581,18 @@ wtc_result_t ar_connect_with_discovery(ar_manager_t *manager,
         }
 
         if (need_profinet_discovery) {
+            /* Phase 2b: ParameterEnd to enable acyclic services (Record Read).
+             * Per IEC 61158-6-10, Record Read requires AR parameterization
+             * to be complete before acyclic services are available. */
+            LOG_DEBUG("Sending ParameterEnd for DAP-only AR before Record Read");
+            res = ar_send_parameter_end(manager, ar);
+            if (res != WTC_OK) {
+                LOG_ERROR("Phase 2b (ParameterEnd) failed for %s",
+                          ar->device_station_name);
+                ar_send_release_request(manager, ar);
+                return res;
+            }
+
             /* Phase 3: Record Read 0xF844 */
             res = ar_read_real_identification(manager, ar, &discovery);
             if (res != WTC_OK) {

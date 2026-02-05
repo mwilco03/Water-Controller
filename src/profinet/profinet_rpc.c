@@ -391,13 +391,20 @@ void rpc_generate_uuid(uint8_t *uuid)
 
 wtc_result_t rpc_context_init(rpc_context_t *ctx,
                                const uint8_t *controller_mac,
-                               uint32_t controller_ip)
+                               uint32_t controller_ip,
+                               const char *interface_name)
 {
     if (!ctx || !controller_mac) {
         return WTC_ERROR_INVALID_PARAM;
     }
 
     memset(ctx, 0, sizeof(rpc_context_t));
+
+    /* Store interface name for diagnostics */
+    if (interface_name) {
+        strncpy(ctx->interface_name, interface_name,
+                sizeof(ctx->interface_name) - 1);
+    }
 
     /* Create UDP socket */
     ctx->socket_fd = socket(AF_INET, SOCK_DGRAM, 0);
@@ -406,16 +413,55 @@ wtc_result_t rpc_context_init(rpc_context_t *ctx,
         return WTC_ERROR_IO;
     }
 
-    /* Bind to local port (any available on all interfaces) */
+    /*
+     * Bind socket to the PROFINET interface via SO_BINDTODEVICE.
+     *
+     * On multi-homed hosts (common in Docker with host networking), the
+     * kernel routing table may direct UDP packets through a non-PROFINET
+     * interface (e.g. eth0 for management).  DCP uses raw L2 sockets
+     * bound to the interface by AF_PACKET and is unaffected, but RPC
+     * uses AF_INET and follows the routing table.
+     *
+     * SO_BINDTODEVICE forces all traffic on this socket through the
+     * specified interface, ensuring RPC Connect requests reach the
+     * RTU on the PROFINET network segment.
+     *
+     * Requires CAP_NET_RAW (already granted for the raw socket).
+     */
+    if (interface_name && interface_name[0]) {
+        if (setsockopt(ctx->socket_fd, SOL_SOCKET, SO_BINDTODEVICE,
+                       interface_name, strlen(interface_name) + 1) < 0) {
+            LOG_ERROR("Failed to bind RPC socket to interface %s: %s "
+                      "(UDP packets may be sent on wrong interface)",
+                      interface_name, strerror(errno));
+            /* Non-fatal: fall through and try INADDR_ANY binding.
+             * On single-NIC systems this is fine; on multi-NIC it may
+             * cause the "no UDP on wire" symptom. */
+        } else {
+            LOG_INFO("RPC socket bound to interface %s", interface_name);
+        }
+    }
+
+    /* Bind to controller IP + ephemeral port.
+     * If controller_ip is known, bind to it so the source address in
+     * outgoing UDP packets is correct (RTU checks this against the
+     * CMInitiatorIPAddress in the ARBlockReq).  If unknown (0),
+     * bind to INADDR_ANY and rely on SO_BINDTODEVICE for routing. */
     struct sockaddr_in local_addr;
     memset(&local_addr, 0, sizeof(local_addr));
     local_addr.sin_family = AF_INET;
-    local_addr.sin_addr.s_addr = INADDR_ANY;  /* Listen on all interfaces */
+    local_addr.sin_addr.s_addr = (controller_ip != 0)
+        ? htonl(controller_ip) : INADDR_ANY;
     local_addr.sin_port = 0;  /* Let kernel assign port */
 
     if (bind(ctx->socket_fd, (struct sockaddr *)&local_addr,
              sizeof(local_addr)) < 0) {
-        LOG_ERROR("Failed to bind RPC socket: %s", strerror(errno));
+        LOG_ERROR("Failed to bind RPC socket to %d.%d.%d.%d: %s",
+                  (controller_ip >> 24) & 0xFF,
+                  (controller_ip >> 16) & 0xFF,
+                  (controller_ip >> 8) & 0xFF,
+                  controller_ip & 0xFF,
+                  strerror(errno));
         close(ctx->socket_fd);
         ctx->socket_fd = -1;
         return WTC_ERROR_IO;
@@ -435,7 +481,13 @@ wtc_result_t rpc_context_init(rpc_context_t *ctx,
     /* Generate initial activity UUID */
     rpc_generate_uuid(ctx->activity_uuid);
 
-    LOG_INFO("RPC context initialized, port %u", ctx->controller_port);
+    LOG_INFO("RPC context initialized on %s, IP %d.%d.%d.%d, port %u",
+             interface_name ? interface_name : "any",
+             (controller_ip >> 24) & 0xFF,
+             (controller_ip >> 16) & 0xFF,
+             (controller_ip >> 8) & 0xFF,
+             controller_ip & 0xFF,
+             ctx->controller_port);
     return WTC_OK;
 }
 
@@ -1169,8 +1221,26 @@ wtc_result_t rpc_send_and_receive(rpc_context_t *ctx,
         return WTC_ERROR_IO;
     }
 
-    LOG_DEBUG("RPC request sent: %zd bytes to %d.%d.%d.%d:%u",
-              sent,
+    /* Extract opnum and sequence from RPC header for logging */
+    uint16_t log_opnum = 0;
+    uint32_t log_seq = 0;
+    const char *opnum_name = "UNKNOWN";
+    if (req_len >= sizeof(profinet_rpc_header_t)) {
+        const profinet_rpc_header_t *hdr = (const profinet_rpc_header_t *)request;
+        log_opnum = hdr->opnum;  /* Already in LE, matches DREP */
+        log_seq = hdr->sequence_number;
+        switch (log_opnum) {
+        case RPC_OPNUM_CONNECT:  opnum_name = "CONNECT"; break;
+        case RPC_OPNUM_RELEASE:  opnum_name = "RELEASE"; break;
+        case RPC_OPNUM_READ:     opnum_name = "READ"; break;
+        case RPC_OPNUM_WRITE:    opnum_name = "WRITE"; break;
+        case RPC_OPNUM_CONTROL:  opnum_name = "CONTROL"; break;
+        default: break;
+        }
+    }
+
+    LOG_DEBUG("RPC %s request (opnum=%u, seq=%u): %zd bytes to %d.%d.%d.%d:%u",
+              opnum_name, log_opnum, log_seq, sent,
               (device_ip >> 24) & 0xFF, (device_ip >> 16) & 0xFF,
               (device_ip >> 8) & 0xFF, device_ip & 0xFF,
               PNIO_RPC_PORT);
@@ -1200,7 +1270,21 @@ wtc_result_t rpc_send_and_receive(rpc_context_t *ctx,
     }
 
     *resp_len = (size_t)received;
-    LOG_DEBUG("RPC response received: %zd bytes", received);
+
+    /* Extract packet type from response for logging */
+    const char *pkt_type_name = "UNKNOWN";
+    if ((size_t)received >= sizeof(profinet_rpc_header_t)) {
+        const profinet_rpc_header_t *resp_hdr = (const profinet_rpc_header_t *)response;
+        switch (resp_hdr->packet_type) {
+        case RPC_PACKET_TYPE_RESPONSE: pkt_type_name = "RESPONSE"; break;
+        case RPC_PACKET_TYPE_FAULT:    pkt_type_name = "FAULT"; break;
+        case RPC_PACKET_TYPE_REJECT:   pkt_type_name = "REJECT"; break;
+        case RPC_PACKET_TYPE_WORKING:  pkt_type_name = "WORKING"; break;
+        default: break;
+        }
+    }
+
+    LOG_DEBUG("RPC %s received: %zd bytes (seq=%u)", pkt_type_name, received, log_seq);
     return WTC_OK;
 }
 

@@ -288,7 +288,10 @@ wtc_result_t frame_parse_ethernet(frame_parser_t *parser,
     }
     parser->position += ETH_ADDR_LEN;
 
-    uint16_t etype = ntohs(*(uint16_t *)(parser->buffer + parser->position));
+    /* Use memcpy to avoid alignment hazards on strict-alignment architectures */
+    uint16_t etype_be;
+    memcpy(&etype_be, parser->buffer + parser->position, sizeof(etype_be));
+    uint16_t etype = ntohs(etype_be);
     parser->position += 2;
 
     /* Handle VLAN tagged frames (PN-H2 fix) */
@@ -302,7 +305,8 @@ wtc_result_t frame_parse_ethernet(frame_parser_t *parser,
         parser->position += 2;
 
         /* Read the real ethertype */
-        etype = ntohs(*(uint16_t *)(parser->buffer + parser->position));
+        memcpy(&etype_be, parser->buffer + parser->position, sizeof(etype_be));
+        etype = ntohs(etype_be);
         parser->position += 2;
     }
 
@@ -320,7 +324,10 @@ wtc_result_t frame_parse_rt_header(frame_parser_t *parser,
     }
 
     if (frame_id) {
-        *frame_id = ntohs(*(uint16_t *)(parser->buffer + parser->position));
+        /* Use memcpy to avoid alignment hazards */
+        uint16_t frame_id_be;
+        memcpy(&frame_id_be, parser->buffer + parser->position, sizeof(frame_id_be));
+        *frame_id = ntohs(frame_id_be);
     }
     parser->position += 2;
 
@@ -336,13 +343,19 @@ wtc_result_t frame_parse_dcp_header(frame_parser_t *parser,
     header->service_id = parser->buffer[parser->position++];
     header->service_type = parser->buffer[parser->position++];
 
-    header->xid = ntohl(*(uint32_t *)(parser->buffer + parser->position));
+    /* Use memcpy to avoid alignment hazards */
+    uint32_t xid_be;
+    uint16_t delay_be, len_be;
+    memcpy(&xid_be, parser->buffer + parser->position, sizeof(xid_be));
+    header->xid = ntohl(xid_be);
     parser->position += 4;
 
-    header->response_delay = ntohs(*(uint16_t *)(parser->buffer + parser->position));
+    memcpy(&delay_be, parser->buffer + parser->position, sizeof(delay_be));
+    header->response_delay = ntohs(delay_be);
     parser->position += 2;
 
-    header->data_length = ntohs(*(uint16_t *)(parser->buffer + parser->position));
+    memcpy(&len_be, parser->buffer + parser->position, sizeof(len_be));
+    header->data_length = ntohs(len_be);
     parser->position += 2;
 
     return WTC_OK;
@@ -358,7 +371,10 @@ wtc_result_t frame_parse_dcp_block(frame_parser_t *parser,
     header->option = parser->buffer[parser->position++];
     header->suboption = parser->buffer[parser->position++];
 
-    header->length = ntohs(*(uint16_t *)(parser->buffer + parser->position));
+    /* Use memcpy to avoid alignment hazards */
+    uint16_t len_be;
+    memcpy(&len_be, parser->buffer + parser->position, sizeof(len_be));
+    header->length = ntohs(len_be);
     parser->position += 2;
 
     if (frame_parser_remaining(parser) < header->length) {
@@ -409,7 +425,10 @@ wtc_result_t frame_read_u16(frame_parser_t *parser, uint16_t *val) {
         return WTC_ERROR_INVALID_PARAM;
     }
 
-    *val = ntohs(*(uint16_t *)(parser->buffer + parser->position));
+    /* Use memcpy to avoid alignment hazards */
+    uint16_t val_be;
+    memcpy(&val_be, parser->buffer + parser->position, sizeof(val_be));
+    *val = ntohs(val_be);
     parser->position += 2;
     return WTC_OK;
 }
@@ -419,7 +438,10 @@ wtc_result_t frame_read_u32(frame_parser_t *parser, uint32_t *val) {
         return WTC_ERROR_INVALID_PARAM;
     }
 
-    *val = ntohl(*(uint32_t *)(parser->buffer + parser->position));
+    /* Use memcpy to avoid alignment hazards */
+    uint32_t val_be;
+    memcpy(&val_be, parser->buffer + parser->position, sizeof(val_be));
+    *val = ntohl(val_be);
     parser->position += 4;
     return WTC_OK;
 }

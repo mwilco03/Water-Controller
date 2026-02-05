@@ -42,7 +42,8 @@ struct profinet_controller {
 
     /* Sockets */
     int raw_socket;
-    int rpc_socket;
+    /* Note: RPC socket is owned by ar_manager->rpc_ctx, not here.
+     * This avoids duplicate sockets and clarifies ownership. */
 
     /* DCP discovery */
     dcp_discovery_t *dcp;
@@ -499,7 +500,6 @@ wtc_result_t profinet_controller_init(profinet_controller_t **controller,
 
     memcpy(&ctrl->config, config, sizeof(profinet_config_t));
     ctrl->raw_socket = -1;
-    ctrl->rpc_socket = -1;
     ctrl->running = false;
 
     pthread_mutex_init(&ctrl->lock, NULL);
@@ -519,33 +519,13 @@ wtc_result_t profinet_controller_init(profinet_controller_t **controller,
         return res;
     }
 
-    /* Create RPC socket for acyclic communication (PN-C1 fix) */
-    ctrl->rpc_socket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-    if (ctrl->rpc_socket < 0) {
-        LOG_ERROR("Failed to create RPC socket: %s", strerror(errno));
-        close(ctrl->raw_socket);
-        free(ctrl);
-        return WTC_ERROR_IO;
-    }
-
-    /* Set RPC socket options */
-    struct timeval tv;
-    tv.tv_sec = 5;  /* 5 second timeout */
-    tv.tv_usec = 0;
-    if (setsockopt(ctrl->rpc_socket, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0) {
-        LOG_WARN("Failed to set RPC socket timeout: %s", strerror(errno));
-    }
-
-    /* Enable socket reuse */
-    int reuse = 1;
-    setsockopt(ctrl->rpc_socket, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
-
-    LOG_INFO("RPC socket created for acyclic communication");
+    /* Note: RPC socket for PNIO-CM is created lazily by ar_manager when needed
+     * (via rpc_context_init). This avoids duplicate sockets and ensures the
+     * socket is configured with the correct controller IP at connect time. */
 
     /* Initialize DCP discovery */
     res = dcp_discovery_init(&ctrl->dcp, ctrl->config.interface_name);
     if (res != WTC_OK) {
-        close(ctrl->rpc_socket);
         close(ctrl->raw_socket);
         free(ctrl);
         return res;
@@ -558,13 +538,32 @@ wtc_result_t profinet_controller_init(profinet_controller_t **controller,
      */
     dcp_set_socket(ctrl->dcp, ctrl->raw_socket);
 
-    /* Initialize AR manager with controller identity for CMInitiatorObjectUUID */
+    /* Determine controller station name (CMInitiatorStationName in ARBlockReq).
+     * If not configured, derive from MAC address like RTUs do (e.g., "controller-1396"). */
+    char controller_station_name[64];
+    if (config->station_name[0]) {
+        strncpy(controller_station_name, config->station_name,
+                sizeof(controller_station_name) - 1);
+        controller_station_name[sizeof(controller_station_name) - 1] = '\0';
+    } else {
+        snprintf(controller_station_name, sizeof(controller_station_name),
+                 "controller-%02x%02x",
+                 ctrl->mac_address[4], ctrl->mac_address[5]);
+        LOG_INFO("No station_name configured, using MAC-derived: %s",
+                 controller_station_name);
+    }
+
+    /* Initialize AR manager with controller identity for CMInitiatorObjectUUID.
+     * Pass interface_name so the RPC socket can be bound to the PROFINET NIC
+     * via SO_BINDTODEVICE — ensures UDP RPC packets egress the correct
+     * interface on multi-homed hosts (Docker with host networking).
+     * Pass controller_station_name for CMInitiatorStationName in ARBlockReq. */
     res = ar_manager_init(&ctrl->ar_manager, ctrl->raw_socket, ctrl->mac_address,
-                           config->station_name,
-                           config->vendor_id, config->device_id);
+                           controller_station_name,
+                           config->vendor_id, config->device_id,
+                           ctrl->config.interface_name);
     if (res != WTC_OK) {
         dcp_discovery_cleanup(ctrl->dcp);
-        close(ctrl->rpc_socket);
         close(ctrl->raw_socket);
         free(ctrl);
         return res;
@@ -605,9 +604,7 @@ void profinet_controller_cleanup(profinet_controller_t *controller) {
     if (controller->raw_socket >= 0) {
         close(controller->raw_socket);
     }
-    if (controller->rpc_socket >= 0) {
-        close(controller->rpc_socket);
-    }
+    /* RPC socket is owned and cleaned up by ar_manager */
 
     pthread_mutex_destroy(&controller->lock);
     free(controller);
@@ -1313,6 +1310,13 @@ wtc_result_t profinet_controller_read_record(profinet_controller_t *controller,
 
     pthread_mutex_unlock(&controller->lock);
 
+    /* Get RPC socket from ar_manager (it owns the properly configured socket) */
+    rpc_context_t *rpc_ctx = ar_manager_get_rpc_context(controller->ar_manager);
+    if (!rpc_ctx) {
+        LOG_ERROR("RPC context not available for record read");
+        return WTC_ERROR_NOT_CONNECTED;
+    }
+
     /* Build RPC request from copied fields (no lock held) */
     uint8_t request[512];
     size_t req_len = sizeof(request);
@@ -1330,7 +1334,7 @@ wtc_result_t profinet_controller_read_record(profinet_controller_t *controller,
     uint8_t response[2048];
     size_t resp_len = sizeof(response);
 
-    result = send_rpc_request(controller->rpc_socket, device_ip_copy,
+    result = send_rpc_request(rpc_ctx->socket_fd, device_ip_copy,
                                request, req_len, response, &resp_len);
 
     if (result != WTC_OK) {
@@ -1418,6 +1422,13 @@ wtc_result_t profinet_controller_write_record(profinet_controller_t *controller,
 
     pthread_mutex_unlock(&controller->lock);
 
+    /* Get RPC socket from ar_manager (it owns the properly configured socket) */
+    rpc_context_t *rpc_ctx = ar_manager_get_rpc_context(controller->ar_manager);
+    if (!rpc_ctx) {
+        LOG_ERROR("RPC context not available for record write");
+        return WTC_ERROR_NOT_CONNECTED;
+    }
+
     /* Build RPC request from copied fields (no lock held) */
     uint8_t request[2048];
     size_t req_len = sizeof(request);
@@ -1435,7 +1446,7 @@ wtc_result_t profinet_controller_write_record(profinet_controller_t *controller,
     uint8_t response[512];
     size_t resp_len = sizeof(response);
 
-    result = send_rpc_request(controller->rpc_socket, device_ip_copy,
+    result = send_rpc_request(rpc_ctx->socket_fd, device_ip_copy,
                                request, req_len, response, &resp_len);
 
     if (result != WTC_OK) {

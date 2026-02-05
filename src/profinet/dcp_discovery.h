@@ -54,12 +54,18 @@ extern "C" {
 #define DCP_SUBOPTION_CONTROL_RESPONSE      0x04
 #define DCP_SUBOPTION_CONTROL_RESET_TO_FACTORY 0x05
 
-/* DCP discovered device info */
+/* DCP discovered device info
+ *
+ * IP Address Byte-Order Convention:
+ * All IP addresses (ip_address, subnet_mask, gateway) are stored in HOST
+ * byte order after ntohl() conversion from network DCP frames. This matches
+ * the convention used throughout the PROFINET subsystem.
+ */
 typedef struct {
     uint8_t mac_address[6];
-    uint32_t ip_address;
-    uint32_t subnet_mask;
-    uint32_t gateway;
+    uint32_t ip_address;            /* Device IP (host byte order) */
+    uint32_t subnet_mask;           /* Subnet mask (host byte order) */
+    uint32_t gateway;               /* Gateway (host byte order) */
     char station_name[64];
     char vendor_name[64];
     uint16_t vendor_id;
