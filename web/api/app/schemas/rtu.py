@@ -9,7 +9,7 @@ Pydantic models for RTU-related endpoints.
 import re
 from datetime import datetime
 from enum import Enum
-from typing import Any
+from typing import Any, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -43,7 +43,7 @@ class RtuCreate(BaseModel):
     )
     vendor_id: str = Field("0x0000", description="PROFINET vendor ID (hex string, e.g., '0x002A')")
     device_id: str = Field("0x0000", description="PROFINET device ID (hex string, e.g., '0x0405')")
-    slot_count: int = Field(8, ge=1, le=64, description="Number of I/O slots")
+    slot_count: Optional[int] = Field(None, ge=1, le=64, description="Number of I/O slots (None = discover from device)")
 
     @field_validator("ip_address")
     @classmethod
