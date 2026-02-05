@@ -300,11 +300,39 @@ typedef struct __attribute__((packed)) {
 
 /* ============== RPC Context ============== */
 
+/*
+ * Socket Ownership Architecture:
+ *
+ * The PROFINET subsystem uses two types of sockets:
+ *
+ * 1. RPC Socket (UDP, port 34964, bound to interface via SO_BINDTODEVICE):
+ *    - Created and OWNED by rpc_context_init()
+ *    - Stored in ar_manager's rpc_ctx field (ar_manager owns the context)
+ *    - Used for Connect, ParameterEnd, ApplicationReady, Release, Record Read/Write
+ *    - Destroyed by rpc_context_cleanup() via ar_manager_cleanup()
+ *    - NEVER shared or duplicated — single owner pattern
+ *
+ * 2. DCP Socket (Raw L2, ETH_P_ALL, bound to interface):
+ *    - Created and owned by dcp_discovery_init()
+ *    - OR uses profinet_controller's shared RT socket via dcp_set_socket()
+ *    - Used for device discovery (DCP Identify multicast)
+ *    - Independent of RPC operations
+ *
+ * Ownership chain:
+ *   profinet_controller_t
+ *     └── ar_manager_t (owns rpc_ctx via composition)
+ *           └── rpc_context_t.socket_fd (UDP socket for RPC)
+ *
+ * Thread safety:
+ *   - RPC operations are NOT thread-safe (one RPC request at a time)
+ *   - ar_manager serializes RPC operations internally
+ *   - Cyclic I/O uses separate raw sockets, not the RPC socket
+ */
 typedef struct {
-    int socket_fd;              /* UDP socket */
+    int socket_fd;              /* UDP socket (owned by this context) */
     uint8_t controller_mac[6];  /* Our MAC address */
-    uint32_t controller_ip;     /* Our IP address */
-    uint16_t controller_port;   /* Our RPC port */
+    uint32_t controller_ip;     /* Our IP (host byte order) */
+    uint16_t controller_port;   /* Our RPC port (ephemeral, kernel-assigned) */
     uint32_t sequence_number;   /* RPC sequence counter */
     uint8_t activity_uuid[16];  /* Current activity UUID */
     char interface_name[32];    /* PROFINET interface (for SO_BINDTODEVICE) */

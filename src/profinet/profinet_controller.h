@@ -58,13 +58,25 @@ typedef enum {
     IOCR_TYPE_MULTICAST = 0x0003,
 } iocr_type_t;
 
-/* PROFINET controller configuration */
+/* PROFINET controller configuration
+ *
+ * IP Address Byte-Order Convention:
+ * All IP addresses (ip_address, subnet_mask, gateway) are stored in HOST
+ * byte order, NOT network byte order. This matches the convention used by
+ * BSD socket APIs (inet_addr, inet_ntoa return host order after ntohl).
+ *
+ * Example: 192.168.1.100 = 0xC0A80164 (host order on little-endian)
+ *          stored as: ip_address = 0xC0A80164
+ *
+ * When passing to sendto/recvfrom, convert with htonl().
+ * When parsing from DCP responses, convert with ntohl().
+ */
 typedef struct {
     char interface_name[32];        /* Network interface (e.g., "eth0") */
     uint8_t mac_address[6];         /* Controller MAC address */
-    uint32_t ip_address;            /* Controller IP address */
-    uint32_t subnet_mask;           /* Subnet mask */
-    uint32_t gateway;               /* Default gateway */
+    uint32_t ip_address;            /* Controller IP (host byte order) */
+    uint32_t subnet_mask;           /* Subnet mask (host byte order) */
+    uint32_t gateway;               /* Default gateway (host byte order) */
 
     uint16_t vendor_id;             /* Controller vendor ID */
     uint16_t device_id;             /* Controller device ID */
@@ -104,7 +116,7 @@ typedef struct {
 
     char device_station_name[64];
     uint8_t device_mac[6];
-    uint32_t device_ip;
+    uint32_t device_ip;                 /* Device IP address (host byte order) */
     uint16_t device_vendor_id;          /* DCP-discovered vendor ID (for strategy hints) */
     uint16_t device_device_id;          /* DCP-discovered device ID */
 

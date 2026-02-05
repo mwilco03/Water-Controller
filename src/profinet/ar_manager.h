@@ -8,6 +8,7 @@
 #define WTC_AR_MANAGER_H
 
 #include "profinet_controller.h"
+#include "profinet_rpc.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -22,11 +23,13 @@ typedef void (*ar_state_change_callback_t)(const char *station_name,
                                             ar_state_t new_state,
                                             void *ctx);
 
-/* AR configuration */
+/* AR configuration
+ * Note: device_ip is in HOST byte order (use htonl() for socket APIs).
+ */
 typedef struct {
     char station_name[64];
     uint8_t device_mac[6];
-    uint32_t device_ip;
+    uint32_t device_ip;             /* Device IP (host byte order) */
     uint16_t vendor_id;
     uint16_t device_id;
 
@@ -125,6 +128,18 @@ wtc_result_t ar_manager_check_health(ar_manager_t *manager);
 void ar_manager_set_state_callback(ar_manager_t *manager,
                                     ar_state_change_callback_t callback,
                                     void *ctx);
+
+/* ============== RPC Context Access ============== */
+
+/* Get RPC context for direct acyclic operations.
+ * The returned context is owned by ar_manager; do not free.
+ * Returns NULL if RPC is not initialized.
+ *
+ * Use this to access the properly configured RPC socket (bound to the
+ * PROFINET interface via SO_BINDTODEVICE) for record read/write operations.
+ * See profinet_controller.c for usage with build_rpc_record_request() and
+ * send_rpc_request(). */
+rpc_context_t *ar_manager_get_rpc_context(ar_manager_t *manager);
 
 /* ============== Phase 2-4: Discovery Pipeline ============== */
 

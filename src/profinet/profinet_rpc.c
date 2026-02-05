@@ -1221,8 +1221,26 @@ wtc_result_t rpc_send_and_receive(rpc_context_t *ctx,
         return WTC_ERROR_IO;
     }
 
-    LOG_DEBUG("RPC request sent: %zd bytes to %d.%d.%d.%d:%u",
-              sent,
+    /* Extract opnum and sequence from RPC header for logging */
+    uint16_t log_opnum = 0;
+    uint32_t log_seq = 0;
+    const char *opnum_name = "UNKNOWN";
+    if (req_len >= sizeof(profinet_rpc_header_t)) {
+        const profinet_rpc_header_t *hdr = (const profinet_rpc_header_t *)request;
+        log_opnum = hdr->opnum;  /* Already in LE, matches DREP */
+        log_seq = hdr->sequence_number;
+        switch (log_opnum) {
+        case RPC_OPNUM_CONNECT:  opnum_name = "CONNECT"; break;
+        case RPC_OPNUM_RELEASE:  opnum_name = "RELEASE"; break;
+        case RPC_OPNUM_READ:     opnum_name = "READ"; break;
+        case RPC_OPNUM_WRITE:    opnum_name = "WRITE"; break;
+        case RPC_OPNUM_CONTROL:  opnum_name = "CONTROL"; break;
+        default: break;
+        }
+    }
+
+    LOG_DEBUG("RPC %s request (opnum=%u, seq=%u): %zd bytes to %d.%d.%d.%d:%u",
+              opnum_name, log_opnum, log_seq, sent,
               (device_ip >> 24) & 0xFF, (device_ip >> 16) & 0xFF,
               (device_ip >> 8) & 0xFF, device_ip & 0xFF,
               PNIO_RPC_PORT);
@@ -1252,7 +1270,21 @@ wtc_result_t rpc_send_and_receive(rpc_context_t *ctx,
     }
 
     *resp_len = (size_t)received;
-    LOG_DEBUG("RPC response received: %zd bytes", received);
+
+    /* Extract packet type from response for logging */
+    const char *pkt_type_name = "UNKNOWN";
+    if ((size_t)received >= sizeof(profinet_rpc_header_t)) {
+        const profinet_rpc_header_t *resp_hdr = (const profinet_rpc_header_t *)response;
+        switch (resp_hdr->packet_type) {
+        case RPC_PACKET_TYPE_RESPONSE: pkt_type_name = "RESPONSE"; break;
+        case RPC_PACKET_TYPE_FAULT:    pkt_type_name = "FAULT"; break;
+        case RPC_PACKET_TYPE_REJECT:   pkt_type_name = "REJECT"; break;
+        case RPC_PACKET_TYPE_WORKING:  pkt_type_name = "WORKING"; break;
+        default: break;
+        }
+    }
+
+    LOG_DEBUG("RPC %s received: %zd bytes (seq=%u)", pkt_type_name, received, log_seq);
     return WTC_OK;
 }
 

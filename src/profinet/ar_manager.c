@@ -1046,6 +1046,22 @@ wtc_result_t ar_send_release_request(ar_manager_t *manager,
     return WTC_OK;
 }
 
+/* ============== Record Read/Write ============== */
+
+rpc_context_t *ar_manager_get_rpc_context(ar_manager_t *manager) {
+    if (!manager || !manager->rpc_initialized) {
+        return NULL;
+    }
+    return &manager->rpc_ctx;
+}
+
+/* Note: ar_manager_record_read and ar_manager_record_write are declared in
+ * the header but not implemented here. Generic record read/write operations
+ * are handled directly by profinet_controller.c using build_rpc_record_request()
+ * and send_rpc_request() with the RPC context obtained via
+ * ar_manager_get_rpc_context(). The specialized ar_read_real_identification()
+ * function handles 0xF844 reads for module discovery. */
+
 wtc_result_t ar_handle_rt_frame(ar_manager_t *manager,
                                  const uint8_t *frame,
                                  size_t len) {
@@ -1053,8 +1069,10 @@ wtc_result_t ar_handle_rt_frame(ar_manager_t *manager,
         return WTC_ERROR_INVALID_PARAM;
     }
 
-    /* Get frame ID */
-    uint16_t frame_id = ntohs(*(uint16_t *)(frame + ETH_HEADER_LEN));
+    /* Get frame ID - use memcpy to avoid alignment hazards */
+    uint16_t frame_id_be;
+    memcpy(&frame_id_be, frame + ETH_HEADER_LEN, sizeof(frame_id_be));
+    uint16_t frame_id = ntohs(frame_id_be);
 
     /* Find AR by frame ID */
     profinet_ar_t *ar = ar_manager_get_ar_by_frame_id(manager, frame_id);
