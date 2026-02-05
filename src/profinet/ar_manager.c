@@ -1352,8 +1352,8 @@ wtc_result_t ar_read_real_identification(ar_manager_t *manager,
     memcpy(read_params.ar_uuid, ar->ar_uuid, 16);
     read_params.session_key = ar->session_key;
     read_params.api = 0x00000000;
-    read_params.slot = 0xFFFF;     /* All slots */
-    read_params.subslot = 0xFFFF;  /* All subslots */
+    read_params.slot = 0;          /* DAP slot */
+    read_params.subslot = 0x0001;  /* DAP identity subslot */
     read_params.index = 0xF844;    /* RealIdentificationData */
     read_params.max_record_length = RPC_MAX_PDU_SIZE;
 
@@ -1554,6 +1554,18 @@ wtc_result_t ar_connect_with_discovery(ar_manager_t *manager,
         }
 
         if (need_profinet_discovery) {
+            /* Phase 2b: ParameterEnd to enable acyclic services (Record Read).
+             * Per IEC 61158-6-10, Record Read requires AR parameterization
+             * to be complete before acyclic services are available. */
+            LOG_DEBUG("Sending ParameterEnd for DAP-only AR before Record Read");
+            res = ar_send_parameter_end(manager, ar);
+            if (res != WTC_OK) {
+                LOG_ERROR("Phase 2b (ParameterEnd) failed for %s",
+                          ar->device_station_name);
+                ar_send_release_request(manager, ar);
+                return res;
+            }
+
             /* Phase 3: Record Read 0xF844 */
             res = ar_read_real_identification(manager, ar, &discovery);
             if (res != WTC_OK) {
