@@ -1213,22 +1213,12 @@ wtc_result_t rpc_send_and_receive(rpc_context_t *ctx,
     addr.sin_port = htons(PNIO_RPC_PORT);
     addr.sin_addr.s_addr = htonl(device_ip);  /* Convert host to network byte order */
 
-    /* Send request */
-    ssize_t sent = sendto(ctx->socket_fd, request, req_len, 0,
-                          (struct sockaddr *)&addr, sizeof(addr));
-    if (sent < 0) {
-        LOG_ERROR("RPC send failed: %s", strerror(errno));
-        return WTC_ERROR_IO;
-    }
-
-    /* Extract opnum and sequence from RPC header for logging */
+    /* Extract opnum from RPC header for logging BEFORE send */
     uint16_t log_opnum = 0;
-    uint32_t log_seq = 0;
     const char *opnum_name = "UNKNOWN";
     if (req_len >= sizeof(profinet_rpc_header_t)) {
         const profinet_rpc_header_t *hdr = (const profinet_rpc_header_t *)request;
-        log_opnum = hdr->opnum;  /* Already in LE, matches DREP */
-        log_seq = hdr->sequence_number;
+        log_opnum = hdr->opnum;
         switch (log_opnum) {
         case RPC_OPNUM_CONNECT:  opnum_name = "CONNECT"; break;
         case RPC_OPNUM_RELEASE:  opnum_name = "RELEASE"; break;
@@ -1239,11 +1229,27 @@ wtc_result_t rpc_send_and_receive(rpc_context_t *ctx,
         }
     }
 
-    LOG_DEBUG("RPC %s request (opnum=%u, seq=%u): %zd bytes to %d.%d.%d.%d:%u",
-              opnum_name, log_opnum, log_seq, sent,
-              (device_ip >> 24) & 0xFF, (device_ip >> 16) & 0xFF,
-              (device_ip >> 8) & 0xFF, device_ip & 0xFF,
-              PNIO_RPC_PORT);
+    /* Log at INFO level - critical for debugging "no packet on wire" issues */
+    LOG_INFO("RPC %s: sending %zu bytes to %d.%d.%d.%d:%u (fd=%d)",
+             opnum_name, req_len,
+             (device_ip >> 24) & 0xFF, (device_ip >> 16) & 0xFF,
+             (device_ip >> 8) & 0xFF, device_ip & 0xFF,
+             PNIO_RPC_PORT, ctx->socket_fd);
+
+    /* Send request */
+    ssize_t sent = sendto(ctx->socket_fd, request, req_len, 0,
+                          (struct sockaddr *)&addr, sizeof(addr));
+    if (sent < 0) {
+        LOG_ERROR("RPC send FAILED: %s (errno=%d, fd=%d)",
+                  strerror(errno), errno, ctx->socket_fd);
+        return WTC_ERROR_IO;
+    }
+
+    if ((size_t)sent != req_len) {
+        LOG_WARN("RPC send incomplete: sent %zd of %zu bytes", sent, req_len);
+    } else {
+        LOG_INFO("RPC %s: sent %zd bytes OK", opnum_name, sent);
+    }
 
     /* Wait for response */
     struct pollfd pfd;
@@ -1284,7 +1290,7 @@ wtc_result_t rpc_send_and_receive(rpc_context_t *ctx,
         }
     }
 
-    LOG_DEBUG("RPC %s received: %zd bytes (seq=%u)", pkt_type_name, received, log_seq);
+    LOG_INFO("RPC %s received: %zd bytes", pkt_type_name, received);
     return WTC_OK;
 }
 

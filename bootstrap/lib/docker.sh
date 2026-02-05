@@ -463,13 +463,17 @@ do_docker_install() {
     # Note: POSIX shared memory for controller-API IPC is created automatically
     # by the controller process. Both containers use ipc: host to share the
     # host's IPC namespace where /dev/shm/wtc_shared_memory is created.
+    #
+    # CRITICAL: Always use --build to ensure containers use freshly built images.
+    # Without --build, docker compose may use cached images even after code changes,
+    # causing "stale build" issues where the running binary doesn't match the source.
     log_step "Starting containers..."
     (
         cd "$docker_dir" || { echo "ERROR: Cannot access $docker_dir" >&2; exit 1; }
         export GRAFANA_PASSWORD="$GRAFANA_PASSWORD"
         export DB_PASSWORD="$DB_PASSWORD"
 
-        docker compose up -d --force-recreate
+        docker compose up -d --build --force-recreate
     )
 
     local result=$?
