@@ -595,9 +595,9 @@ wtc_result_t profinet_controller_init(profinet_controller_t **controller,
      * interface on multi-homed hosts (Docker with host networking).
      * Pass controller_station_name for CMInitiatorStationName in ARBlockReq. */
     res = ar_manager_init(&ctrl->ar_manager, ctrl->raw_socket, ctrl->mac_address,
-                           config->station_name,
+                           controller_station_name,
                            config->vendor_id, config->device_id,
-                           ctrl->config.interface_name, controller_station_name);
+                           ctrl->config.interface_name);
     if (res != WTC_OK) {
         dcp_discovery_cleanup(ctrl->dcp);
         close(ctrl->rpc_socket);

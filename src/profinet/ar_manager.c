@@ -896,6 +896,11 @@ wtc_result_t ar_send_connect_request(ar_manager_t *manager,
         /* Update AR with response data */
         memcpy(ar->device_mac, response.device_mac, 6);
 
+        /* Store the device-assigned session key. The device may accept our
+         * proposed key or assign a different one — we must use its value
+         * for all subsequent RPC calls (ParameterEnd, Release, etc.). */
+        ar->session_key = response.session_key;
+
         for (int i = 0; i < response.frame_id_count &&
                         i < ar->iocr_count; i++) {
             if (ar->iocr[i].frame_id != response.frame_ids[i].assigned) {
@@ -1311,11 +1316,15 @@ wtc_result_t ar_send_dap_connect_request(ar_manager_t *manager,
 
     if (res == WTC_OK && response.success) {
         memcpy(ar->device_mac, response.device_mac, 6);
+
+        /* Store the device-assigned session key for subsequent RPC calls */
+        ar->session_key = response.session_key;
+
         ar->state = AR_STATE_CONNECT_CNF;
         ar->last_activity_ms = time_get_ms();
 
         LOG_INFO("=== DAP Connect SUCCESS for %s (session_key=%u) ===",
-                 ar->device_station_name, response.session_key);
+                 ar->device_station_name, ar->session_key);
 
         if (response.has_diff) {
             LOG_DEBUG("DAP connect: module diff block present (expected for DAP-only)");

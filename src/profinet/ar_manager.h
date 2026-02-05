@@ -59,8 +59,7 @@ wtc_result_t ar_manager_init(ar_manager_t **manager,
                               const char *controller_station_name,
                               uint16_t vendor_id,
                               uint16_t device_id,
-                              const char *interface_name,
-                              const char *controller_station_name);
+                              const char *interface_name);
 
 /* Set controller IP address (required for RPC) */
 void ar_manager_set_controller_ip(ar_manager_t *manager, uint32_t ip);
