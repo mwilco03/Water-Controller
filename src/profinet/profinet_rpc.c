@@ -1236,9 +1236,25 @@ wtc_result_t rpc_send_and_receive(rpc_context_t *ctx,
              (device_ip >> 8) & 0xFF, device_ip & 0xFF,
              PNIO_RPC_PORT, ctx->socket_fd);
 
-    /* Send request */
-    ssize_t sent = sendto(ctx->socket_fd, request, req_len, 0,
-                          (struct sockaddr *)&addr, sizeof(addr));
+    /*
+     * Use connect() + send() instead of sendto() to force early routing
+     * resolution. This can help with edge cases where sendto() succeeds
+     * but packets don't reach the wire due to deferred routing decisions.
+     *
+     * For UDP, connect() doesn't establish a connection - it just sets
+     * the default destination and forces the kernel to resolve the route
+     * immediately. If routing fails, connect() returns an error.
+     */
+    if (connect(ctx->socket_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+        LOG_ERROR("RPC connect() failed for %d.%d.%d.%d:%u: %s (errno=%d)",
+                  (device_ip >> 24) & 0xFF, (device_ip >> 16) & 0xFF,
+                  (device_ip >> 8) & 0xFF, device_ip & 0xFF,
+                  PNIO_RPC_PORT, strerror(errno), errno);
+        return WTC_ERROR_IO;
+    }
+
+    /* Send request using send() on connected socket */
+    ssize_t sent = send(ctx->socket_fd, request, req_len, 0);
     if (sent < 0) {
         LOG_ERROR("RPC send FAILED: %s (errno=%d, fd=%d)",
                   strerror(errno), errno, ctx->socket_fd);
