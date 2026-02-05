@@ -13,7 +13,7 @@ WORKDIR /app
 # Install build dependencies for posix-ipc and other C extensions
 # python3-dev provides Python.h headers needed for C extension compilation
 # libcap2-bin provides setcap for granting capabilities to Python binary
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     gcc \
     python3-dev \
     libcap2-bin \
