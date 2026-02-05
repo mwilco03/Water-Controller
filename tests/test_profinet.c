@@ -156,6 +156,10 @@ TEST(ar_manager_init_null)
     /* NULL MAC address should fail */
     result = ar_manager_init(&manager, -1, NULL, "wtc-controller", 0x0493, 0x0001, "eth0");
     ASSERT_EQ(WTC_ERROR_INVALID_PARAM, result);
+
+    /* NULL station name should fail (CMInitiatorStationName is required) */
+    result = ar_manager_init(&manager, -1, controller_mac, NULL, 0x0493, 0x0001, "eth0");
+    ASSERT_EQ(WTC_ERROR_INVALID_PARAM, result);
 }
 
 TEST(ar_manager_get_ar_null)

@@ -574,14 +574,30 @@ wtc_result_t profinet_controller_init(profinet_controller_t **controller,
      */
     dcp_set_socket(ctrl->dcp, ctrl->raw_socket);
 
+    /* Determine controller station name (CMInitiatorStationName in ARBlockReq).
+     * If not configured, derive from MAC address like RTUs do (e.g., "controller-1396"). */
+    char controller_station_name[64];
+    if (config->station_name[0]) {
+        strncpy(controller_station_name, config->station_name,
+                sizeof(controller_station_name) - 1);
+        controller_station_name[sizeof(controller_station_name) - 1] = '\0';
+    } else {
+        snprintf(controller_station_name, sizeof(controller_station_name),
+                 "controller-%02x%02x",
+                 ctrl->mac_address[4], ctrl->mac_address[5]);
+        LOG_INFO("No station_name configured, using MAC-derived: %s",
+                 controller_station_name);
+    }
+
     /* Initialize AR manager with controller identity for CMInitiatorObjectUUID.
      * Pass interface_name so the RPC socket can be bound to the PROFINET NIC
      * via SO_BINDTODEVICE — ensures UDP RPC packets egress the correct
-     * interface on multi-homed hosts (Docker with host networking). */
+     * interface on multi-homed hosts (Docker with host networking).
+     * Pass controller_station_name for CMInitiatorStationName in ARBlockReq. */
     res = ar_manager_init(&ctrl->ar_manager, ctrl->raw_socket, ctrl->mac_address,
                            config->station_name,
                            config->vendor_id, config->device_id,
-                           ctrl->config.interface_name);
+                           ctrl->config.interface_name, controller_station_name);
     if (res != WTC_OK) {
         dcp_discovery_cleanup(ctrl->dcp);
         close(ctrl->rpc_socket);

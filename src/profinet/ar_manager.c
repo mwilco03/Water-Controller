@@ -56,9 +56,9 @@ struct ar_manager {
     /* Controller UUID (generated once at startup) */
     uint8_t controller_uuid[16];
 
-    /* Controller NameOfStation used in ARBlockReq (CMInitiatorStationName) */
+    /* Controller NameOfStation (CMInitiatorStationName in ARBlockReq).
+     * This is the CONTROLLER's identity, not the device's. */
     char controller_station_name[64];
-
 
     /* State change notification */
     ar_state_change_callback_t state_callback;
@@ -217,6 +217,11 @@ wtc_result_t ar_manager_init(ar_manager_t **manager,
                 sizeof(mgr->interface_name) - 1);
     }
 
+    /* Store controller station name for CMInitiatorStationName in ARBlockReq.
+     * This MUST be the controller's NameOfStation, not the device's. */
+    strncpy(mgr->controller_station_name, controller_station_name,
+            sizeof(mgr->controller_station_name) - 1);
+
     /* Get interface index from socket */
     struct sockaddr_ll sll;
     socklen_t sll_len = sizeof(sll);
@@ -233,7 +238,8 @@ wtc_result_t ar_manager_init(ar_manager_t **manager,
                                 vendor_id, device_id, PN_INSTANCE_ID);
 
     *manager = mgr;
-    LOG_DEBUG("AR manager initialized on %s", interface_name ? interface_name : "unknown");
+    LOG_DEBUG("AR manager initialized: station='%s', interface=%s",
+              controller_station_name, interface_name ? interface_name : "any");
     return WTC_OK;
 }
 
@@ -718,6 +724,10 @@ static void build_connect_params(ar_manager_t *manager,
     params->ar_properties = AR_PROP_STATE_ACTIVE |
                             AR_PROP_PARAMETERIZATION_TYPE |
                             AR_PROP_STARTUP_MODE_LEGACY;
+
+    /* ARBlockReq carries CMInitiatorStationName — the CONTROLLER's name,
+     * not the device's.  Using the device name here causes p-net to reject
+     * the connect request (silent drop or invalid response). */
     strncpy(params->station_name, manager->controller_station_name,
             sizeof(params->station_name) - 1);
 
@@ -1178,6 +1188,10 @@ static void build_dap_connect_params(ar_manager_t *manager,
     params->ar_properties = AR_PROP_STATE_ACTIVE |
                             AR_PROP_PARAMETERIZATION_TYPE |
                             AR_PROP_STARTUP_MODE_LEGACY;
+
+    /* ARBlockReq carries CMInitiatorStationName — the CONTROLLER's name,
+     * not the device's.  Using the device name here causes p-net to reject
+     * the connect request (silent drop or invalid response). */
     strncpy(params->station_name, manager->controller_station_name,
             sizeof(params->station_name) - 1);
 

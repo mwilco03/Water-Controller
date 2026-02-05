@@ -50,14 +50,17 @@ typedef struct {
  * vendor_id/device_id are used to build the CMInitiatorObjectUUID
  * (DEA00000-6C97-11D1-8271-{instance}{device}{vendor}) per IEC 61158-6-10.
  * interface_name is the PROFINET NIC (e.g. "eth1") — passed to the RPC
- * context for SO_BINDTODEVICE so UDP RPC packets egress the correct NIC. */
+ * context for SO_BINDTODEVICE so UDP RPC packets egress the correct NIC.
+ * controller_station_name is the CMInitiatorStationName in ARBlockReq —
+ * must be the CONTROLLER's NameOfStation, not the device's. */
 wtc_result_t ar_manager_init(ar_manager_t **manager,
                               int socket_fd,
                               const uint8_t *controller_mac,
                               const char *controller_station_name,
                               uint16_t vendor_id,
                               uint16_t device_id,
-                              const char *interface_name);
+                              const char *interface_name,
+                              const char *controller_station_name);
 
 /* Set controller IP address (required for RPC) */
 void ar_manager_set_controller_ip(ar_manager_t *manager, uint32_t ip);
