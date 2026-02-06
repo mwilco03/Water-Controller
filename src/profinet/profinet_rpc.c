@@ -565,10 +565,8 @@ wtc_result_t rpc_build_connect_request(rpc_context_t *ctx,
     write_block_header(buffer, BLOCK_TYPE_AR_BLOCK_REQ,
                         (uint16_t)ar_block_len, &save_pos);
 
-    /* Bug 0.5 fix: Zero-fill alignment padding to avoid leaking buffer content */
-    while (pos % 4 != 0) {
-        buffer[pos++] = 0;
-    }
+    /* NOTE: NO inter-block padding. p-net advances by (4 + BlockLength) only.
+     * Any padding between blocks would cause parser offset mismatch. */
 
     /* ============== IOCR Block Requests (IEC 61158-6 format) ============== */
     for (int i = 0; i < params->iocr_count; i++) {
