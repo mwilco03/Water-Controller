@@ -150,8 +150,6 @@ typedef struct {
 
     /* Module mismatch discovery state (cascading: ModuleDiffBlock → Record Read 0xF844 → HTTP /slots) */
     bool has_discovered_modules;        /* True if module config has been discovered */
-    int module_mismatch_retries;        /* Separate counter for module mismatch retries (max 3) */
-    uint32_t retry_backoff_ms;          /* Exponential backoff timer (2s, 4s, 8s, cap at 30s) */
     struct {
         uint16_t slot;
         uint16_t subslot;

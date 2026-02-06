@@ -958,18 +958,18 @@ wtc_result_t ar_send_connect_request(ar_manager_t *manager,
 
         /* Cascading module discovery: ModuleDiffBlock → Record Read 0xF844 → HTTP /slots */
         if (response.has_diff && response.discovered_count > 0) {
-            /* Check retry limit for module mismatch */
-            if (ar->module_mismatch_retries >= 3) {
+            /* Check retry limit for module mismatch - use ABORT handler's retry_count */
+            if (ar->retry_count >= AR_MAX_RETRY_ATTEMPTS) {
                 LOG_ERROR("Module mismatch persists after %d attempts - giving up",
-                         ar->module_mismatch_retries);
+                         ar->retry_count);
                 ar->state = AR_STATE_ABORT;
-                ar->last_error = WTC_ERROR_PROTOCOL;
-                return WTC_ERROR_PROTOCOL;
+                ar->last_error = WTC_ERROR_CONNECTION_FAILED;  /* Let ABORT handler decide */
+                return WTC_ERROR_CONNECTION_FAILED;
             }
 
             /* Store discovered modules from ModuleDiffBlock */
-            LOG_WARN("Device reported module mismatch (%d modules discovered), will retry with correct config (attempt %d/3)",
-                     response.discovered_count, ar->module_mismatch_retries + 1);
+            LOG_WARN("Device reported module mismatch (%d modules discovered), will retry with correct config (attempt %d/%d)",
+                     response.discovered_count, ar->retry_count + 1, AR_MAX_RETRY_ATTEMPTS);
 
             ar->has_discovered_modules = true;
             ar->discovered_count = response.discovered_count < WTC_MAX_SLOTS ? response.discovered_count : WTC_MAX_SLOTS;
@@ -985,18 +985,13 @@ wtc_result_t ar_send_connect_request(ar_manager_t *manager,
                          ar->discovered_modules[i].module_ident, ar->discovered_modules[i].submodule_ident);
             }
 
-            /* Exponential backoff: 2s, 4s, 8s (capped at 30s) */
-            ar->module_mismatch_retries++;
-            ar->retry_backoff_ms = (ar->retry_backoff_ms == 0) ? 2000 : ar->retry_backoff_ms * 2;
-            if (ar->retry_backoff_ms > 30000) ar->retry_backoff_ms = 30000;
-
-            /* Abort and retry with discovered config */
+            /* Abort and retry with discovered config - ABORT handler will apply backoff */
             ar->state = AR_STATE_ABORT;
             ar->last_activity_ms = time_get_ms();
-            ar->last_error = WTC_OK;  /* Not a failure, just config mismatch */
+            ar->last_error = WTC_ERROR_CONNECTION_FAILED;  /* Transient - will retry */
 
-            LOG_INFO("Stored %d discovered modules, will retry after %u ms backoff",
-                     ar->discovered_count, ar->retry_backoff_ms);
+            LOG_INFO("Stored %d discovered modules, will retry via ABORT handler",
+                     ar->discovered_count);
             return WTC_ERROR_CONNECTION_FAILED;  /* Trigger retry */
         }
 
@@ -1004,13 +999,13 @@ wtc_result_t ar_send_connect_request(ar_manager_t *manager,
         if ((response.has_diff && response.discovered_count == 0) ||
             (!response.has_diff && !ar->has_discovered_modules)) {
 
-            /* Check retry limit */
-            if (ar->module_mismatch_retries >= 3) {
+            /* Check retry limit - use ABORT handler's retry_count */
+            if (ar->retry_count >= AR_MAX_RETRY_ATTEMPTS) {
                 LOG_ERROR("Module discovery failed after %d attempts - giving up",
-                         ar->module_mismatch_retries);
+                         ar->retry_count);
                 ar->state = AR_STATE_ABORT;
-                ar->last_error = WTC_ERROR_PROTOCOL;
-                return WTC_ERROR_PROTOCOL;
+                ar->last_error = WTC_ERROR_CONNECTION_FAILED;
+                return WTC_ERROR_CONNECTION_FAILED;
             }
 
             LOG_INFO("ModuleDiffBlock empty/missing, attempting Record Read 0xF844 discovery");
@@ -1033,42 +1028,25 @@ wtc_result_t ar_send_connect_request(ar_manager_t *manager,
                     ar->discovered_modules[i].submodule_ident = discovery.modules[i].submodule_ident;
                 }
 
-                /* Exponential backoff and retry */
-                ar->module_mismatch_retries++;
-                ar->retry_backoff_ms = (ar->retry_backoff_ms == 0) ? 2000 : ar->retry_backoff_ms * 2;
-                if (ar->retry_backoff_ms > 30000) ar->retry_backoff_ms = 30000;
-
+                /* Abort and retry with discovered config - ABORT handler will apply backoff */
                 ar->state = AR_STATE_ABORT;
                 ar->last_activity_ms = time_get_ms();
-                ar->last_error = WTC_OK;
+                ar->last_error = WTC_ERROR_CONNECTION_FAILED;  /* Transient - will retry */
 
-                LOG_INFO("Will retry connect with discovered config after %u ms backoff",
-                         ar->retry_backoff_ms);
+                LOG_INFO("Will retry connect with discovered config via ABORT handler");
                 return WTC_ERROR_CONNECTION_FAILED;  /* Trigger retry */
             } else {
                 /* Record Read failed - HTTP /slots fallback handled by API layer */
                 LOG_WARN("Record Read 0xF844 failed (%d) - PROFINET discovery exhausted", disc_res);
                 LOG_INFO("HTTP /slots fallback should be handled by API layer before PROFINET connect");
 
-                /* Increment retry counter and give up if max attempts reached */
-                ar->module_mismatch_retries++;
-                if (ar->module_mismatch_retries >= 3) {
-                    LOG_ERROR("All PROFINET discovery methods exhausted - cannot determine module config");
-                    ar->state = AR_STATE_ABORT;
-                    ar->last_error = WTC_ERROR_PROTOCOL;
-                    return WTC_ERROR_PROTOCOL;
-                }
-
-                /* Retry with current (possibly incorrect) config */
-                ar->retry_backoff_ms = (ar->retry_backoff_ms == 0) ? 2000 : ar->retry_backoff_ms * 2;
-                if (ar->retry_backoff_ms > 30000) ar->retry_backoff_ms = 30000;
-
+                /* Retry with current (possibly incorrect) config - ABORT handler will apply backoff */
                 ar->state = AR_STATE_ABORT;
                 ar->last_activity_ms = time_get_ms();
-                ar->last_error = WTC_ERROR_PROTOCOL;
+                ar->last_error = WTC_ERROR_CONNECTION_FAILED;  /* Transient - will retry */
 
-                LOG_WARN("Will retry with current config after %u ms backoff (attempt %d/3)",
-                        ar->retry_backoff_ms, ar->module_mismatch_retries);
+                LOG_WARN("Will retry with current config via ABORT handler (attempt %d/%d)",
+                        ar->retry_count + 1, AR_MAX_RETRY_ATTEMPTS);
                 return WTC_ERROR_CONNECTION_FAILED;
             }
         }
