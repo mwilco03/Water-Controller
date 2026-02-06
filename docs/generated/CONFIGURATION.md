@@ -2,7 +2,7 @@
   AUTO-GENERATED FILE - DO NOT EDIT MANUALLY
 
   Generated from: schemas/config/*.schema.yaml
-  Generated at: 2026-02-06 15:18:59 UTC
+  Generated at: 2026-02-06 16:00:53 UTC
   Generator: scripts/generate_docs.py
 
   To update this file, modify the source schemas and run:
