@@ -23,7 +23,7 @@ from ...core.exceptions import (
     RtuNotConnectedError,
 )
 from ...core.ports import DEFAULTS as PORT_DEFAULTS
-from ...core.rtu_utils import get_rtu_or_404
+from ...core.rtu_utils import get_rtu_or_404, hex_string_to_int
 from ...models.base import get_db
 from ...models.rtu import RTU, RtuState
 from ...services.profinet_client import get_profinet_client
@@ -77,8 +77,8 @@ async def create_rtu(
     try:
         if profinet.is_connected():
             # Parse hex strings to integers for controller
-            vendor_int = int(rtu.vendor_id, 16) if rtu.vendor_id else 0
-            device_int = int(rtu.device_id, 16) if rtu.device_id else 0
+            vendor_int = hex_string_to_int(rtu.vendor_id)
+            device_int = hex_string_to_int(rtu.device_id)
             controller_registered = profinet.add_rtu(
                 rtu.station_name,
                 rtu.ip_address,
@@ -399,8 +399,8 @@ async def connect_rtu(
         if profinet.is_connected():
             # Parse hex strings to integers for controller
             # vendor_id/device_id are stored as "0x002A" but controller expects ints
-            vendor_int = int(rtu.vendor_id, 16) if rtu.vendor_id else 0
-            device_int = int(rtu.device_id, 16) if rtu.device_id else 0
+            vendor_int = hex_string_to_int(rtu.vendor_id)
+            device_int = hex_string_to_int(rtu.device_id)
             # Try to add RTU to controller (idempotent - OK if already exists)
             profinet.add_rtu(
                 rtu.station_name,
@@ -820,8 +820,8 @@ async def refresh_rtu_inventory(
         try:
             if profinet.is_connected():
                 # Parse hex strings to integers for controller
-                vendor_int = int(rtu.vendor_id, 16) if rtu.vendor_id else 0
-                device_int = int(rtu.device_id, 16) if rtu.device_id else 0
+                vendor_int = hex_string_to_int(rtu.vendor_id)
+                device_int = hex_string_to_int(rtu.device_id)
                 profinet.add_rtu(
                     rtu.station_name,
                     rtu.ip_address,
@@ -1246,8 +1246,8 @@ async def fetch_rtu_config(
         rtu_device = pn_config.get("device_id")
 
         # Convert hex strings to int for comparison if needed
-        db_vendor = int(rtu.vendor_id, 16) if rtu.vendor_id else None
-        db_device = int(rtu.device_id, 16) if rtu.device_id else None
+        db_vendor = hex_string_to_int(rtu.vendor_id, None)
+        db_device = hex_string_to_int(rtu.device_id, None)
 
         mismatches = {}
         if rtu_station and rtu_station != rtu.station_name:
