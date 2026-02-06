@@ -10,6 +10,7 @@ Environment variables can override defaults:
 - WTC_API_PORT: API server port (default: 8000)
 - WTC_UI_PORT: UI server port (default: 8080)
 - WTC_DB_PORT: Database port (default: 5432)
+- WTC_RTU_HTTP_PORT: RTU HTTP API port (default: 9081)
 """
 
 import os
@@ -50,6 +51,9 @@ class PortDefaults:
 
     # Modbus TCP
     MODBUS_TCP: int = 1502
+
+    # RTU HTTP API (Water-Treat RTU web interface)
+    RTU_HTTP: int = 9081
 
     # Graylog GELF
     GRAYLOG: int = 12201
@@ -93,6 +97,11 @@ def get_profinet_udp_port() -> int:
 def get_modbus_tcp_port() -> int:
     """Get the Modbus TCP port from environment or default."""
     return int(os.environ.get("WTC_MODBUS_TCP_PORT", DEFAULTS.MODBUS_TCP))
+
+
+def get_rtu_http_port() -> int:
+    """Get the RTU HTTP API port from environment or default."""
+    return int(os.environ.get("WTC_RTU_HTTP_PORT", DEFAULTS.RTU_HTTP))
 
 
 # -----------------------------------------------------------------------------

@@ -1,6 +1,6 @@
 """
 Auto-generated configuration models.
-Generated at: 2026-02-03 21:20:37 UTC
+Generated at: 2026-02-06 12:30:09 UTC
 """
 
 from .config_models import *

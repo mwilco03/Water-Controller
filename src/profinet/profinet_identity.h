@@ -3,9 +3,8 @@
  * Copyright (C) 2024-2025
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
- * Single source of truth for PROFINET vendor/device identity.
- * These values MUST match the Water-Treat RTU GSDML file:
- *   GSDML-V2.4-WaterTreat-RTU-20241222.xml
+ * PROFINET identity utilities and UUID generation.
+ * Identity values come from generated config (schemas/config/profinet.schema.yaml).
  *
  * Used for:
  *   - CMInitiatorObjectUUID in ARBlockReq (Connect Request)
@@ -20,22 +19,20 @@
 
 #include <stdint.h>
 #include <string.h>
+#include "generated/config_defaults.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 /*
- * PROFINET Vendor ID (PI-assigned).
- * Shared between controller and RTU; must match GSDML VendorID.
+ * PROFINET Identity - sourced from schema (DO NOT hardcode here).
+ * These values come from schemas/config/profinet.schema.yaml.
+ * To change: edit schema, run `make generate`.
  */
-#define PN_VENDOR_ID              0x0493
-
-/*
- * PROFINET Device ID (product identifier).
- * Must match GSDML DeviceID.
- */
-#define PN_DEVICE_ID              0x0001
+#define PN_VENDOR_ID              WTC_DEFAULT_PROFINET_CONTROLLER_VENDOR_ID
+#define PN_DEVICE_ID              WTC_DEFAULT_PROFINET_CONTROLLER_DEVICE_ID
+#define PN_STATION_NAME           WTC_DEFAULT_PROFINET_CONTROLLER_STATION_NAME
 
 /*
  * PROFINET Instance ID (controller instance).

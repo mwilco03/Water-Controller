@@ -38,6 +38,57 @@ def get_rtu_or_404(db: Session, name: str) -> RTU:
     return rtu
 
 
+def hex_string_to_int(hex_str: str | None, default: int = 0) -> int:
+    """
+    Convert hex string (e.g., "0x0493") to integer.
+
+    Handles None values and invalid formats gracefully.
+    Common pattern for vendor_id/device_id conversion.
+
+    Args:
+        hex_str: Hex string like "0x0493" or None
+        default: Value to return if hex_str is None or invalid
+
+    Returns:
+        Integer value of hex string, or default if conversion fails
+
+    Examples:
+        >>> hex_string_to_int("0x0493")
+        1171
+        >>> hex_string_to_int(None)
+        0
+        >>> hex_string_to_int("0x002A", None)
+        42
+    """
+    if not hex_str:
+        return default
+    try:
+        return int(hex_str, 16)
+    except (ValueError, TypeError):
+        return default
+
+
+def int_to_hex_string(value: int | None) -> str | None:
+    """
+    Convert integer to hex string format (e.g., "0x0493").
+
+    Args:
+        value: Integer value or None
+
+    Returns:
+        Hex string like "0x0493" or None if input is None
+
+    Examples:
+        >>> int_to_hex_string(1171)
+        "0x0493"
+        >>> int_to_hex_string(None)
+        None
+    """
+    if value is None:
+        return None
+    return f"0x{value:04X}"
+
+
 def get_data_quality(rtu_state: str) -> DataQuality:
     """
     Determine data quality based on RTU state.

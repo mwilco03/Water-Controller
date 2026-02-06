@@ -804,11 +804,13 @@ class WtcShmClient:
     # ============== RTU Management IPC Commands ==============
 
     def add_rtu(self, station_name: str, ip_address: str,
-                vendor_id: int = 0x0493, device_id: int = 0x0001,
+                vendor_id: int, device_id: int,
                 slot_count: int = 16) -> bool:
         """
         Send IPC command to add RTU to PROFINET controller.
         The controller will initiate DCP identification and AR setup.
+
+        Note: vendor_id and device_id must come from DCP discovery, not hardcoded.
         """
         if not self.mm:
             logger.warning("Cannot add RTU: shared memory not connected")

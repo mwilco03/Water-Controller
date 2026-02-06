@@ -64,16 +64,16 @@ properties:
         type: integer
         minimum: 0
         maximum: 65535
-        default: 1171
-        description: "PROFINET vendor ID (0x0493, must match GSDML)"
+        default: 626
+        description: "PROFINET vendor ID (0x0272, must match GSDML)"
         x-format: "hex"
 
       device_id:
         type: integer
         minimum: 0
         maximum: 65535
-        default: 1
-        description: "PROFINET device ID"
+        default: 3077
+        description: "PROFINET device ID (0x0C05)"
 
       station_name:
         type: string

@@ -2,7 +2,7 @@
  * AUTO-GENERATED FILE - DO NOT EDIT MANUALLY
  *
  * Generated from: schemas/config/*.schema.yaml
- * Generated at: 2026-02-03 21:20:37 UTC
+ * Generated at: 2026-02-06 12:30:09 UTC
  * Generator: scripts/generate_c_types.py
  *
  * To update this file, modify the source schemas and run:
@@ -668,10 +668,10 @@ typedef struct {
 
 /**
  * controller configuration
- * PROFINET vendor ID (0x0493, must match GSDML)...
+ * PROFINET vendor ID (0x0272, must match GSDML)...
  */
 typedef struct {
-    /** PROFINET device ID */
+    /** PROFINET device ID (0x0C05) */
     uint16_t device_id;
     /** Default gateway (optional) */
     char gateway[256];
@@ -683,7 +683,7 @@ typedef struct {
     char station_name[63];
     /** Network subnet mask */
     char subnet_mask[256];
-    /** PROFINET vendor ID (0x0493, must match GSDML) */
+    /** PROFINET vendor ID (0x0272, must match GSDML) */
     uint16_t vendor_id;
 } profinet_controller_config_t;
 

@@ -2,7 +2,7 @@
 AUTO-GENERATED FILE - DO NOT EDIT MANUALLY
 
 Generated from: schemas/config/*.schema.yaml
-Generated at: 2026-02-03 21:20:37 UTC
+Generated at: 2026-02-06 12:30:09 UTC
 Generator: scripts/generate_pydantic.py
 
 To update this file, modify the source schemas and run:
@@ -539,13 +539,13 @@ class ModbusConfig(BaseModel):
 class ControllerConfig(BaseModel):
     """Controller identity settings"""
 
-    device_id: int = Field(default=1, ge=0, le=65535, description="PROFINET device ID")
+    device_id: int = Field(default=3077, ge=0, le=65535, description="PROFINET device ID (0x0C05)")
     gateway: str = Field(default="", description="Default gateway (optional)")
     ip_address: str = Field(default="", description="Controller IP address (auto-detect if empty)")
     mac_address: str = Field(default="", pattern=r"^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$", description="Controller MAC address (auto-detect if empty)")
     station_name: str = Field(default="wtc-controller", max_length=63, pattern=r"^[a-z0-9][a-z0-9-]{0,62}$", description="Controller station name (PROFINET IEC 61158-6: lowercase, digits, hyphen only)")
     subnet_mask: str = Field(default="255.255.255.0", description="Network subnet mask")
-    vendor_id: int = Field(default=1171, ge=0, le=65535, description="PROFINET vendor ID (0x0493, must match GSDML)")
+    vendor_id: int = Field(default=626, ge=0, le=65535, description="PROFINET vendor ID (0x0272, must match GSDML)")
 
     model_config = {
         "extra": "forbid",

@@ -40,6 +40,9 @@ docs/
 | [TROUBLESHOOTING_GUIDE.md](guides/TROUBLESHOOTING_GUIDE.md) | Diagnostics and fixes |
 | [PERFORMANCE_TUNING_GUIDE.md](guides/PERFORMANCE_TUNING_GUIDE.md) | Optimization |
 | [COMMISSIONING_PROCEDURE.md](guides/COMMISSIONING_PROCEDURE.md) | New system startup |
+| [DOCKER_DEPLOYMENT.md](guides/DOCKER_DEPLOYMENT.md) | Docker container deployment |
+| [DEPLOYMENT_TROUBLESHOOTING.md](guides/DEPLOYMENT_TROUBLESHOOTING.md) | Deployment issues |
+| [SIMULATION_MODE.md](guides/SIMULATION_MODE.md) | Development simulation mode |
 | [MODBUS_GATEWAY_GUIDE.md](guides/MODBUS_GATEWAY_GUIDE.md) | Modbus integration |
 
 ---
@@ -77,6 +80,7 @@ Stable documentation that rarely changes. Defines system principles and contract
 | [INTERNALS.md](development/INTERNALS.md) | Build system internals |
 | [OPENAPI_SPECIFICATION.md](development/OPENAPI_SPECIFICATION.md) | REST API reference |
 | [HMI-ANALYSIS.md](development/HMI-ANALYSIS.md) | HMI component design |
+| [API_DATABASE.md](development/API_DATABASE.md) | API and database documentation |
 
 ---
 

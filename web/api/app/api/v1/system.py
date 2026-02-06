@@ -22,6 +22,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from ...core.errors import build_success_response
+from ...core.ports import DEFAULTS as PORT_DEFAULTS
 from ...models.alarm import AlarmEvent, AlarmState
 from ...models.base import get_db
 from ...models.historian import HistorianSample
@@ -759,7 +760,7 @@ _network_config: dict[str, Any] = {
 }
 
 _web_config: dict[str, Any] = {
-    "port": 3000,
+    "port": PORT_DEFAULTS.DOCKER_UI_INTERNAL,
     "bind_address": "0.0.0.0",
     "https_enabled": False,
     "https_port": 3443,
@@ -779,7 +780,7 @@ class NetworkConfig(BaseModel):
 
 class WebServerConfig(BaseModel):
     """Web server configuration."""
-    port: int = 3000
+    port: int = PORT_DEFAULTS.DOCKER_UI_INTERNAL
     bind_address: str = "0.0.0.0"
     https_enabled: bool = False
     https_port: int = 3443

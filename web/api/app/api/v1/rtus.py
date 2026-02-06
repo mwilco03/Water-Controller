@@ -22,7 +22,8 @@ from ...core.exceptions import (
     RtuBusyError,
     RtuNotConnectedError,
 )
-from ...core.rtu_utils import get_rtu_or_404
+from ...core.ports import DEFAULTS as PORT_DEFAULTS
+from ...core.rtu_utils import get_rtu_or_404, hex_string_to_int
 from ...models.base import get_db
 from ...models.rtu import RTU, RtuState
 from ...services.profinet_client import get_profinet_client
@@ -76,8 +77,8 @@ async def create_rtu(
     try:
         if profinet.is_connected():
             # Parse hex strings to integers for controller
-            vendor_int = int(rtu.vendor_id, 16) if rtu.vendor_id else 0
-            device_int = int(rtu.device_id, 16) if rtu.device_id else 0
+            vendor_int = hex_string_to_int(rtu.vendor_id)
+            device_int = hex_string_to_int(rtu.device_id)
             controller_registered = profinet.add_rtu(
                 rtu.station_name,
                 rtu.ip_address,
@@ -111,7 +112,7 @@ async def create_rtu(
 @router.post("/add-by-ip", status_code=201)
 async def add_rtu_by_ip(
     ip_address: str = Query(..., description="RTU IP address"),
-    port: int = Query(9081, ge=1, le=65535, description="RTU HTTP API port"),
+    port: int = Query(PORT_DEFAULTS.RTU_HTTP, ge=1, le=65535, description="RTU HTTP API port"),
     timeout_ms: int = Query(5000, ge=100, le=30000, description="Timeout in milliseconds"),
     auto_connect: bool = Query(False, description="Automatically connect after adding"),
     db: Session = Depends(get_db)
@@ -398,8 +399,8 @@ async def connect_rtu(
         if profinet.is_connected():
             # Parse hex strings to integers for controller
             # vendor_id/device_id are stored as "0x002A" but controller expects ints
-            vendor_int = int(rtu.vendor_id, 16) if rtu.vendor_id else 0
-            device_int = int(rtu.device_id, 16) if rtu.device_id else 0
+            vendor_int = hex_string_to_int(rtu.vendor_id)
+            device_int = hex_string_to_int(rtu.device_id)
             # Try to add RTU to controller (idempotent - OK if already exists)
             profinet.add_rtu(
                 rtu.station_name,
@@ -819,8 +820,8 @@ async def refresh_rtu_inventory(
         try:
             if profinet.is_connected():
                 # Parse hex strings to integers for controller
-                vendor_int = int(rtu.vendor_id, 16) if rtu.vendor_id else 0
-                device_int = int(rtu.device_id, 16) if rtu.device_id else 0
+                vendor_int = hex_string_to_int(rtu.vendor_id)
+                device_int = hex_string_to_int(rtu.device_id)
                 profinet.add_rtu(
                     rtu.station_name,
                     rtu.ip_address,
@@ -1021,7 +1022,7 @@ async def provision_rtu_sensors(
 @router.get("/{name}/probe")
 async def probe_rtu_http(
     name: str,
-    port: int = Query(9081, ge=1, le=65535, description="RTU HTTP API port"),
+    port: int = Query(PORT_DEFAULTS.RTU_HTTP, ge=1, le=65535, description="RTU HTTP API port"),
     timeout_ms: int = Query(2000, ge=100, le=10000, description="Timeout in milliseconds"),
     db: Session = Depends(get_db)
 ) -> dict[str, Any]:
@@ -1097,6 +1098,63 @@ async def probe_rtu_http(
                 # Don't auto-connect, but note that device is reachable
                 logger.info(f"RTU {name} is HTTP-reachable but PROFINET state is OFFLINE")
 
+            # Fetch and sync PROFINET config if probe succeeded
+            if response.status_code == 200:
+                config_url = f"http://{ip_address}:{port}/config"
+                try:
+                    async with httpx.AsyncClient(timeout=timeout_sec) as client:
+                        config_response = await client.get(config_url)
+
+                    if config_response.status_code == 200:
+                        config = config_response.json()
+                        pn_config = config.get("profinet", {})
+
+                        # Extract PROFINET identity
+                        rtu_vendor = pn_config.get("vendor_id")
+                        rtu_device = pn_config.get("device_id")
+                        rtu_slot_count = pn_config.get("slot_count")
+
+                        # Update database with RTU's actual PROFINET identity
+                        updated_fields = []
+                        if rtu_vendor is not None:
+                            new_vendor_id = f"0x{rtu_vendor:04X}"
+                            if rtu.vendor_id != new_vendor_id:
+                                rtu.vendor_id = new_vendor_id
+                                updated_fields.append(f"vendor_id={new_vendor_id}")
+
+                        if rtu_device is not None:
+                            new_device_id = f"0x{rtu_device:04X}"
+                            if rtu.device_id != new_device_id:
+                                rtu.device_id = new_device_id
+                                updated_fields.append(f"device_id={new_device_id}")
+
+                        if rtu_slot_count is not None:
+                            if rtu.slot_count != rtu_slot_count:
+                                rtu.slot_count = rtu_slot_count
+                                updated_fields.append(f"slot_count={rtu_slot_count}")
+
+                        if updated_fields:
+                            db.commit()
+                            logger.info(f"RTU {name}: synced PROFINET config from device: {', '.join(updated_fields)}")
+                            result["config_synced"] = True
+                            result["updated_fields"] = updated_fields
+                        else:
+                            result["config_synced"] = False
+                            result["message"] = "PROFINET config already up to date"
+
+                        # Include PROFINET config in result
+                        result["profinet_config"] = {
+                            "vendor_id": f"0x{rtu_vendor:04X}" if rtu_vendor is not None else None,
+                            "device_id": f"0x{rtu_device:04X}" if rtu_device is not None else None,
+                            "slot_count": rtu_slot_count,
+                            "station_name": pn_config.get("station_name"),
+                            "product_name": pn_config.get("product_name"),
+                            "enabled": pn_config.get("enabled"),
+                        }
+                except Exception as e:
+                    logger.warning(f"RTU {name}: failed to fetch/sync PROFINET config: {e}")
+                    result["config_sync_error"] = str(e)
+
             break  # Success, don't try other endpoints
 
         except httpx.ConnectTimeout:
@@ -1115,7 +1173,7 @@ async def probe_rtu_http(
 @router.post("/{name}/fetch-config")
 async def fetch_rtu_config(
     name: str,
-    port: int = Query(9081, ge=1, le=65535, description="RTU HTTP API port"),
+    port: int = Query(PORT_DEFAULTS.RTU_HTTP, ge=1, le=65535, description="RTU HTTP API port"),
     timeout_ms: int = Query(5000, ge=100, le=30000, description="Timeout in milliseconds"),
     update_db: bool = Query(False, description="Update database with fetched PROFINET identity"),
     db: Session = Depends(get_db)
@@ -1188,8 +1246,8 @@ async def fetch_rtu_config(
         rtu_device = pn_config.get("device_id")
 
         # Convert hex strings to int for comparison if needed
-        db_vendor = int(rtu.vendor_id, 16) if rtu.vendor_id else None
-        db_device = int(rtu.device_id, 16) if rtu.device_id else None
+        db_vendor = hex_string_to_int(rtu.vendor_id, None)
+        db_device = hex_string_to_int(rtu.device_id, None)
 
         mismatches = {}
         if rtu_station and rtu_station != rtu.station_name:

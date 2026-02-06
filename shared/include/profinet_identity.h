@@ -21,10 +21,27 @@ extern "C" {
 
 /* ============== Device Identity ============== */
 
-/* Vendor & Device IDs - MUST match GSDML */
-#define PN_VENDOR_ID            0x0493
-#define PN_DEVICE_ID            0x0001
-#define PN_INSTANCE_ID          0x0001
+/*
+ * Controller identity - sourced from schema (DO NOT hardcode).
+ * Values come from schemas/config/profinet.schema.yaml.
+ * To change: edit schema, run `make generate`.
+ *
+ * Note: This header provides protocol constants, but controller identity
+ * comes from generated config. Include "generated/config_defaults.h" if needed.
+ */
+#ifndef PN_VENDOR_ID
+  #warning "PN_VENDOR_ID not defined - include generated/config_defaults.h or profinet/profinet_identity.h"
+  #define PN_VENDOR_ID            0xFFFF  /* Placeholder - should come from config */
+#endif
+
+#ifndef PN_DEVICE_ID
+  #warning "PN_DEVICE_ID not defined - include generated/config_defaults.h or profinet/profinet_identity.h"
+  #define PN_DEVICE_ID            0xFFFF  /* Placeholder - should come from config */
+#endif
+
+#ifndef PN_INSTANCE_ID
+  #define PN_INSTANCE_ID          0x0001  /* Controller instance - can be hardcoded */
+#endif
 
 /* ============== DAP (Device Access Point) ============== */
 

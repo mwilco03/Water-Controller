@@ -27,7 +27,9 @@ from sqlalchemy.orm import Session
 # icmplib for ICMP ping - supports unprivileged mode without CAP_NET_RAW
 from icmplib import async_ping, async_multiping, SocketPermissionError
 
+from ...core.config import settings
 from ...core.errors import build_success_response
+from ...core.ports import DEFAULTS as PORT_DEFAULTS
 from ...models.base import get_db
 from ...models.rtu import RTU
 from ...services.dcp_discovery import discover_profinet_devices
@@ -397,7 +399,7 @@ class PortScanRequest(BaseModel):
     """Request for TCP port scan to find RTUs."""
 
     subnet: str = Field(..., description="Subnet to scan (e.g., '192.168.1.0/24')")
-    port: int = Field(9081, ge=1, le=65535, description="TCP port to scan")
+    port: int = Field(PORT_DEFAULTS.RTU_HTTP, ge=1, le=65535, description="TCP port to scan")
     timeout_ms: int = Field(1000, ge=100, le=10000, description="Connection timeout per host in ms")
     max_concurrent: int = Field(50, ge=1, le=255, description="Max concurrent connections")
     fetch_info: bool = Field(True, description="Fetch RTU info from responding hosts")
@@ -743,9 +745,9 @@ class HttpProbeRequest(BaseModel):
     """Request for HTTP probe."""
 
     ip_address: str = Field(..., description="IP address to probe")
-    port: int = Field(8000, ge=1, le=65535, description="Port to connect to")
+    port: int = Field(PORT_DEFAULTS.API, ge=1, le=65535, description="Port to connect to")
     path: str = Field("/health", description="URL path to request")
-    timeout_ms: int = Field(3000, ge=100, le=30000, description="Request timeout in milliseconds")
+    timeout_ms: int = Field(settings.timeouts.command_timeout_ms, ge=100, le=30000, description="Request timeout in milliseconds")
 
     @field_validator("ip_address")
     @classmethod
@@ -870,7 +872,7 @@ class ProbeIpRequest(BaseModel):
     """Request for probing RTU config by IP."""
 
     ip_address: str = Field(..., description="RTU IP address")
-    port: int = Field(9081, ge=1, le=65535, description="RTU HTTP API port")
+    port: int = Field(PORT_DEFAULTS.RTU_HTTP, ge=1, le=65535, description="RTU HTTP API port")
     timeout_ms: int = Field(5000, ge=100, le=30000, description="Timeout in milliseconds")
 
     @field_validator("ip_address")
@@ -986,7 +988,7 @@ class HttpProbeBatchRequest(BaseModel):
     """Request for batch HTTP probe."""
 
     ip_addresses: list[str] = Field(..., description="List of IP addresses to probe")
-    port: int = Field(8000, ge=1, le=65535, description="Port to connect to")
+    port: int = Field(PORT_DEFAULTS.API, ge=1, le=65535, description="Port to connect to")
     path: str = Field("/health", description="URL path to request")
     timeout_ms: int = Field(2000, ge=100, le=10000, description="Request timeout per host")
     max_concurrent: int = Field(10, ge=1, le=50, description="Max concurrent requests")
@@ -1074,7 +1076,7 @@ class GsdmlFetchRequest(BaseModel):
 
     ip_address: str = Field(..., description="RTU IP address")
     station_name: str | None = Field(None, description="RTU station name (for caching)")
-    port: int = Field(9081, ge=1, le=65535, description="RTU HTTP port")
+    port: int = Field(PORT_DEFAULTS.RTU_HTTP, ge=1, le=65535, description="RTU HTTP port")
 
     @field_validator("ip_address")
     @classmethod
@@ -1187,7 +1189,7 @@ class SlotsFetchRequest(BaseModel):
     """Request to fetch slot configuration from RTU."""
 
     ip_address: str = Field(..., description="RTU IP address")
-    port: int = Field(9081, ge=1, le=65535, description="RTU HTTP port")
+    port: int = Field(PORT_DEFAULTS.RTU_HTTP, ge=1, le=65535, description="RTU HTTP port")
 
     @field_validator("ip_address")
     @classmethod
