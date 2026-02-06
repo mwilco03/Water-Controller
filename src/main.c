@@ -634,6 +634,7 @@ static wtc_result_t initialize_components(void) {
         };
         strncpy(pn_config.interface_name, g_config.interface,
                 sizeof(pn_config.interface_name) - 1);
+        pn_config.interface_name[sizeof(pn_config.interface_name) - 1] = '\0';
 
         res = profinet_controller_init(&g_profinet, &pn_config);
         if (res != WTC_OK) {
@@ -711,7 +712,9 @@ static wtc_result_t initialize_components(void) {
         .actuator_base_addr = 1000,
     };
     if (g_config.modbus_rtu_device[0]) {
-        strncpy(mb_config.server.rtu_device, g_config.modbus_rtu_device, 63);
+        strncpy(mb_config.server.rtu_device, g_config.modbus_rtu_device,
+                sizeof(mb_config.server.rtu_device) - 1);
+        mb_config.server.rtu_device[sizeof(mb_config.server.rtu_device) - 1] = '\0';
     }
 
     res = modbus_gateway_init(&g_modbus, &mb_config);
@@ -886,7 +889,8 @@ static bool detect_network_interface(char *interface, size_t size) {
                 /* Remove newline */
                 state[strcspn(state, "\n")] = 0;
                 if (strcmp(state, "up") == 0) {
-                    snprintf(interface, size, "%s", name);
+                    strncpy(interface, name, size - 1);
+                    interface[size - 1] = '\0';
                     found = true;
                     fclose(fp);
                     break;
@@ -908,7 +912,8 @@ static bool detect_network_interface(char *interface, size_t size) {
             if (strncmp(name, "br-", 3) == 0) continue;
             if (strncmp(name, "virbr", 5) == 0) continue;
 
-            snprintf(interface, size, "%s", name);
+            strncpy(interface, name, size - 1);
+            interface[size - 1] = '\0';
             found = true;
             break;
         }

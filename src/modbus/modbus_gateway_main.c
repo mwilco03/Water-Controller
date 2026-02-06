@@ -252,7 +252,9 @@ static int init_gateway(void) {
     };
 
     strncpy(mb_config.server.tcp_bind_address, g_config.tcp_bind, sizeof(mb_config.server.tcp_bind_address) - 1);
+    mb_config.server.tcp_bind_address[sizeof(mb_config.server.tcp_bind_address) - 1] = '\0';
     strncpy(mb_config.server.rtu_device, g_config.rtu_device, sizeof(mb_config.server.rtu_device) - 1);
+    mb_config.server.rtu_device[sizeof(mb_config.server.rtu_device) - 1] = '\0';
 
     wtc_result_t res = modbus_gateway_init(&g_gateway, &mb_config);
     if (res != WTC_OK) {

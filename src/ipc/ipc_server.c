@@ -656,7 +656,9 @@ static wtc_result_t handle_configure_slot(ipc_server_t *server, shm_command_t *c
     };
 
     strncpy(slot.name, cmd->configure_slot_cmd.name, WTC_MAX_NAME - 1);
+    slot.name[WTC_MAX_NAME - 1] = '\0';
     strncpy(slot.unit, cmd->configure_slot_cmd.unit, WTC_MAX_UNIT - 1);
+    slot.unit[WTC_MAX_UNIT - 1] = '\0';
 
     wtc_result_t result = rtu_registry_set_device_config(server->registry,
                                                           cmd->configure_slot_cmd.rtu_station,

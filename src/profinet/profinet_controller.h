@@ -157,7 +157,7 @@ typedef struct {
         uint16_t subslot;
         uint32_t module_ident;
         uint32_t submodule_ident;
-    } discovered_modules[64];
+    } discovered_modules[WTC_MAX_SLOTS];
     int discovered_count;               /* Number of modules in discovered_modules[] */
 
     /* Watchdog degradation */

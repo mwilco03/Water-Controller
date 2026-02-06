@@ -43,6 +43,114 @@ from ...services.rtu_service import get_rtu_service
 router = APIRouter()
 
 
+async def auto_discover_slots(
+    rtu: RTU,
+    port: int,
+    timeout_sec: float,
+    db: Session
+) -> tuple[int, int, int]:
+    """
+    Automatically discover and create Sensor/Control records from RTU's /slots endpoint.
+
+    This function is called automatically when an RTU is added to the system.
+    It fetches the slot configuration from the RTU's HTTP API and creates
+    database records for all sensors and controls.
+
+    Args:
+        rtu: RTU database model
+        port: RTU HTTP API port
+        timeout_sec: Request timeout in seconds
+        db: Database session
+
+    Returns:
+        Tuple of (slot_count, sensors_created, controls_created)
+    """
+    import httpx
+    from ...models.rtu import Control, ControlType, Sensor
+
+    url = f"http://{rtu.ip_address}:{port}/slots"
+    logger.info(f"Auto-discovering slots for RTU {rtu.station_name} from {url}")
+
+    try:
+        async with httpx.AsyncClient(timeout=timeout_sec) as client:
+            response = await client.get(url)
+
+        if response.status_code != 200:
+            logger.warning(f"Slot discovery failed for {rtu.station_name}: HTTP {response.status_code}")
+            return (0, 0, 0)
+
+        slots_data = response.json()
+        slot_count = slots_data.get("slot_count", 0)
+        slots_list = slots_data.get("slots", [])
+
+        sensors_created = 0
+        controls_created = 0
+
+        for slot_data in slots_list:
+            slot_num = slot_data.get("slot")
+            if slot_num is None or slot_num == 0:
+                continue  # Skip DAP (slot 0)
+
+            direction = slot_data.get("direction", "input")
+
+            if direction == "input":
+                # Check if sensor already exists
+                existing_sensor = db.query(Sensor).filter(
+                    Sensor.rtu_id == rtu.id,
+                    Sensor.slot_number == slot_num
+                ).first()
+
+                if not existing_sensor:
+                    tag = f"{rtu.station_name}-sensor-{slot_num}"
+                    sensor = Sensor(
+                        rtu_id=rtu.id,
+                        slot_number=slot_num,
+                        tag=tag,
+                        channel=slot_num,
+                        sensor_type="generic",
+                        unit="",
+                    )
+                    db.add(sensor)
+                    sensors_created += 1
+
+            elif direction == "output":
+                # Check if control already exists
+                existing_control = db.query(Control).filter(
+                    Control.rtu_id == rtu.id,
+                    Control.slot_number == slot_num
+                ).first()
+
+                if not existing_control:
+                    tag = f"{rtu.station_name}-control-{slot_num}"
+                    control = Control(
+                        rtu_id=rtu.id,
+                        slot_number=slot_num,
+                        tag=tag,
+                        channel=slot_num,
+                        control_type=ControlType.DISCRETE,
+                        equipment_type="generic",
+                    )
+                    db.add(control)
+                    controls_created += 1
+
+        # Update RTU slot_count
+        if slot_count > 0:
+            rtu.slot_count = slot_count
+
+        if sensors_created > 0 or controls_created > 0 or slot_count > 0:
+            db.commit()
+            logger.info(
+                f"RTU {rtu.station_name}: auto-discovered slot_count={slot_count}, "
+                f"{sensors_created} sensors, {controls_created} controls"
+            )
+
+        return (slot_count, sensors_created, controls_created)
+
+    except Exception as e:
+        logger.warning(f"Auto-discovery failed for RTU {rtu.station_name}: {e}")
+        return (0, 0, 0)
+
+
 def build_rtu_stats(db: Session, rtu: RTU) -> RtuStats:
     """Build statistics for an RTU (delegates to service)."""
     service = get_rtu_service(db)
@@ -63,6 +171,9 @@ async def create_rtu(
     Creates the RTU record in the database and registers it with the
     PROFINET controller (if running). The RTU starts in OFFLINE state -
     use POST /connect to establish PROFINET connection.
+
+    If the RTU has an IP address, automatically fetches slot configuration
+    from the RTU's HTTP API and creates Sensor/Control records.
     """
     # Delegate to service layer
     service = get_rtu_service(db)
@@ -70,6 +181,15 @@ async def create_rtu(
         rtu = service.create(request)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
+
+    # Auto-discover slots if RTU has IP address
+    slot_count = 0
+    sensors_created = 0
+    controls_created = 0
+    if rtu.ip_address:
+        slot_count, sensors_created, controls_created = await auto_discover_slots(
+            rtu, PORT_DEFAULTS.RTU_HTTP, 5.0, db
+        )
 
     # Register RTU with PROFINET controller (if available)
     controller_registered = False
@@ -105,6 +225,14 @@ async def create_rtu(
         "created_at": rtu.created_at.isoformat() if rtu.created_at else None,
         "updated_at": rtu.updated_at.isoformat() if rtu.updated_at else None,
     }
+
+    # Include auto-discovery stats if slots were discovered
+    if sensors_created > 0 or controls_created > 0:
+        response_data["auto_discovery"] = {
+            "sensors_created": sensors_created,
+            "controls_created": controls_created,
+            "slot_count": slot_count,
+        }
 
     return build_success_response(response_data)
 
@@ -205,6 +333,11 @@ async def add_rtu_by_ip(
 
     logger.info(f"Added RTU by IP: {station_name} at {ip_address} (vendor=0x{vendor_id:04X}, device=0x{device_id:04X})")
 
+    # Auto-discover slots and create Sensor/Control records
+    slot_count, sensors_created, controls_created = await auto_discover_slots(
+        rtu, port, timeout_sec, db
+    )
+
     # Register with PROFINET controller
     controller_registered = False
     profinet = get_profinet_client()
@@ -238,11 +371,17 @@ async def add_rtu_by_ip(
         "ip_address": rtu.ip_address,
         "vendor_id": rtu.vendor_id,
         "device_id": rtu.device_id,
+        "slot_count": slot_count if slot_count > 0 else rtu.slot_count,
         "state": rtu.state,
         "controller_registered": controller_registered,
         "auto_connect_initiated": connected,
         "source": "fetched_from_device",
         "profinet_config": pn_config,
+        "auto_discovery": {
+            "sensors_created": sensors_created,
+            "controls_created": controls_created,
+            "slot_count": slot_count,
+        },
     })
 
 

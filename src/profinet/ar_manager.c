@@ -972,7 +972,7 @@ wtc_result_t ar_send_connect_request(ar_manager_t *manager,
                      response.discovered_count, ar->module_mismatch_retries + 1);
 
             ar->has_discovered_modules = true;
-            ar->discovered_count = response.discovered_count < 64 ? response.discovered_count : 64;
+            ar->discovered_count = response.discovered_count < WTC_MAX_SLOTS ? response.discovered_count : WTC_MAX_SLOTS;
 
             for (int i = 0; i < ar->discovered_count; i++) {
                 ar->discovered_modules[i].slot = response.discovered_modules[i].slot;
@@ -1024,7 +1024,7 @@ wtc_result_t ar_send_connect_request(ar_manager_t *manager,
                 LOG_INFO("Discovered %d modules via Record Read 0xF844", discovery.module_count);
 
                 ar->has_discovered_modules = true;
-                ar->discovered_count = discovery.module_count < 64 ? discovery.module_count : 64;
+                ar->discovered_count = discovery.module_count < WTC_MAX_SLOTS ? discovery.module_count : WTC_MAX_SLOTS;
 
                 for (int i = 0; i < ar->discovered_count; i++) {
                     ar->discovered_modules[i].slot = discovery.modules[i].slot;

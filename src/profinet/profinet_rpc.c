@@ -1026,7 +1026,7 @@ wtc_result_t rpc_parse_connect_response(const uint8_t *buffer,
 
                     for (int sub_idx = 0; sub_idx < submodule_count && sub_idx < 16; sub_idx++) {
                         if (pos + 8 > block_end) break;
-                        if (response->discovered_count >= 64) break;
+                        if (response->discovered_count >= WTC_MAX_SLOTS) break;
 
                         uint16_t subslot = read_u16_be(buffer, &pos);
                         uint32_t submodule_ident = read_u32_be(buffer, &pos);
