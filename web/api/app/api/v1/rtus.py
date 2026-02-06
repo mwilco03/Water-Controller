@@ -213,6 +213,19 @@ async def create_rtu(
     except Exception as e:
         logger.warning(f"Could not register RTU {rtu.station_name} with controller: {e}")
 
+    # Auto-connect if RTU was registered and has IP address
+    connected = False
+    if controller_registered and rtu.ip_address:
+        try:
+            connected = profinet.connect_rtu(rtu.station_name)
+            if connected:
+                from ...models.rtu import RtuState
+                rtu.update_state(RtuState.CONNECTING)
+                db.commit()
+                logger.info(f"Auto-connecting RTU {rtu.station_name}")
+        except Exception as e:
+            logger.warning(f"Auto-connect failed for {rtu.station_name}: {e}")
+
     response_data = {
         "id": rtu.id,
         "station_name": rtu.station_name,
@@ -222,6 +235,7 @@ async def create_rtu(
         "slot_count": rtu.slot_count,
         "state": rtu.state,
         "controller_registered": controller_registered,
+        "auto_connect_initiated": connected,
         "created_at": rtu.created_at.isoformat() if rtu.created_at else None,
         "updated_at": rtu.updated_at.isoformat() if rtu.updated_at else None,
     }
@@ -242,7 +256,7 @@ async def add_rtu_by_ip(
     ip_address: str = Query(..., description="RTU IP address"),
     port: int = Query(PORT_DEFAULTS.RTU_HTTP, ge=1, le=65535, description="RTU HTTP API port"),
     timeout_ms: int = Query(5000, ge=100, le=30000, description="Timeout in milliseconds"),
-    auto_connect: bool = Query(False, description="Automatically connect after adding"),
+    auto_connect: bool = Query(True, description="Automatically connect after adding"),
     db: Session = Depends(get_db)
 ) -> dict[str, Any]:
     """
