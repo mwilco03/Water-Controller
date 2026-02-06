@@ -73,7 +73,7 @@ wtc_result_t gsdml_cache_load_modules(const char *station_name,
 /**
  * @brief Fetch slot configuration from RTU via HTTP (Phase 6 fallback).
  *
- * Sends HTTP GET to http://<rtu_ip>:9081/api/v1/slots
+ * Sends HTTP GET to http://<rtu_ip>:9081/slots
  * and parses the JSON response into module discovery format.
  *
  * @param[in]  rtu_ip_str    RTU IP address string
