@@ -137,22 +137,15 @@ class RtuDefaults:
     """
     RTU default configuration values.
 
-    Rationale: These defaults are based on standard PROFINET device
-    configurations and can be overridden per-device at creation time.
+    CRITICAL: RTU vendor_id and device_id are NEVER hardcoded or defaulted.
+    Per CLAUDE.md discovery-first rule: RTUs discovered via DCP multicast,
+    identity comes from the device itself via DCP Identify Response.
 
-    - VENDOR_ID 0x002A (42): Real-Time Automation (RTA) - common for
-      water treatment PLCs
-    - DEVICE_ID 0x0405 (1029): Generic PROFINET IO device
-    - SLOT_COUNT 16: Typical modular RTU configuration
+    SLOT_COUNT is a reasonable default for initial RTU registration,
+    but will be updated when the RTU reports its actual configuration.
     """
 
-    # Default PROFINET vendor ID (RTA = 0x002A = 42)
-    VENDOR_ID: int = _get_int_env("WTC_DEFAULT_VENDOR_ID", 0x002A)
-
-    # Default PROFINET device ID (generic = 0x0405 = 1029)
-    DEVICE_ID: int = _get_int_env("WTC_DEFAULT_DEVICE_ID", 0x0405)
-
-    # Default slot count for modular RTUs
+    # Default slot count for modular RTUs (updated after RTU reports actual count)
     SLOT_COUNT: int = _get_int_env("WTC_DEFAULT_SLOT_COUNT", 16)
 
 

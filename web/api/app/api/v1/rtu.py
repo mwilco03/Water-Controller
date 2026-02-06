@@ -14,6 +14,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from ...core.config import settings
 from ...core.errors import build_success_response
 from ...models.base import get_db
 from ...models.rtu import RTU, RtuState
@@ -26,6 +27,10 @@ router = APIRouter()
 # Controller identification
 CONTROLLER_NAME = "water-treat-controller"
 CONFIG_VERSION = 1
+
+# PROFINET defaults (sourced from schema: schemas/config/profinet.schema.yaml)
+# To change: edit schema, run `make generate`
+DEFAULT_WATCHDOG_MS = 3000  # From profinet.timing.watchdog_ms
 
 
 def generate_enrollment_token() -> str:
@@ -246,7 +251,7 @@ async def get_rtu_config(
         "sensors": [],  # Populated when RTU reports sensor submodules via PROFINET
         "actuators": [],  # Populated when RTU reports actuator submodules via PROFINET
         "authority_mode": "SUPERVISED",
-        "watchdog_ms": 3000,
+        "watchdog_ms": DEFAULT_WATCHDOG_MS,
     }
 
     return build_success_response(config)

@@ -26,6 +26,7 @@
  */
 
 #include "types.h"
+#include "generated/config_defaults.h"
 #include "profinet/profinet_controller.h"
 #include "profinet/profinet_identity.h"
 #include "registry/rtu_registry.h"
@@ -104,7 +105,7 @@ static app_config_t g_config = {
     .log_file = "",
     .log_level = LOG_LEVEL_INFO,
     .cycle_time_ms = 1000,
-    .web_port = 8080,
+    .web_port = WTC_DEFAULT_WEB_UI_PORT,
     .daemon_mode = false,
     .modbus_tcp_enabled = true,
     .modbus_tcp_port = 1502,  /* Non-privileged port, matches WTC_MODBUS_TCP_PORT */
@@ -113,7 +114,7 @@ static app_config_t g_config = {
     .modbus_slave_addr = 1,
     /* Database defaults */
     .db_host = "localhost",
-    .db_port = 5432,
+    .db_port = WTC_DEFAULT_CONTROLLER_DATABASE_PORT,
     .db_name = "water_treatment",  /* Matches WTC_DB_NAME across codebase */
     .db_user = "wtc",
     .db_password = "",
@@ -311,10 +312,10 @@ static void print_usage(const char *program) {
     printf("  -v, --verbose            Increase verbosity\n");
     printf("  -q, --quiet              Decrease verbosity\n");
     printf("  -t, --cycle <ms>         Cycle time in milliseconds (default: 1000)\n");
-    printf("  -p, --port <port>        Web server port (default: 8080)\n");
+    printf("  -p, --port <port>        Web server port (default: %d)\n", WTC_DEFAULT_WEB_UI_PORT);
     printf("  -d, --daemon             Run as daemon\n");
     printf("  --db-host <host>         PostgreSQL host (default: localhost)\n");
-    printf("  --db-port <port>         PostgreSQL port (default: 5432)\n");
+    printf("  --db-port <port>         PostgreSQL port (default: %d)\n", WTC_DEFAULT_CONTROLLER_DATABASE_PORT);
     printf("  --db-name <name>         Database name (default: water_controller)\n");
     printf("  --db-user <user>         Database user (default: wtc)\n");
     printf("  --db-password <pass>     Database password\n");

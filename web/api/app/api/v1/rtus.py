@@ -22,6 +22,7 @@ from ...core.exceptions import (
     RtuBusyError,
     RtuNotConnectedError,
 )
+from ...core.ports import DEFAULTS as PORT_DEFAULTS
 from ...core.rtu_utils import get_rtu_or_404
 from ...models.base import get_db
 from ...models.rtu import RTU, RtuState
@@ -111,7 +112,7 @@ async def create_rtu(
 @router.post("/add-by-ip", status_code=201)
 async def add_rtu_by_ip(
     ip_address: str = Query(..., description="RTU IP address"),
-    port: int = Query(9081, ge=1, le=65535, description="RTU HTTP API port"),
+    port: int = Query(PORT_DEFAULTS.RTU_HTTP, ge=1, le=65535, description="RTU HTTP API port"),
     timeout_ms: int = Query(5000, ge=100, le=30000, description="Timeout in milliseconds"),
     auto_connect: bool = Query(False, description="Automatically connect after adding"),
     db: Session = Depends(get_db)
@@ -1021,7 +1022,7 @@ async def provision_rtu_sensors(
 @router.get("/{name}/probe")
 async def probe_rtu_http(
     name: str,
-    port: int = Query(9081, ge=1, le=65535, description="RTU HTTP API port"),
+    port: int = Query(PORT_DEFAULTS.RTU_HTTP, ge=1, le=65535, description="RTU HTTP API port"),
     timeout_ms: int = Query(2000, ge=100, le=10000, description="Timeout in milliseconds"),
     db: Session = Depends(get_db)
 ) -> dict[str, Any]:
@@ -1172,7 +1173,7 @@ async def probe_rtu_http(
 @router.post("/{name}/fetch-config")
 async def fetch_rtu_config(
     name: str,
-    port: int = Query(9081, ge=1, le=65535, description="RTU HTTP API port"),
+    port: int = Query(PORT_DEFAULTS.RTU_HTTP, ge=1, le=65535, description="RTU HTTP API port"),
     timeout_ms: int = Query(5000, ge=100, le=30000, description="Timeout in milliseconds"),
     update_db: bool = Query(False, description="Update database with fetched PROFINET identity"),
     db: Session = Depends(get_db)

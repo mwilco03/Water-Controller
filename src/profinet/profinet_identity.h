@@ -32,6 +32,7 @@ extern "C" {
  */
 #define PN_VENDOR_ID              WTC_DEFAULT_PROFINET_CONTROLLER_VENDOR_ID
 #define PN_DEVICE_ID              WTC_DEFAULT_PROFINET_CONTROLLER_DEVICE_ID
+#define PN_STATION_NAME           WTC_DEFAULT_PROFINET_CONTROLLER_STATION_NAME
 
 /*
  * PROFINET Instance ID (controller instance).
