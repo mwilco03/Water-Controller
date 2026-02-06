@@ -1000,8 +1000,78 @@ wtc_result_t ar_send_connect_request(ar_manager_t *manager,
             return WTC_ERROR_CONNECTION_FAILED;  /* Trigger retry */
         }
 
-        /* TODO: Fallback to Record Read 0xF844 if ModuleDiffBlock not present */
-        /* TODO: Fallback to HTTP /slots if PROFINET discovery unavailable */
+        /* Fallback to Record Read 0xF844 if ModuleDiffBlock not present or empty */
+        if ((response.has_diff && response.discovered_count == 0) ||
+            (!response.has_diff && !ar->has_discovered_modules)) {
+
+            /* Check retry limit */
+            if (ar->module_mismatch_retries >= 3) {
+                LOG_ERROR("Module discovery failed after %d attempts - giving up",
+                         ar->module_mismatch_retries);
+                ar->state = AR_STATE_ABORT;
+                ar->last_error = WTC_ERROR_PROTOCOL;
+                return WTC_ERROR_PROTOCOL;
+            }
+
+            LOG_INFO("ModuleDiffBlock empty/missing, attempting Record Read 0xF844 discovery");
+
+            /* Try Record Read 0xF844 to discover modules */
+            ar_module_discovery_t discovery;
+            wtc_result_t disc_res = ar_read_real_identification(manager, ar, &discovery);
+
+            if (disc_res == WTC_OK && discovery.module_count > 0) {
+                /* Success! Store discovered modules */
+                LOG_INFO("Discovered %d modules via Record Read 0xF844", discovery.module_count);
+
+                ar->has_discovered_modules = true;
+                ar->discovered_count = discovery.module_count < 64 ? discovery.module_count : 64;
+
+                for (int i = 0; i < ar->discovered_count; i++) {
+                    ar->discovered_modules[i].slot = discovery.modules[i].slot;
+                    ar->discovered_modules[i].subslot = discovery.modules[i].subslot;
+                    ar->discovered_modules[i].module_ident = discovery.modules[i].module_ident;
+                    ar->discovered_modules[i].submodule_ident = discovery.modules[i].submodule_ident;
+                }
+
+                /* Exponential backoff and retry */
+                ar->module_mismatch_retries++;
+                ar->retry_backoff_ms = (ar->retry_backoff_ms == 0) ? 2000 : ar->retry_backoff_ms * 2;
+                if (ar->retry_backoff_ms > 30000) ar->retry_backoff_ms = 30000;
+
+                ar->state = AR_STATE_ABORT;
+                ar->last_activity_ms = time_get_ms();
+                ar->last_error = WTC_OK;
+
+                LOG_INFO("Will retry connect with discovered config after %u ms backoff",
+                         ar->retry_backoff_ms);
+                return WTC_ERROR_CONNECTION_FAILED;  /* Trigger retry */
+            } else {
+                /* Record Read failed - HTTP /slots fallback handled by API layer */
+                LOG_WARN("Record Read 0xF844 failed (%d) - PROFINET discovery exhausted", disc_res);
+                LOG_INFO("HTTP /slots fallback should be handled by API layer before PROFINET connect");
+
+                /* Increment retry counter and give up if max attempts reached */
+                ar->module_mismatch_retries++;
+                if (ar->module_mismatch_retries >= 3) {
+                    LOG_ERROR("All PROFINET discovery methods exhausted - cannot determine module config");
+                    ar->state = AR_STATE_ABORT;
+                    ar->last_error = WTC_ERROR_PROTOCOL;
+                    return WTC_ERROR_PROTOCOL;
+                }
+
+                /* Retry with current (possibly incorrect) config */
+                ar->retry_backoff_ms = (ar->retry_backoff_ms == 0) ? 2000 : ar->retry_backoff_ms * 2;
+                if (ar->retry_backoff_ms > 30000) ar->retry_backoff_ms = 30000;
+
+                ar->state = AR_STATE_ABORT;
+                ar->last_activity_ms = time_get_ms();
+                ar->last_error = WTC_ERROR_PROTOCOL;
+
+                LOG_WARN("Will retry with current config after %u ms backoff (attempt %d/3)",
+                        ar->retry_backoff_ms, ar->module_mismatch_retries);
+                return WTC_ERROR_CONNECTION_FAILED;
+            }
+        }
 
         ar->state = AR_STATE_CONNECT_CNF;
         ar->last_activity_ms = time_get_ms();
