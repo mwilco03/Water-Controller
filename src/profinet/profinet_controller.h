@@ -150,14 +150,12 @@ typedef struct {
 
     /* Module mismatch discovery state (cascading: ModuleDiffBlock → Record Read 0xF844 → HTTP /slots) */
     bool has_discovered_modules;        /* True if module config has been discovered */
-    int module_mismatch_retries;        /* Separate counter for module mismatch retries (max 3) */
-    uint32_t retry_backoff_ms;          /* Exponential backoff timer (2s, 4s, 8s, cap at 30s) */
     struct {
         uint16_t slot;
         uint16_t subslot;
         uint32_t module_ident;
         uint32_t submodule_ident;
-    } discovered_modules[64];
+    } discovered_modules[WTC_MAX_SLOTS];
     int discovered_count;               /* Number of modules in discovered_modules[] */
 
     /* Watchdog degradation */

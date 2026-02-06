@@ -486,7 +486,9 @@ wtc_result_t modbus_gateway_init(modbus_gateway_t **gw,
             .user_data = gateway,
         };
         if (config->server.tcp_bind_address[0]) {
-            strncpy(tcp_cfg.bind_address, config->server.tcp_bind_address, 63);
+            strncpy(tcp_cfg.bind_address, config->server.tcp_bind_address,
+                    sizeof(tcp_cfg.bind_address) - 1);
+            tcp_cfg.bind_address[sizeof(tcp_cfg.bind_address) - 1] = '\0';
         }
 
         if (modbus_tcp_init(&gateway->server_tcp, &tcp_cfg) != WTC_OK) {
@@ -507,7 +509,9 @@ wtc_result_t modbus_gateway_init(modbus_gateway_t **gw,
             .request_handler = handle_rtu_request,
             .user_data = gateway,
         };
-        strncpy(rtu_cfg.device, config->server.rtu_device, 63);
+        strncpy(rtu_cfg.device, config->server.rtu_device,
+                sizeof(rtu_cfg.device) - 1);
+        rtu_cfg.device[sizeof(rtu_cfg.device) - 1] = '\0';
 
         if (modbus_rtu_init(&gateway->server_rtu, &rtu_cfg) != WTC_OK) {
             LOG_ERROR(LOG_TAG, "Failed to initialize RTU server");

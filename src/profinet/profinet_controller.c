@@ -689,7 +689,9 @@ static wtc_result_t arp_lookup_mac(const char *interface_name,
     sin->sin_family = AF_INET;
     sin->sin_addr.s_addr = htonl(ip_address);
 
-    snprintf(arp_req.arp_dev, sizeof(arp_req.arp_dev), "%s", interface_name);
+    /* Copy interface name - truncate if needed (IFNAMSIZ=16) */
+    strncpy(arp_req.arp_dev, interface_name, sizeof(arp_req.arp_dev) - 1);
+    arp_req.arp_dev[sizeof(arp_req.arp_dev) - 1] = '\0';
 
     if (ioctl(sock, SIOCGARP, &arp_req) < 0) {
         LOG_DEBUG("ARP lookup failed for 0x%08X: %s (may need to ping first)",

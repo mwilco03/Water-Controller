@@ -311,7 +311,8 @@ wtc_result_t register_map_auto_generate(register_map_t *map,
                 .read_only = true,
                 .enabled = true,
             };
-            strncpy(reg.rtu_station, dev->station_name, 63);
+            strncpy(reg.rtu_station, dev->station_name, sizeof(reg.rtu_station) - 1);
+            reg.rtu_station[sizeof(reg.rtu_station) - 1] = '\0';
             snprintf(reg.description, sizeof(reg.description), "%.45s Sensor %d", dev->station_name, s + 1);
 
             register_map_add_register(map, &reg);
@@ -330,7 +331,8 @@ wtc_result_t register_map_auto_generate(register_map_t *map,
                 .read_only = false,
                 .enabled = true,
             };
-            strncpy(reg.rtu_station, dev->station_name, 63);
+            strncpy(reg.rtu_station, dev->station_name, sizeof(reg.rtu_station) - 1);
+            reg.rtu_station[sizeof(reg.rtu_station) - 1] = '\0';
             snprintf(reg.description, sizeof(reg.description), "%.43s Actuator %d", dev->station_name, a + 1);
 
             register_map_add_register(map, &reg);
@@ -347,7 +349,8 @@ wtc_result_t register_map_auto_generate(register_map_t *map,
                 .read_only = false,
                 .enabled = true,
             };
-            strncpy(coil.rtu_station, dev->station_name, 63);
+            strncpy(coil.rtu_station, dev->station_name, sizeof(coil.rtu_station) - 1);
+            coil.rtu_station[sizeof(coil.rtu_station) - 1] = '\0';
             snprintf(coil.description, sizeof(coil.description), "%.36s Act %d On/Off", dev->station_name, a + 1);
 
             register_map_add_coil(map, &coil);
