@@ -204,7 +204,7 @@ wtc_result_t gsdml_cache_fetch(const char *rtu_ip_str,
     }
 
     ssize_t body_len = http_get(rtu_ip_str, RTU_HTTP_PORT,
-                                 "/api/v1/gsdml", body, GSDML_MAX_FILE_SIZE);
+                                 "/gsdml", body, GSDML_MAX_FILE_SIZE);
     if (body_len <= 0) {
         LOG_ERROR("GSDML fetch failed from %s", rtu_ip_str);
         free(body);

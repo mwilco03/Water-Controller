@@ -39,7 +39,7 @@ wtc_result_t gsdml_cache_init(void);
 /**
  * @brief Fetch GSDML from RTU via HTTP and cache locally.
  *
- * Sends HTTP GET to http://<rtu_ip>:9081/api/v1/gsdml
+ * Sends HTTP GET to http://<rtu_ip>:9081/gsdml
  * and saves the XML response to GSDML_CACHE_DIR/<station_name>.xml
  *
  * @param[in] rtu_ip_str    RTU IP address string (e.g. "192.168.1.100")
