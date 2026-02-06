@@ -106,6 +106,14 @@ static uint16_t read_u16_be(const uint8_t *buf, size_t *pos)
     return ntohs(be);
 }
 
+static uint32_t read_u32_be(const uint8_t *buf, size_t *pos)
+{
+    uint32_t be;
+    memcpy(&be, buf + *pos, 4);
+    *pos += 4;
+    return ntohl(be);
+}
+
 /**
  * @brief Pad position to 4-byte alignment.
  *
@@ -994,6 +1002,50 @@ wtc_result_t rpc_parse_connect_response(const uint8_t *buffer,
             uint16_t api_count = read_u16_be(buffer, &pos);
             LOG_WARN("Module Diff Block: %u APIs with differences", api_count);
             response->diff_count = api_count;
+            response->discovered_count = 0;
+
+            /* Parse ModuleDiffBlock per IEC 61158-6 §5.2.67.4 */
+            for (int api_idx = 0; api_idx < api_count && api_idx < 4; api_idx++) {
+                if (pos + 6 > block_end) break;
+
+                uint32_t api = read_u32_be(buffer, &pos);
+                uint16_t module_count = read_u16_be(buffer, &pos);
+
+                LOG_DEBUG("  API %u: %u modules", api, module_count);
+
+                for (int mod_idx = 0; mod_idx < module_count && mod_idx < 64; mod_idx++) {
+                    if (pos + 8 > block_end) break;
+
+                    uint16_t slot = read_u16_be(buffer, &pos);
+                    uint32_t module_ident = read_u32_be(buffer, &pos);
+                    uint16_t module_state = read_u16_be(buffer, &pos);
+                    uint16_t submodule_count = read_u16_be(buffer, &pos);
+
+                    LOG_DEBUG("    Slot %u: module 0x%08X, state 0x%04X, %u submodules",
+                             slot, module_ident, module_state, submodule_count);
+
+                    for (int sub_idx = 0; sub_idx < submodule_count && sub_idx < 16; sub_idx++) {
+                        if (pos + 8 > block_end) break;
+                        if (response->discovered_count >= 64) break;
+
+                        uint16_t subslot = read_u16_be(buffer, &pos);
+                        uint32_t submodule_ident = read_u32_be(buffer, &pos);
+                        uint16_t submodule_state = read_u16_be(buffer, &pos);
+
+                        /* Store discovered module */
+                        response->discovered_modules[response->discovered_count].slot = slot;
+                        response->discovered_modules[response->discovered_count].subslot = subslot;
+                        response->discovered_modules[response->discovered_count].module_ident = module_ident;
+                        response->discovered_modules[response->discovered_count].submodule_ident = submodule_ident;
+                        response->discovered_count++;
+
+                        LOG_INFO("      Subslot %u: submodule 0x%08X, state 0x%04X",
+                                subslot, submodule_ident, submodule_state);
+                    }
+                }
+            }
+
+            LOG_INFO("Discovered %d modules from ModuleDiffBlock", response->discovered_count);
             break;
         }
 
@@ -1793,17 +1845,6 @@ wtc_result_t rpc_send_response(rpc_context_t *ctx,
 }
 
 /* ============== Record Read (Phase 3: Module Discovery) ============== */
-
-/**
- * @brief Read uint32 in network byte order from buffer.
- */
-static uint32_t read_u32_be(const uint8_t *buf, size_t *pos)
-{
-    uint32_t be;
-    memcpy(&be, buf + *pos, 4);
-    *pos += 4;
-    return ntohl(be);
-}
 
 wtc_result_t rpc_build_read_request(rpc_context_t *ctx,
                                      const read_request_params_t *params,

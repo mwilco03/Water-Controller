@@ -1111,6 +1111,8 @@ async def probe_rtu_http(
                     rtu_vendor = None
                     rtu_device = None
                     rtu_slot_count = None
+                    sensors_created = 0
+                    controls_created = 0
 
                     # Parse PROFINET identity from config
                     if config_response.status_code == 200:
@@ -1119,10 +1121,66 @@ async def probe_rtu_http(
                         rtu_vendor = pn_config.get("vendor_id")
                         rtu_device = pn_config.get("device_id")
 
-                    # Parse slot count from slots endpoint
+                    # Parse slot count and slots from slots endpoint
                     if slots_response and slots_response.status_code == 200:
+                        from ...models.rtu import Sensor, Control, ControlType
+
                         slots_data = slots_response.json()
                         rtu_slot_count = slots_data.get("slot_count")
+                        slots_list = slots_data.get("slots", [])
+                        for slot_data in slots_list:
+                            slot_num = slot_data.get("slot")
+                            if slot_num is None or slot_num == 0:
+                                continue  # Skip DAP (slot 0)
+
+                            direction = slot_data.get("direction", "input")
+                            subslot = slot_data.get("subslot", 1)
+
+                            if direction == "input":
+                                # Create sensor record
+                                tag = f"{rtu.station_name}-sensor-{slot_num}"
+                                existing_sensor = db.query(Sensor).filter(
+                                    Sensor.rtu_id == rtu.id,
+                                    Sensor.slot_number == slot_num
+                                ).first()
+
+                                if not existing_sensor:
+                                    sensor = Sensor(
+                                        rtu_id=rtu.id,
+                                        slot_number=slot_num,
+                                        tag=tag,
+                                        channel=slot_num,
+                                        sensor_type="generic",
+                                        unit="",
+                                    )
+                                    db.add(sensor)
+                                    sensors_created += 1
+
+                            elif direction == "output":
+                                # Create control record
+                                tag = f"{rtu.station_name}-control-{slot_num}"
+                                existing_control = db.query(Control).filter(
+                                    Control.rtu_id == rtu.id,
+                                    Control.slot_number == slot_num
+                                ).first()
+
+                                if not existing_control:
+                                    control = Control(
+                                        rtu_id=rtu.id,
+                                        slot_number=slot_num,
+                                        tag=tag,
+                                        channel=slot_num,
+                                        control_type=ControlType.DISCRETE,
+                                        equipment_type="generic",
+                                    )
+                                    db.add(control)
+                                    controls_created += 1
+
+                        if sensors_created > 0 or controls_created > 0:
+                            logger.info(f"RTU {name}: created {sensors_created} sensors, {controls_created} controls from /slots")
+                            result["slots_synced"] = True
+                            result["sensors_created"] = sensors_created
+                            result["controls_created"] = controls_created
 
                     # Update database with RTU's actual PROFINET identity
                     updated_fields = []
@@ -1143,11 +1201,13 @@ async def probe_rtu_http(
                             rtu.slot_count = rtu_slot_count
                             updated_fields.append(f"slot_count={rtu_slot_count}")
 
-                    if updated_fields:
+                    # Commit all changes (config + sensors/controls)
+                    if updated_fields or sensors_created > 0 or controls_created > 0:
                         db.commit()
-                        logger.info(f"RTU {name}: synced PROFINET config from device: {', '.join(updated_fields)}")
-                        result["config_synced"] = True
-                        result["updated_fields"] = updated_fields
+                        if updated_fields:
+                            logger.info(f"RTU {name}: synced PROFINET config from device: {', '.join(updated_fields)}")
+                            result["config_synced"] = True
+                            result["updated_fields"] = updated_fields
                     else:
                         result["config_synced"] = False
                         result["message"] = "PROFINET config already up to date"
