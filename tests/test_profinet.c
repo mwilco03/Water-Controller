@@ -150,15 +150,15 @@ TEST(ar_manager_init_null)
     uint8_t controller_mac[6] = {0x00, 0x11, 0x22, 0x33, 0x44, 0x55};
 
     /* NULL manager pointer should fail */
-    wtc_result_t result = ar_manager_init(NULL, -1, controller_mac, "wtc-controller", 0x0493, 0x0001, "eth0");
+    wtc_result_t result = ar_manager_init(NULL, -1, controller_mac, "wtc-controller", PN_VENDOR_ID, PN_DEVICE_ID, "eth0");
     ASSERT_EQ(WTC_ERROR_INVALID_PARAM, result);
 
     /* NULL MAC address should fail */
-    result = ar_manager_init(&manager, -1, NULL, "wtc-controller", 0x0493, 0x0001, "eth0");
+    result = ar_manager_init(&manager, -1, NULL, "wtc-controller", PN_VENDOR_ID, PN_DEVICE_ID, "eth0");
     ASSERT_EQ(WTC_ERROR_INVALID_PARAM, result);
 
     /* NULL station name should fail (CMInitiatorStationName is required) */
-    result = ar_manager_init(&manager, -1, controller_mac, NULL, 0x0493, 0x0001, "eth0");
+    result = ar_manager_init(&manager, -1, controller_mac, NULL, PN_VENDOR_ID, PN_DEVICE_ID, "eth0");
     ASSERT_EQ(WTC_ERROR_INVALID_PARAM, result);
 }
 
