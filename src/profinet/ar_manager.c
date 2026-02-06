@@ -801,8 +801,52 @@ static void build_connect_params(ar_manager_t *manager,
     params->expected_config[params->expected_count].is_input = true;
     params->expected_count++;
 
-    /* Add slots from stored slot configuration with GSDML module IDs */
-    for (int i = 0; i < ar->slot_count && params->expected_count < WTC_MAX_SLOTS; i++) {
+    /* Add slots: use discovered modules if available, else GSDML-based slot_info */
+    if (ar->has_discovered_modules) {
+        /* Use actual module configuration discovered from RTU via ModuleDiffBlock */
+        LOG_INFO("Building ExpectedSubmoduleBlockReq from %d discovered modules", ar->discovered_count);
+
+        for (int i = 0; i < ar->discovered_count && params->expected_count < WTC_MAX_SLOTS; i++) {
+            /* Skip DAP submodules (already added above) */
+            if (ar->discovered_modules[i].slot == 0) {
+                continue;
+            }
+
+            params->expected_config[params->expected_count].slot = ar->discovered_modules[i].slot;
+            params->expected_config[params->expected_count].subslot = ar->discovered_modules[i].subslot;
+            params->expected_config[params->expected_count].module_ident = ar->discovered_modules[i].module_ident;
+            params->expected_config[params->expected_count].submodule_ident = ar->discovered_modules[i].submodule_ident;
+
+            /* Infer data_length and direction from submodule_ident
+             * Input submodules: 5 bytes (4B float + 1B quality)
+             * Output submodules: 4 bytes (1B cmd + 1B duty + 2B reserved)
+             * DAP/diagnostic: 0 bytes */
+            uint32_t submod = ar->discovered_modules[i].submodule_ident;
+            if (submod >= 0x00000011 && submod <= 0x00000071) {
+                /* Input submodules (sensors): 0x11, 0x21, 0x31, 0x41, 0x51, 0x61, 0x71 */
+                params->expected_config[params->expected_count].data_length = 5;
+                params->expected_config[params->expected_count].is_input = true;
+            } else if (submod >= 0x00000101 && submod <= 0x00000121) {
+                /* Output submodules (actuators): 0x101, 0x111, 0x121 */
+                params->expected_config[params->expected_count].data_length = 4;
+                params->expected_config[params->expected_count].is_input = false;
+            } else {
+                /* Diagnostic/DAP submodules */
+                params->expected_config[params->expected_count].data_length = 0;
+                params->expected_config[params->expected_count].is_input = true;
+            }
+
+            LOG_DEBUG("Discovered slot %u.%u: module=0x%08X submodule=0x%08X len=%u %s",
+                     ar->discovered_modules[i].slot, ar->discovered_modules[i].subslot,
+                     ar->discovered_modules[i].module_ident, ar->discovered_modules[i].submodule_ident,
+                     params->expected_config[params->expected_count].data_length,
+                     params->expected_config[params->expected_count].is_input ? "INPUT" : "OUTPUT");
+
+            params->expected_count++;
+        }
+    } else {
+        /* Use GSDML-based slot configuration (original behavior) */
+        for (int i = 0; i < ar->slot_count && params->expected_count < WTC_MAX_SLOTS; i++) {
         ar_slot_info_t *slot = &ar->slot_info[i];
         uint32_t mod_ident, submod_ident;
         uint16_t data_length;
@@ -832,9 +876,10 @@ static void build_connect_params(ar_manager_t *manager,
         params->expected_config[params->expected_count].is_input = is_input;
         params->expected_count++;
 
-        LOG_DEBUG("Slot %d: type=%s mod=0x%08X submod=0x%08X len=%u",
-                  slot->slot, is_input ? "INPUT" : "OUTPUT",
-                  mod_ident, submod_ident, data_length);
+            LOG_DEBUG("Slot %d: type=%s mod=0x%08X submod=0x%08X len=%u",
+                      slot->slot, is_input ? "INPUT" : "OUTPUT",
+                      mod_ident, submod_ident, data_length);
+        }
     }
 
     params->max_alarm_data_length = 200;
