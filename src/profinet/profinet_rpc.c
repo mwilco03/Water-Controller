@@ -680,10 +680,9 @@ wtc_result_t rpc_build_connect_request(rpc_context_t *ctx,
     write_u16_be(buffer, 0x0001, &pos);  /* Local alarm reference */
     write_u16_be(buffer, params->max_alarm_data_length, &pos);
     /* Bug 0.2 fix: VLAN priority tags are mandatory.
-     * 0xC000 = priority 6 (high), 0xA000 = priority 5 (low).
      * p-net rejects 0x0000 at pf_cmdev.c:4088-4098 (error code 11/12). */
-    write_u16_be(buffer, 0xC000, &pos);  /* Tag header high (VLAN prio 6) */
-    write_u16_be(buffer, 0xA000, &pos);  /* Tag header low  (VLAN prio 5) */
+    write_u16_be(buffer, IOCR_TAG_HEADER_HIGH, &pos);  /* VLAN prio 6 */
+    write_u16_be(buffer, IOCR_TAG_HEADER_LOW, &pos);   /* VLAN prio 5 */
 
     size_t alarm_block_len = pos - alarm_block_start - 4;
     save_pos = alarm_block_start;

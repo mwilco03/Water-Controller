@@ -327,7 +327,7 @@ wtc_result_t ar_manager_create_ar(ar_manager_t *manager,
     new_ar->device_ip = config->device_ip;
     new_ar->device_vendor_id = config->vendor_id;
     new_ar->device_device_id = config->device_id;
-    new_ar->watchdog_ms = config->watchdog_ms > 0 ? config->watchdog_ms : 3000;
+    new_ar->watchdog_ms = config->watchdog_ms > 0 ? config->watchdog_ms : DEFAULT_WATCHDOG_MS;
 
     /* Count input and output slots */
     int input_slots = 0, output_slots = 0;
