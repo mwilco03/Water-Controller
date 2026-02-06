@@ -98,10 +98,8 @@ services:
       # Leave unset for auto-detection, or set WTC_INTERFACE in environment
       WTC_INTERFACE: ${WTC_INTERFACE:-}
       # Python PROFINET controller (runs in-process, no C controller needed)
+      # RTUs are discovered via DCP multicast - no hardcoded IPs or names
       WTC_USE_PYTHON_CONTROLLER: ${WTC_USE_PYTHON_CONTROLLER:-1}
-      # Default RTU to connect to on startup
-      WTC_RTU_IP: ${WTC_RTU_IP:-192.168.6.21}
-      WTC_RTU_NAME: ${WTC_RTU_NAME:-rtu-ec3b}
       # Shared memory name for POSIX IPC with controller (fallback if Python controller disabled)
       WTC_SHM_NAME: /wtc_shared_memory
     depends_on:
