@@ -911,10 +911,52 @@ wtc_result_t ar_send_connect_request(ar_manager_t *manager,
             }
         }
 
-        if (response.has_diff) {
-            LOG_WARN("Device reported module differences, "
-                     "AR may have limited functionality");
+        /* Cascading module discovery: ModuleDiffBlock → Record Read 0xF844 → HTTP /slots */
+        if (response.has_diff && response.discovered_count > 0) {
+            /* Check retry limit for module mismatch */
+            if (ar->module_mismatch_retries >= 3) {
+                LOG_ERROR("Module mismatch persists after %d attempts - giving up",
+                         ar->module_mismatch_retries);
+                ar->state = AR_STATE_ABORT;
+                ar->last_error = WTC_ERROR_PROTOCOL;
+                return WTC_ERROR_PROTOCOL;
+            }
+
+            /* Store discovered modules from ModuleDiffBlock */
+            LOG_WARN("Device reported module mismatch (%d modules discovered), will retry with correct config (attempt %d/3)",
+                     response.discovered_count, ar->module_mismatch_retries + 1);
+
+            ar->has_discovered_modules = true;
+            ar->discovered_count = response.discovered_count < 64 ? response.discovered_count : 64;
+
+            for (int i = 0; i < ar->discovered_count; i++) {
+                ar->discovered_modules[i].slot = response.discovered_modules[i].slot;
+                ar->discovered_modules[i].subslot = response.discovered_modules[i].subslot;
+                ar->discovered_modules[i].module_ident = response.discovered_modules[i].module_ident;
+                ar->discovered_modules[i].submodule_ident = response.discovered_modules[i].submodule_ident;
+
+                LOG_DEBUG("  Module %d: slot=%u subslot=%u module=0x%08X submodule=0x%08X",
+                         i, ar->discovered_modules[i].slot, ar->discovered_modules[i].subslot,
+                         ar->discovered_modules[i].module_ident, ar->discovered_modules[i].submodule_ident);
+            }
+
+            /* Exponential backoff: 2s, 4s, 8s (capped at 30s) */
+            ar->module_mismatch_retries++;
+            ar->retry_backoff_ms = (ar->retry_backoff_ms == 0) ? 2000 : ar->retry_backoff_ms * 2;
+            if (ar->retry_backoff_ms > 30000) ar->retry_backoff_ms = 30000;
+
+            /* Abort and retry with discovered config */
+            ar->state = AR_STATE_ABORT;
+            ar->last_activity_ms = time_get_ms();
+            ar->last_error = WTC_OK;  /* Not a failure, just config mismatch */
+
+            LOG_INFO("Stored %d discovered modules, will retry after %u ms backoff",
+                     ar->discovered_count, ar->retry_backoff_ms);
+            return WTC_ERROR_CONNECTION_FAILED;  /* Trigger retry */
         }
+
+        /* TODO: Fallback to Record Read 0xF844 if ModuleDiffBlock not present */
+        /* TODO: Fallback to HTTP /slots if PROFINET discovery unavailable */
 
         ar->state = AR_STATE_CONNECT_CNF;
         ar->last_activity_ms = time_get_ms();

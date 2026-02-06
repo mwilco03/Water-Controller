@@ -414,6 +414,15 @@ typedef struct {
     bool has_diff;
     int diff_count;
 
+    /* Discovered modules from ModuleDiffBlock (for retry with correct config) */
+    struct {
+        uint16_t slot;
+        uint16_t subslot;
+        uint32_t module_ident;
+        uint32_t submodule_ident;
+    } discovered_modules[64];
+    int discovered_count;
+
     /* Error info */
     uint8_t error_code;
     uint8_t error_decode;
