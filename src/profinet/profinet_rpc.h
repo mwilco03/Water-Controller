@@ -118,6 +118,13 @@ extern "C" {
 #define IOCR_PROP_RT_CLASS_UDP          0x00000004
 #define IOCR_PROP_MEDIA_REDUNDANCY      0x00000800
 
+/* IOCR VLAN Tag Headers (IEC 61158-6-10, Table 720) */
+#define IOCR_TAG_HEADER_HIGH            0xC000  /* VLAN priority 6 */
+#define IOCR_TAG_HEADER_LOW             0xA000  /* VLAN priority 5 */
+
+/* Default Timing Constants */
+#define DEFAULT_WATCHDOG_MS             3000    /* 3 second AR watchdog */
+
 /* ============== Control Command Types ============== */
 
 #define CONTROL_CMD_PRM_END             0x0001

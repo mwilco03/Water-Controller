@@ -803,6 +803,14 @@ wtc_result_t profinet_controller_connect(profinet_controller_t *controller,
         }
     }
 
+    /*
+     * Refresh DCP discovery before connect to ensure we have current device info.
+     * RTUs may change vendor_id/device_id dynamically, so stale cache causes issues.
+     * This is a quick multicast identify - responses update the cache.
+     */
+    LOG_DEBUG("Refreshing DCP cache before connect attempt");
+    dcp_discovery_identify_all(controller->dcp);
+
     /* Get device info from DCP cache */
     dcp_device_info_t devices[64];
     int device_count = 64;
@@ -871,14 +879,20 @@ wtc_result_t profinet_controller_connect(profinet_controller_t *controller,
         return WTC_ERROR_NOT_FOUND;
     }
 
-    /* Create AR configuration */
+    /* Create AR configuration
+     *
+     * Note: vendor_id/device_id here are for tracking purposes only.
+     * The CMInitiatorObjectUUID (used in Connect request) is built with
+     * the CONTROLLER's identity (PN_VENDOR_ID/PN_DEVICE_ID), not the device's.
+     * Using consistent values here avoids issues if RTU changes its advertised IDs.
+     */
     ar_config_t ar_config;
     memset(&ar_config, 0, sizeof(ar_config));
     strncpy(ar_config.station_name, station_name, sizeof(ar_config.station_name) - 1);
     memcpy(ar_config.device_mac, device->mac_address, 6);
     ar_config.device_ip = device->ip_address;
-    ar_config.vendor_id = device->vendor_id;
-    ar_config.device_id = device->device_id;
+    ar_config.vendor_id = PN_VENDOR_ID;   /* Use controller's identity */
+    ar_config.device_id = PN_DEVICE_ID;   /* Use controller's identity */
 
     if (slots && slot_count > 0) {
         memcpy(ar_config.slots, slots, slot_count * sizeof(slot_config_t));
@@ -889,7 +903,7 @@ wtc_result_t profinet_controller_connect(profinet_controller_t *controller,
 
     ar_config.cycle_time_us = controller->config.cycle_time_us;
     ar_config.reduction_ratio = controller->config.reduction_ratio;
-    ar_config.watchdog_ms = 3000; /* 3 second watchdog */
+    ar_config.watchdog_ms = DEFAULT_WATCHDOG_MS;
 
     /* Create AR */
     profinet_ar_t *ar;
@@ -1116,16 +1130,13 @@ wtc_result_t profinet_controller_write_output(profinet_controller_t *controller,
     return WTC_ERROR_NOT_FOUND;
 }
 
-/* PROFINET RPC constants */
-#define PNIO_RPC_PORT           34964
-#define RPC_VERSION             4
-#define RPC_PACKET_REQUEST      0
-#define RPC_PACKET_RESPONSE     2
-#define RPC_OPNUM_READ          2  /* IEC 61158-6: OpNum 2 = Read */
-#define RPC_OPNUM_WRITE         3  /* IEC 61158-6: OpNum 3 = Write */
-#define RPC_TIMEOUT_MS          5000
-
-/* PNIO_DEVICE_INTERFACE_UUID is provided by profinet_rpc.h */
+/* PROFINET RPC constants - use definitions from profinet_rpc.h:
+ * - PNIO_RPC_PORT, RPC_VERSION_MAJOR
+ * - RPC_PACKET_TYPE_REQUEST, RPC_PACKET_TYPE_RESPONSE
+ * - RPC_OPNUM_READ, RPC_OPNUM_WRITE
+ * - RPC_READ_TIMEOUT_MS
+ * - PNIO_DEVICE_INTERFACE_UUID
+ */
 
 /* Build RPC read/write request */
 static wtc_result_t build_rpc_record_request(
@@ -1144,10 +1155,10 @@ static wtc_result_t build_rpc_record_request(
 
     /* RPC header */
     memset(rpc, 0, sizeof(profinet_rpc_header_t));
-    rpc->version = RPC_VERSION;
-    rpc->packet_type = RPC_PACKET_REQUEST;
-    rpc->flags1 = 0x22; /* LAST_FRAGMENT (0x02) | IDEMPOTENT (0x20) */
-    rpc->drep[0] = 0x10; /* Little-endian */
+    rpc->version = RPC_VERSION_MAJOR;
+    rpc->packet_type = RPC_PACKET_TYPE_REQUEST;
+    rpc->flags1 = RPC_FLAG1_LAST_FRAGMENT | RPC_FLAG1_IDEMPOTENT;
+    rpc->drep[0] = RPC_DREP_LITTLE_ENDIAN;
 
     /* Activity UUID — generate and swap to LE per DREP */
     rpc_generate_uuid(rpc->activity_uuid);
@@ -1169,7 +1180,7 @@ static wtc_result_t build_rpc_record_request(
 
     /* IODReadReq / IODWriteReq block */
     /* Block header */
-    uint16_t block_type = htons(is_write ? 0x0008 : 0x0009); /* IODWriteReqHeader / IODReadReqHeader */
+    uint16_t block_type = htons(is_write ? BLOCK_TYPE_IOD_WRITE_REQ_HEADER : BLOCK_TYPE_IOD_READ_REQ_HEADER);
     memcpy(buffer + pos, &block_type, 2); pos += 2;
 
     uint16_t block_length = htons(is_write ? (uint16_t)(24 + write_len) : 24);
@@ -1247,7 +1258,7 @@ static wtc_result_t send_rpc_request(
     pfd.fd = socket_fd;
     pfd.events = POLLIN;
 
-    int poll_result = poll(&pfd, 1, RPC_TIMEOUT_MS);
+    int poll_result = poll(&pfd, 1, RPC_READ_TIMEOUT_MS);
     if (poll_result < 0) {
         LOG_ERROR("Poll failed: %s", strerror(errno));
         return WTC_ERROR_IO;
@@ -1349,7 +1360,7 @@ wtc_result_t profinet_controller_read_record(profinet_controller_t *controller,
 
     /* Check for error in response */
     profinet_rpc_header_t *rpc_resp = (profinet_rpc_header_t *)response;
-    if (rpc_resp->packet_type != RPC_PACKET_RESPONSE) {
+    if (rpc_resp->packet_type != RPC_PACKET_TYPE_RESPONSE) {
         LOG_ERROR("Invalid RPC response type: %d", rpc_resp->packet_type);
         return WTC_ERROR_PROTOCOL;
     }
@@ -1460,7 +1471,7 @@ wtc_result_t profinet_controller_write_record(profinet_controller_t *controller,
     }
 
     profinet_rpc_header_t *rpc_resp = (profinet_rpc_header_t *)response;
-    if (rpc_resp->packet_type != RPC_PACKET_RESPONSE) {
+    if (rpc_resp->packet_type != RPC_PACKET_TYPE_RESPONSE) {
         LOG_ERROR("Invalid RPC write response type: %d", rpc_resp->packet_type);
         return WTC_ERROR_PROTOCOL;
     }

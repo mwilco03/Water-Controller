@@ -1018,12 +1018,12 @@ int main(int argc, char *argv[]) {
                      reg_stats.connected_devices, reg_stats.total_devices,
                      alarm_stats.active_alarms, alarm_stats.unack_alarms);
 
-            /* Log failover status if enabled */
+            /* Log failover status if enabled - only at DEBUG level to avoid spam */
             if (g_failover) {
                 failover_status_t fo_status;
                 if (failover_get_status(g_failover, &fo_status) == WTC_OK) {
                     if (fo_status.failed_count > 0 || fo_status.in_failover_count > 0) {
-                        LOG_WARN("Failover: healthy=%d, failed=%d, in_failover=%d",
+                        LOG_DEBUG("Failover: healthy=%d, failed=%d, in_failover=%d",
                                  fo_status.healthy_count, fo_status.failed_count,
                                  fo_status.in_failover_count);
                     }
