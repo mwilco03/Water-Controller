@@ -9,6 +9,7 @@
 #include <string.h>
 #include <assert.h>
 #include "../src/profinet/profinet_controller.h"
+#include "../src/profinet/profinet_identity.h"
 #include "../src/profinet/dcp_discovery.h"
 #include "../src/profinet/ar_manager.h"
 #include "../src/profinet/profinet_frame.h"

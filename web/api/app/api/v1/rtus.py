@@ -1100,57 +1100,64 @@ async def probe_rtu_http(
 
             # Fetch and sync PROFINET config if probe succeeded
             if response.status_code == 200:
-                config_url = f"http://{ip_address}:{port}/config"
                 try:
                     async with httpx.AsyncClient(timeout=timeout_sec) as client:
-                        config_response = await client.get(config_url)
+                        # Fetch PROFINET identity from /config
+                        config_response = await client.get(f"http://{ip_address}:{port}/config")
 
+                        # Fetch slot count from /slots endpoint
+                        slots_response = await client.get(f"http://{ip_address}:{port}/slots")
+
+                    rtu_vendor = None
+                    rtu_device = None
+                    rtu_slot_count = None
+
+                    # Parse PROFINET identity from config
                     if config_response.status_code == 200:
                         config = config_response.json()
                         pn_config = config.get("profinet", {})
-
-                        # Extract PROFINET identity
                         rtu_vendor = pn_config.get("vendor_id")
                         rtu_device = pn_config.get("device_id")
-                        rtu_slot_count = pn_config.get("slot_count")
 
-                        # Update database with RTU's actual PROFINET identity
-                        updated_fields = []
-                        if rtu_vendor is not None:
-                            new_vendor_id = f"0x{rtu_vendor:04X}"
-                            if rtu.vendor_id != new_vendor_id:
-                                rtu.vendor_id = new_vendor_id
-                                updated_fields.append(f"vendor_id={new_vendor_id}")
+                    # Parse slot count from slots endpoint
+                    if slots_response and slots_response.status_code == 200:
+                        slots_data = slots_response.json()
+                        rtu_slot_count = slots_data.get("slot_count")
 
-                        if rtu_device is not None:
-                            new_device_id = f"0x{rtu_device:04X}"
-                            if rtu.device_id != new_device_id:
-                                rtu.device_id = new_device_id
-                                updated_fields.append(f"device_id={new_device_id}")
+                    # Update database with RTU's actual PROFINET identity
+                    updated_fields = []
+                    if rtu_vendor is not None:
+                        new_vendor_id = f"0x{rtu_vendor:04X}"
+                        if rtu.vendor_id != new_vendor_id:
+                            rtu.vendor_id = new_vendor_id
+                            updated_fields.append(f"vendor_id={new_vendor_id}")
 
-                        if rtu_slot_count is not None:
-                            if rtu.slot_count != rtu_slot_count:
-                                rtu.slot_count = rtu_slot_count
-                                updated_fields.append(f"slot_count={rtu_slot_count}")
+                    if rtu_device is not None:
+                        new_device_id = f"0x{rtu_device:04X}"
+                        if rtu.device_id != new_device_id:
+                            rtu.device_id = new_device_id
+                            updated_fields.append(f"device_id={new_device_id}")
 
-                        if updated_fields:
-                            db.commit()
-                            logger.info(f"RTU {name}: synced PROFINET config from device: {', '.join(updated_fields)}")
-                            result["config_synced"] = True
-                            result["updated_fields"] = updated_fields
-                        else:
-                            result["config_synced"] = False
-                            result["message"] = "PROFINET config already up to date"
+                    if rtu_slot_count is not None:
+                        if rtu.slot_count != rtu_slot_count:
+                            rtu.slot_count = rtu_slot_count
+                            updated_fields.append(f"slot_count={rtu_slot_count}")
 
-                        # Include PROFINET config in result
-                        result["profinet_config"] = {
-                            "vendor_id": f"0x{rtu_vendor:04X}" if rtu_vendor is not None else None,
-                            "device_id": f"0x{rtu_device:04X}" if rtu_device is not None else None,
-                            "slot_count": rtu_slot_count,
-                            "station_name": pn_config.get("station_name"),
-                            "product_name": pn_config.get("product_name"),
-                            "enabled": pn_config.get("enabled"),
-                        }
+                    if updated_fields:
+                        db.commit()
+                        logger.info(f"RTU {name}: synced PROFINET config from device: {', '.join(updated_fields)}")
+                        result["config_synced"] = True
+                        result["updated_fields"] = updated_fields
+                    else:
+                        result["config_synced"] = False
+                        result["message"] = "PROFINET config already up to date"
+
+                    # Include PROFINET config in result
+                    result["profinet_config"] = {
+                        "vendor_id": f"0x{rtu_vendor:04X}" if rtu_vendor is not None else None,
+                        "device_id": f"0x{rtu_device:04X}" if rtu_device is not None else None,
+                        "slot_count": rtu_slot_count,
+                    }
                 except Exception as e:
                     logger.warning(f"RTU {name}: failed to fetch/sync PROFINET config: {e}")
                     result["config_sync_error"] = str(e)

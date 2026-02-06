@@ -2,7 +2,7 @@
 """
 Generate C header files from JSON Schema YAML files.
 
-This script reads schemas from schemas/config/*.schema.yaml and generates
+This script reads schemas from schemas/config/ (all .schema.yaml files) and generates
 C header files with proper types, defines, and documentation.
 
 Usage:
@@ -33,7 +33,7 @@ OUTPUT_DIR = Path(__file__).parent.parent / "src" / "generated"
 HEADER_TEMPLATE = """/*
  * AUTO-GENERATED FILE - DO NOT EDIT MANUALLY
  *
- * Generated from: schemas/config/*.schema.yaml
+ * Generated from: schemas/config/ (all .schema.yaml files)
  * Generated at: {timestamp}
  * Generator: scripts/generate_c_types.py
  *

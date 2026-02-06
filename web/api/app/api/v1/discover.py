@@ -1101,7 +1101,7 @@ async def fetch_gsdml(request: GsdmlFetchRequest) -> dict[str, Any]:
     """
     import httpx
 
-    url = f"http://{request.ip_address}:{request.port}/api/v1/gsdml"
+    url = f"http://{request.ip_address}:{request.port}/gsdml"
 
     logger.info(f"Fetching GSDML from {url}")
 
@@ -1214,7 +1214,7 @@ async def fetch_rtu_slots(request: SlotsFetchRequest) -> dict[str, Any]:
     """
     import httpx
 
-    url = f"http://{request.ip_address}:{request.port}/api/v1/slots"
+    url = f"http://{request.ip_address}:{request.port}/slots"
 
     logger.info(f"Fetching slot config from {url} (HTTP fallback)")
 
