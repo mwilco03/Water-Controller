@@ -1109,10 +1109,11 @@ async def probe_rtu_http(
                         config = config_response.json()
                         pn_config = config.get("profinet", {})
 
-                        # Extract PROFINET identity
+                        # Extract PROFINET identity (vendor_id/device_id from profinet section)
                         rtu_vendor = pn_config.get("vendor_id")
                         rtu_device = pn_config.get("device_id")
-                        rtu_slot_count = pn_config.get("slot_count")
+                        # slot_count is at top level of config
+                        rtu_slot_count = config.get("slot_count")
 
                         # Update database with RTU's actual PROFINET identity
                         updated_fields = []
