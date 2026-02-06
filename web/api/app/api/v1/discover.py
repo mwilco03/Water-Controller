@@ -747,7 +747,7 @@ class HttpProbeRequest(BaseModel):
     ip_address: str = Field(..., description="IP address to probe")
     port: int = Field(PORT_DEFAULTS.API, ge=1, le=65535, description="Port to connect to")
     path: str = Field("/health", description="URL path to request")
-    timeout_ms: int = Field(settings.timeouts.command_timeout_ms, ge=100, le=30000, description="Request timeout in milliseconds")
+    timeout_ms: int = Field(settings.timeouts.COMMAND_TIMEOUT_MS, ge=100, le=30000, description="Request timeout in milliseconds")
 
     @field_validator("ip_address")
     @classmethod
