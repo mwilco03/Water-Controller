@@ -1105,15 +1105,8 @@ async def probe_rtu_http(
                         # Fetch PROFINET identity from /config
                         config_response = await client.get(f"http://{ip_address}:{port}/config")
 
-                        # Fetch slot count from /slots (try new endpoint first, fallback to /api/v1/slots)
-                        slots_response = None
-                        for slots_path in ["/slots", "/api/v1/slots"]:
-                            try:
-                                slots_response = await client.get(f"http://{ip_address}:{port}{slots_path}")
-                                if slots_response.status_code == 200:
-                                    break
-                            except Exception:
-                                continue
+                        # Fetch slot count from /slots endpoint
+                        slots_response = await client.get(f"http://{ip_address}:{port}/slots")
 
                     rtu_vendor = None
                     rtu_device = None

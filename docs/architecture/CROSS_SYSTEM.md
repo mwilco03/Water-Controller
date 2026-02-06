@@ -274,6 +274,58 @@ PROFINET STACK INTEGRATION
 ═══════════════════════════════════════════════════════════════════
 ```
 
+### 2.6 RTU HTTP API Endpoints
+
+The RTU exposes a REST API for configuration, diagnostics, and GSDML retrieval.
+All endpoints are at the root path (no `/api/v1/` prefix).
+
+**Base URL:** `http://<rtu_ip>:9081`
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/health` | GET | Health check (returns 200 OK when operational) |
+| `/metrics` | GET | Prometheus-compatible metrics |
+| `/ready` | GET | Readiness probe (PROFINET stack initialized) |
+| `/live` | GET | Liveness probe (process responsive) |
+| `/config` | GET | PROFINET configuration (vendor_id, device_id, station_name) |
+| `/slots` | GET | Slot configuration (slot_count, module/submodule IDs) |
+| `/gsdml` | GET | GSDML XML file for this RTU |
+
+**Example `/config` response:**
+```json
+{
+  "profinet": {
+    "station_name": "rtu-ec3b",
+    "vendor_id": 626,
+    "device_id": 3520,
+    "product_name": "Water Treatment RTU",
+    "enabled": true
+  }
+}
+```
+
+**Example `/slots` response:**
+```json
+{
+  "slot_count": 8,
+  "slots": [
+    {
+      "slot": 1,
+      "subslot": 1,
+      "module_ident": 1,
+      "submodule_ident": 1,
+      "direction": "input",
+      "data_size": 5
+    }
+  ]
+}
+```
+
+**Controller Integration:**
+- Controller fetches `/config` for PROFINET identity (vendor_id, device_id)
+- Controller fetches `/slots` for slot count and module configuration
+- Controller fetches `/gsdml` during RTU discovery for module catalog
+
 ---
 
 ## Part 3: Water-Controller Implementation Standards
