@@ -141,3 +141,13 @@ This tells you exactly which commit is running.
 - [System Design](/docs/architecture/SYSTEM_DESIGN.md)
 - [Development Guidelines](/docs/development/GUIDELINES.md)
 - [Alarm Philosophy](/docs/architecture/ALARM_PHILOSOPHY.md)
+
+## Known Technical Debt
+
+The following files contain discovery-first violations (hardcoded RTU IPs/names). They are acknowledged technical debt, not to be expanded:
+
+| File | Issue | Future Fix |
+|------|-------|------------|
+| `web/api/app/services/demo_mode.py` | Hardcoded RTU IPs and station names | Remove entirely (violates no-demo-fallbacks rule) |
+| `src/simulation/simulator.c` | Hardcoded RTU IPs and station names | Refactor to use discovered devices or remove |
+| `web/api/app/api/v1/modbus.py:39` | Default `/dev/ttyUSB0` serial device | Remove default, require explicit config |
