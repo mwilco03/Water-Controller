@@ -1,8 +1,8 @@
 /*
  * AUTO-GENERATED FILE - DO NOT EDIT MANUALLY
  *
- * Generated from: schemas/config/*.schema.yaml
- * Generated at: 2026-02-06 12:30:09 UTC
+ * Generated from: schemas/config/ (all .schema.yaml files)
+ * Generated at: 2026-02-06 13:16:58 UTC
  * Generator: scripts/generate_c_types.py
  *
  * To update this file, modify the source schemas and run:
