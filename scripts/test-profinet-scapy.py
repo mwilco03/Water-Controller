@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-PROFINET Controller Test Script - Scapy Reference Implementation
+PROFINET Controller Test Script - RPC Reference Implementation
 
-This script provides a working Scapy PROFINET controller for packet comparison.
+Uses existing working DCP discovery, focuses on testing RPC Connect.
 Run this manually and capture packets with tcpdump to see correct wire format.
 
 Usage:
@@ -18,27 +18,35 @@ import socket
 import struct
 import sys
 import time
+from pathlib import Path
 from typing import List, Optional
 from uuid import uuid4
 
+# Add parent directory to path to import working DCP code
+sys.path.insert(0, str(Path(__file__).parent.parent / "web" / "api"))
+
 try:
-    from scapy.all import (
-        Ether, Raw, conf, get_if_hwaddr, sendp, sniff, sr1
+    from app.services.dcp_discovery import (
+        build_dcp_identify_all_frame,
+        parse_dcp_response,
+        get_interface_mac,
+        DCPDevice
     )
-    from scapy.contrib.pnio import ProfinetIO
-    from scapy.contrib.pnio_dcp import (
-        ProfinetDCP, DCPNameOfStationBlock, DCPDeviceIDBlock
-    )
+except ImportError as e:
+    print(f"ERROR: Could not import DCP discovery: {e}")
+    print("Make sure you're running from the repo root")
+    sys.exit(1)
+
+try:
     from scapy.layers.dcerpc import DceRpc4
     from scapy.layers.inet import UDP, IP
+    from scapy.all import Raw
 except ImportError as e:
     print(f"ERROR: Scapy not available: {e}")
     print("Install with: pip3 install scapy")
     sys.exit(1)
 
 # Constants
-PROFINET_ETHERTYPE = 0x8892
-DCP_MULTICAST = "01:0e:cf:00:00:00"
 RPC_PORT = 34964
 
 # PROFINET UUIDs (matching C implementation)
@@ -63,30 +71,13 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-class DeviceInfo:
-    """Discovered PROFINET device"""
-    def __init__(self):
-        self.mac_address = ""
-        self.ip_address = ""
-        self.subnet_mask = ""
-        self.gateway = ""
-        self.station_name = ""
-        self.vendor_id = 0
-        self.device_id = 0
-
-    def __str__(self):
-        return f"{self.station_name} @ {self.ip_address} ({self.mac_address}) VID:{self.vendor_id:04x} DID:{self.device_id:04x}"
-
-
-class ScapyProfinetController:
-    """Minimal Scapy PROFINET controller for testing"""
+class ProfinetControllerTest:
+    """PROFINET Controller Test - uses working DCP, tests RPC Connect"""
 
     def __init__(self, interface: str = "eth0"):
         self.interface = interface
-        try:
-            self.mac = get_if_hwaddr(interface)
-        except Exception:
-            self.mac = "02:00:00:00:00:01"
+        self.mac_bytes = get_interface_mac(interface)
+        self.mac = ':'.join(f'{b:02x}' for b in self.mac_bytes)
 
         self.ar_uuid = uuid4().bytes
         self.activity_uuid = uuid4().bytes
@@ -94,112 +85,66 @@ class ScapyProfinetController:
 
         logger.info(f"Controller initialized on {interface} (MAC: {self.mac})")
 
-    def discover(self, timeout_s: float = 3.0, target_station: Optional[str] = None) -> List[DeviceInfo]:
-        """DCP discovery - find RTUs on network"""
+    def discover(self, timeout_s: float = 3.0, target_station: Optional[str] = None) -> List[DCPDevice]:
+        """DCP discovery using working code from dcp_discovery.py"""
         logger.info(f"=== Phase 1: DCP Discovery (timeout={timeout_s}s) ===")
+        logger.info("Using existing working DCP implementation (raw sockets)")
 
         if target_station:
             logger.info(f"Searching for station: {target_station}")
-            name_bytes = target_station.encode('utf-8')
-            dcp = (
-                Ether(dst=DCP_MULTICAST, src=self.mac) /
-                ProfinetIO(frameID=0xfefe) /
-                ProfinetDCP(
-                    service_id=0x05,  # Identify
-                    service_type=0x00,  # Request
-                    xid=0x1234,
-                    reserved=0,
-                    dcp_data_length=4 + len(name_bytes)
-                ) /
-                DCPNameOfStationBlock(
-                    option=0x02,
-                    sub_option=0x02,
-                    block_length=len(name_bytes),
-                    name_of_station=name_bytes
-                )
-            )
         else:
             logger.info("Searching for all devices")
-            dcp = (
-                Ether(dst=DCP_MULTICAST, src=self.mac) /
-                ProfinetIO(frameID=0xfefe) /
-                ProfinetDCP(
-                    service_id=0x05,
-                    service_type=0x00,
-                    xid=0x1234,
-                    reserved=0,
-                    dcp_data_length=4
-                ) /
-                DCPNameOfStationBlock(option=0xFF, sub_option=0xFF)
-            )
 
-        results = []
+        # Build DCP Identify frame using working code
+        dcp_frame = build_dcp_identify_all_frame(self.mac_bytes)
 
-        def handle_response(pkt):
-            if ProfinetDCP not in pkt:
-                return False
-            if pkt[ProfinetDCP].service_type != 0x01:  # Not a response
-                return False
+        logger.info(f"DCP frame size: {len(dcp_frame)} bytes")
+        logger.info(f"Hex dump:")
+        for i in range(0, len(dcp_frame), 16):
+            hex_str = ' '.join(f'{b:02x}' for b in dcp_frame[i:i+16])
+            ascii_str = ''.join(chr(b) if 32 <= b < 127 else '.' for b in dcp_frame[i:i+16])
+            logger.info(f"  {i:04x}: {hex_str:<48} {ascii_str}")
 
-            device = self._parse_dcp_response(pkt)
-            if device:
-                results.append(device)
-                logger.info(f"✓ Discovered: {device}")
-            return False
+        # Create raw socket
+        sock = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.htons(0x8892))
+        sock.bind((self.interface, 0))
+        sock.settimeout(timeout_s)
 
-        # Send DCP request
-        logger.info(f"Sending DCP Identify Request to {DCP_MULTICAST}")
-        sendp(dcp, iface=self.interface, verbose=False)
+        discovered = []
 
-        # Sniff for responses
-        sniff(
-            iface=self.interface,
-            timeout=timeout_s,
-            store=False,
-            prn=handle_response,
-            filter="ether proto 0x8892"
-        )
-
-        logger.info(f"Discovery complete: found {len(results)} device(s)")
-        return results
-
-    def _parse_dcp_response(self, pkt) -> Optional[DeviceInfo]:
-        """Parse DCP Identify Response"""
         try:
-            device = DeviceInfo()
-            device.mac_address = pkt.src
+            # Send DCP Identify
+            sock.send(dcp_frame)
+            logger.info("✓ Sent DCP Identify Request")
 
-            layer = pkt[ProfinetDCP].payload
-            while layer:
-                if hasattr(layer, 'option'):
-                    if layer.option == 0x01:  # IP
-                        if hasattr(layer, 'ip'):
-                            device.ip_address = layer.ip
-                        if hasattr(layer, 'netmask'):
-                            device.subnet_mask = layer.netmask
-                        if hasattr(layer, 'gateway'):
-                            device.gateway = layer.gateway
-                    elif layer.option == 0x02:  # Device
-                        if hasattr(layer, 'name_of_station'):
-                            device.station_name = (
-                                layer.name_of_station.decode()
-                                if isinstance(layer.name_of_station, bytes)
-                                else layer.name_of_station
-                            )
-                        if hasattr(layer, 'vendor_id'):
-                            device.vendor_id = layer.vendor_id
-                        if hasattr(layer, 'device_id'):
-                            device.device_id = layer.device_id
+            # Receive responses
+            start_time = time.time()
+            while time.time() - start_time < timeout_s:
+                try:
+                    data = sock.recv(4096)
+                    device = parse_dcp_response(data)
+                    if device:
+                        # Filter by station name if specified
+                        if target_station and device.device_name != target_station:
+                            continue
 
-                layer = layer.payload if hasattr(layer, 'payload') else None
+                        discovered.append(device)
+                        logger.info(f"✓ Discovered: {device.device_name} @ {device.ip_address} ({device.mac_address})")
 
-            return device if device.station_name else None
+                        # If searching for specific station, stop after finding it
+                        if target_station:
+                            break
 
-        except Exception as e:
-            logger.debug(f"Failed to parse DCP response: {e}")
-            return None
+                except socket.timeout:
+                    break
 
-    def connect(self, device: DeviceInfo) -> bool:
+        finally:
+            sock.close()
+
+        logger.info(f"Discovery complete: found {len(discovered)} device(s)")
+        return discovered
+
+    def connect(self, device: DCPDevice) -> bool:
         """
         PROFINET RPC Connect Request - This is the critical part to compare!
 
@@ -210,9 +155,9 @@ class ScapyProfinetController:
         4. Wait for device ApplicationReady
         5. Cyclic I/O
         """
-        logger.info(f"\n=== Phase 2: RPC Connect to {device.station_name} ({device.ip_address}) ===")
+        logger.info(f"\n=== Phase 2: RPC Connect to {device.device_name} ({device.ip_address}) ===")
 
-        # Build Connect Request using Scapy's PROFINET classes
+        # Build Connect Request
         connect_pkt = self._build_connect_request(device)
 
         logger.info(f"Sending RPC Connect Request to {device.ip_address}:{RPC_PORT}")
@@ -449,7 +394,7 @@ class ScapyProfinetController:
         block += struct.pack('>H', 0)  # Reserved
 
         # Station names
-        station_name = device.station_name.encode('utf-8')
+        station_name = device.device_name.encode('utf-8')
         block += struct.pack('>H', len(station_name))
         block += station_name
         # Pad to multiple of 4
@@ -627,13 +572,14 @@ def main():
 
     args = parser.parse_args()
 
-    logger.info("=== Scapy PROFINET Controller Test ===\n")
-    logger.info("This script demonstrates correct PROFINET RPC packet format")
+    logger.info("=== PROFINET RPC Test - Using Working DCP + Scapy RPC ===\n")
+    logger.info("This script uses existing working DCP discovery")
+    logger.info("and demonstrates RPC Connect packet format for comparison")
     logger.info("Run tcpdump in another terminal to capture packets:")
-    logger.info(f"  sudo tcpdump -i {args.interface} -w scapy-profinet.pcap udp port {RPC_PORT}\n")
+    logger.info(f"  sudo tcpdump -i {args.interface} -w profinet-test.pcap '(ether proto 0x8892) or (udp port {RPC_PORT})'\n")
 
     # Create controller
-    ctrl = ScapyProfinetController(interface=args.interface)
+    ctrl = ProfinetControllerTest(interface=args.interface)
 
     # Step 1: Discover RTUs
     devices = ctrl.discover(timeout_s=args.timeout, target_station=args.station_name)
