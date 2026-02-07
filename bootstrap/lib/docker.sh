@@ -422,14 +422,22 @@ do_docker_install() {
         export GRAFANA_PASSWORD="$GRAFANA_PASSWORD"
         export DB_PASSWORD="$DB_PASSWORD"
 
-        # Get git version info for build identification
-        if [[ -d "../.git" ]]; then
-            export GIT_COMMIT=$(git -C .. rev-parse --short=7 HEAD 2>/dev/null || echo "unknown")
-            export GIT_DATE=$(git -C .. log -1 --format=%ci 2>/dev/null || echo "unknown")
+        # Generate .env file with git version info for build identification
+        # Docker Compose will automatically load this file
+        if [[ -x "./generate-build-env.sh" ]]; then
+            log_info "Generating build environment with version info..."
+            ./generate-build-env.sh >/dev/null 2>&1 || log_warn "Failed to generate .env file"
+        else
+            log_warn "generate-build-env.sh not found or not executable"
+        fi
+
+        # Read generated values for logging (Docker Compose will load from .env)
+        if [[ -f ".env" ]]; then
+            GIT_COMMIT=$(grep "^GIT_COMMIT=" .env | cut -d= -f2 || echo "unknown")
+            GIT_DATE=$(grep "^GIT_DATE=" .env | cut -d= -f2- || echo "unknown")
             log_info "Building commit: $GIT_COMMIT ($GIT_DATE)"
         else
-            export GIT_COMMIT="unknown"
-            export GIT_DATE="unknown"
+            log_warn "No .env file found, version info will be 'unknown'"
         fi
 
         docker compose build --no-cache --progress=plain 2>&1 | while IFS= read -r line; do
