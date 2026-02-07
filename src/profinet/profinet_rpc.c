@@ -673,10 +673,8 @@ wtc_result_t rpc_build_connect_request(rpc_context_t *ctx,
         write_block_header(buffer, BLOCK_TYPE_IOCR_BLOCK_REQ,
                             (uint16_t)iocr_block_len, &save_pos);
 
-        /* Add 4-byte alignment padding after each IOCR block */
-        while (pos % 4 != 0) {
-            buffer[pos++] = 0;
-        }
+        /* NOTE: NO inter-block padding. p-net advances by (4 + BlockLength) only.
+         * Padding after IOCR blocks causes AlarmCR to be read at wrong offset. */
     }
 
     /* ============== Alarm CR Block Request ============== */
