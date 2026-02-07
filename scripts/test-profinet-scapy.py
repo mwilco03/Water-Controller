@@ -251,10 +251,59 @@ class ScapyProfinetController:
                 ascii_str = ''.join(chr(b) if 32 <= b < 127 else '.' for b in response[i:i+16])
                 logger.info(f"  {i:04x}: {hex_str:<48} {ascii_str}")
 
-            # Check for success
-            # TODO: Parse response blocks properly
-            logger.info("✓ Connect succeeded!")
-            return True
+            # Parse DCE/RPC response header
+            if len(response) < 80:
+                logger.error(f"✗ Response too short: {len(response)} bytes (expected ≥80)")
+                return False
+
+            # Check RPC ptype (should be 0x02 = Response)
+            rpc_ptype = response[0]
+            if rpc_ptype != 0x02:
+                logger.error(f"✗ Invalid RPC ptype: 0x{rpc_ptype:02x} (expected 0x02 Response)")
+                return False
+
+            logger.info(f"✓ Valid RPC Response (ptype=0x02)")
+
+            # Skip to PNIO blocks (after ~80 byte RPC header)
+            # Look for ARBlockRes (0x8101)
+            pos = 80
+            found_ar_block = False
+            ar_status = None
+
+            while pos + 6 <= len(response):
+                block_type = struct.unpack('>H', response[pos:pos+2])[0]
+                block_length = struct.unpack('>H', response[pos+2:pos+4])[0]
+
+                logger.info(f"  Block at offset {pos}: type=0x{block_type:04x} length={block_length}")
+
+                if block_type == 0x8101:  # ARBlockRes
+                    found_ar_block = True
+                    if pos + 6 + 4 <= len(response):
+                        # Status is at offset 6 within block content (after header)
+                        ar_status = struct.unpack('>I', response[pos+6:pos+10])[0]
+                        logger.info(f"  ARBlockRes Status: 0x{ar_status:08x}")
+                    break
+
+                # Move to next block (4 bytes header + block_length)
+                pos += 4 + block_length
+
+            if not found_ar_block:
+                logger.error("✗ ARBlockRes not found in response")
+                return False
+
+            if ar_status is None:
+                logger.error("✗ Could not parse AR status")
+                return False
+
+            # Check status (0x00000000 = success)
+            if ar_status == 0x00000000:
+                logger.info("✓ Connect succeeded! (AR Status = 0x00000000)")
+                return True
+            else:
+                logger.error(f"✗ Connect failed with AR Status: 0x{ar_status:08x}")
+                logger.error(f"  Error class: 0x{(ar_status >> 16) & 0xFF:02x}")
+                logger.error(f"  Error code: 0x{ar_status & 0xFF:02x}")
+                return False
 
         except socket.timeout:
             logger.error("✗ Connect timeout - no response from RTU")
