@@ -38,7 +38,6 @@ except ImportError as e:
     sys.exit(1)
 
 try:
-    from scapy.layers.dcerpc import DceRpc4
     from scapy.layers.inet import UDP, IP
     from scapy.all import Raw
 except ImportError as e:
@@ -285,21 +284,57 @@ class ProfinetControllerTest:
         The question is: WHERE does padding go and HOW MUCH?
         """
 
-        # --- DCE/RPC Header ---
-        # DceRpc4 from Scapy handles this
-        rpc = DceRpc4(
-            ptype=0x00,  # Request
-            pfc_flags=0x08,  # First fragment
-            packed_drep=struct.pack('BBBB', 0x10, 0x00, 0x00, 0x00),  # Little-endian
-            call_id=1,
-            opnum=0,  # Connect
-            object_uuid=PNIO_UUID,
-            if_uuid=PNIO_UUID,
-            activity_uuid=self.activity_uuid,
-            server_boot=0,
-            if_vers=1,
-            seqnum=0
-        )
+        # --- DCE/RPC Header (build manually to match C code) ---
+        rpc_header = bytearray()
+
+        # DCE/RPC header fields
+        rpc_header += struct.pack('B', 0x04)  # rpc_vers = 4
+        rpc_header += struct.pack('B', 0x00)  # rpc_vers_minor = 0
+        rpc_header += struct.pack('B', 0x00)  # ptype = request
+        rpc_header += struct.pack('B', 0x00)  # pfc_flags = 0
+        rpc_header += struct.pack('BBBB', 0x10, 0x00, 0x00, 0x00)  # packed_drep (little-endian)
+        rpc_header += struct.pack('<H', 0)  # frag_length (fill later)
+        rpc_header += struct.pack('<H', 0)  # auth_length = 0
+        rpc_header += struct.pack('<I', 0)  # call_id = 0
+
+        # Object UUID (PNIO UUID)
+        rpc_header += PNIO_UUID
+
+        # Interface UUID  (PNIO UUID)
+        rpc_header += PNIO_UUID
+
+        # Activity UUID
+        rpc_header += self.activity_uuid
+
+        # Server boot time
+        rpc_header += struct.pack('<I', 0)
+
+        # Interface version
+        rpc_header += struct.pack('<I', 1)
+
+        # Sequence number
+        rpc_header += struct.pack('<I', 0)
+
+        # Operation number (0 = Connect)
+        rpc_header += struct.pack('<H', 0)
+
+        # Interface hint
+        rpc_header += struct.pack('<H', 0xffff)
+
+        # Activity hint
+        rpc_header += struct.pack('<H', 0xffff)
+
+        # Fragment length (reserve 2 bytes)
+        rpc_header += struct.pack('<H', 0)  # Will be filled later
+
+        # Fragment number
+        rpc_header += struct.pack('<H', 0)
+
+        # Auth protocol
+        rpc_header += struct.pack('B', 0)
+
+        # Serial high
+        rpc_header += struct.pack('B', 0)
 
         # --- ARBlockReq ---
         ar_block = self._build_ar_block_req(device)
@@ -340,6 +375,7 @@ class ProfinetControllerTest:
         pnio_data = ar_block + iocr_input + iocr_output + alarm_block + expected_submod
 
         logger.info(f"\nBlock sizes:")
+        logger.info(f"  RPC header: {len(rpc_header)} bytes")
         logger.info(f"  ARBlockReq: {len(ar_block)} bytes")
         logger.info(f"  IOCRBlockReq (input): {len(iocr_input)} bytes")
         logger.info(f"  IOCRBlockReq (output): {len(iocr_output)} bytes")
@@ -347,12 +383,22 @@ class ProfinetControllerTest:
         logger.info(f"  ExpectedSubmoduleBlockReq: {len(expected_submod)} bytes")
         logger.info(f"  Total PNIO data: {len(pnio_data)} bytes")
 
-        # Wrap in IP/UDP
+        # Combine RPC header + PNIO data
+        rpc_payload = bytes(rpc_header) + pnio_data
+
+        # Fill in frag_length in RPC header (offset 8, 2 bytes little-endian)
+        frag_length = len(rpc_payload)
+        rpc_payload = bytearray(rpc_payload)
+        struct.pack_into('<H', rpc_payload, 8, frag_length)
+        rpc_payload = bytes(rpc_payload)
+
+        logger.info(f"  Total RPC payload: {len(rpc_payload)} bytes")
+
+        # Wrap in IP/UDP using Scapy
         pkt = (
             IP(dst=device.ip_address, src="0.0.0.0") /
             UDP(sport=RPC_PORT, dport=RPC_PORT) /
-            rpc /
-            Raw(load=pnio_data)
+            Raw(load=rpc_payload)
         )
 
         return pkt
