@@ -102,7 +102,8 @@ class ScapyProfinetController:
             logger.info(f"Searching for station: {target_station}")
             name_bytes = target_station.encode('utf-8')
             dcp = (
-                Ether(dst=DCP_MULTICAST, src=self.mac, type=PROFINET_ETHERTYPE) /
+                Ether(dst=DCP_MULTICAST, src=self.mac) /
+                ProfinetIO(frameID=0xfefd) /
                 ProfinetDCP(
                     service_id=0x05,  # Identify
                     service_type=0x00,  # Request
@@ -120,7 +121,8 @@ class ScapyProfinetController:
         else:
             logger.info("Searching for all devices")
             dcp = (
-                Ether(dst=DCP_MULTICAST, src=self.mac, type=PROFINET_ETHERTYPE) /
+                Ether(dst=DCP_MULTICAST, src=self.mac) /
+                ProfinetIO(frameID=0xfefd) /
                 ProfinetDCP(
                     service_id=0x05,
                     service_type=0x00,
