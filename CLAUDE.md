@@ -142,6 +142,24 @@ This tells you exactly which commit is running.
 - [Development Guidelines](/docs/development/GUIDELINES.md)
 - [Alarm Philosophy](/docs/architecture/ALARM_PHILOSOPHY.md)
 
+## PROFINET RPC Communication
+
+**CRITICAL: RPC timeouts are NOT a networking issue. The network is fine.**
+
+PROFINET RPC Connect failures are caused by **code bugs** in the controller, not firewalls/connectivity. P-net silently rejects malformed RPC packets. Key fixes:
+
+- **Inter-block padding** (7e0f01a): P-net parses blocks contiguously without padding; any alignment bytes cause offset mismatch
+- **UUID byte ordering** (84649b6): Interface UUID must be LE-swapped per DREP=0x10
+- **NDR header** (741bd70): Mandatory 20-byte header between RPC and PNIO blocks
+
+After code fixes, **rebuild controller container** to deploy changes:
+```bash
+cd /opt/water-controller/docker
+./generate-build-env.sh
+docker compose build controller --no-cache
+docker compose up -d controller
+```
+
 ## Known Technical Debt
 
 The following files contain discovery-first violations (hardcoded RTU IPs/names). They are acknowledged technical debt, not to be expanded:
