@@ -297,14 +297,28 @@ class ProfinetControllerTest:
         rpc_header += struct.pack('<H', 0)  # auth_length = 0
         rpc_header += struct.pack('<I', 0)  # call_id = 0
 
-        # Object UUID (PNIO UUID)
-        rpc_header += PNIO_UUID
+        # UUID byte swapping helper (per commit 84649b6)
+        def swap_uuid_fields(uuid_bytes):
+            """Swap first 8 bytes of UUID to LE per DREP=0x10"""
+            uuid = bytearray(uuid_bytes)
+            # time_low (0-3): reverse
+            uuid[0], uuid[3] = uuid[3], uuid[0]
+            uuid[1], uuid[2] = uuid[2], uuid[1]
+            # time_mid (4-5): reverse
+            uuid[4], uuid[5] = uuid[5], uuid[4]
+            # time_hi_and_version (6-7): reverse
+            uuid[6], uuid[7] = uuid[7], uuid[6]
+            # Bytes 8-15: unchanged
+            return bytes(uuid)
 
-        # Interface UUID  (PNIO UUID)
-        rpc_header += PNIO_UUID
+        # Object UUID (PNIO UUID) - swap to LE
+        rpc_header += swap_uuid_fields(PNIO_UUID)
 
-        # Activity UUID
-        rpc_header += self.activity_uuid
+        # Interface UUID (PNIO UUID) - swap to LE
+        rpc_header += swap_uuid_fields(PNIO_UUID)
+
+        # Activity UUID - swap to LE
+        rpc_header += swap_uuid_fields(self.activity_uuid)
 
         # Server boot time
         rpc_header += struct.pack('<I', 0)
