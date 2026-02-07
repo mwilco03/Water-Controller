@@ -262,7 +262,7 @@ class ProfinetControllerTest:
         finally:
             sock.close()
 
-    def _build_connect_request(self, device: DeviceInfo) -> bytes:
+    def _build_connect_request(self, device: DCPDevice) -> bytes:
         """
         Build PROFINET Connect Request - CRITICAL SECTION
 
@@ -357,7 +357,7 @@ class ProfinetControllerTest:
 
         return pkt
 
-    def _build_ar_block_req(self, device: DeviceInfo) -> bytes:
+    def _build_ar_block_req(self, device: DCPDevice) -> bytes:
         """Build ARBlockReq manually to match C code"""
         block = bytearray()
 
