@@ -416,8 +416,9 @@ class ProfinetControllerTest:
         logger.info(f"  Total RPC payload: {len(rpc_payload)} bytes")
 
         # Wrap in IP/UDP using Scapy
+        # Let kernel select source IP based on routing (don't use 0.0.0.0!)
         pkt = (
-            IP(dst=device.ip_address, src="0.0.0.0") /
+            IP(dst=device.ip_address) /
             UDP(sport=RPC_PORT, dport=RPC_PORT) /
             Raw(load=rpc_payload)
         )
