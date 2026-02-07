@@ -336,6 +336,13 @@ class ProfinetControllerTest:
         # Serial high
         rpc_header += struct.pack('B', 0)
 
+        # --- NDR Header (20 bytes, mandatory per Bug 0.4) ---
+        # p-net rejects requests without NDR header (pf_cmrpc.c:4622-4634)
+        # This goes BETWEEN RPC header and PNIO blocks
+        # Will be filled after we know PNIO blocks length
+        ndr_header_pos = len(rpc_header)
+        rpc_header += bytes(20)  # Reserve 20 bytes
+
         # --- ARBlockReq ---
         ar_block = self._build_ar_block_req(device)
 
@@ -375,7 +382,8 @@ class ProfinetControllerTest:
         pnio_data = ar_block + iocr_input + iocr_output + alarm_block + expected_submod
 
         logger.info(f"\nBlock sizes:")
-        logger.info(f"  RPC header: {len(rpc_header)} bytes")
+        logger.info(f"  RPC header: 88 bytes")
+        logger.info(f"  NDR header: 20 bytes (mandatory per Bug 0.4)")
         logger.info(f"  ARBlockReq: {len(ar_block)} bytes")
         logger.info(f"  IOCRBlockReq (input): {len(iocr_input)} bytes")
         logger.info(f"  IOCRBlockReq (output): {len(iocr_output)} bytes")
@@ -384,11 +392,24 @@ class ProfinetControllerTest:
         logger.info(f"  Total PNIO data: {len(pnio_data)} bytes")
 
         # Combine RPC header + PNIO data
-        rpc_payload = bytes(rpc_header) + pnio_data
+        rpc_payload = bytearray(rpc_header) + pnio_data
+
+        # Fill in NDR header (20 bytes at ndr_header_pos)
+        pnio_len = len(pnio_data)
+        args_maximum = 4096  # Max buffer size
+        # ArgsMaximum (4 bytes LE)
+        struct.pack_into('<I', rpc_payload, ndr_header_pos, args_maximum)
+        # ArgsLength (4 bytes LE)
+        struct.pack_into('<I', rpc_payload, ndr_header_pos + 4, pnio_len)
+        # MaxCount (4 bytes LE) = ArgsLength
+        struct.pack_into('<I', rpc_payload, ndr_header_pos + 8, pnio_len)
+        # Offset (4 bytes LE) = 0
+        struct.pack_into('<I', rpc_payload, ndr_header_pos + 12, 0)
+        # ActualCount (4 bytes LE) = ArgsLength
+        struct.pack_into('<I', rpc_payload, ndr_header_pos + 16, pnio_len)
 
         # Fill in frag_length in RPC header (offset 8, 2 bytes little-endian)
         frag_length = len(rpc_payload)
-        rpc_payload = bytearray(rpc_payload)
         struct.pack_into('<H', rpc_payload, 8, frag_length)
         rpc_payload = bytes(rpc_payload)
 
