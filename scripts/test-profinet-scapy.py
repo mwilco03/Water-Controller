@@ -297,15 +297,8 @@ class ProfinetControllerTest:
         # --- DCE/RPC Header (build manually to match C code) ---
         rpc_header = bytearray()
 
-        # DCE/RPC header fields
-        rpc_header += struct.pack('B', 0x04)  # rpc_vers = 4
-        rpc_header += struct.pack('B', 0x00)  # rpc_vers_minor = 0
-        rpc_header += struct.pack('B', 0x00)  # ptype = request
-        rpc_header += struct.pack('B', 0x00)  # pfc_flags = 0
-        rpc_header += struct.pack('BBBB', 0x10, 0x00, 0x00, 0x00)  # packed_drep (little-endian)
-        rpc_header += struct.pack('<H', 0)  # frag_length (fill later)
-        rpc_header += struct.pack('<H', 0)  # auth_length = 0
-        rpc_header += struct.pack('<I', 0)  # call_id = 0
+        # DCE/RPC header fields - MUST match profinet_rpc_header_t struct exactly!
+        # See src/profinet/profinet_frame.h:84-104
 
         # UUID byte swapping helper (per commit 84649b6)
         def swap_uuid_fields(uuid_bytes):
@@ -321,44 +314,57 @@ class ProfinetControllerTest:
             # Bytes 8-15: unchanged
             return bytes(uuid)
 
-        # Object UUID (PNIO UUID) - swap to LE
+        # Offset 0-3: version, packet_type, flags1, flags2
+        rpc_header += struct.pack('B', 0x04)  # version = 4
+        rpc_header += struct.pack('B', 0x00)  # packet_type = 0 (request)
+        rpc_header += struct.pack('B', 0x22)  # flags1 = 0x22 (LAST_FRAGMENT=0x02 | IDEMPOTENT=0x20)
+        rpc_header += struct.pack('B', 0x00)  # flags2 = 0
+
+        # Offset 4-7: drep[3], serial_high
+        rpc_header += struct.pack('BBB', 0x10, 0x00, 0x00)  # drep: LE, ASCII
+        rpc_header += struct.pack('B', 0x00)  # serial_high = 0
+
+        # Offset 8-23: object_uuid (AR UUID) - swap to LE
         rpc_header += swap_uuid_fields(PNIO_UUID)
 
-        # Interface UUID (PNIO UUID) - swap to LE
+        # Offset 24-39: interface_uuid (PNIO Device UUID) - swap to LE
         rpc_header += swap_uuid_fields(PNIO_UUID)
 
-        # Activity UUID - swap to LE
+        # Offset 40-55: activity_uuid - swap to LE
         rpc_header += swap_uuid_fields(self.activity_uuid)
 
-        # Server boot time
+        # Offset 56-59: server_boot (LE)
         rpc_header += struct.pack('<I', 0)
 
-        # Interface version
+        # Offset 60-63: interface_version (LE)
         rpc_header += struct.pack('<I', 1)
 
-        # Sequence number
+        # Offset 64-67: sequence_number (LE)
         rpc_header += struct.pack('<I', 0)
 
-        # Operation number (0 = Connect)
+        # Offset 68-69: opnum (LE) - 0 = Connect
         rpc_header += struct.pack('<H', 0)
 
-        # Interface hint
+        # Offset 70-71: interface_hint (LE)
         rpc_header += struct.pack('<H', 0xffff)
 
-        # Activity hint
+        # Offset 72-73: activity_hint (LE)
         rpc_header += struct.pack('<H', 0xffff)
 
-        # Fragment length (reserve 2 bytes)
-        rpc_header += struct.pack('<H', 0)  # Will be filled later
-
-        # Fragment number
+        # Offset 74-75: fragment_length (LE) - filled later
+        frag_length_offset = len(rpc_header)
         rpc_header += struct.pack('<H', 0)
 
-        # Auth protocol
+        # Offset 76-77: fragment_number (LE)
+        rpc_header += struct.pack('<H', 0)
+
+        # Offset 78: auth_protocol
         rpc_header += struct.pack('B', 0)
 
-        # Serial high
+        # Offset 79: serial_low
         rpc_header += struct.pack('B', 0)
+
+        # RPC header complete: 80 bytes
 
         # --- NDR Header (20 bytes, mandatory per Bug 0.4) ---
         # p-net rejects requests without NDR header (pf_cmrpc.c:4622-4634)
@@ -406,7 +412,7 @@ class ProfinetControllerTest:
         pnio_data = ar_block + iocr_input + iocr_output + alarm_block + expected_submod
 
         logger.info(f"\nBlock sizes:")
-        logger.info(f"  RPC header: 88 bytes")
+        logger.info(f"  RPC header: 80 bytes (profinet_rpc_header_t)")
         logger.info(f"  NDR header: 20 bytes (mandatory per Bug 0.4)")
         logger.info(f"  ARBlockReq: {len(ar_block)} bytes")
         logger.info(f"  IOCRBlockReq (input): {len(iocr_input)} bytes")
@@ -432,9 +438,9 @@ class ProfinetControllerTest:
         # ActualCount (4 bytes LE) = ArgsLength
         struct.pack_into('<I', rpc_payload, ndr_header_pos + 16, pnio_len)
 
-        # Fill in frag_length in RPC header (offset 8, 2 bytes little-endian)
+        # Fill in frag_length in RPC header (offset 74-75, 2 bytes little-endian)
         frag_length = len(rpc_payload)
-        struct.pack_into('<H', rpc_payload, 8, frag_length)
+        struct.pack_into('<H', rpc_payload, frag_length_offset, frag_length)
         rpc_payload = bytes(rpc_payload)
 
         logger.info(f"  Total RPC payload: {len(rpc_payload)} bytes")
