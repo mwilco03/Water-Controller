@@ -12,6 +12,16 @@ Copyright (C) 2024-2026
 SPDX-License-Identifier: GPL-3.0-or-later
 """
 
+# Version tracking
+import subprocess
+try:
+    VERSION = subprocess.check_output(['git', 'rev-parse', '--short=7', 'HEAD'],
+                                     stderr=subprocess.DEVNULL).decode().strip()
+except:
+    VERSION = "unknown"
+
+SCRIPT_VERSION = f"v2.0-{VERSION}"  # v2.0 = UUID swap + NDR header + source IP fixes
+
 import argparse
 import logging
 import socket
@@ -654,7 +664,7 @@ def main():
 
     args = parser.parse_args()
 
-    logger.info("=== PROFINET RPC Test - Using Working DCP + Scapy RPC ===\n")
+    logger.info(f"=== PROFINET RPC Test {SCRIPT_VERSION} - Using Working DCP + Scapy RPC ===\n")
     logger.info("This script uses existing working DCP discovery")
     logger.info("and demonstrates RPC Connect packet format for comparison")
     logger.info("Run tcpdump in another terminal to capture packets:")
