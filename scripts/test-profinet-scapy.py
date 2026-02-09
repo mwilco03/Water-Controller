@@ -324,8 +324,8 @@ class ProfinetControllerTest:
         rpc_header += struct.pack('BBB', 0x10, 0x00, 0x00)  # drep: LE, ASCII
         rpc_header += struct.pack('B', 0x00)  # serial_high = 0
 
-        # Offset 8-23: object_uuid (AR UUID) - swap to LE
-        rpc_header += swap_uuid_fields(PNIO_UUID)
+        # Offset 8-23: object_uuid (AR UUID, unique per connection) - swap to LE
+        rpc_header += swap_uuid_fields(self.ar_uuid)
 
         # Offset 24-39: interface_uuid (PNIO Device UUID) - swap to LE
         rpc_header += swap_uuid_fields(PNIO_UUID)
