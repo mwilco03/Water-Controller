@@ -2,7 +2,7 @@
  * AUTO-GENERATED FILE - DO NOT EDIT MANUALLY
  *
  * Generated from: schemas/config/ (all .schema.yaml files)
- * Generated at: 2026-02-06 23:01:16 UTC
+ * Generated at: 2026-02-09 18:10:43 UTC
  * Generator: scripts/generate_c_types.py
  *
  * To update this file, modify the source schemas and run:
@@ -679,7 +679,7 @@ typedef struct {
     char ip_address[256];
     /** Controller MAC address (auto-detect if empty) */
     char mac_address[256];
-    /** Controller station name (PROFINET IEC 61158-6: lowercase, digits, hyph */
+    /** Controller station name (auto-generated as 'controller-XXXX' from MAC  */
     char station_name[63];
     /** Network subnet mask */
     char subnet_mask[256];
