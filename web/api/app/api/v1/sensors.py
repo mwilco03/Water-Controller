@@ -53,13 +53,16 @@ async def get_sensors(
     # Get live sensor values from controller via shared memory
     live_sensors = profinet.get_sensor_values(rtu.station_name)
 
-    # Build lookup by slot for efficient matching
+    # Build lookup by SHM sensor index for efficient matching
+    # SHM uses 0-based sensor index, DB slot_number is PROFINET slot (1-based, slot 0 = DAP)
     live_by_slot = {s["slot"]: s for s in live_sensors}
 
     result = []
-    for sensor in sensors:
+    for idx, sensor in enumerate(sensors):
         # Try to get live value from controller
-        live = live_by_slot.get(sensor.slot_number)
+        # SHM sensor index = slot_number - 1 (DAP is slot 0, first sensor is slot 1)
+        shm_idx = (sensor.slot_number - 1) if sensor.slot_number else idx
+        live = live_by_slot.get(shm_idx)
 
         if live and quality == DataQuality.GOOD:
             value = live.get("value")
