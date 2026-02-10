@@ -64,11 +64,15 @@ async def get_controls(
 
     controls = db.query(Control).filter(Control.rtu_id == rtu.id).order_by(Control.tag).all()
 
-    quality = get_data_quality(rtu.state)
+    # Get live state from controller SHM (preferred over stale DB state)
+    profinet = get_profinet_client()
+    live_state = profinet.get_rtu_state(rtu.station_name)
+    effective_state = live_state or rtu.state
+
+    quality = get_data_quality(effective_state)
     now = datetime.now(UTC)
 
     # Get live actuator states from controller or demo mode
-    profinet = get_profinet_client()
     live_actuators = profinet.get_actuator_states(name)
 
     # Build lookup by slot for efficient access
@@ -116,8 +120,8 @@ async def get_controls(
         result.append(state_obj.model_dump())
 
     meta = ControlListMeta(
-        rtu_state=rtu.state,
-        last_io_update=now if rtu.state == RtuState.RUNNING else None,
+        rtu_state=effective_state,
+        last_io_update=now if effective_state == RtuState.RUNNING else None,
     )
 
     return {

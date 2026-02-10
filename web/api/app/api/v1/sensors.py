@@ -41,12 +41,16 @@ async def get_sensors(
 
     sensors = query.order_by(Sensor.tag).all()
 
-    # Determine data quality based on RTU state
-    quality = get_data_quality(rtu.state)
+    # Get live state from controller SHM (preferred over stale DB state)
+    profinet = get_profinet_client()
+    live_state = profinet.get_rtu_state(rtu.station_name)
+    effective_state = live_state or rtu.state
+
+    # Determine data quality based on live RTU state
+    quality = get_data_quality(effective_state)
     now = datetime.now(UTC)
 
     # Get live sensor values from controller via shared memory
-    profinet = get_profinet_client()
     live_sensors = profinet.get_sensor_values(rtu.station_name)
 
     # Build lookup by slot for efficient matching
@@ -79,7 +83,7 @@ async def get_sensors(
             value = None
             raw_value = None
             sensor_quality = quality
-            quality_reason = f"RTU state: {rtu.state}"
+            quality_reason = f"RTU state: {effective_state}"
 
         sensor_value = SensorValue(
             tag=sensor.tag,
@@ -93,8 +97,8 @@ async def get_sensors(
         result.append(sensor_value.model_dump())
 
     meta = SensorListMeta(
-        rtu_state=rtu.state,
-        last_io_update=now if rtu.state == RtuState.RUNNING else None,
+        rtu_state=effective_state,
+        last_io_update=now if effective_state == RtuState.RUNNING else None,
     )
 
     return {
