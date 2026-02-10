@@ -261,9 +261,9 @@ export default function SystemPage() {
     try {
       const res = await fetch('/api/v1/system/status');
       if (res.ok) {
-        const data = await res.json();
-        // Transform API response to UI expected format
-        // API returns: { uptime_seconds, rtus: {...}, alarms: {...}, historian: {...}, resources: {...} }
+        const json = await res.json();
+        // Unwrap {data: ...} envelope
+        const data = json.data || json;
         setHealth({
           status: 'ok',
           uptime_seconds: data.uptime_seconds || 0,
@@ -290,7 +290,9 @@ export default function SystemPage() {
     try {
       const res = await fetch('/api/v1/services');
       if (res.ok) {
-        const data = await res.json();
+        const json = await res.json();
+        // Unwrap {data: ...} envelope
+        const data = json.data || json;
         // Convert to array and add descriptions
         const serviceDescriptions: Record<string, string> = {
           api: 'FastAPI Backend',

@@ -55,7 +55,7 @@ async def get_sensors(
     result = []
     for sensor in sensors:
         # Try to get live value from controller
-        live = live_by_slot.get(sensor.slot)
+        live = live_by_slot.get(sensor.slot_number)
 
         if live and quality == DataQuality.GOOD:
             value = live.get("value")

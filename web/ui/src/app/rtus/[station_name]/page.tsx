@@ -3,8 +3,8 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { getRTU, getRTUInventory, refreshRTUInventory } from '@/lib/api';
-import type { RTUDevice, RTUInventory } from '@/lib/api';
+import { getRTU, getRTUInventory, refreshRTUInventory, getSensors } from '@/lib/api';
+import type { RTUDevice, RTUInventory, SensorData } from '@/lib/api';
 import { SensorList, ControlList, InventoryRefresh, RtuStateBadge, ProfinetStatus, StaleIndicator, DeleteRtuModal } from '@/components/rtu';
 import { useWebSocket } from '@/hooks/useWebSocket';
 import { useCommandMode } from '@/contexts/CommandModeContext';
@@ -21,6 +21,7 @@ export default function RTUDetailPage() {
 
   const [rtu, setRtu] = useState<RTUDevice | null>(null);
   const [inventory, setInventory] = useState<RTUInventory | null>(null);
+  const [liveSensors, setLiveSensors] = useState<SensorData[]>([]);
   const [activeTab, setActiveTab] = useState<Tab>('overview');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -29,12 +30,14 @@ export default function RTUDetailPage() {
 
   const fetchData = useCallback(async () => {
     try {
-      const [rtuData, inventoryData] = await Promise.all([
+      const [rtuData, inventoryData, sensorData] = await Promise.all([
         getRTU(stationName),
         getRTUInventory(stationName),
+        getSensors(stationName).catch(() => []),
       ]);
       setRtu(rtuData);
       setInventory(inventoryData);
+      setLiveSensors(sensorData);
       setError(null);
     } catch (err) {
       rtuLogger.error('Failed to fetch RTU data', err);
@@ -130,8 +133,41 @@ export default function RTUDetailPage() {
 
   const stateColor = getStateColor(rtu.state);
   const isOnline = rtu.state === 'RUNNING';
-  const sensors = inventory?.sensors ?? [];
+
+  // Merge live sensor values into inventory sensors for display
+  const qualityStringToCode = (q: string): number => {
+    switch (q?.toUpperCase()) {
+      case 'GOOD': return 0x00;
+      case 'UNCERTAIN': return 0x40;
+      case 'BAD': return 0x80;
+      default: return 0xC0;
+    }
+  };
+  const sensors = (inventory?.sensors ?? []).map((s) => {
+    // Match by tag name — API returns `tag` field, not `name`
+    const live = liveSensors.find((ls) => {
+      // Sensors API returns `tag` field; SensorData interface has `name`
+      const liveTag = (ls as unknown as { tag?: string }).tag || ls.name;
+      return liveTag === s.name || liveTag === s.sensor_id;
+    });
+    if (live) {
+      return {
+        ...s,
+        last_value: live.value ?? s.last_value,
+        last_quality: live.quality_code ?? qualityStringToCode(live.quality),
+        last_update: live.timestamp ?? s.last_update,
+      };
+    }
+    return s;
+  });
   const controls = inventory?.controls ?? [];
+
+  // Compute data quality from live sensors
+  const liveQualities = liveSensors.map((s) => (s.quality || '').toUpperCase());
+  const dataQuality = liveSensors.length > 0
+    ? (liveQualities.every((q) => q === 'GOOD') ? 'GOOD'
+      : liveQualities.some((q) => q === 'BAD') ? 'BAD' : 'UNCERTAIN')
+    : 'N/A';
 
   return (
     <div className="space-y-6">
@@ -191,12 +227,15 @@ export default function RTUDetailPage() {
           <div className="text-sm text-hmi-muted">Controls</div>
         </div>
         <div className="bg-hmi-panel border border-hmi-border rounded-lg p-4 text-center">
-          <div className="text-3xl font-bold text-control-manual">
-            {controls.filter((c) =>
-              ['ON', 'RUNNING', 'OPEN'].includes(c.current_state?.toUpperCase() ?? '')
-            ).length}
+          <div className={`text-3xl font-bold ${
+            dataQuality === 'GOOD' ? 'text-status-ok'
+            : dataQuality === 'BAD' ? 'text-status-alarm'
+            : dataQuality === 'UNCERTAIN' ? 'text-status-warning'
+            : 'text-hmi-muted'
+          }`}>
+            {dataQuality}
           </div>
-          <div className="text-sm text-hmi-muted">Active</div>
+          <div className="text-sm text-hmi-muted">Data Quality</div>
         </div>
       </div>
 

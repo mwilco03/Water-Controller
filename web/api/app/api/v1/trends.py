@@ -9,13 +9,13 @@ import io
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from ...core.errors import build_success_response
 from ...models.base import get_db
-from ...models.historian import DataQuality, HistorianSample
+from ...models.historian import DataQuality, HistorianSample, HistorianTag
 from ...models.rtu import Sensor
 from ...schemas.common import DataQuality as DataQualityEnum
 from ...schemas.trends import (
@@ -30,6 +30,51 @@ from ...schemas.trends import (
 )
 
 router = APIRouter()
+
+
+@router.get("/tags")
+async def get_trend_tags(db: Session = Depends(get_db)) -> dict[str, Any]:
+    """List all historian tags available for trending."""
+    tags = db.query(HistorianTag).order_by(HistorianTag.rtu_station, HistorianTag.slot).all()
+    return {"data": [{
+        "tag_id": t.id,
+        "rtu_station": t.rtu_station,
+        "slot": t.slot,
+        "tag_name": t.tag_name,
+        "unit": t.unit,
+        "sample_rate_ms": t.sample_rate_ms,
+        "deadband": t.deadband,
+        "compression": t.compression,
+    } for t in tags]}
+
+
+@router.get("/{tag_id}")
+async def get_trend_by_tag(
+    tag_id: int = Path(...),
+    start_time: datetime = Query(...),
+    end_time: datetime = Query(...),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Get trend samples for a specific historian tag."""
+    tag = db.query(HistorianTag).filter(HistorianTag.id == tag_id).first()
+    if not tag:
+        raise HTTPException(status_code=404, detail="Tag not found")
+
+    sensor = db.query(Sensor).filter(Sensor.tag == tag.tag_name).first()
+    if not sensor:
+        return {"samples": []}
+
+    samples = db.query(HistorianSample).filter(
+        HistorianSample.sensor_id == sensor.id,
+        HistorianSample.timestamp >= start_time,
+        HistorianSample.timestamp <= end_time,
+    ).order_by(HistorianSample.timestamp).limit(5000).all()
+
+    return {"samples": [{
+        "timestamp": s.timestamp.isoformat(),
+        "value": s.value,
+        "quality": 0 if s.quality == DataQuality.GOOD else 1,
+    } for s in samples]}
 
 
 def get_interval_seconds(interval: TrendInterval) -> int:

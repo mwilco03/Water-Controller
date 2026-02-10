@@ -394,14 +394,16 @@ export async function getTrendTags(): Promise<Array<{
   tag_name: string;
   sample_rate_ms: number;
 }>> {
-  return apiFetch('/api/v1/trends/tags');
+  const response = await apiFetch<{ data?: unknown[] } | unknown[]>('/api/v1/trends/tags');
+  return extractArrayData(response);
 }
 
 // System API
 export async function getSystemHealth(): Promise<SystemHealth> {
   // Note: /health endpoint returns subsystem status, not cycle_time_ms
   // For detailed system metrics, use /api/v1/system/status
-  return apiFetch<SystemHealth>('/api/v1/system/status');
+  const response = await apiFetch<{ data?: SystemHealth } | SystemHealth>('/api/v1/system/status');
+  return (response as { data?: SystemHealth }).data || (response as SystemHealth);
 }
 
 // Configuration export/import uses the backup API
@@ -460,13 +462,18 @@ export async function restoreBackup(file: File): Promise<{ success: boolean; err
 
 // RTU Inventory API
 export async function getRTUInventory(stationName: string): Promise<RTUInventory> {
-  return apiFetch<RTUInventory>(`/api/v1/rtus/${encodeURIComponent(stationName)}/inventory`);
+  const response = await apiFetch<{ data?: RTUInventory } | RTUInventory>(
+    `/api/v1/rtus/${encodeURIComponent(stationName)}/inventory`
+  );
+  return (response as { data?: RTUInventory }).data || (response as RTUInventory);
 }
 
 export async function refreshRTUInventory(stationName: string): Promise<RTUInventory> {
-  return apiFetch<RTUInventory>(`/api/v1/rtus/${encodeURIComponent(stationName)}/inventory/refresh`, {
-    method: 'POST',
-  });
+  const response = await apiFetch<{ data?: RTUInventory } | RTUInventory>(
+    `/api/v1/rtus/${encodeURIComponent(stationName)}/inventory/refresh`,
+    { method: 'POST' }
+  );
+  return (response as { data?: RTUInventory }).data || (response as RTUInventory);
 }
 
 // RTU Discovery API

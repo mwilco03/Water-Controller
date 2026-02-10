@@ -78,8 +78,23 @@ export default function ProfinetStatus({
       const res = await fetch(`/api/v1/rtus/${encodeURIComponent(stationName)}/profinet/status`);
 
       if (res.ok) {
-        const data = await res.json();
-        setStatus(data);
+        const json = await res.json();
+        // Unwrap {data: ...} envelope and map nested API fields to flat interface
+        const raw = json.data || json;
+        setStatus({
+          ar_handle: raw.ar_handle ?? 'N/A',
+          uptime_seconds: raw.uptime_seconds ?? 0,
+          session_seconds: raw.session_seconds ?? 0,
+          cycle_time_target_ms: raw.cycle_time?.target_ms ?? 0,
+          cycle_time_actual_ms: raw.cycle_time?.actual_ms ?? 0,
+          packet_loss_percent: raw.packet_stats?.loss_percent ?? 0,
+          jitter_ms: raw.jitter_ms ?? 0,
+          last_error: raw.last_error ?? null,
+          input_bytes: raw.io_status?.input_bytes ?? 0,
+          output_bytes: raw.io_status?.output_bytes ?? 0,
+          last_io_update: raw.io_status?.last_update ?? raw.timestamp ?? '',
+          data_quality: raw.io_status?.data_quality ?? 'NOT_CONNECTED',
+        });
         setError(null);
         setLastFetch(new Date().toISOString());
       } else if (res.status === 404) {
