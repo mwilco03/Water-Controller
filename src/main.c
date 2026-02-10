@@ -38,6 +38,7 @@
 #include "db/database.h"
 #include "coordination/failover.h"
 #include "simulation/simulator.h"
+#include "user/user_sync.h"
 #include "utils/logger.h"
 #include "utils/time_utils.h"
 
@@ -64,6 +65,7 @@ static modbus_gateway_t *g_modbus = NULL;
 static wtc_database_t *g_database = NULL;
 static failover_manager_t *g_failover = NULL;
 static simulator_t *g_simulator = NULL;
+static user_sync_manager_t *g_user_sync = NULL;
 
 /* Configuration */
 typedef struct {
@@ -490,6 +492,11 @@ static void on_profinet_state_changed(const char *station_name,
     if (g_registry) {
         rtu_registry_set_device_state(g_registry, station_name, state);
     }
+
+    /* Auto-sync users when RTU reaches RUNNING state */
+    if (state == PROFINET_STATE_RUNNING && g_user_sync) {
+        user_sync_on_rtu_connect(g_user_sync, station_name, NULL, 0);
+    }
 }
 
 /* PROFINET data received callback — from recv thread on each RT input frame.
@@ -700,6 +707,18 @@ static wtc_result_t initialize_components(void) {
     ipc_server_set_control_engine(g_ipc, g_control);
     ipc_server_set_profinet(g_ipc, g_profinet);
 
+    /* Initialize user sync manager for auto-sync on RTU connect */
+    res = user_sync_manager_init(&g_user_sync, NULL);  /* NULL = defaults (auto_sync_on_connect=true) */
+    if (res != WTC_OK) {
+        LOG_WARN("Failed to initialize user sync manager - auto-sync disabled");
+        g_user_sync = NULL;
+    } else {
+        user_sync_set_profinet(g_user_sync, g_profinet);
+        user_sync_set_registry(g_user_sync, g_registry);
+        ipc_server_set_user_sync(g_ipc, g_user_sync);
+        LOG_INFO("User sync manager initialized (auto-sync on connect enabled)");
+    }
+
     /* Initialize Modbus gateway */
     modbus_gateway_config_t mb_config = {
         .server = {
@@ -841,6 +860,7 @@ static void cleanup_components(void) {
     /* Cleanup in reverse order of initialization */
     if (g_failover) failover_cleanup(g_failover);
     modbus_gateway_cleanup(g_modbus);
+    if (g_user_sync) user_sync_manager_cleanup(g_user_sync);
     ipc_server_cleanup(g_ipc);
     historian_cleanup(g_historian);
     alarm_manager_cleanup(g_alarms);

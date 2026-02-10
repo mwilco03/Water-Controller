@@ -36,6 +36,11 @@ struct user_sync_manager {
     void *callback_ctx;
 
     user_sync_stats_t stats;
+
+    /* Cached user list for auto-sync on RTU connect.
+     * Updated each time a sync command is processed via IPC. */
+    user_t cached_users[USER_SYNC_MAX_USERS];
+    int cached_user_count;
 };
 
 /* ============== Constant-Time Comparison ============== */
@@ -401,7 +406,19 @@ void user_sync_on_rtu_connect(user_sync_manager_t *manager,
         return;
     }
 
-    LOG_INFO(LOG_TAG, "RTU %s connected, triggering user sync", station_name);
+    /* Use cached users if none provided */
+    if (!users || user_count <= 0) {
+        users = manager->cached_users;
+        user_count = manager->cached_user_count;
+    }
+
+    if (!users || user_count <= 0) {
+        LOG_INFO(LOG_TAG, "RTU %s connected but no users cached for sync", station_name);
+        return;
+    }
+
+    LOG_INFO(LOG_TAG, "RTU %s connected, triggering user sync (%d users)",
+             station_name, user_count);
     user_sync_to_rtu(manager, station_name, users, user_count);
 }
 
@@ -414,6 +431,20 @@ void user_sync_on_user_change(user_sync_manager_t *manager,
 
     LOG_INFO(LOG_TAG, "User change detected, syncing to all RTUs");
     user_sync_to_all_rtus(manager, users, user_count);
+}
+
+void user_sync_cache_users(user_sync_manager_t *manager,
+                           const user_t *users,
+                           int user_count) {
+    if (!manager || !users || user_count <= 0) {
+        return;
+    }
+    if (user_count > USER_SYNC_MAX_USERS) {
+        user_count = USER_SYNC_MAX_USERS;
+    }
+    memcpy(manager->cached_users, users, user_count * sizeof(user_t));
+    manager->cached_user_count = user_count;
+    LOG_INFO(LOG_TAG, "Cached %d users for auto-sync on connect", user_count);
 }
 
 wtc_result_t user_sync_get_stats(user_sync_manager_t *manager,

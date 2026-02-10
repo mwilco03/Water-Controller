@@ -7,7 +7,7 @@ User management endpoints for admin operations.
 All endpoints require admin authentication.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Request, status
 from pydantic import BaseModel, Field
 
 from ...core.auth import require_admin_access
@@ -30,10 +30,45 @@ from ...persistence.users import (
     unlock_user,
     update_user,
 )
+from ...services.profinet_client import get_profinet_client
 
 logger = get_logger(__name__)
 
 router = APIRouter()
+
+
+def _trigger_user_sync(station_name: str | None = None) -> dict:
+    """
+    Trigger user sync to RTU(s) via SHM.
+
+    Sync failure is non-fatal — logs warning and returns result.
+    """
+    users = get_users_for_sync()
+    if not users:
+        return {"synced": 0, "message": "No users configured for RTU sync"}
+
+    profinet = get_profinet_client()
+    if not profinet.is_connected():
+        logger.warning("User sync skipped: controller not connected")
+        return {"synced": 0, "message": "Controller not connected"}
+
+    try:
+        client = profinet._client
+        if not client:
+            return {"synced": 0, "message": "SHM client not available"}
+
+        if station_name:
+            ok = client.sync_users_to_rtu(station_name, users)
+            count = 1 if ok else 0
+            logger.info(f"User sync to {station_name}: {'ok' if ok else 'failed'} ({len(users)} users)")
+        else:
+            count = client.sync_users_to_all_rtus(users)
+            logger.info(f"User sync broadcast: {count} RTUs ({len(users)} users)")
+
+        return {"synced": count, "user_count": len(users)}
+    except Exception as e:
+        logger.warning(f"User sync failed (non-fatal): {e}")
+        return {"synced": 0, "error": str(e)}
 
 
 class UserCreate(BaseModel):
@@ -144,6 +179,94 @@ async def get_sync_users(
     return build_success_response(users)
 
 
+@router.post("/sync")
+async def sync_users_to_all(
+    request: Request,
+    session: dict = Depends(require_admin_access),
+):
+    """
+    Sync users to all connected RTUs.
+
+    Sends all sync_to_rtus=True users via PROFINET acyclic write
+    to every RTU in RUNNING state. Admin access required.
+    """
+    result = _trigger_user_sync()
+
+    log_audit(
+        session.get("username", "admin"),
+        "sync",
+        "user",
+        "all_rtus",
+        f"User sync broadcast: {result.get('synced', 0)} RTUs, {result.get('user_count', 0)} users",
+        ip_address=request.client.host if request.client else None,
+    )
+
+    return build_success_response(result)
+
+
+@router.post("/sync/{station_name}")
+async def sync_users_to_rtu(
+    station_name: str = Path(..., description="Target RTU station name"),
+    request: Request = None,
+    session: dict = Depends(require_admin_access),
+):
+    """
+    Sync users to a specific RTU.
+
+    Sends all sync_to_rtus=True users via PROFINET acyclic write
+    to the specified RTU. RTU must be in RUNNING state.
+    Admin access required.
+    """
+    result = _trigger_user_sync(station_name)
+
+    log_audit(
+        session.get("username", "admin"),
+        "sync",
+        "user",
+        station_name,
+        f"User sync to {station_name}: {result.get('synced', 0)} synced, {result.get('user_count', 0)} users",
+        ip_address=request.client.host if request.client else None,
+    )
+
+    return build_success_response(result)
+
+
+@router.get("/sync/status")
+async def get_sync_status(
+    request: Request,
+    session: dict = Depends(require_admin_access),
+):
+    """
+    Get user sync status for all RTUs.
+
+    Returns which RTUs are connected and eligible for sync.
+    Admin access required.
+    """
+    profinet = get_profinet_client()
+    users = get_users_for_sync()
+
+    rtu_status = []
+    try:
+        client = profinet._client
+        if client:
+            rtus = client.get_rtus()
+            for rtu in rtus:
+                from shm_client import CONN_STATE_RUNNING, CONNECTION_STATE_NAMES
+                state_code = rtu.get('connection_state', 0)
+                rtu_status.append({
+                    "station_name": rtu.get('station_name'),
+                    "state": CONNECTION_STATE_NAMES.get(state_code, "UNKNOWN"),
+                    "sync_eligible": state_code == CONN_STATE_RUNNING,
+                })
+    except Exception as e:
+        logger.warning(f"Could not get RTU status: {e}")
+
+    return build_success_response({
+        "sync_users_count": len(users),
+        "rtus": rtu_status,
+    })
+
+
 @router.get("/{user_id}")
 async def get_user_by_id(
     user_id: int,
@@ -230,9 +353,16 @@ async def create_new_user(
 
     logger.info(f"User created: {body.username} by {session.get('username')}")
 
+    # Auto-sync to RTUs if user is sync-enabled
+    sync_result = None
+    if body.sync_to_rtus:
+        sync_result = _trigger_user_sync()
+
     # Return created user
     user = get_user(user_id)
     safe_user = {k: v for k, v in user.items() if k != "password_hash"}
+    if sync_result:
+        safe_user["sync_result"] = sync_result
     return build_success_response(safe_user)
 
 
@@ -323,9 +453,16 @@ async def update_existing_user(
 
     logger.info(f"User updated: {existing['username']} by {session.get('username')}")
 
+    # Auto-sync to RTUs if user credentials or sync flag changed
+    sync_result = None
+    updated = get_user(user_id)
+    if updated and updated.get("sync_to_rtus"):
+        sync_result = _trigger_user_sync()
+
     # Return updated user
-    user = get_user(user_id)
-    safe_user = {k: v for k, v in user.items() if k != "password_hash"}
+    safe_user = {k: v for k, v in updated.items() if k != "password_hash"} if updated else {}
+    if sync_result:
+        safe_user["sync_result"] = sync_result
     return build_success_response(safe_user)
 
 
@@ -458,4 +595,12 @@ async def delete_existing_user(
 
     logger.info(f"User deleted: {existing['username']} by {session.get('username')}")
 
-    return build_success_response({"deleted": True, "username": existing["username"]})
+    # Auto-sync to RTUs (sends updated user list without deleted user)
+    sync_result = None
+    if existing.get("sync_to_rtus"):
+        sync_result = _trigger_user_sync()
+
+    result = {"deleted": True, "username": existing["username"]}
+    if sync_result:
+        result["sync_result"] = sync_result
+    return build_success_response(result)

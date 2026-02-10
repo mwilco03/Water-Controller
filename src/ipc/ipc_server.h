@@ -340,6 +340,11 @@ struct dcp_discovery;
 wtc_result_t ipc_server_set_dcp(ipc_server_t *server,
                                  struct dcp_discovery *dcp);
 
+/* Set user sync manager (for caching users on auto-sync) */
+struct user_sync_manager;
+wtc_result_t ipc_server_set_user_sync(ipc_server_t *server,
+                                       struct user_sync_manager *user_sync);
+
 /* Update shared memory (call periodically) */
 wtc_result_t ipc_server_update(ipc_server_t *server);
 

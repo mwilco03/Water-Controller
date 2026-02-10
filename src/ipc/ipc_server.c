@@ -39,6 +39,7 @@ struct ipc_server {
     struct control_engine *control;
     struct profinet_controller *profinet;
     struct dcp_discovery *dcp;
+    struct user_sync_manager *user_sync;
 
     uint32_t last_command_seq;
 
@@ -191,6 +192,14 @@ wtc_result_t ipc_server_set_dcp(ipc_server_t *server,
                                  struct dcp_discovery *dcp) {
     if (!server) return WTC_ERROR_INVALID_PARAM;
     server->dcp = dcp;
+    return WTC_OK;
+}
+
+/* Set user sync manager */
+wtc_result_t ipc_server_set_user_sync(ipc_server_t *server,
+                                       struct user_sync_manager *user_sync) {
+    if (!server) return WTC_ERROR_INVALID_PARAM;
+    server->user_sync = user_sync;
     return WTC_OK;
 }
 
@@ -715,6 +724,11 @@ static wtc_result_t handle_user_sync_command(ipc_server_t *server, shm_command_t
 
     size_t payload_size = sizeof(user_sync_header_t) +
                           (payload.header.user_count * sizeof(user_sync_record_t));
+
+    /* Cache users in sync manager for auto-sync on future RTU connections */
+    if (server->user_sync) {
+        user_sync_cache_users(server->user_sync, users, user_count);
+    }
 
     wtc_result_t result = WTC_OK;
 

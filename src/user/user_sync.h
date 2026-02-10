@@ -227,6 +227,20 @@ void user_sync_on_user_change(user_sync_manager_t *manager,
                               int user_count);
 
 /**
+ * Cache users for auto-sync on RTU connect.
+ *
+ * Called by IPC server when processing user sync commands so the
+ * manager has a user list available for auto-sync when new RTUs connect.
+ *
+ * @param manager       Sync manager
+ * @param users         User list to cache
+ * @param user_count    Number of users
+ */
+void user_sync_cache_users(user_sync_manager_t *manager,
+                           const user_t *users,
+                           int user_count);
+
+/**
  * Get sync statistics.
  */
 wtc_result_t user_sync_get_stats(user_sync_manager_t *manager,
