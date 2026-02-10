@@ -1,15 +1,17 @@
 #!/bin/bash
-# Push the PROFINET cyclic data exchange commit to origin
+# Push all PROFINET commits to origin
 # Run this after logging in with your GitHub credentials
 #
-# Commit: c746b1d feat(profinet): complete PROFINET cyclic data exchange (17 bugs fixed)
-# 18 files changed, 2731 insertions(+), 366 deletions(-)
+# Commits (3 ahead of origin):
+#   c746b1d feat(profinet): complete PROFINET cyclic data exchange (17 bugs fixed)
+#   2a5628b New diag files
+#   f50bb34 fix(profinet): enable full module Connect with IOCR buffer reallocation
 
 set -e
 cd /opt/water-controller
 
 echo "=== Current state ==="
-git log --oneline -3
+git log --oneline -5
 echo ""
 git status
 echo ""
