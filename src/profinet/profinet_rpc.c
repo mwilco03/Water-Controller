@@ -1329,9 +1329,12 @@ wtc_result_t rpc_parse_control_response(const uint8_t *buffer,
 
     uint16_t control_command = read_u16_be(buffer, &pos);
 
-    if (control_command != expected_command) {
-        LOG_WARN("Control response: command mismatch, expected %u got %u",
-                 expected_command, control_command);
+    if (control_command != expected_command &&
+        control_command != CONTROL_CMD_DONE) {
+        /* DONE (0x0008) is the normal response command per IEC 61158-6.
+         * Only warn if we get something unexpected. */
+        LOG_WARN("Control response: unexpected command %u (expected %u or DONE)",
+                 control_command, expected_command);
     }
 
     *success = true;

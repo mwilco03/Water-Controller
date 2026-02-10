@@ -669,7 +669,38 @@ wtc_result_t ar_manager_process(ar_manager_t *manager) {
 
             ar_state_t old_state = ar->state;
             ar->retry_count++;
-            ar_send_connect_request(manager, ar);
+
+            if (ar->has_discovered_modules && ar->discovered_count > 0) {
+                /* Modules already discovered — rebuild params (reallocates
+                 * IOCR buffers to correct size) then retry connect */
+                ar_module_discovery_t disc;
+                memset(&disc, 0, sizeof(disc));
+                disc.module_count = ar->discovered_count;
+                for (int d = 0; d < ar->discovered_count; d++) {
+                    disc.modules[d].slot = ar->discovered_modules[d].slot;
+                    disc.modules[d].subslot = ar->discovered_modules[d].subslot;
+                    disc.modules[d].module_ident = ar->discovered_modules[d].module_ident;
+                    disc.modules[d].submodule_ident = ar->discovered_modules[d].submodule_ident;
+                }
+                ar_build_full_connect_params(manager, ar, &disc);
+                ar_send_connect_request(manager, ar);
+            } else {
+                /* No modules discovered yet — run full discovery pipeline
+                 * (GSDML cache → HTTP /slots → DAP-only fallback).
+                 * Discovery makes blocking network calls, so release lock. */
+                __atomic_store_n(&ar->connecting, true, __ATOMIC_RELEASE);
+                pthread_mutex_unlock(&manager->lock);
+
+                ar_connect_with_discovery(manager, ar);
+
+                pthread_mutex_lock(&manager->lock);
+                /* AR may have been deleted while unlocked — re-validate */
+                if (i >= manager->ar_count || manager->ars[i] != ar) {
+                    __atomic_store_n(&ar->connecting, false, __ATOMIC_RELEASE);
+                    break;
+                }
+                __atomic_store_n(&ar->connecting, false, __ATOMIC_RELEASE);
+            }
 
             if (ar->state != old_state) {
                 notify_state_change(manager, ar, old_state, ar->state);
@@ -1322,6 +1353,11 @@ wtc_result_t ar_manager_check_health(ar_manager_t *manager) {
                 ar->missed_cycles = 0;
                 ar->last_error = WTC_ERROR_TIMEOUT;
                 ar->state = AR_STATE_ABORT;
+                /* Clear discovery state so ABORT retry re-discovers
+                 * modules. After RTU reboot, config may have changed. */
+                ar->has_discovered_modules = false;
+                ar->discovered_count = 0;
+                ar->slot_count = 0;
                 notify_state_change(manager, ar, old_state, AR_STATE_ABORT);
             } else {
                 LOG_WARN("AR %s watchdog miss (%d/%d)",
@@ -1641,7 +1677,17 @@ wtc_result_t ar_build_full_connect_params(ar_manager_t *manager,
                               ? input_frame : IOCR_MIN_C_SDU_LENGTH;
         ar->iocr[0].data_length = input_csdu;
         ar->iocr[0].user_data_length = input_data_total;
-        ar->iocr[0].iodata_count = input_submod_count;
+        ar->iocr[0].iodata_count = input_iodata;
+        ar->iocr[0].iocs_count = input_iocs;
+
+        /* Reallocate INPUT IOCR buffer to match discovered layout */
+        free(ar->iocr[0].data_buffer);
+        ar->iocr[0].data_buffer = calloc(1, input_csdu);
+        if (!ar->iocr[0].data_buffer) {
+            LOG_ERROR("Failed to reallocate INPUT IOCR buffer (%u bytes)",
+                      input_csdu);
+            return WTC_ERROR_NO_MEMORY;
+        }
 
         /* OUTPUT IOCR: data from controller to device */
         uint16_t output_iodata = output_submod_count;
@@ -1651,7 +1697,22 @@ wtc_result_t ar_build_full_connect_params(ar_manager_t *manager,
                                ? output_frame : IOCR_MIN_C_SDU_LENGTH;
         ar->iocr[1].data_length = output_csdu;
         ar->iocr[1].user_data_length = output_data_total;
-        ar->iocr[1].iodata_count = output_submod_count;
+        ar->iocr[1].iodata_count = output_iodata;
+        ar->iocr[1].iocs_count = output_iocs;
+
+        /* Reallocate OUTPUT IOCR buffer to match discovered layout */
+        free(ar->iocr[1].data_buffer);
+        ar->iocr[1].data_buffer = calloc(1, output_csdu);
+        if (!ar->iocr[1].data_buffer) {
+            LOG_ERROR("Failed to reallocate OUTPUT IOCR buffer (%u bytes)",
+                      output_csdu);
+            return WTC_ERROR_NO_MEMORY;
+        }
+
+        LOG_INFO("IOCR buffers reallocated: INPUT=%u bytes (data=%u, iodata=%u, iocs=%u), "
+                 "OUTPUT=%u bytes (data=%u, iodata=%u, iocs=%u)",
+                 input_csdu, input_data_total, input_iodata, input_iocs,
+                 output_csdu, output_data_total, output_iodata, output_iocs);
     }
 
     /* Store discovered modules as slot_info for full connect */
