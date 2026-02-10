@@ -1427,21 +1427,23 @@ static void build_dap_connect_params(ar_manager_t *manager,
     timing_params_t tp;
     rpc_strategy_get_timing(TIMING_CONSERVATIVE, &tp);
 
-    /* Input IOCR: minimum data_length for RT_CLASS_1 */
+    /* Input IOCR: use AR's data_length if set by discovery, else minimum */
     params->iocr_count = 2;
     params->iocr[0].type = IOCR_TYPE_INPUT;
     params->iocr[0].reference = 1;
     params->iocr[0].frame_id = 0xC001;
-    params->iocr[0].data_length = IOCR_MIN_C_SDU_LENGTH;
+    params->iocr[0].data_length = (ar->iocr_count >= 1 && ar->iocr[0].data_length >= IOCR_MIN_C_SDU_LENGTH)
+                                   ? ar->iocr[0].data_length : IOCR_MIN_C_SDU_LENGTH;
     params->iocr[0].send_clock_factor = tp.send_clock_factor;
     params->iocr[0].reduction_ratio = tp.reduction_ratio;
     params->iocr[0].watchdog_factor = tp.watchdog_factor;
 
-    /* Output IOCR: minimum data_length */
+    /* Output IOCR: use AR's data_length if set by discovery, else minimum */
     params->iocr[1].type = IOCR_TYPE_OUTPUT;
     params->iocr[1].reference = 2;
     params->iocr[1].frame_id = 0xFFFF; /* Device assigns */
-    params->iocr[1].data_length = IOCR_MIN_C_SDU_LENGTH;
+    params->iocr[1].data_length = (ar->iocr_count >= 2 && ar->iocr[1].data_length >= IOCR_MIN_C_SDU_LENGTH)
+                                   ? ar->iocr[1].data_length : IOCR_MIN_C_SDU_LENGTH;
     params->iocr[1].send_clock_factor = tp.send_clock_factor;
     params->iocr[1].reduction_ratio = tp.reduction_ratio;
     params->iocr[1].watchdog_factor = tp.watchdog_factor;
@@ -1715,7 +1717,18 @@ wtc_result_t ar_build_full_connect_params(ar_manager_t *manager,
                  output_csdu, output_data_total, output_iodata, output_iocs);
     }
 
-    /* Store discovered modules as slot_info for full connect */
+    /* Store raw discovered modules so build_connect_params() can include
+     * them in ExpectedSubmoduleBlockReq */
+    ar->discovered_count = 0;
+    for (int i = 0; i < discovery->module_count && ar->discovered_count < WTC_MAX_SLOTS; i++) {
+        ar->discovered_modules[ar->discovered_count].slot = discovery->modules[i].slot;
+        ar->discovered_modules[ar->discovered_count].subslot = discovery->modules[i].subslot;
+        ar->discovered_modules[ar->discovered_count].module_ident = discovery->modules[i].module_ident;
+        ar->discovered_modules[ar->discovered_count].submodule_ident = discovery->modules[i].submodule_ident;
+        ar->discovered_count++;
+    }
+
+    /* Also store as slot_info for type mapping (sensor/actuator) */
     ar->slot_count = 0;
     for (int i = 0; i < discovery->module_count && ar->slot_count < WTC_MAX_SLOTS; i++) {
         const ar_discovered_module_t *m = &discovery->modules[i];
@@ -1766,58 +1779,58 @@ wtc_result_t ar_connect_with_discovery(ar_manager_t *manager,
 
     wtc_result_t res;
     ar_module_discovery_t discovery;
-    bool need_profinet_discovery = true;
+    bool have_config = false;
 
-    /* Phase 5 shortcut: Check GSDML cache first.
-     * If cached GSDML exists for this station, skip DAP-only connect
-     * and Record Read (Phases 2-3) entirely. */
-    if (gsdml_cache_exists(ar->device_station_name)) {
-        LOG_INFO("GSDML cache found for %s, skipping Phases 2-3",
+    /* Module discovery: HTTP /slots → GSDML cache → DAP-only fallback.
+     *
+     * IMPORTANT: HTTP /slots is the primary source because it returns the
+     * ACTUAL plugged configuration (which modules are in which slots).
+     * GSDML cache contains ALL possible module definitions — using it as
+     * the primary source sends 13 modules when only 1 is plugged, causing
+     * p-net to reject the Connect with a config mismatch error.
+     *
+     * We do NOT use the Phase 2-3 PROFINET discovery cycle
+     * (DAP Connect → PrmEnd → Record Read → Release → Full Connect).
+     * p-net v0.2.0 leaks RPC sessions for non-Connect operations and has
+     * only PF_MAX_SESSION = 5 slots. */
+    char ip_str[16];
+    snprintf(ip_str, sizeof(ip_str), "%u.%u.%u.%u",
+             (ar->device_ip >> 24) & 0xFF,
+             (ar->device_ip >> 16) & 0xFF,
+             (ar->device_ip >> 8) & 0xFF,
+             ar->device_ip & 0xFF);
+
+    /* Phase 1: Try HTTP /slots — actual plugged configuration */
+    res = gsdml_fetch_slots_http(ip_str, &discovery);
+    if (res == WTC_OK && discovery.module_count > 0) {
+        LOG_INFO("HTTP /slots returned %d modules for %s",
+                 discovery.module_count, ar->device_station_name);
+        have_config = true;
+    } else {
+        LOG_INFO("HTTP /slots unavailable for %s, trying GSDML cache",
                  ar->device_station_name);
+    }
+
+    /* Phase 2: Fall back to GSDML cache (module type definitions) */
+    if (!have_config && gsdml_cache_exists(ar->device_station_name)) {
+        LOG_INFO("Trying GSDML cache for %s", ar->device_station_name);
 
         res = gsdml_cache_load_modules(ar->device_station_name, &discovery);
         if (res == WTC_OK && discovery.module_count > 0) {
-            need_profinet_discovery = false;
-            LOG_INFO("Loaded %d modules from cached GSDML",
-                     discovery.module_count);
+            have_config = true;
+            LOG_WARN("Using GSDML cache (%d module types) for %s — "
+                     "may include unplugged modules",
+                     discovery.module_count, ar->device_station_name);
         } else {
-            LOG_WARN("GSDML cache load failed, falling back to PROFINET discovery");
+            LOG_WARN("GSDML cache load failed for %s", ar->device_station_name);
         }
     }
 
-    /* Module discovery: GSDML cache → HTTP /slots → DAP-only fallback.
-     *
-     * IMPORTANT: We do NOT use the Phase 2-3 PROFINET discovery cycle
-     * (DAP Connect → PrmEnd → Record Read → Release → Full Connect).
-     * p-net v0.2.0 leaks RPC sessions for non-Connect operations and has
-     * only PF_MAX_SESSION = 5 slots.  The old pipeline consumed 4 sessions
-     * per cycle and leaked 2, exhausting the pool after 2 attempts.
-     *
-     * Instead we try HTTP /slots, then fall back to DAP-only connect.
-     * The device's ModuleDiffBlock in the Connect response will tell us
-     * what modules are actually plugged — no Record Read needed. */
-    if (need_profinet_discovery) {
-        /* Try HTTP /slots for module discovery */
-        char ip_str[16];
-        snprintf(ip_str, sizeof(ip_str), "%u.%u.%u.%u",
-                 (ar->device_ip >> 24) & 0xFF,
-                 (ar->device_ip >> 16) & 0xFF,
-                 (ar->device_ip >> 8) & 0xFF,
-                 ar->device_ip & 0xFF);
-
-        res = gsdml_fetch_slots_http(ip_str, &discovery);
-        if (res == WTC_OK && discovery.module_count > 0) {
-            LOG_INFO("HTTP /slots returned %d modules for %s",
-                     discovery.module_count, ar->device_station_name);
-            need_profinet_discovery = false;
-        } else {
-            LOG_INFO("HTTP /slots unavailable — using DAP-only config for %s",
-                     ar->device_station_name);
-            /* Proceed with empty discovery (DAP-only).
-             * build_connect_params always includes DAP slot 0. */
-            memset(&discovery, 0, sizeof(discovery));
-            need_profinet_discovery = false;
-        }
+    /* Phase 3: DAP-only fallback */
+    if (!have_config) {
+        LOG_INFO("No module config available — using DAP-only for %s",
+                 ar->device_station_name);
+        memset(&discovery, 0, sizeof(discovery));
     }
 
     /* Phase 4: Build full params from discovered modules */

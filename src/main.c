@@ -507,9 +507,11 @@ static void on_data_received(const char *station_name, int slot,
     raw = ntohl(raw);
     memcpy(&value, &raw, 4);
 
+    /* OPC UA quality byte: bits 7:6 encode quality class
+     * 0x00 = Good, 0x40 = Uncertain, 0x80 = Bad, 0xC0 = Not Connected */
     uint8_t quality = ((const uint8_t *)data)[4];
-    data_quality_t dq = (quality & 0x80) ? QUALITY_GOOD : QUALITY_BAD;
-    iops_t iops = (quality & 0x80) ? IOPS_GOOD : IOPS_BAD;
+    data_quality_t dq = (data_quality_t)(quality & 0xC0);
+    iops_t iops = (dq == QUALITY_GOOD) ? IOPS_GOOD : IOPS_BAD;
 
     rtu_registry_update_sensor(g_registry, station_name, slot, value, iops, dq);
 }

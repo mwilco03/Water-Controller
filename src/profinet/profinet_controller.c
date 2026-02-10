@@ -376,12 +376,20 @@ static void *recv_thread_func(void *arg) {
                                 !ar->iocr[j].data_buffer) {
                                 continue;
                             }
-                            uint16_t offset = 0;
+                            /* C-SDU layout: [DAP IOPS bytes] [sensor data+IOPS]...
+                             * Each DAP NO_IO submodule contributes 1 byte (IOPS only).
+                             * Sensor data starts AFTER all DAP IOPS bytes. */
+                            uint16_t dap_count = ar->iocr[j].iodata_count;
+                            for (int s = 0; s < ar->slot_count; s++) {
+                                if (ar->slot_info[s].type == SLOT_TYPE_SENSOR)
+                                    dap_count--;
+                            }
+                            uint16_t offset = dap_count; /* Skip DAP IOPS bytes */
                             int sensor_idx = 0;
                             for (int s = 0; s < ar->slot_count; s++) {
                                 if (ar->slot_info[s].type == SLOT_TYPE_SENSOR) {
                                     if (offset + GSDML_INPUT_DATA_SIZE <=
-                                        ar->iocr[j].user_data_length) {
+                                        ar->iocr[j].data_length) {
                                         ctrl->config.on_data_received(
                                             ar->device_station_name,
                                             sensor_idx,
@@ -389,7 +397,8 @@ static void *recv_thread_func(void *arg) {
                                             GSDML_INPUT_DATA_SIZE,
                                             ctrl->config.callback_ctx);
                                     }
-                                    offset += GSDML_INPUT_DATA_SIZE;
+                                    /* Advance past data + IOPS byte */
+                                    offset += GSDML_INPUT_DATA_SIZE + 1;
                                     sensor_idx++;
                                 }
                             }
