@@ -1,5 +1,10 @@
 # Scapy PROFINET Test - Reference Implementation
 
+> **Note (2026-02-09):** The RPC Connect issue has been **resolved**. The root
+> cause was 10 code bugs in the C controller's packet construction, not the
+> Scapy reference. See
+> [PROFINET_RPC_BUG_FIXES.md](../development/PROFINET_RPC_BUG_FIXES.md).
+
 This document describes how to use the Scapy reference implementation to debug PROFINET RPC communication issues.
 
 ## Purpose

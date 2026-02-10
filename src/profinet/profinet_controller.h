@@ -148,7 +148,7 @@ typedef struct {
     int retry_count;                    /* Consecutive failed connect attempts */
     wtc_result_t last_error;            /* Error code from last failure */
 
-    /* Module mismatch discovery state (cascading: ModuleDiffBlock → Record Read 0xF844 → HTTP /slots) */
+    /* Module mismatch discovery state (cascading: ModuleDiffBlock → Record Read 0xF000 → HTTP /slots) */
     bool has_discovered_modules;        /* True if module config has been discovered */
     struct {
         uint16_t slot;

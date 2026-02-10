@@ -86,6 +86,8 @@ extern "C" {
 #define BLOCK_TYPE_IOD_CONTROL_RES          0x8110
 #define BLOCK_TYPE_IOX_CONTROL_REQ          0x0112
 #define BLOCK_TYPE_IOX_CONTROL_RES          0x8112
+#define BLOCK_TYPE_RELEASE_BLOCK_REQ        0x0114
+#define BLOCK_TYPE_RELEASE_BLOCK_RES        0x8114
 
 /* Read/Write blocks */
 #define BLOCK_TYPE_IOD_READ_REQ_HEADER      0x0009
@@ -99,7 +101,7 @@ extern "C" {
 /* ============== AR Properties ============== */
 
 #define AR_PROP_STATE_ACTIVE            0x00000001
-#define AR_PROP_PARAMETERIZATION_TYPE   0x00000002  /* 0=device, 1=controller */
+#define AR_PROP_PARAMETERIZATION_TYPE   0x00000010  /* Bit 4: 0=External PrmServer, 1=CMInitiator */
 #define AR_PROP_SUPERVISOR_TAKEOVER     0x00000008
 #define AR_PROP_DATA_RATE_MASK          0x00000030  /* 0=reserved, 1=class1, 2=class2, 3=class3 */
 #define AR_PROP_DEVICE_ACCESS           0x00000100
@@ -127,12 +129,14 @@ extern "C" {
 
 /* ============== Control Command Types ============== */
 
-#define CONTROL_CMD_PRM_END             0x0001
-#define CONTROL_CMD_APP_READY           0x0002
-#define CONTROL_CMD_RELEASE             0x0003
-#define CONTROL_CMD_PRM_BEGIN           0x0004
-#define CONTROL_CMD_READY_FOR_COMPANION 0x0005
-#define CONTROL_CMD_READY_FOR_RTC3      0x0006
+/* ControlCommand is a bitfield per IEC 61158-6-10 Table 777 */
+#define CONTROL_CMD_PRM_END             0x0001  /* BIT(0) */
+#define CONTROL_CMD_APP_READY           0x0002  /* BIT(1) */
+#define CONTROL_CMD_RELEASE             0x0004  /* BIT(2) */
+#define CONTROL_CMD_DONE                0x0008  /* BIT(3) - response only */
+#define CONTROL_CMD_READY_FOR_COMPANION 0x0010  /* BIT(4) */
+#define CONTROL_CMD_READY_FOR_RTC3      0x0020  /* BIT(5) */
+#define CONTROL_CMD_PRM_BEGIN           0x0040  /* BIT(6) */
 
 /* ============== Error Codes ============== */
 
@@ -516,14 +520,14 @@ wtc_result_t rpc_release(rpc_context_t *ctx,
 
 /* ============== Record Read/Write ============== */
 
-/* Maximum discovered modules from a single Record Read 0xF844 */
+/* Maximum discovered modules from a single Record Read 0xF000 */
 #define RPC_MAX_DISCOVERED_MODULES  64
 
 /* Record Read timeout */
 #define RPC_READ_TIMEOUT_MS         5000
 
 /* RealIdentificationData block type */
-#define BLOCK_TYPE_REAL_IDENT_DATA  0x0240
+#define BLOCK_TYPE_REAL_IDENT_DATA  0x0013
 
 /* Record Read request parameters */
 typedef struct {
@@ -532,11 +536,11 @@ typedef struct {
     uint32_t api;               /* API number (0 = default) */
     uint16_t slot;              /* Slot (0xFFFF = all) */
     uint16_t subslot;           /* Subslot (0xFFFF = all) */
-    uint16_t index;             /* Record index (e.g. 0xF844) */
+    uint16_t index;             /* Record index (e.g. 0xF000) */
     uint32_t max_record_length; /* Max response data length */
 } read_request_params_t;
 
-/* Discovered module from RealIdentificationData (0xF844) */
+/* Discovered module from RealIdentificationData (0xE001/0xF000) */
 typedef struct {
     uint16_t slot;
     uint16_t subslot;
@@ -550,7 +554,7 @@ typedef struct {
     uint16_t index;             /* Echoed record index */
     uint32_t record_data_length;/* Actual data length */
 
-    /* For 0xF844 (RealIdentificationData) parsing */
+    /* For RealIdentificationData (0xE001/0xF000) parsing */
     discovered_module_t modules[RPC_MAX_DISCOVERED_MODULES];
     int module_count;
 
@@ -588,6 +592,9 @@ typedef struct {
     uint16_t source_port;       /* Source port of the request */
     uint8_t activity_uuid[16];  /* Activity UUID for response */
     uint32_t sequence_number;   /* Sequence number for response */
+    uint8_t interface_uuid[16]; /* Interface UUID from RPC header (wire format) */
+    uint16_t block_type;        /* IODControlReq (0x0110) or IOCControlReq (0x0112) */
+    uint8_t drep0;              /* DREP byte 0 from incoming request (0x10=LE, 0x00=BE) */
 } incoming_control_request_t;
 
 /**

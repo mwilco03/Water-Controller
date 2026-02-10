@@ -44,7 +44,7 @@ static const timing_params_t timing_profiles[TIMING_PROFILE_COUNT] = {
         .reduction_ratio   = 128,   /* 256ms data update */
         .watchdog_factor   = 10,    /* 2.56s watchdog (very relaxed) */
         .data_hold_factor  = 5,     /* 1.28s data hold */
-        .rta_timeout_factor = 200,  /* 20s alarm timeout */
+        .rta_timeout_factor = 100,  /* 10s alarm timeout (max per IEC 61158-6) */
         .rta_retries       = 5,
     },
 };

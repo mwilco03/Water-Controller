@@ -76,20 +76,29 @@ Offset 24-31 (Interface UUID): 01 00 A0 DE 97 6C D1 11
 
 **MATCH!** ✓ Python RPC header now matches C controller byte-for-byte.
 
-## Current Status: BOTH IMPLEMENTATIONS TIMEOUT
+## Status: RESOLVED — DAP Connect + PrmEnd Succeeded (2026-02-09)
 
-**Critical Finding**: Both C controller AND Python script timeout!
+**The RPC header fixes documented above were necessary but not sufficient.**
+After fixing the header issues (bugs #1-#3 below), additional PNIO block-level
+bugs (#4-#10) were discovered and fixed. The full journey is documented in:
 
-From C controller logs:
+**[docs/development/PROFINET_RPC_BUG_FIXES.md](../../docs/development/PROFINET_RPC_BUG_FIXES.md)**
+
+RTU log confirming success:
 ```
-[INFO] RPC CONNECT: sent 463 bytes OK
-[WARN] RPC CONNECT TIMEOUT after 5000 ms (no response received)
+Connect call-back. Status: 0x00 0x00 0x00 0x00
+State transition: W_CIND -> W_PEIND
+PrmEnd call-back. AREP: 1, result: 0
 ```
 
-This proves the issue is NOT in the RPC header (which now matches perfectly), but somewhere in:
-1. PNIO block structure (AR/IOCR/Alarm/ExpSubmod configuration)
-2. RTU p-net device stack rejection criteria
-3. Network-level issue affecting both implementations
+### Additional bugs found after RPC header was fixed:
+4. IOCRTagHeader VLAN priority (0x0000 → 0xC000)
+5. ARProperties bit position (bit 1 → bit 4)
+6. ExpectedSubmoduleBlockReq wire format (complete rewrite)
+7. IOCR IOData/IOCS NO_IO placement (DAP in wrong IOCR direction)
+8. IOCR frame offset overlap (IOPS byte not accounted for)
+9. AlarmCR rta_timeout_factor > 100 (spec max exceeded)
+10. NDR response parser format (20 bytes PNIOStatus-first, not 24 bytes)
 
 ## Commits Made (Session 014RJQ1WFeNeANju5fF24eoz)
 
@@ -101,16 +110,16 @@ This proves the issue is NOT in the RPC header (which now matches perfectly), bu
 6. **956c594**: Use AR UUID as object_uuid
 7. **d31a82d**: Fix PNIO_UUID constant byte order
 
-## Next Steps (for fresh session)
+## Remaining Work
 
-The Python reference implementation is now structurally correct. The timeout affects BOTH implementations, suggesting:
+The DAP-only Connect + PrmEnd is proven. Next steps:
 
-1. **Compare PNIO blocks** (bytes after RPC+NDR) against p-net expectations
-2. **Check AR properties**: May need different flags/timeouts
-3. **Check IOCR configuration**: Data length, frame IDs, send clock
-4. **Check ExpectedSubmodule**: Module/submodule IDs, data descriptions
-5. **Enable p-net debug logging** on RTU to see rejection reason
-6. **Check actual working capture** if one exists from before regression
+1. **Fix Record Read error handling** — graceful fallback when RTU rejects index 0xF844
+2. **Test full Connect** with discovered modules in ExpectedSubmoduleBlockReq
+3. **Handle ApplicationReady** — RTU-initiated, controller must respond
+4. **Begin cyclic I/O exchange** on configured IOCRs
+
+See [PROFINET_RPC_BUG_FIXES.md](../../docs/development/PROFINET_RPC_BUG_FIXES.md) for full details.
 
 ## References
 - PROFINET spec: IEC 61158-6-10

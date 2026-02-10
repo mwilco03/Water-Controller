@@ -1,5 +1,11 @@
 # PROFINET RPC Timeout Troubleshooting Guide
 
+> **RESOLVED (2026-02-09):** RPC Connect timeouts were caused by **code bugs in
+> the controller**, not networking issues. Ten bugs were found and fixed to
+> achieve the first successful DAP Connect + PrmEnd. See
+> [PROFINET_RPC_BUG_FIXES.md](../development/PROFINET_RPC_BUG_FIXES.md) for the
+> complete fix history.
+
 ## Symptom
 
 Controller logs show:
@@ -14,6 +20,17 @@ Controller logs show:
 DCP discovery works (RTU is discovered), but RPC Connect requests receive no response.
 
 ## Root Cause Analysis
+
+**Primary cause: Code bugs in the controller's RPC packet construction.**
+
+p-net (the PROFINET device stack on RTUs) **silently drops** malformed packets.
+There is no reject, no RST, no error — just silence. This makes RPC timeouts
+indistinguishable from network issues.
+
+If you are seeing timeouts, check the controller code first. The most common
+causes are documented in
+[PROFINET_RPC_BUG_FIXES.md](../development/PROFINET_RPC_BUG_FIXES.md).
+Only investigate networking after verifying the packet structure is correct.
 
 The Water Treatment Controller uses a custom PROFINET controller implementation that communicates with RTUs running p-net (PROFINET device stack). The RPC Connect timeout indicates the RTU is not responding to DCE/RPC connection requests on UDP port 34964.
 
@@ -272,6 +289,44 @@ To avoid RPC timeouts:
 - **DCP discovery failures**: See [DCP_TROUBLESHOOTING.md](./DCP_TROUBLESHOOTING.md)
 - **Cyclic I/O timeouts**: See [CYCLIC_IO_TIMEOUT.md](./CYCLIC_IO_TIMEOUT.md)
 - **Network configuration**: See [NETWORK_SETUP.md](./NETWORK_SETUP.md)
+
+## Resolution History
+
+RPC Connect timeouts were fully resolved on 2026-02-09 after fixing 10 bugs in
+the controller's RPC packet construction and response parsing. The key finding:
+**p-net silently drops malformed packets** — all timeout symptoms were caused by
+code bugs, not network issues.
+
+For the complete bug-by-bug analysis, see:
+- [PROFINET RPC Bug Fixes](../development/PROFINET_RPC_BUG_FIXES.md) — full journey
+- [Experimental Debug README](../../experimental/profinet-rpc-debug/README.md) — initial investigation
+
+### Quick Checklist for Future RPC Issues
+
+If RPC timeouts return after code changes, verify:
+
+1. **No inter-block padding** — blocks must be contiguous
+2. **UUIDs are LE-swapped** — per DREP=0x10
+3. **NDR header present** — 20 bytes before first PNIO block
+4. **IOCRTagHeader = 0xC000** — VLAN priority 6
+5. **Frame offsets don't overlap** — each entry needs data_length+1 bytes
+6. **rta_timeout_factor <= 100** — IEC 61158-6 maximum
+7. **Response parser reads 20 bytes** — PNIOStatus first, not ArgsMaximum
+
+### Enable Debug Logging on RTU
+
+Install debug p-net library on the RTU for RTU-side error visibility:
+```bash
+ssh root@<rtu-ip>
+cd /tmp && git clone https://github.com/mwilco03/p-net.git p-net-debug
+cd p-net-debug && mkdir build && cd build
+cmake .. -DCMAKE_BUILD_TYPE=Debug -DLOG_LEVEL=3 -DBUILD_SHARED_LIBS=ON
+make -j$(nproc)
+# Backup original, install debug version
+cp /usr/lib/libprofinet.so /usr/lib/libprofinet.so.bak
+cp libprofinet.so /usr/lib/
+systemctl restart water-treat
+```
 
 ## Support
 

@@ -292,6 +292,26 @@ static uint32_t rpc_hdr_u32(const profinet_rpc_header_t *hdr, uint32_t val)
 
 /* ============== NDR Header Support ============== */
 
+/**
+ * @brief Read uint32 from NDR response data respecting response DREP.
+ *
+ * p-net writes NDR fields (PNIOStatus, ArgsLength, etc.) using the byte order
+ * indicated by the response RPC header's DREP[0] field.  The response DREP may
+ * differ from the request DREP — the server is free to choose its own encoding.
+ */
+static uint32_t read_ndr_u32(const profinet_rpc_header_t *hdr,
+                              const uint8_t *buf, size_t pos)
+{
+    if (hdr->drep[0] & 0x10) {
+        /* Little-endian */
+        return (uint32_t)buf[pos] | ((uint32_t)buf[pos+1] << 8) |
+               ((uint32_t)buf[pos+2] << 16) | ((uint32_t)buf[pos+3] << 24);
+    }
+    /* Big-endian */
+    return ((uint32_t)buf[pos] << 24) | ((uint32_t)buf[pos+1] << 16) |
+           ((uint32_t)buf[pos+2] << 8) | (uint32_t)buf[pos+3];
+}
+
 /* Size of NDR request header inserted before PNIO blocks */
 #define NDR_REQUEST_HEADER_SIZE 20
 
@@ -347,11 +367,16 @@ static void write_ndr_request_header(uint8_t *buf, size_t pos,
 /**
  * @brief Detect whether an NDR header is present after the RPC header.
  *
- * Heuristic: PNIO response block types start with 0x81xx (response) or
- * 0x01xx (request).  An NDR header starts with ArgsMaximum which is
- * a LE uint32 — its first byte is never 0x81 or 0x01 for realistic
- * PDU sizes, so we can distinguish by checking the first two bytes as
- * a big-endian block type.
+ * Heuristic: PNIO block types are big-endian uint16 in well-known ranges.
+ * An NDR header starts with PNIOStatus (4 bytes) whose first byte is either
+ * 0x00 (success) or an error code like 0xDE/0xCF — never a valid block type.
+ *
+ * PNIO block type ranges (IEC 61158-6-10):
+ *   0x0001-0x00FF  Request blocks (IODConnectReq, IODReadReq, etc.)
+ *   0x0100-0x01FF  AR/IOCR/Alarm blocks
+ *   0x0200-0x02FF  Ident/Diff/Diag blocks
+ *   0x8001-0x80FF  Response blocks (IODReadRes=0x8009, IODWriteRes=0x8008)
+ *   0x8100-0x81FF  Response blocks (ARBlockRes=0x8101, IOCRBlockRes=0x8102)
  *
  * @param[in] buf  Response buffer
  * @param[in] pos  Byte offset right after RPC header
@@ -367,13 +392,12 @@ static bool response_has_ndr_header(const uint8_t *buf, size_t pos, size_t len)
     /* Read first 2 bytes as big-endian (potential block type) */
     uint16_t maybe_type = (uint16_t)((buf[pos] << 8) | buf[pos + 1]);
 
-    /* Valid response block types: 0x8101-0x810F */
-    if (maybe_type >= 0x8101 && maybe_type <= 0x810F) {
-        return false;
+    /* Check all known PNIO block type ranges */
+    if (maybe_type >= 0x0001 && maybe_type <= 0x02FF) {
+        return false;  /* Request/AR/Ident block starts directly */
     }
-    /* Valid request block types: 0x0101-0x010F */
-    if (maybe_type >= 0x0101 && maybe_type <= 0x010F) {
-        return false;
+    if (maybe_type >= 0x8001 && maybe_type <= 0x81FF) {
+        return false;  /* Response block starts directly */
     }
 
     return true;
@@ -450,17 +474,26 @@ wtc_result_t rpc_context_init(rpc_context_t *ctx,
         }
     }
 
-    /* Bind to controller IP + ephemeral port.
-     * If controller_ip is known, bind to it so the source address in
-     * outgoing UDP packets is correct (RTU checks this against the
-     * CMInitiatorIPAddress in the ARBlockReq).  If unknown (0),
-     * bind to INADDR_ANY and rely on SO_BINDTODEVICE for routing. */
+    /*
+     * Bind to controller IP + PNIO_RPC_PORT (34964).
+     *
+     * p-net v0.2.0 sends CControl (ApplicationReady) to the well-known
+     * PROFINET RPC port (34964) rather than the ephemeral port communicated
+     * in the ARBlockReq cm_initiator_udp_port field.  We must listen on
+     * port 34964 to receive it.
+     *
+     * SO_REUSEADDR allows rebinding after a crash without TIME_WAIT delay.
+     */
+    int reuse = 1;
+    setsockopt(ctx->socket_fd, SOL_SOCKET, SO_REUSEADDR,
+               &reuse, sizeof(reuse));
+
     struct sockaddr_in local_addr;
     memset(&local_addr, 0, sizeof(local_addr));
     local_addr.sin_family = AF_INET;
     local_addr.sin_addr.s_addr = (controller_ip != 0)
         ? htonl(controller_ip) : INADDR_ANY;
-    local_addr.sin_port = 0;  /* Let kernel assign port */
+    local_addr.sin_port = htons(PNIO_RPC_PORT);
 
     if (bind(ctx->socket_fd, (struct sockaddr *)&local_addr,
              sizeof(local_addr)) < 0) {
@@ -588,7 +621,7 @@ wtc_result_t rpc_build_connect_request(rpc_context_t *ctx,
         write_u32_be(buffer, 0xFFFFFFFF, &pos);  /* FrameSendOffset: best effort */
         write_u16_be(buffer, params->iocr[i].watchdog_factor, &pos);
         write_u16_be(buffer, params->data_hold_factor ? params->data_hold_factor : 3, &pos);
-        write_u16_be(buffer, 0, &pos);  /* IOCR tag header */
+        write_u16_be(buffer, IOCR_TAG_HEADER_HIGH, &pos);  /* VLAN prio 6 (p-net requires priority==6) */
         memset(buffer + pos, 0, 6);     /* Multicast MAC (not used for Class 1) */
         pos += 6;
 
@@ -597,16 +630,16 @@ wtc_result_t rpc_build_connect_request(rpc_context_t *ctx,
         write_u32_be(buffer, 0, &pos);  /* API = 0 */
 
         /*
-         * IOData objects: submodules whose data appears in THIS IOCR's frame.
+         * IOData objects: submodules whose PROVIDER data + IOPS appear
+         * in THIS IOCR's cyclic frame.
          *
-         * Directional submodules (data_length > 0):
-         *   Input IOCR  ← input submodules only
-         *   Output IOCR ← output submodules only
+         * Per IEC 61158-6-10 and p-net's pf_cmdev validation:
+         *   Input IOCR  ← input submodules + NO_IO submodules (device provides)
+         *   Output IOCR ← output submodules only (controller provides)
          *
-         * NO_IO submodules (data_length == 0, e.g., DAP slot 0):
-         *   Appear in BOTH IOCRs as IODataObjects with FrameOffset but
-         *   zero data contribution.  This is required per IEC 61158-6
-         *   so that each submodule gets an IOPS byte in the cyclic frame.
+         * NO_IO submodules (DAP) have no data but need an IOPS byte in
+         * the INPUT IOCR frame.  They do NOT appear in the OUTPUT IOCR
+         * IODataObjects because the controller does not provide their IOPS.
          *
          * Each IODataObject = SlotNumber(u16) + SubslotNumber(u16)
          *                   + IODataObjectFrameOffset(u16) = 6 bytes
@@ -616,51 +649,76 @@ wtc_result_t rpc_build_connect_request(rpc_context_t *ctx,
         int iodata_count = 0;
         uint16_t iodata_frame_offset = 0;
         for (int j = 0; j < params->expected_count; j++) {
-            if (params->expected_config[j].data_length == 0 ||
-                params->expected_config[j].is_input == is_input_iocr) {
-                iodata_count++;
+            bool no_io = (params->expected_config[j].data_length == 0);
+            if (no_io) {
+                /* NO_IO: only in INPUT IOCR */
+                if (is_input_iocr) iodata_count++;
+            } else {
+                /* Directional: in matching IOCR */
+                if (params->expected_config[j].is_input == is_input_iocr)
+                    iodata_count++;
             }
         }
         write_u16_be(buffer, (uint16_t)iodata_count, &pos);
 
         uint16_t running_offset = 0;
         for (int j = 0; j < params->expected_count; j++) {
-            if (params->expected_config[j].data_length != 0 &&
-                params->expected_config[j].is_input != is_input_iocr) {
-                continue;
+            bool no_io = (params->expected_config[j].data_length == 0);
+            bool include;
+            if (no_io) {
+                include = is_input_iocr;
+            } else {
+                include = (params->expected_config[j].is_input == is_input_iocr);
             }
+            if (!include) continue;
             write_u16_be(buffer, params->expected_config[j].slot, &pos);
             write_u16_be(buffer, params->expected_config[j].subslot, &pos);
             write_u16_be(buffer, running_offset, &pos);
-            running_offset += params->expected_config[j].data_length;
+            /* Advance past data + 1 byte for IOPS.  p-net calculates each
+             * submodule's iops_offset = data_offset + data_length, so every
+             * IOData entry (including NO_IO with data_length=0) must occupy
+             * at least 1 byte for its IOPS to avoid overlap. */
+            running_offset += params->expected_config[j].data_length + 1;
         }
-        /* IOPS bytes follow user data (1 per IOData submodule) */
-        iodata_frame_offset = running_offset + (uint16_t)iodata_count;
+        /* running_offset already accounts for all data + IOPS bytes */
+        iodata_frame_offset = running_offset;
 
         /*
-         * IOCS objects: consumer status bytes.
+         * IOCS objects: consumer status bytes for submodules whose data
+         * is in the OTHER IOCR.
          *
-         * Directional submodules:
-         *   Input IOCR  ← IOCS for output submodules
-         *   Output IOCR ← IOCS for input submodules
+         * Per IEC 61158-6-10 and p-net's pf_cmdev validation:
+         *   Input IOCR  ← IOCS for output submodules only
+         *   Output IOCR ← IOCS for input submodules + NO_IO submodules
          *
-         * NO_IO submodules: appear in BOTH IOCRs as IOCS (same as IOData).
+         * NO_IO submodules get IOCS in the OUTPUT IOCR because the
+         * controller (consumer of device-provided status) sends its
+         * consumer acknowledgement there.
          */
         int iocs_count = 0;
         for (int j = 0; j < params->expected_count; j++) {
-            if (params->expected_config[j].data_length == 0 ||
-                params->expected_config[j].is_input != is_input_iocr) {
-                iocs_count++;
+            bool no_io = (params->expected_config[j].data_length == 0);
+            if (no_io) {
+                /* NO_IO: only in OUTPUT IOCR */
+                if (!is_input_iocr) iocs_count++;
+            } else {
+                /* Directional: in opposite IOCR */
+                if (params->expected_config[j].is_input != is_input_iocr)
+                    iocs_count++;
             }
         }
         write_u16_be(buffer, (uint16_t)iocs_count, &pos);
 
         uint16_t iocs_offset = iodata_frame_offset;
         for (int j = 0; j < params->expected_count; j++) {
-            if (params->expected_config[j].data_length != 0 &&
-                params->expected_config[j].is_input == is_input_iocr) {
-                continue;
+            bool no_io = (params->expected_config[j].data_length == 0);
+            bool include;
+            if (no_io) {
+                include = !is_input_iocr;
+            } else {
+                include = (params->expected_config[j].is_input != is_input_iocr);
             }
+            if (!include) continue;
             write_u16_be(buffer, params->expected_config[j].slot, &pos);
             write_u16_be(buffer, params->expected_config[j].subslot, &pos);
             write_u16_be(buffer, iocs_offset, &pos);
@@ -684,7 +742,9 @@ wtc_result_t rpc_build_connect_request(rpc_context_t *ctx,
     write_u16_be(buffer, 1, &pos);  /* Alarm CR type */
     write_u16_be(buffer, PROFINET_ETHERTYPE, &pos);  /* LT */
     write_u32_be(buffer, 0, &pos);  /* Alarm CR properties */
-    write_u16_be(buffer, params->rta_timeout_factor ? params->rta_timeout_factor : 100, &pos);
+    uint16_t rta_tf = params->rta_timeout_factor ? params->rta_timeout_factor : 100;
+    if (rta_tf > 100) rta_tf = 100;  /* IEC 61158-6 max */
+    write_u16_be(buffer, rta_tf, &pos);
     write_u16_be(buffer, params->rta_retries ? params->rta_retries : 3, &pos);
     write_u16_be(buffer, 0x0001, &pos);  /* Local alarm reference */
     write_u16_be(buffer, params->max_alarm_data_length, &pos);
@@ -702,12 +762,30 @@ wtc_result_t rpc_build_connect_request(rpc_context_t *ctx,
     size_t exp_block_start = pos;
     pos += 6;  /* Skip header */
 
-    write_u16_be(buffer, 1, &pos);  /* Number of APIs */
+    /*
+     * ExpectedSubmoduleBlockReq format (IEC 61158-6 §5.2.3.6):
+     *
+     *   NumberOfAPIs (u16)
+     *   { API (u32)
+     *     SlotNumber (u16)
+     *     ModuleIdentNumber (u32)
+     *     ModuleProperties (u16)
+     *     NumberOfSubmodules (u16)
+     *     { SubslotNumber (u16)
+     *       SubmoduleIdentNumber (u32)
+     *       SubmoduleProperties (u16)
+     *       DataDescription(s)
+     *     }*
+     *   }*
+     *
+     * Each API-loop entry describes ONE module (slot).  For multiple
+     * modules under the same API, repeat the API number.
+     *
+     * p-net (pf_block_reader.c:307) unconditionally reads 1 DataDescriptor
+     * per submodule, even for NO_IO.  We must write one for every submodule.
+     */
 
-    /* API 0 */
-    write_u32_be(buffer, 0, &pos);  /* API number */
-
-    /* Count unique slots */
+    /* Count unique slots — each becomes one API-loop entry */
     int unique_slots = 0;
     uint16_t seen_slots[WTC_MAX_SLOTS] = {0};
     for (int j = 0; j < params->expected_count; j++) {
@@ -722,11 +800,13 @@ wtc_result_t rpc_build_connect_request(rpc_context_t *ctx,
             seen_slots[unique_slots++] = params->expected_config[j].slot;
         }
     }
-    write_u16_be(buffer, (uint16_t)unique_slots, &pos);
 
-    /* Slot/Submodule data */
+    write_u16_be(buffer, (uint16_t)unique_slots, &pos);  /* NumberOfAPIs */
+
     for (int s = 0; s < unique_slots; s++) {
         uint16_t slot = seen_slots[s];
+
+        write_u32_be(buffer, 0, &pos);  /* API = 0 */
         write_u16_be(buffer, slot, &pos);
 
         /* Find module ident for this slot */
@@ -758,9 +838,9 @@ wtc_result_t rpc_build_connect_request(rpc_context_t *ctx,
             write_u32_be(buffer, params->expected_config[j].submodule_ident, &pos);
 
             /* SubmoduleProperties: bits 0-1 = Type per IEC 61158-6
-             *   0 = NO_IO  → 0 DataDescriptions
-             *   1 = INPUT  → 1 DataDescription (type 0x0001)
-             *   2 = OUTPUT → 1 DataDescription (type 0x0002)
+             *   0 = NO_IO
+             *   1 = INPUT
+             *   2 = OUTPUT
              */
             bool is_no_io = (params->expected_config[j].data_length == 0);
             uint16_t submod_props;
@@ -773,20 +853,28 @@ wtc_result_t rpc_build_connect_request(rpc_context_t *ctx,
             }
             write_u16_be(buffer, submod_props, &pos);
 
-            /* DataDescription: 1 block for INPUT/OUTPUT, 0 for NO_IO.
-             * Format per IEC 61158-6:
-             *   DataDescription(u16) + SubmoduleDataLength(u16) +
-             *   LengthIOPS(u8) + LengthIOCS(u8) */
-            if (!is_no_io) {
-                uint16_t data_desc_type = params->expected_config[j].is_input
-                                          ? 0x0001 : 0x0002;
-                write_u16_be(buffer, data_desc_type, &pos);
-                write_u16_be(buffer, params->expected_config[j].data_length, &pos);
-                write_u8(buffer + pos, 1);  /* LengthIOPS */
-                pos++;
-                write_u8(buffer + pos, 1);  /* LengthIOCS */
-                pos++;
+            /* DataDescription: p-net always reads 1 per submodule
+             * (pf_block_reader.c:307-311), even for NO_IO.
+             * Format: DataDirection(u16) + SubmoduleDataLength(u16) +
+             *         LengthIOPS(u8) + LengthIOCS(u8) = 6 bytes */
+            uint16_t data_desc_dir;
+            uint16_t data_desc_len;
+            if (is_no_io) {
+                data_desc_dir = 0x0001;  /* Input (placeholder for NO_IO) */
+                data_desc_len = 0;
+            } else if (params->expected_config[j].is_input) {
+                data_desc_dir = 0x0001;  /* Input */
+                data_desc_len = params->expected_config[j].data_length;
+            } else {
+                data_desc_dir = 0x0002;  /* Output */
+                data_desc_len = params->expected_config[j].data_length;
             }
+            write_u16_be(buffer, data_desc_dir, &pos);
+            write_u16_be(buffer, data_desc_len, &pos);
+            write_u8(buffer + pos, 1);  /* LengthIOPS */
+            pos++;
+            write_u8(buffer + pos, 1);  /* LengthIOCS */
+            pos++;
         }
     }
 
@@ -874,50 +962,63 @@ wtc_result_t rpc_parse_connect_response(const uint8_t *buffer,
     bool has_ndr = response_has_ndr_header(buffer, pos, buf_len);
 
     if (has_ndr) {
-        if (pos + 24 > buf_len) {
+        /*
+         * p-net NDR Response Header (20 bytes, byte order per response DREP):
+         *
+         *   Offset  Field          Description
+         *   ------  -------------- ----------------------------------------
+         *   +0      PNIOStatus     Packed: error_code<<24 | error_decode<<16
+         *                          | error_code_1<<8 | error_code_2
+         *                          0x00000000 = success
+         *   +4      ArgsLength     Byte count of the PNIO block payload
+         *   +8      MaximumCount   NDR array conformance (== ArgsLength)
+         *   +12     Offset         NDR array offset (always 0)
+         *   +16     ActualCount    NDR array actual (== ArgsLength)
+         *
+         * Reference: IEC 61158-6-10, pf_cmrpc.c pf_cmrpc_rm_connect_rsp().
+         * p-net writes PNIOStatus FIRST via pf_put_pnet_status(), then the
+         * 4-field NDR array header.  Note: p-net v0.2.0 sends DREP=0x00
+         * (big-endian) in responses regardless of request DREP.
+         */
+        if (pos + 20 > buf_len) {
             LOG_ERROR("Connect response too short for NDR header");
             return WTC_ERROR_PROTOCOL;
         }
 
-        /* Parse NDR/PNIO header - values are little-endian */
-        uint32_t args_maximum = buffer[pos] | (buffer[pos+1] << 8) |
-                                (buffer[pos+2] << 16) | (buffer[pos+3] << 24);
-        pos += 4;
-        (void)args_maximum;
-
-        uint32_t error_status1 = buffer[pos] | (buffer[pos+1] << 8) |
-                                 (buffer[pos+2] << 16) | (buffer[pos+3] << 24);
+        /* 1. PNIOStatus (4 bytes, byte order per response DREP) */
+        uint32_t pnio_status = read_ndr_u32(hdr, buffer, pos);
         pos += 4;
 
-        uint32_t error_status2 = buffer[pos] | (buffer[pos+1] << 8) |
-                                 (buffer[pos+2] << 16) | (buffer[pos+3] << 24);
-        pos += 4;
-
-        LOG_DEBUG("Connect response NDR: error1=0x%08X, error2=0x%08X",
-                  error_status1, error_status2);
-
-        /* Check for PNIO-level errors */
-        if (error_status1 != 0 || error_status2 != 0) {
-            LOG_ERROR("Connect response PNIO error: status1=0x%08X, status2=0x%08X",
-                      error_status1, error_status2);
+        if (pnio_status != 0) {
+            uint8_t err_code   = (uint8_t)((pnio_status >> 24) & 0xFF);
+            uint8_t err_decode = (uint8_t)((pnio_status >> 16) & 0xFF);
+            uint8_t err_code1  = (uint8_t)((pnio_status >> 8)  & 0xFF);
+            uint8_t err_code2  = (uint8_t)(pnio_status & 0xFF);
+            LOG_ERROR("Connect response PNIO error: code=0x%02X decode=0x%02X "
+                      "code_1=0x%02X code_2=0x%02X",
+                      err_code, err_decode, err_code1, err_code2);
             response->success = false;
-            response->error_code = (uint8_t)(error_status2 & 0xFF);
+            response->error_code = err_code2;
             return WTC_ERROR_PROTOCOL;
         }
 
-        /* Skip NDR array conformance header */
-        uint32_t max_count = buffer[pos] | (buffer[pos+1] << 8) |
-                             (buffer[pos+2] << 16) | (buffer[pos+3] << 24);
+        /* 2. ArgsLength (4 bytes per DREP) */
+        uint32_t args_length = read_ndr_u32(hdr, buffer, pos);
         pos += 4;
 
-        pos += 4;  /* Skip offset (always 0) */
-
-        uint32_t actual_count = buffer[pos] | (buffer[pos+1] << 8) |
-                                (buffer[pos+2] << 16) | (buffer[pos+3] << 24);
+        /* 3. MaximumCount (4 bytes per DREP) */
+        uint32_t max_count = read_ndr_u32(hdr, buffer, pos);
         pos += 4;
 
-        LOG_DEBUG("Connect response NDR array: max=%u, actual=%u",
-                  max_count, actual_count);
+        /* 4. Offset (4 bytes per DREP, always 0) */
+        pos += 4;
+
+        /* 5. ActualCount (4 bytes per DREP) */
+        uint32_t actual_count = read_ndr_u32(hdr, buffer, pos);
+        pos += 4;
+
+        LOG_DEBUG("Connect response NDR: args_len=%u, max=%u, actual=%u",
+                  args_length, max_count, actual_count);
 
         if (actual_count == 0) {
             LOG_ERROR("Connect response: no PNIO data in response");
@@ -1056,7 +1157,8 @@ wtc_result_t rpc_parse_connect_response(const uint8_t *buffer,
         }
 
         pos = block_end;
-        align_to_4(&pos);
+        /* No inter-block alignment — PNIO blocks are contiguous per
+         * IEC 61158-6-10 and p-net's block writer (pf_put_*_result). */
     }
 
     if (!response->success) {
@@ -1064,7 +1166,8 @@ wtc_result_t rpc_parse_connect_response(const uint8_t *buffer,
         return WTC_ERROR_PROTOCOL;
     }
 
-    LOG_INFO("Connect response parsed successfully");
+    LOG_INFO("Connect response parsed successfully (frame_ids=%d)",
+             response->frame_id_count);
     return WTC_OK;
 }
 
@@ -1118,9 +1221,13 @@ wtc_result_t rpc_build_control_request(rpc_context_t *ctx,
     uint32_t args_max = (uint32_t)(RPC_MAX_PDU_SIZE - sizeof(profinet_rpc_header_t));
     write_ndr_request_header(buffer, ndr_header_pos, args_max, pnio_len);
 
-    /* Build RPC header */
+    /* Build RPC header.
+     * Reuse the activity_uuid from the Connect session — p-net matches
+     * PrmEnd/Release to the session allocated during Connect by
+     * activity_uuid.  Generating a new UUID would create a new session,
+     * exhausting p-net's limited session pool ("Out of session resources").
+     * The sequence_number is auto-incremented in build_rpc_header(). */
     uint16_t fragment_length = (uint16_t)(pos - sizeof(profinet_rpc_header_t));
-    rpc_generate_uuid(ctx->activity_uuid);
     build_rpc_header(buffer, ctx, ar_uuid, RPC_OPNUM_CONTROL,
                       fragment_length, &save_pos);
 
@@ -1165,37 +1272,36 @@ wtc_result_t rpc_parse_control_response(const uint8_t *buffer,
         return WTC_ERROR_PROTOCOL;
     }
 
-    /* Validate OpNum — DREP-aware decode; Control operations use OpNum 4 */
+    /* Validate OpNum — DREP-aware decode; Control uses OpNum 4, Release uses OpNum 1 */
     uint16_t ctrl_opnum = rpc_hdr_u16(hdr, hdr->opnum);
-    if (ctrl_opnum != RPC_OPNUM_CONTROL) {
-        LOG_WARN("Control response: opnum=%u (expected %u)",
-                 ctrl_opnum, RPC_OPNUM_CONTROL);
+    if (ctrl_opnum != RPC_OPNUM_CONTROL && ctrl_opnum != RPC_OPNUM_RELEASE) {
+        LOG_WARN("Control/Release response: opnum=%u (expected %u or %u)",
+                 ctrl_opnum, RPC_OPNUM_CONTROL, RPC_OPNUM_RELEASE);
     }
 
     size_t pos = sizeof(profinet_rpc_header_t);
 
-    /* Skip NDR response header if present (some devices include it) */
+    /* p-net NDR Response Header (20 bytes): PNIOStatus + ArgsLength +
+     * MaxCount + Offset + ActualCount.  See Connect response parser. */
     bool has_ndr = response_has_ndr_header(buffer, pos, buf_len);
     if (has_ndr) {
-        if (pos + 24 > buf_len) {
+        if (pos + 20 > buf_len) {
             LOG_ERROR("Control response too short for NDR header");
             return WTC_ERROR_PROTOCOL;
         }
-        pos += 4;  /* ArgsMaximum */
 
-        uint32_t error_status1 = buffer[pos] | (buffer[pos+1] << 8) |
-                                 (buffer[pos+2] << 16) | (buffer[pos+3] << 24);
-        pos += 4;
-        uint32_t error_status2 = buffer[pos] | (buffer[pos+1] << 8) |
-                                 (buffer[pos+2] << 16) | (buffer[pos+3] << 24);
+        uint32_t pnio_status = read_ndr_u32(hdr, buffer, pos);
         pos += 4;
 
-        if (error_status1 != 0 || error_status2 != 0) {
-            LOG_ERROR("Control response PNIO error: status1=0x%08X, status2=0x%08X",
-                      error_status1, error_status2);
+        if (pnio_status != 0) {
+            LOG_ERROR("Control response PNIO error: code=0x%02X decode=0x%02X "
+                      "code_1=0x%02X code_2=0x%02X",
+                      (pnio_status >> 24) & 0xFF, (pnio_status >> 16) & 0xFF,
+                      (pnio_status >> 8) & 0xFF, pnio_status & 0xFF);
             return WTC_ERROR_PROTOCOL;
         }
 
+        pos += 4;  /* ArgsLength */
         pos += 4;  /* MaxCount */
         pos += 4;  /* Offset */
         pos += 4;  /* ActualCount */
@@ -1207,8 +1313,9 @@ wtc_result_t rpc_parse_control_response(const uint8_t *buffer,
     }
 
     uint16_t block_type = read_u16_be(buffer, &pos);
-    if (block_type != BLOCK_TYPE_IOD_CONTROL_RES) {
-        LOG_ERROR("Control response: unexpected block type 0x%04X", block_type);
+    if (block_type != BLOCK_TYPE_IOD_CONTROL_RES &&
+        block_type != BLOCK_TYPE_RELEASE_BLOCK_RES) {
+        LOG_ERROR("Control/Release response: unexpected block type 0x%04X", block_type);
         return WTC_ERROR_PROTOCOL;
     }
 
@@ -1238,8 +1345,53 @@ wtc_result_t rpc_build_release_request(rpc_context_t *ctx,
                                         uint8_t *buffer,
                                         size_t *buf_len)
 {
-    return rpc_build_control_request(ctx, ar_uuid, session_key,
-                                      CONTROL_CMD_RELEASE, buffer, buf_len);
+    if (!ctx || !ar_uuid || !buffer || !buf_len) {
+        return WTC_ERROR_INVALID_PARAM;
+    }
+
+    if (*buf_len < RPC_MAX_PDU_SIZE) {
+        return WTC_ERROR_NO_MEMORY;
+    }
+
+    size_t pos = sizeof(profinet_rpc_header_t);
+
+    /* NDR request header */
+    size_t ndr_header_pos = pos;
+    pos += NDR_REQUEST_HEADER_SIZE;
+    size_t pnio_blocks_start = pos;
+
+    /* ReleaseBlockReq (0x0114) — same wire format as IODControlReq */
+    size_t block_start = pos;
+    pos += 6;  /* Skip header */
+
+    write_u16_be(buffer, 0, &pos);  /* Reserved */
+    memcpy(buffer + pos, ar_uuid, 16);
+    pos += 16;
+    write_u16_be(buffer, session_key, &pos);
+    write_u16_be(buffer, 0, &pos);  /* Reserved */
+    write_u16_be(buffer, CONTROL_CMD_RELEASE, &pos);  /* 0x0004 = BIT(2) */
+    write_u16_be(buffer, 0, &pos);  /* Control block properties */
+
+    size_t block_len = pos - block_start - 4;
+    size_t save_pos = block_start;
+    write_block_header(buffer, BLOCK_TYPE_RELEASE_BLOCK_REQ,
+                        (uint16_t)block_len, &save_pos);
+
+    /* Fill NDR request header */
+    uint32_t pnio_len = (uint32_t)(pos - pnio_blocks_start);
+    uint32_t args_max = (uint32_t)(RPC_MAX_PDU_SIZE - sizeof(profinet_rpc_header_t));
+    write_ndr_request_header(buffer, ndr_header_pos, args_max, pnio_len);
+
+    /* Build RPC header with OpNum 1 (Release), NOT OpNum 4 (Control).
+     * Reuse the activity_uuid from the Connect session (same as Control). */
+    uint16_t fragment_length = (uint16_t)(pos - sizeof(profinet_rpc_header_t));
+    build_rpc_header(buffer, ctx, ar_uuid, RPC_OPNUM_RELEASE,
+                      fragment_length, &save_pos);
+
+    *buf_len = pos;
+
+    LOG_DEBUG("Built Release request: %zu bytes (OpNum=%d)", pos, RPC_OPNUM_RELEASE);
+    return WTC_OK;
 }
 
 wtc_result_t rpc_send_and_receive(rpc_context_t *ctx,
@@ -1402,6 +1554,19 @@ wtc_result_t rpc_send_and_receive(rpc_context_t *ctx,
         snprintf(resp_hex + i*3, 4, "%02X ", response[i]);
     }
     LOG_INFO("RPC %s RESPONSE[0:32]: %s", pkt_type_name, resp_hex);
+
+    /*
+     * Disconnect the UDP socket so it can receive from any source.
+     * connect() on UDP sets a source address filter — only packets from the
+     * connected peer are delivered.  After the request/response exchange,
+     * we need the socket to also receive CControl (ApplicationReady) from
+     * the device, which may come from a different session or port.
+     */
+    struct sockaddr_in unspec;
+    memset(&unspec, 0, sizeof(unspec));
+    unspec.sin_family = AF_UNSPEC;
+    connect(ctx->socket_fd, (struct sockaddr *)&unspec, sizeof(unspec));
+
     return WTC_OK;
 }
 
@@ -1666,23 +1831,59 @@ wtc_result_t rpc_parse_incoming_control_request(const uint8_t *buffer,
         return WTC_ERROR_PROTOCOL;
     }
 
+    /* Save DREP for response UUID re-encoding */
+    request->drep0 = hdr->drep[0];
+
     /* Save activity UUID and sequence for response — DREP-aware decode */
     memcpy(request->activity_uuid, hdr->activity_uuid, 16);
     request->sequence_number = rpc_hdr_u32(hdr, hdr->sequence_number);
 
-    /* Parse the IOD Control Request block */
+    /* Save interface UUID for echoing in response (already in wire format) */
+    memcpy(request->interface_uuid, hdr->interface_uuid, 16);
+
+    /* Parse the IOD/IOC Control Request block */
     size_t pos = sizeof(profinet_rpc_header_t);
+
+    /*
+     * Skip NDR request header if present (20 bytes).
+     * p-net includes ArgsMaximum + ArgsLength + MaxCount + Offset + ActualCount
+     * before the PNIO block in all RPC requests, including CControl
+     * (ApplicationReady).  Use the same heuristic as the response parser
+     * to detect whether the NDR header is present.
+     */
+    bool has_ndr = response_has_ndr_header(buffer, pos, buf_len);
+    if (has_ndr) {
+        if (pos + NDR_REQUEST_HEADER_SIZE > buf_len) {
+            LOG_ERROR("Incoming control request too short for NDR header");
+            return WTC_ERROR_PROTOCOL;
+        }
+        LOG_DEBUG("Incoming control: skipping %d-byte NDR header",
+                  NDR_REQUEST_HEADER_SIZE);
+        pos += NDR_REQUEST_HEADER_SIZE;
+    }
 
     if (pos + 6 > buf_len) {
         LOG_ERROR("Incoming control request too short for block header");
         return WTC_ERROR_PROTOCOL;
     }
 
+    /*
+     * Accept both IODControlReq (0x0110, DControl) and IOCControlReq (0x0112,
+     * CControl).  Per IEC 61158-6-10:
+     *   - DControl (0x0110): Controller → Device (PrmEnd, Release)
+     *   - CControl (0x0112): Device → Controller (ApplicationReady)
+     * ApplicationReady uses CControl (0x0112).
+     */
     uint16_t block_type = read_u16_be(buffer, &pos);
-    if (block_type != BLOCK_TYPE_IOD_CONTROL_REQ) {
-        LOG_ERROR("Incoming control request: unexpected block type 0x%04X", block_type);
+    if (block_type != BLOCK_TYPE_IOD_CONTROL_REQ &&
+        block_type != BLOCK_TYPE_IOX_CONTROL_REQ) {
+        LOG_ERROR("Incoming control request: unexpected block type 0x%04X "
+                  "(expected 0x%04X or 0x%04X)",
+                  block_type, BLOCK_TYPE_IOD_CONTROL_REQ,
+                  BLOCK_TYPE_IOX_CONTROL_REQ);
         return WTC_ERROR_PROTOCOL;
     }
+    request->block_type = block_type;
 
     uint16_t block_length = read_u16_be(buffer, &pos);
     (void)block_length;
@@ -1757,12 +1958,26 @@ wtc_result_t rpc_build_control_response(rpc_context_t *ctx,
     memcpy(hdr->object_uuid, request->ar_uuid, 16);
     uuid_swap_fields(hdr->object_uuid);
 
-    /* Interface UUID (Controller) — swap to LE per DREP, same as build_rpc_header */
-    memcpy(hdr->interface_uuid, PNIO_CONTROLLER_INTERFACE_UUID, 16);
-    uuid_swap_fields(hdr->interface_uuid);
-
-    /* Activity UUID — must match request, already in wire format from device */
+    /*
+     * Interface UUID and Activity UUID — echo from incoming request.
+     *
+     * The raw bytes are in the incoming request's DREP encoding.  Our
+     * response uses DREP=LE (0x10).  If the incoming request used a
+     * different DREP (e.g. BE=0x00), we must swap UUID fields 1-3 so
+     * p-net parses the same UUID values when it reads our LE response.
+     *
+     * p-net matches the CControl response to the outgoing session by
+     * activity UUID.  A DREP mismatch causes "Unknown incoming activity
+     * UUID" and the response is silently dropped.
+     */
+    memcpy(hdr->interface_uuid, request->interface_uuid, 16);
     memcpy(hdr->activity_uuid, request->activity_uuid, 16);
+
+    if (request->drep0 != RPC_DREP_LITTLE_ENDIAN) {
+        /* Incoming was BE — swap to LE for our LE response */
+        uuid_swap_fields(hdr->interface_uuid);
+        uuid_swap_fields(hdr->activity_uuid);
+    }
 
     /* All multi-byte header fields in LE (matching DREP=0x10) */
     hdr->server_boot = 0;
@@ -1773,8 +1988,31 @@ wtc_result_t rpc_build_control_response(rpc_context_t *ctx,
     hdr->interface_hint = 0xFFFF;
     hdr->activity_hint = 0xFFFF;
 
-    /* Build IOD Control Response block */
+    /*
+     * NDR Response Header (20 bytes, all LE per DREP=0x10):
+     *   ArgsMaximum(4) + ArgsLength(4) + MaxCount(4) + Offset(4) + ActualCount(4)
+     *
+     * Per the PROFINET spec the first field in a response NDR is PNIOStatus,
+     * but p-net v0.2.0 uses pf_get_ndr_data() which reads it as ArgsMaximum
+     * (same 20-byte format for both request and response).  Setting it to 0
+     * works because p-net does not validate ArgsMaximum >= ArgsLength.
+     */
     size_t pos = sizeof(profinet_rpc_header_t);
+    size_t ndr_pos = pos;
+    pos += 20;  /* Reserve space for NDR response header */
+    size_t blocks_start = pos;
+
+    /*
+     * Determine response block type from request block type:
+     *   IODControlReq (0x0110) → IODControlRes (0x8110) — DControl
+     *   IOCControlReq (0x0112) → IOCControlRes (0x8112) — CControl
+     * ApplicationReady from device uses CControl (0x0112/0x8112).
+     */
+    uint16_t resp_block_type = (request->block_type == BLOCK_TYPE_IOX_CONTROL_REQ)
+                               ? BLOCK_TYPE_IOX_CONTROL_RES
+                               : BLOCK_TYPE_IOD_CONTROL_RES;
+
+    /* Build Control Response block */
     size_t block_start = pos;
     pos += 6;  /* Skip header, fill later */
 
@@ -1783,14 +2021,36 @@ wtc_result_t rpc_build_control_response(rpc_context_t *ctx,
     pos += 16;
     write_u16_be(buffer, request->session_key, &pos);
     write_u16_be(buffer, 0, &pos);  /* Reserved */
-    write_u16_be(buffer, request->control_command, &pos);  /* Echo command */
+    write_u16_be(buffer, CONTROL_CMD_DONE, &pos);  /* Response uses DONE (0x0008) */
     write_u16_be(buffer, 0, &pos);  /* Control block properties */
 
-    /* Fill block header */
+    /* Fill block header with correct response block type */
     size_t block_len = pos - block_start - 4;
     size_t save_pos = block_start;
-    write_block_header(buffer, BLOCK_TYPE_IOD_CONTROL_RES,
-                        (uint16_t)block_len, &save_pos);
+    write_block_header(buffer, resp_block_type, (uint16_t)block_len, &save_pos);
+
+    /* Fill NDR response header */
+    uint32_t blocks_len = (uint32_t)(pos - blocks_start);
+    size_t p = ndr_pos;
+    /* ArgsMaximum = 0 (p-net reads PNIOStatus slot as ArgsMaximum, 4 bytes LE) */
+    buffer[p++] = 0; buffer[p++] = 0; buffer[p++] = 0; buffer[p++] = 0;
+    /* ArgsLength (4 bytes LE) */
+    buffer[p++] = (uint8_t)(blocks_len);
+    buffer[p++] = (uint8_t)(blocks_len >> 8);
+    buffer[p++] = (uint8_t)(blocks_len >> 16);
+    buffer[p++] = (uint8_t)(blocks_len >> 24);
+    /* MaxCount = blocks_len (4 bytes LE) */
+    buffer[p++] = (uint8_t)(blocks_len);
+    buffer[p++] = (uint8_t)(blocks_len >> 8);
+    buffer[p++] = (uint8_t)(blocks_len >> 16);
+    buffer[p++] = (uint8_t)(blocks_len >> 24);
+    /* Offset = 0 (4 bytes LE) */
+    buffer[p++] = 0; buffer[p++] = 0; buffer[p++] = 0; buffer[p++] = 0;
+    /* ActualCount = blocks_len (4 bytes LE) */
+    buffer[p++] = (uint8_t)(blocks_len);
+    buffer[p++] = (uint8_t)(blocks_len >> 8);
+    buffer[p++] = (uint8_t)(blocks_len >> 16);
+    buffer[p++] = (uint8_t)(blocks_len >> 24);
 
     /* Update fragment length in RPC header (LE, matching DREP) */
     uint16_t fragment_length = (uint16_t)(pos - sizeof(profinet_rpc_header_t));
@@ -1801,7 +2061,8 @@ wtc_result_t rpc_build_control_response(rpc_context_t *ctx,
 
     *buf_len = pos;
 
-    LOG_DEBUG("Built control response: %zu bytes", pos);
+    LOG_DEBUG("Built control response: %zu bytes (block_type=0x%04X, NDR=%u bytes payload)",
+              pos, resp_block_type, blocks_len);
     return WTC_OK;
 }
 
@@ -1900,9 +2161,9 @@ wtc_result_t rpc_build_read_request(rpc_context_t *ctx,
     uint32_t args_max = (uint32_t)(RPC_MAX_PDU_SIZE - sizeof(profinet_rpc_header_t));
     write_ndr_request_header(buffer, ndr_header_pos, args_max, pnio_len);
 
-    /* Build RPC header (OpNum = READ) */
+    /* Build RPC header (OpNum = READ).
+     * Reuse the activity_uuid from the Connect session. */
     uint16_t fragment_length = (uint16_t)(pos - sizeof(profinet_rpc_header_t));
-    rpc_generate_uuid(ctx->activity_uuid);
     build_rpc_header(buffer, ctx, params->ar_uuid, RPC_OPNUM_READ,
                       fragment_length, &save_pos);
 
@@ -1913,7 +2174,7 @@ wtc_result_t rpc_build_read_request(rpc_context_t *ctx,
 }
 
 /**
- * @brief Parse RealIdentificationData (index 0xF844) from response data.
+ * @brief Parse RealIdentificationData (index 0xE001/0xF000) from response data.
  *
  * Format: NumberOfAPIs(u16), then for each API:
  *   API(u32), NumberOfSlots(u16), then for each slot:
@@ -2017,34 +2278,30 @@ wtc_result_t rpc_parse_read_response(const uint8_t *buffer,
 
     size_t pos = sizeof(profinet_rpc_header_t);
 
-    /* NDR response header (24 bytes):
-     * ArgsMaximum(4), ErrorStatus1(4), ErrorStatus2(4),
-     * MaxCount(4), Offset(4), ActualCount(4) */
+    /* p-net NDR Response Header (20 bytes): PNIOStatus + ArgsLength +
+     * MaxCount + Offset + ActualCount.  See Connect response parser. */
     bool has_ndr = response_has_ndr_header(buffer, pos, buf_len);
 
     if (has_ndr) {
-        if (pos + 24 > buf_len) {
+        if (pos + 20 > buf_len) {
             LOG_ERROR("Read response too short for NDR header");
             return WTC_ERROR_PROTOCOL;
         }
 
-        pos += 4;  /* ArgsMaximum */
-
-        uint32_t error_status1 = buffer[pos] | (buffer[pos+1] << 8) |
-                                 (buffer[pos+2] << 16) | (buffer[pos+3] << 24);
-        pos += 4;
-        uint32_t error_status2 = buffer[pos] | (buffer[pos+1] << 8) |
-                                 (buffer[pos+2] << 16) | (buffer[pos+3] << 24);
+        uint32_t pnio_status = read_ndr_u32(hdr, buffer, pos);
         pos += 4;
 
-        if (error_status1 != 0 || error_status2 != 0) {
-            LOG_ERROR("Read response PNIO error: status1=0x%08X, status2=0x%08X",
-                      error_status1, error_status2);
+        if (pnio_status != 0) {
+            LOG_ERROR("Read response PNIO error: code=0x%02X decode=0x%02X "
+                      "code_1=0x%02X code_2=0x%02X",
+                      (pnio_status >> 24) & 0xFF, (pnio_status >> 16) & 0xFF,
+                      (pnio_status >> 8) & 0xFF, pnio_status & 0xFF);
             response->success = false;
-            response->error_code = (uint8_t)(error_status2 & 0xFF);
+            response->error_code = (uint8_t)(pnio_status & 0xFF);
             return WTC_ERROR_PROTOCOL;
         }
 
+        pos += 4;  /* ArgsLength */
         pos += 4;  /* MaxCount */
         pos += 4;  /* Offset */
         pos += 4;  /* ActualCount */
@@ -2112,8 +2369,8 @@ wtc_result_t rpc_parse_read_response(const uint8_t *buffer,
             data_available = response->record_data_length;
         }
 
-        /* If this is RealIdentificationData (0xF844), parse the modules */
-        if (response->index == 0xF844) {
+        /* If this is RealIdentificationData (0xE001 or 0xF000), parse the modules */
+        if (response->index == 0xE001 || response->index == 0xF000) {
             wtc_result_t res = parse_real_identification_data(
                 buffer + pos, data_available, response);
             if (res != WTC_OK) {

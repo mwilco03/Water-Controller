@@ -95,8 +95,8 @@ extern "C" {
 
 /* ============== Record Indices ============== */
 
-#define PN_RECORD_INDEX_REAL_IDENT  0xF844   /* RealIdentificationData */
-#define PN_RECORD_INDEX_EXPECTED    0xF840   /* ExpectedIdentificationData */
+#define PN_RECORD_INDEX_REAL_IDENT  0xE001   /* RealIdentificationData for one AR */
+#define PN_RECORD_INDEX_EXPECTED    0xE000   /* ExpectedIdentificationData for one AR */
 #define PN_RECORD_INDEX_IM0         0xAFF0   /* I&M0 */
 #define PN_RECORD_INDEX_IM1         0xAFF1   /* I&M1 */
 
@@ -107,7 +107,7 @@ extern "C" {
 
 /* ============== Module Discovery ============== */
 
-/* Maximum modules an RTU can report via Record Read 0xF844 */
+/* Maximum modules an RTU can report via Record Read 0xE001 */
 #define PN_MAX_DISCOVERED_MODULES   64
 
 /* Discovered module from RealIdentificationData */
@@ -118,7 +118,7 @@ typedef struct {
     uint32_t submodule_ident;
 } pn_discovered_module_t;
 
-/* Result of module discovery (Record Read 0xF844) */
+/* Result of module discovery (Record Read 0xE001) */
 typedef struct {
     pn_discovered_module_t modules[PN_MAX_DISCOVERED_MODULES];
     int module_count;

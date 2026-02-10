@@ -131,11 +131,17 @@ static wtc_result_t send_cyclic_frame(ar_manager_t *manager, profinet_ar_t *ar) 
     uint8_t frame[1518];
     size_t pos = 0;
 
-    /* Ethernet header */
+    /* Ethernet header with 802.1Q VLAN tag (p-net CPM expects VLAN PCP=6) */
     memcpy(frame + pos, ar->device_mac, 6);
     pos += 6;
     memcpy(frame + pos, manager->controller_mac, 6);
     pos += 6;
+    uint16_t vlan_tpid = htons(PROFINET_ETHERTYPE_VLAN);
+    memcpy(frame + pos, &vlan_tpid, 2);
+    pos += 2;
+    uint16_t vlan_tci = htons(0xC000);  /* PCP=6, DEI=0, VID=0 */
+    memcpy(frame + pos, &vlan_tci, 2);
+    pos += 2;
     uint16_t ethertype = htons(PROFINET_ETHERTYPE);
     memcpy(frame + pos, &ethertype, 2);
     pos += 2;
@@ -170,10 +176,11 @@ static wtc_result_t send_cyclic_frame(ar_manager_t *manager, profinet_ar_t *ar) 
     memcpy(frame + pos, &net_counter, 2);
     pos += 2;
 
-    /* Data status */
+    /* Data status: Primary, Valid, Run, No station problem */
     frame[pos++] = PROFINET_DATA_STATUS_STATE |
                    PROFINET_DATA_STATUS_VALID |
-                   PROFINET_DATA_STATUS_RUN;
+                   PROFINET_DATA_STATUS_RUN |
+                   PROFINET_DATA_STATUS_STATION_PROBLEM;
 
     /* Transfer status */
     frame[pos++] = 0x00;
@@ -516,8 +523,24 @@ wtc_result_t ar_manager_process(ar_manager_t *manager) {
                                      ar->device_station_name, ar->state);
                         }
                     } else {
-                        LOG_WARN("Received ApplicationReady for unknown AR (session_key=%u)",
-                                 incoming_req.session_key);
+                        LOG_WARN("Received ApplicationReady for unknown AR "
+                                 "(session_key=%u, ar_uuid=%02x%02x%02x%02x-%02x%02x-%02x%02x)",
+                                 incoming_req.session_key,
+                                 incoming_req.ar_uuid[0], incoming_req.ar_uuid[1],
+                                 incoming_req.ar_uuid[2], incoming_req.ar_uuid[3],
+                                 incoming_req.ar_uuid[4], incoming_req.ar_uuid[5],
+                                 incoming_req.ar_uuid[6], incoming_req.ar_uuid[7]);
+                        /* Dump known ARs for debugging */
+                        for (int i = 0; i < manager->ar_count; i++) {
+                            profinet_ar_t *known = manager->ars[i];
+                            if (!known) continue;
+                            uint8_t *u = (uint8_t *)known->ar_uuid;
+                            LOG_WARN("  Known AR[%d]: %s session_key=%u state=%d "
+                                     "uuid=%02x%02x%02x%02x-%02x%02x-%02x%02x",
+                                     i, known->device_station_name, known->session_key,
+                                     known->state,
+                                     u[0], u[1], u[2], u[3], u[4], u[5], u[6], u[7]);
+                        }
                     }
                     pthread_mutex_unlock(&manager->lock);
                 } else {
@@ -956,99 +979,60 @@ wtc_result_t ar_send_connect_request(ar_manager_t *manager,
             }
         }
 
-        /* Cascading module discovery: ModuleDiffBlock → Record Read 0xF844 → HTTP /slots */
+        /* ModuleDiffBlock handling:
+         * The device reports which submodules differ from our expected config.
+         * For DAP-only connections, DAP subslots (slot 0, subslots 0x8000/0x8001)
+         * always show as "substitute" because our expected idents (0x100/0x200)
+         * differ from the device's configured idents (0x8000/0x8001).
+         * This is informational — the device ACCEPTS the connection regardless
+         * and enters W_PEIND.  Proceed to PrmEnd; do not retry. */
         if (response.has_diff && response.discovered_count > 0) {
-            /* Check retry limit for module mismatch - use ABORT handler's retry_count */
-            if (ar->retry_count >= AR_MAX_RETRY_ATTEMPTS) {
-                LOG_ERROR("Module mismatch persists after %d attempts - giving up",
-                         ar->retry_count);
-                ar->state = AR_STATE_ABORT;
-                ar->last_error = WTC_ERROR_CONNECTION_FAILED;  /* Let ABORT handler decide */
-                return WTC_ERROR_CONNECTION_FAILED;
+            bool has_app_module_diff = false;
+            for (int i = 0; i < response.discovered_count; i++) {
+                if (response.discovered_modules[i].slot > 0) {
+                    has_app_module_diff = true;
+                    break;
+                }
             }
 
-            /* Store discovered modules from ModuleDiffBlock */
-            LOG_WARN("Device reported module mismatch (%d modules discovered), will retry with correct config (attempt %d/%d)",
-                     response.discovered_count, ar->retry_count + 1, AR_MAX_RETRY_ATTEMPTS);
-
-            ar->has_discovered_modules = true;
-            ar->discovered_count = response.discovered_count < WTC_MAX_SLOTS ? response.discovered_count : WTC_MAX_SLOTS;
-
-            for (int i = 0; i < ar->discovered_count; i++) {
-                ar->discovered_modules[i].slot = response.discovered_modules[i].slot;
-                ar->discovered_modules[i].subslot = response.discovered_modules[i].subslot;
-                ar->discovered_modules[i].module_ident = response.discovered_modules[i].module_ident;
-                ar->discovered_modules[i].submodule_ident = response.discovered_modules[i].submodule_ident;
-
-                LOG_DEBUG("  Module %d: slot=%u subslot=%u module=0x%08X submodule=0x%08X",
-                         i, ar->discovered_modules[i].slot, ar->discovered_modules[i].subslot,
-                         ar->discovered_modules[i].module_ident, ar->discovered_modules[i].submodule_ident);
-            }
-
-            /* Abort and retry with discovered config - ABORT handler will apply backoff */
-            ar->state = AR_STATE_ABORT;
-            ar->last_activity_ms = time_get_ms();
-            ar->last_error = WTC_ERROR_CONNECTION_FAILED;  /* Transient - will retry */
-
-            LOG_INFO("Stored %d discovered modules, will retry via ABORT handler",
-                     ar->discovered_count);
-            return WTC_ERROR_CONNECTION_FAILED;  /* Trigger retry */
-        }
-
-        /* Fallback to Record Read 0xF844 if ModuleDiffBlock not present or empty */
-        if ((response.has_diff && response.discovered_count == 0) ||
-            (!response.has_diff && !ar->has_discovered_modules)) {
-
-            /* Check retry limit - use ABORT handler's retry_count */
-            if (ar->retry_count >= AR_MAX_RETRY_ATTEMPTS) {
-                LOG_ERROR("Module discovery failed after %d attempts - giving up",
-                         ar->retry_count);
+            if (has_app_module_diff && ar->retry_count < AR_MAX_RETRY_ATTEMPTS) {
+                /* Application modules differ — retry with discovered config */
+                LOG_WARN("Application module mismatch (%d modules), will retry (attempt %d/%d)",
+                         response.discovered_count, ar->retry_count + 1, AR_MAX_RETRY_ATTEMPTS);
+                ar->has_discovered_modules = true;
+                ar->discovered_count = response.discovered_count < WTC_MAX_SLOTS
+                                       ? response.discovered_count : WTC_MAX_SLOTS;
+                for (int i = 0; i < ar->discovered_count; i++) {
+                    ar->discovered_modules[i].slot = response.discovered_modules[i].slot;
+                    ar->discovered_modules[i].subslot = response.discovered_modules[i].subslot;
+                    ar->discovered_modules[i].module_ident = response.discovered_modules[i].module_ident;
+                    ar->discovered_modules[i].submodule_ident = response.discovered_modules[i].submodule_ident;
+                }
                 ar->state = AR_STATE_ABORT;
+                ar->last_activity_ms = time_get_ms();
                 ar->last_error = WTC_ERROR_CONNECTION_FAILED;
                 return WTC_ERROR_CONNECTION_FAILED;
             }
 
-            LOG_INFO("ModuleDiffBlock empty/missing, attempting Record Read 0xF844 discovery");
+            /* DAP-only diff or retries exhausted — proceed to PrmEnd */
+            LOG_INFO("ModuleDiffBlock: %d submodule diffs (DAP-only=%s), proceeding to PrmEnd",
+                     response.discovered_count, has_app_module_diff ? "no" : "yes");
+        }
 
-            /* Try Record Read 0xF844 to discover modules */
-            ar_module_discovery_t discovery;
-            wtc_result_t disc_res = ar_read_real_identification(manager, ar, &discovery);
-
-            if (disc_res == WTC_OK && discovery.module_count > 0) {
-                /* Success! Store discovered modules */
-                LOG_INFO("Discovered %d modules via Record Read 0xF844", discovery.module_count);
-
-                ar->has_discovered_modules = true;
-                ar->discovered_count = discovery.module_count < WTC_MAX_SLOTS ? discovery.module_count : WTC_MAX_SLOTS;
-
-                for (int i = 0; i < ar->discovered_count; i++) {
-                    ar->discovered_modules[i].slot = discovery.modules[i].slot;
-                    ar->discovered_modules[i].subslot = discovery.modules[i].subslot;
-                    ar->discovered_modules[i].module_ident = discovery.modules[i].module_ident;
-                    ar->discovered_modules[i].submodule_ident = discovery.modules[i].submodule_ident;
-                }
-
-                /* Abort and retry with discovered config - ABORT handler will apply backoff */
-                ar->state = AR_STATE_ABORT;
-                ar->last_activity_ms = time_get_ms();
-                ar->last_error = WTC_ERROR_CONNECTION_FAILED;  /* Transient - will retry */
-
-                LOG_INFO("Will retry connect with discovered config via ABORT handler");
-                return WTC_ERROR_CONNECTION_FAILED;  /* Trigger retry */
-            } else {
-                /* Record Read failed - HTTP /slots fallback handled by API layer */
-                LOG_WARN("Record Read 0xF844 failed (%d) - PROFINET discovery exhausted", disc_res);
-                LOG_INFO("HTTP /slots fallback should be handled by API layer before PROFINET connect");
-
-                /* Retry with current (possibly incorrect) config - ABORT handler will apply backoff */
-                ar->state = AR_STATE_ABORT;
-                ar->last_activity_ms = time_get_ms();
-                ar->last_error = WTC_ERROR_CONNECTION_FAILED;  /* Transient - will retry */
-
-                LOG_WARN("Will retry with current config via ABORT handler (attempt %d/%d)",
-                        ar->retry_count + 1, AR_MAX_RETRY_ATTEMPTS);
-                return WTC_ERROR_CONNECTION_FAILED;
-            }
+        /* Proceed to PrmEnd.
+         *
+         * Do NOT attempt Record Read 0xF000 here.  p-net v0.2.0 leaks RPC
+         * sessions: each non-Connect operation (DControl, Read) allocates a
+         * session that is never freed.  With PF_MAX_SESSION = 5 the pool is
+         * exhausted after 2-3 Connect cycles, causing subsequent PrmEnd and
+         * Read requests to be silently dropped ("Out of session resources").
+         *
+         * Module discovery should happen before Connect (HTTP /slots from
+         * the API layer).  If we arrive here without discovered modules the
+         * device still accepted our DAP-only config — proceed to PrmEnd and
+         * the device will signal ApplicationReady when ready. */
+        if (!ar->has_discovered_modules) {
+            LOG_INFO("No ModuleDiffBlock — proceeding with DAP-only config to PrmEnd");
         }
 
         ar->state = AR_STATE_CONNECT_CNF;
@@ -1195,7 +1179,7 @@ rpc_context_t *ar_manager_get_rpc_context(ar_manager_t *manager) {
  * are handled directly by profinet_controller.c using build_rpc_record_request()
  * and send_rpc_request() with the RPC context obtained via
  * ar_manager_get_rpc_context(). The specialized ar_read_real_identification()
- * function handles 0xF844 reads for module discovery. */
+ * function handles 0xF000 reads for module discovery. */
 
 wtc_result_t ar_handle_rt_frame(ar_manager_t *manager,
                                  const uint8_t *frame,
@@ -1204,9 +1188,26 @@ wtc_result_t ar_handle_rt_frame(ar_manager_t *manager,
         return WTC_ERROR_INVALID_PARAM;
     }
 
+    /*
+     * Determine frame ID offset — handle both VLAN-tagged and untagged.
+     * p-net sends VLAN-tagged PPM frames (802.1Q, EtherType 0x8100).
+     * Untagged: [DstMAC 6][SrcMAC 6][0x8892 2][FrameID 2] → offset 14
+     * Tagged:   [DstMAC 6][SrcMAC 6][0x8100 2][TCI 2][0x8892 2][FrameID 2] → offset 18
+     */
+    size_t hdr_offset = ETH_HEADER_LEN; /* 14 by default (untagged) */
+    uint16_t etype_be;
+    memcpy(&etype_be, frame + 12, sizeof(etype_be));
+    if (ntohs(etype_be) == PROFINET_ETHERTYPE_VLAN) {
+        hdr_offset = ETH_HEADER_LEN + 4; /* 18 for VLAN-tagged */
+    }
+
+    if (len < hdr_offset + 4) {
+        return WTC_ERROR_INVALID_PARAM;
+    }
+
     /* Get frame ID - use memcpy to avoid alignment hazards */
     uint16_t frame_id_be;
-    memcpy(&frame_id_be, frame + ETH_HEADER_LEN, sizeof(frame_id_be));
+    memcpy(&frame_id_be, frame + hdr_offset, sizeof(frame_id_be));
     uint16_t frame_id = ntohs(frame_id_be);
 
     /* Find AR by frame ID */
@@ -1220,7 +1221,7 @@ wtc_result_t ar_handle_rt_frame(ar_manager_t *manager,
         if (ar->iocr[i].frame_id == frame_id &&
             ar->iocr[i].type == IOCR_TYPE_INPUT) {
             /* Copy data to buffer */
-            size_t data_offset = ETH_HEADER_LEN + 2; /* After frame ID */
+            size_t data_offset = hdr_offset + 2; /* After frame ID */
             size_t data_len = ar->iocr[i].data_length;
 
             if (data_offset + data_len <= len && ar->iocr[i].data_buffer) {
@@ -1238,7 +1239,34 @@ wtc_result_t ar_handle_rt_frame(ar_manager_t *manager,
 
 wtc_result_t ar_send_output_data(ar_manager_t *manager,
                                   profinet_ar_t *ar) {
-    return send_cyclic_frame(manager, ar);
+    if (!ar || ar->state != AR_STATE_RUN) {
+        return WTC_ERROR_NOT_INITIALIZED;
+    }
+
+    /* Find output IOCR and check per-IOCR send timing */
+    for (int i = 0; i < ar->iocr_count; i++) {
+        if (ar->iocr[i].type == IOCR_TYPE_OUTPUT) {
+            /* Compute IOCR period: SCF × RR × 31.25µs
+             * Integer math: (SCF × RR × 3125) / 100 */
+            uint64_t period_us = ((uint64_t)ar->iocr[i].send_clock_factor *
+                                  ar->iocr[i].reduction_ratio * 3125) / 100;
+            if (period_us == 0) {
+                period_us = 256000; /* Fallback: 256ms */
+            }
+
+            uint64_t now_us = time_get_monotonic_us();
+            if (now_us - ar->iocr[i].last_frame_time_us >= period_us) {
+                wtc_result_t rc = send_cyclic_frame(manager, ar);
+                if (rc == WTC_OK) {
+                    ar->iocr[i].last_frame_time_us = now_us;
+                }
+                return rc;
+            }
+            return WTC_OK; /* Not time to send yet */
+        }
+    }
+
+    return WTC_ERROR_NOT_FOUND;
 }
 
 wtc_result_t ar_manager_get_all(ar_manager_t *manager,
@@ -1505,7 +1533,7 @@ wtc_result_t ar_read_real_identification(ar_manager_t *manager,
 
     memset(discovery, 0, sizeof(ar_module_discovery_t));
 
-    LOG_INFO("=== Phase 3: Record Read 0xF844 from %s ===",
+    LOG_INFO("=== Phase 3: Record Read 0xF000 from %s ===",
              ar->device_station_name);
 
     /* Build Record Read parameters */
@@ -1514,9 +1542,9 @@ wtc_result_t ar_read_real_identification(ar_manager_t *manager,
     memcpy(read_params.ar_uuid, ar->ar_uuid, 16);
     read_params.session_key = ar->session_key;
     read_params.api = 0x00000000;
-    read_params.slot = 0;          /* DAP slot */
-    read_params.subslot = 0x0001;  /* DAP identity subslot */
-    read_params.index = 0xF844;    /* RealIdentificationData */
+    read_params.slot = 0;          /* AR-level: slot/subslot ignored by device */
+    read_params.subslot = 0x0000;
+    read_params.index = 0xF000;    /* RealIdentificationData for one API (PF_IDX_API_REAL_ID_DATA) */
     read_params.max_record_length = RPC_MAX_PDU_SIZE;
 
     /* Execute Record Read */
@@ -1524,13 +1552,13 @@ wtc_result_t ar_read_real_identification(ar_manager_t *manager,
     wtc_result_t res = rpc_read_record(&manager->rpc_ctx, ar->device_ip,
                                         &read_params, &read_response);
     if (res != WTC_OK) {
-        LOG_ERROR("Record Read 0xF844 failed for %s: error=%d",
+        LOG_ERROR("Record Read 0xF000 failed for %s: error=%d",
                   ar->device_station_name, res);
         return res;
     }
 
     if (!read_response.success) {
-        LOG_ERROR("Record Read 0xF844 returned error for %s",
+        LOG_ERROR("Record Read 0xF000 returned error for %s",
                   ar->device_station_name);
         return WTC_ERROR_PROTOCOL;
     }
@@ -1594,22 +1622,33 @@ wtc_result_t ar_build_full_connect_params(ar_manager_t *manager,
     }
 
     /* Update IOCR buffers on the AR to match discovered layout.
-     * IOCR data_length = 40 + user_data + IOPS_count (1 per submodule) */
+     *
+     * IOCR data_length = max(40, user_data + iodata_count + iocs_count)
+     *
+     * Per IEC 61158-6-10 and p-net pf_cmdev validation:
+     *   INPUT IOCR:  IOData = NO_IO(3 DAP) + input modules
+     *                IOCS   = output modules only
+     *   OUTPUT IOCR: IOData = output modules only
+     *                IOCS   = NO_IO(3 DAP) + input modules
+     */
+    #define DAP_SUBMODULE_COUNT 3  /* slot 0: subslots 1, 0x8000, 0x8001 */
     if (ar->iocr_count >= 2) {
-        uint16_t input_csdu = IOCR_MIN_C_SDU_LENGTH + input_data_total +
-                              input_submod_count;
-        if (input_csdu < IOCR_MIN_C_SDU_LENGTH) {
-            input_csdu = IOCR_MIN_C_SDU_LENGTH;
-        }
+        /* INPUT IOCR: data from device to controller */
+        uint16_t input_iodata = DAP_SUBMODULE_COUNT + input_submod_count;
+        uint16_t input_iocs = output_submod_count;
+        uint16_t input_frame = input_data_total + input_iodata + input_iocs;
+        uint16_t input_csdu = (input_frame > IOCR_MIN_C_SDU_LENGTH)
+                              ? input_frame : IOCR_MIN_C_SDU_LENGTH;
         ar->iocr[0].data_length = input_csdu;
         ar->iocr[0].user_data_length = input_data_total;
         ar->iocr[0].iodata_count = input_submod_count;
 
-        uint16_t output_csdu = IOCR_MIN_C_SDU_LENGTH + output_data_total +
-                               output_submod_count;
-        if (output_csdu < IOCR_MIN_C_SDU_LENGTH) {
-            output_csdu = IOCR_MIN_C_SDU_LENGTH;
-        }
+        /* OUTPUT IOCR: data from controller to device */
+        uint16_t output_iodata = output_submod_count;
+        uint16_t output_iocs = DAP_SUBMODULE_COUNT + input_submod_count;
+        uint16_t output_frame = output_data_total + output_iodata + output_iocs;
+        uint16_t output_csdu = (output_frame > IOCR_MIN_C_SDU_LENGTH)
+                               ? output_frame : IOCR_MIN_C_SDU_LENGTH;
         ar->iocr[1].data_length = output_csdu;
         ar->iocr[1].user_data_length = output_data_total;
         ar->iocr[1].iodata_count = output_submod_count;
@@ -1685,66 +1724,38 @@ wtc_result_t ar_connect_with_discovery(ar_manager_t *manager,
         }
     }
 
-    /* Phases 2-3: PROFINET-based module discovery */
+    /* Module discovery: GSDML cache → HTTP /slots → DAP-only fallback.
+     *
+     * IMPORTANT: We do NOT use the Phase 2-3 PROFINET discovery cycle
+     * (DAP Connect → PrmEnd → Record Read → Release → Full Connect).
+     * p-net v0.2.0 leaks RPC sessions for non-Connect operations and has
+     * only PF_MAX_SESSION = 5 slots.  The old pipeline consumed 4 sessions
+     * per cycle and leaked 2, exhausting the pool after 2 attempts.
+     *
+     * Instead we try HTTP /slots, then fall back to DAP-only connect.
+     * The device's ModuleDiffBlock in the Connect response will tell us
+     * what modules are actually plugged — no Record Read needed. */
     if (need_profinet_discovery) {
-        /* Phase 2: DAP-only connect */
-        res = ar_send_dap_connect_request(manager, ar);
-        if (res != WTC_OK) {
-            LOG_ERROR("Phase 2 (DAP connect) failed for %s",
-                      ar->device_station_name);
+        /* Try HTTP /slots for module discovery */
+        char ip_str[16];
+        snprintf(ip_str, sizeof(ip_str), "%u.%u.%u.%u",
+                 (ar->device_ip >> 24) & 0xFF,
+                 (ar->device_ip >> 16) & 0xFF,
+                 (ar->device_ip >> 8) & 0xFF,
+                 ar->device_ip & 0xFF);
 
-            /* Phase 6 fallback: try HTTP /slots if PROFINET fails */
-            LOG_INFO("Attempting Phase 6 HTTP fallback for %s",
-                     ar->device_station_name);
-
-            /* Convert device_ip (host order uint32) to string */
-            char ip_str[16];
-            snprintf(ip_str, sizeof(ip_str), "%u.%u.%u.%u",
-                     (ar->device_ip >> 24) & 0xFF,
-                     (ar->device_ip >> 16) & 0xFF,
-                     (ar->device_ip >> 8) & 0xFF,
-                     ar->device_ip & 0xFF);
-
-            res = gsdml_fetch_slots_http(ip_str, &discovery);
-            if (res != WTC_OK) {
-                LOG_ERROR("HTTP fallback also failed for %s",
-                          ar->device_station_name);
-                return WTC_ERROR_CONNECTION_FAILED;
-            }
-            /* HTTP fallback succeeded — skip to Phase 4 */
+        res = gsdml_fetch_slots_http(ip_str, &discovery);
+        if (res == WTC_OK && discovery.module_count > 0) {
+            LOG_INFO("HTTP /slots returned %d modules for %s",
+                     discovery.module_count, ar->device_station_name);
             need_profinet_discovery = false;
-        }
-
-        if (need_profinet_discovery) {
-            /* Phase 2b: ParameterEnd to enable acyclic services (Record Read).
-             * Per IEC 61158-6-10, Record Read requires AR parameterization
-             * to be complete before acyclic services are available. */
-            LOG_DEBUG("Sending ParameterEnd for DAP-only AR before Record Read");
-            res = ar_send_parameter_end(manager, ar);
-            if (res != WTC_OK) {
-                LOG_ERROR("Phase 2b (ParameterEnd) failed for %s",
-                          ar->device_station_name);
-                ar_send_release_request(manager, ar);
-                return res;
-            }
-
-            /* Phase 3: Record Read 0xF844 */
-            res = ar_read_real_identification(manager, ar, &discovery);
-            if (res != WTC_OK) {
-                LOG_ERROR("Phase 3 (Record Read) failed for %s",
-                          ar->device_station_name);
-                ar_send_release_request(manager, ar);
-                return res;
-            }
-
-            /* Release DAP-only AR before full connect */
-            LOG_INFO("Releasing DAP-only AR for %s before full connect",
+        } else {
+            LOG_INFO("HTTP /slots unavailable — using DAP-only config for %s",
                      ar->device_station_name);
-            ar_send_release_request(manager, ar);
-
-            /* Brief pause for device to clean up the old AR */
-            struct timespec ts = {0, 100000000}; /* 100ms */
-            nanosleep(&ts, NULL);
+            /* Proceed with empty discovery (DAP-only).
+             * build_connect_params always includes DAP slot 0. */
+            memset(&discovery, 0, sizeof(discovery));
+            need_profinet_discovery = false;
         }
     }
 
@@ -1755,6 +1766,11 @@ wtc_result_t ar_connect_with_discovery(ar_manager_t *manager,
                   ar->device_station_name);
         return res;
     }
+
+    /* Mark that we have a discovered module config so the Connect response
+     * handler doesn't re-trigger discovery when there's no ModuleDiffBlock
+     * (no ModuleDiffBlock = our expected config matches → success). */
+    ar->has_discovered_modules = true;
 
     /* Phase 4: Full connect with discovered configuration */
     LOG_INFO("=== Phase 4: Full Connect to %s with %d discovered modules ===",

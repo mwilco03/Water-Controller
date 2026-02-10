@@ -773,7 +773,7 @@ wtc_result_t profinet_controller_connect(profinet_controller_t *controller,
     /*
      * No hardcoded default slots.  The controller must always discover
      * the RTU's actual module layout via the PROFINET discovery pipeline
-     * (DAP-only connect → Record Read 0xF844 → full connect with
+     * (DAP-only connect → Record Read 0xF000 → full connect with
      * discovered modules).  Hardcoding slot counts violates CLAUDE.md
      * ("NEVER hardcode RTU data") and causes module mismatch when the
      * RTU has fewer slots than assumed (e.g. just CPU temp on slot 1).

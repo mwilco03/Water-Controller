@@ -144,13 +144,34 @@ This tells you exactly which commit is running.
 
 ## PROFINET RPC Communication
 
+**STATUS (2026-02-10): Full PROFINET cyclic data exchange WORKING. 17 bugs fixed.**
+
+See [docs/development/PROFINET_RPC_BUG_FIXES.md](docs/development/PROFINET_RPC_BUG_FIXES.md) for the complete bug fix history.
+
+Full lifecycle: DCP → Connect → PrmEnd → ApplicationReady → CControl → Cyclic I/O (DATA state).
+p-net reaches `PF_CMDEV_STATE_DATA` — stable, no timeouts.
+
 **CRITICAL: RPC timeouts are NOT a networking issue. The network is fine.**
 
-PROFINET RPC Connect failures are caused by **code bugs** in the controller, not firewalls/connectivity. P-net silently rejects malformed RPC packets. Key fixes:
+PROFINET RPC failures are caused by **code bugs** in the controller, not firewalls/connectivity. P-net silently rejects malformed packets. The 17 bugs fixed:
 
-- **Inter-block padding** (7e0f01a): P-net parses blocks contiguously without padding; any alignment bytes cause offset mismatch
-- **UUID byte ordering** (84649b6): Interface UUID must be LE-swapped per DREP=0x10
-- **NDR header** (741bd70): Mandatory 20-byte header between RPC and PNIO blocks
+1. Inter-block padding — blocks must be contiguous, no alignment bytes
+2. UUID byte ordering — fields 1-3 must be LE-swapped per DREP=0x10
+3. NDR header — mandatory 20-byte header between RPC and PNIO blocks
+4. IOCRTagHeader — VLAN priority 6 (0xC000), not 0
+5. ARProperties — bit 4 (0x10), not bit 1 (0x02)
+6. ExpectedSubmoduleBlockReq — complete rewrite to IEC 61158-6 wire format
+7. IOCR NO_IO placement — IOData in INPUT IOCR only, IOCS in OUTPUT only
+8. IOCR frame offset overlap — each entry needs data_length+1 for IOPS byte
+9. AlarmCR rta_timeout_factor — must be <=100 (IEC 61158-6 max)
+10. NDR response parser — 20 bytes with PNIOStatus first, not 24-byte format
+11. Activity UUID reuse — all RPC ops must share Connect's activity UUID
+12. Connect response alignment — blocks are contiguous (no align_to_4 in parser)
+13. ModuleDiffBlock — DAP-only diffs are informational, proceed to PrmEnd
+14. CControl response — NDR header, block type 0x8112, DONE cmd, DREP-aware UUIDs
+15. ControlCommand bitfield — IEC 61158-6 Table 777 bit positions, not sequential
+16. VLAN tag on output frames — 802.1Q tag with PCP=6 required by CPM
+17. DataStatus + VLAN receive — StationProblem bit 0x20, VLAN-aware frame offset
 
 After code fixes, **rebuild controller container** to deploy changes:
 ```bash

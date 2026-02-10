@@ -143,10 +143,10 @@ rpc_context_t *ar_manager_get_rpc_context(ar_manager_t *manager);
 
 /* ============== Phase 2-4: Discovery Pipeline ============== */
 
-/* Maximum discovered modules from RealIdentificationData 0xF844 */
+/* Maximum discovered modules from RealIdentificationData 0xF000 */
 #define AR_MAX_DISCOVERED_MODULES  64
 
-/* Module discovered via Record Read 0xF844 */
+/* Module discovered via Record Read 0xF000 */
 typedef struct {
     uint16_t slot;
     uint16_t subslot;
@@ -182,7 +182,7 @@ wtc_result_t ar_send_dap_connect_request(ar_manager_t *manager,
 /**
  * @brief Phase 3: Read RealIdentificationData from device.
  *
- * Sends Record Read (index 0xF844) to discover actual plugged modules.
+ * Sends Record Read (index 0xF000) to discover actual plugged modules.
  * Must be called after a successful DAP-only connect (Phase 2).
  *
  * @param[in]  manager    AR manager
@@ -199,7 +199,7 @@ wtc_result_t ar_read_real_identification(ar_manager_t *manager,
  *
  * Executes the complete discovery pipeline:
  * 1. DAP-only connect (Phase 2)
- * 2. Record Read 0xF844 for module discovery (Phase 3)
+ * 2. Record Read 0xF000 for module discovery (Phase 3)
  * 3. Release DAP-only AR
  * 4. Full connect with discovered modules (Phase 4)
  *
