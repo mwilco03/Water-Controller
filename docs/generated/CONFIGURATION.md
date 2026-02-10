@@ -2,7 +2,7 @@
   AUTO-GENERATED FILE - DO NOT EDIT MANUALLY
 
   Generated from: schemas/config/*.schema.yaml
-  Generated at: 2026-02-06 23:01:16 UTC
+  Generated at: 2026-02-09 18:10:42 UTC
   Generator: scripts/generate_docs.py
 
   To update this file, modify the source schemas and run:
@@ -426,7 +426,7 @@ Controller identity settings
 | `controller.gateway` | `string` (ipv4) | `""` | Default gateway (optional) |
 | `controller.ip_address` | `string` (ipv4) | `""` | Controller IP address (auto-detect if empty) |
 | `controller.mac_address` | `string` | `""` | Controller MAC address (auto-detect if empty) |
-| `controller.station_name` | `string` (max 63 chars) | `"wtc-controller"` | Controller station name (PROFINET IEC 61158-6: lowercase, digits, hyphen only... |
+| `controller.station_name` | `string` (max 63 chars) | `""` | Controller station name (auto-generated as 'controller-XXXX' from MAC if empt... |
 | `controller.subnet_mask` | `string` (ipv4) | `"255.255.255.0"` | Network subnet mask |
 | `controller.vendor_id` | `integer` (min: 0, max: 65535) | `626` | PROFINET vendor ID (0x0272, must match GSDML) |
 
@@ -626,7 +626,7 @@ WebSocket streaming configuration
 | `WTC_SIMULATION_MODE` | `false` | Run in simulation mode without real hardware |
 | `WTC_SMTP_HOST` | `""` | SMTP server hostname |
 | `WTC_STARTUP_MODE` | `""` | Startup mode override |
-| `WTC_STATION_NAME` | `"wtc-controller"` | Controller station name (PROFINET IEC 61158-6: lowercase,... |
+| `WTC_STATION_NAME` | `""` | Controller station name (auto-generated as 'controller-XX... |
 | `WTC_SYSTEM_NAME` | `"Water Treatment Controller"` | Human-readable system name |
 | `WTC_TIMESCALE_DB` | `"wtc_historian"` | TimescaleDB database name |
 | `WTC_TIMESCALE_ENABLED` | `false` | Use TimescaleDB instead of SQLite |
