@@ -228,9 +228,14 @@ async function apiFetch<T>(
 
 // RTU API
 export async function getRTUs(): Promise<RTUDevice[]> {
-  const response = await apiFetch<{ data?: RTUDevice[]; rtus?: RTUDevice[] }>('/api/v1/rtus');
+  const response = await apiFetch<{ data?: Record<string, unknown>[]; rtus?: Record<string, unknown>[] }>('/api/v1/rtus');
   // Handle both { data: [...] } and { rtus: [...] } formats
-  return response.data || response.rtus || [];
+  const raw = response.data || response.rtus || [];
+  // API list endpoint returns connection_state; normalize to state
+  return raw.map((r) => ({
+    ...r,
+    state: r.state || r.connection_state || 'UNKNOWN',
+  })) as unknown as RTUDevice[];
 }
 
 export async function getRTU(stationName: string): Promise<RTUDevice> {

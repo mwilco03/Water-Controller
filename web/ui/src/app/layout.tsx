@@ -137,6 +137,20 @@ function AppShell({ children }: { children: React.ReactNode }) {
     [rtus]
   );
 
+  // Derive PROFINET state from RTU connection states
+  const profinetState = useMemo(() => {
+    if (rtus.length === 0) return PROFINET_STATES.NOT_CONNECTED;
+    const anyRunning = rtus.some(r => r.state === 'RUNNING');
+    if (anyRunning) return PROFINET_STATES.RUN;
+    const anyConnecting = rtus.some(r =>
+      r.state === 'CONNECTING' || r.state === 'DISCOVERY' || r.state === 'PARAMETERIZING'
+    );
+    if (anyConnecting) return PROFINET_STATES.STARTUP;
+    const anyError = rtus.some(r => r.state === 'ERROR' || r.state === 'FAULT');
+    if (anyError) return PROFINET_STATES.FAULT;
+    return PROFINET_STATES.STOP;
+  }, [rtus]);
+
   return (
     <div className="min-h-screen flex">
       {/* Skip Link */}
@@ -237,7 +251,7 @@ function AppShell({ children }: { children: React.ReactNode }) {
             <GlobalStatusBar
               isApiConnected={isApiConnected}
               isWebSocketConnected={wsConnected}
-              profinetState={PROFINET_STATES.RUN}
+              profinetState={profinetState}
               rtus={rtuStatusSummary}
               activeAlarmCount={activeAlarmCount}
               highestAlarmSeverity={highestAlarmSeverity}
