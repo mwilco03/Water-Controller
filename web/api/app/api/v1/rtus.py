@@ -421,8 +421,12 @@ async def list_rtus(
     # Apply pagination
     rtus = query.order_by(RTU.station_name).offset(offset).limit(limit).all()
 
+    profinet = get_profinet_client()
     result = []
     for rtu in rtus:
+        # Prefer live state from controller SHM over stale DB state
+        live_state = profinet.get_rtu_state(rtu.station_name)
+        connection_state = live_state or rtu.state
         item = RtuResponse(
             id=rtu.id,
             station_name=rtu.station_name,
@@ -430,7 +434,7 @@ async def list_rtus(
             vendor_id=rtu.vendor_id,
             device_id=rtu.device_id,
             slot_count=rtu.slot_count or 0,
-            connection_state=rtu.state,
+            connection_state=connection_state,
             state_since=rtu.state_since,
             last_seen=rtu.state_since.isoformat() if rtu.state_since else None,
             stats=build_rtu_stats(db, rtu) if include_stats else None,
@@ -457,6 +461,10 @@ async def get_rtu(
 
     stats = build_rtu_stats(db, rtu)
 
+    # Prefer live state from controller SHM over stale DB state
+    profinet = get_profinet_client()
+    live_state = profinet.get_rtu_state(rtu.station_name)
+
     response_data = RtuDetailResponse(
         id=rtu.id,
         station_name=rtu.station_name,
@@ -464,7 +472,7 @@ async def get_rtu(
         vendor_id=rtu.vendor_id,
         device_id=rtu.device_id,
         slot_count=rtu.slot_count or 0,
-        state=rtu.state,
+        state=live_state or rtu.state,
         state_since=rtu.state_since,
         last_error=rtu.last_error,
         created_at=rtu.created_at,
